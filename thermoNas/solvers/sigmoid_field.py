@@ -13,8 +13,8 @@ import os
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from tpms_geometry import compute_geometry, _phi_grid, _C_from_tL, _eps_from_C, _A0_from_C
-from tpms_calc import (Pr, Sa_mm, P_atm, _F_COEFFS, _T_TRAIN_MAX, _GAMMA_CORR,
+from .tpms_geometry import compute_geometry, _phi_grid, _C_from_tL, _eps_from_C, _A0_from_C
+from .tpms_calc import (Pr, Sa_mm, P_atm, _F_COEFFS, _T_TRAIN_MAX, _GAMMA_CORR,
                        air_density, air_viscosity, air_conductivity, air_cp)
 
 

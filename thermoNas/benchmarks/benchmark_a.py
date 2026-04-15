@@ -75,7 +75,7 @@ def _make_50_cases():
 
 def measure_batch(max_workers):
     """Run batch_runner on 50 cases and return wall time."""
-    from batch_runner import run_batch
+    from runs.batch_runner import run_batch
     cases = _make_50_cases()
     t0 = time.perf_counter()
     _ = run_batch(cases, max_workers=max_workers)

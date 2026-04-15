@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtGui import QColor
-from matplotlib_canvas import MatplotlibCanvas
-from theme import _THEMES, _build_styles
+from .matplotlib_canvas import MatplotlibCanvas
+from .theme import _THEMES, _build_styles
 
 
 def _m():

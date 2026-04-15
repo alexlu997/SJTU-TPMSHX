@@ -2,8 +2,12 @@
 Run via:  python test_solve_full_freeze.py
 No pytest needed — uses plain assert statements.
 """
+
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
-from solve_full import solve_full_domain
+from solvers.solve_full import solve_full_domain
 
 def _common_args(Nx=12, Ny=10):
     L, H = 0.1, 0.05

@@ -21,7 +21,7 @@ Usage:
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Optional
-import tpms_calc
+from . import tpms_calc
 
 
 @dataclass
@@ -197,7 +197,7 @@ class ZoneConfig:
         -------
         dict with 2D arrays (Nx, Ny).
         """
-        import tpms_calc
+        from . import tpms_calc
 
         # Compute properties for each unique (L, t)
         props_cache = {}

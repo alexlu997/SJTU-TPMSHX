@@ -43,11 +43,11 @@ def run_single_case(case: dict) -> dict:
     in a multiprocessing pool each trigger their own JIT warmup on spawn.
     """
     try:
-        from tpms_calc import (compute as tpms_compute,
+        from solvers.tpms_calc import (compute as tpms_compute,
                                 geometry as tpms_geometry,
                                 P_atm, air_density, air_viscosity,
                                 air_conductivity, air_cp, adaptive_grid)
-        from solve_full import solve_full_domain
+        from solvers.solve_full import solve_full_domain
 
         tpms = case['tpms']
         L_cell = case['L_cell_mm']

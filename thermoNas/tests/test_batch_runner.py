@@ -4,6 +4,10 @@ Run with:
     cd D:/Postgraduate/均质化/ThermoNAS/thermoNas
     python test_batch_runner.py
 """
+
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 
 
@@ -29,7 +33,7 @@ def _make_shanghai_like_case(u_air: float) -> dict:
 
 def test_run_single_case_returns_finite_Q():
     """A single case should return a finite Q_sim value, no NaN."""
-    from batch_runner import run_single_case
+    from runs.batch_runner import run_single_case
     case = _make_shanghai_like_case(u_air=3.92)
     result = run_single_case(case)
     assert 'Q_sim' in result, f"missing Q_sim: {result}"
@@ -40,7 +44,7 @@ def test_run_single_case_returns_finite_Q():
 
 def test_run_batch_serial_10_cases():
     """run_batch with max_workers=1 should behave like a plain map."""
-    from batch_runner import run_batch
+    from runs.batch_runner import run_batch
     cases = [_make_shanghai_like_case(u_air=u) for u in np.linspace(3, 22, 10)]
     results = run_batch(cases, max_workers=1)
     assert len(results) == 10
@@ -51,7 +55,7 @@ def test_run_batch_serial_10_cases():
 
 def test_run_batch_parallel_10_cases():
     """run_batch with max_workers=2 should give identical results to serial."""
-    from batch_runner import run_batch
+    from runs.batch_runner import run_batch
     cases = [_make_shanghai_like_case(u_air=u) for u in np.linspace(3, 22, 10)]
     results_serial = run_batch(cases, max_workers=1)
     results_parallel = run_batch(cases, max_workers=2)

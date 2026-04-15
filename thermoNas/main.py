@@ -17,12 +17,12 @@ from PySide6.QtWidgets import (
     QStackedWidget, QInputDialog,
 )
 
-from mainui import Ui_MainWindow
-from tpms_calc import compute as tpms_compute, geometry as tpms_geometry, compute_pressure_field, adaptive_grid
-from simple_solver import SIMPLESolver
-from solve_full import solve_full_domain
-from matplotlib_canvas import MatplotlibCanvas, _label_axes
-from theme import _THEMES, _build_styles
+from ui.mainui import Ui_MainWindow
+from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, compute_pressure_field, adaptive_grid
+from solvers.simple_solver import SIMPLESolver
+from solvers.solve_full import solve_full_domain
+from ui.matplotlib_canvas import MatplotlibCanvas, _label_axes
+from ui.theme import _THEMES, _build_styles
 
 # Theme dict and _build_styles moved to theme.py (Task B.3).
 # Light-only as of D-1 (dark mode + toggle removed).
@@ -90,58 +90,58 @@ class Main_Menu(QMainWindow):
     #  Top-level layout
     # ─────────────────────────────────────────────────────────
     def _build_ui(self):
-        from ui_builders import build_ui
+        from ui.ui_builders import build_ui
         return build_ui(self)
 
     # ─────────────────────────────────────────────────────────
     #  Param tabs container (3 tab buttons + QStackedWidget)
     # ─────────────────────────────────────────────────────────
     def _build_param_tabs(self) -> QWidget:
-        from ui_builders import build_param_tabs
+        from ui.ui_builders import build_param_tabs
         return build_param_tabs(self)
 
     def _switch_param_tab(self, index):
-        from ui_builders import switch_param_tab
+        from ui.ui_builders import switch_param_tab
         return switch_param_tab(self, index)
 
     # ─────────────────────────────────────────────────────────
     #  Page 1 — Domain / TPMS / Material / Grid / Results
     # ─────────────────────────────────────────────────────────
     def _build_page_domain(self) -> QScrollArea:
-        from ui_builders import build_page_domain
+        from ui.ui_builders import build_page_domain
         return build_page_domain(self)
 
     # ─────────────────────────────────────────────────────────
     #  Page 2 — Fluid A / Fluid B config + pipe geometry
     # ─────────────────────────────────────────────────────────
     def _build_page_fluids(self) -> QScrollArea:
-        from ui_builders import build_page_fluids
+        from ui.ui_builders import build_page_fluids
         return build_page_fluids(self)
 
     # ─────────────────────────────────────────────────────────
     #  Page 3 — Zone configuration (expanding height)
     # ─────────────────────────────────────────────────────────
     def _build_page_zones(self) -> QScrollArea:
-        from ui_builders import build_page_zones
+        from ui.ui_builders import build_page_zones
         return build_page_zones(self)
 
     # ─────────────────────────────────────────────────────────
     #  Canvas area — tab-switched, vertical scrolling
     # ─────────────────────────────────────────────────────────
     def _build_canvas_area(self) -> QWidget:
-        from ui_builders import build_canvas_area
+        from ui.ui_builders import build_canvas_area
         return build_canvas_area(self)
 
     def _canvas_zoom(self, factor):
-        from ui_builders import canvas_zoom
+        from ui.ui_builders import canvas_zoom
         return canvas_zoom(self, factor)
 
     def _canvas_zoom_reset(self):
-        from ui_builders import canvas_zoom_reset
+        from ui.ui_builders import canvas_zoom_reset
         return canvas_zoom_reset(self)
 
     def _canvas_wheel_zoom(self, event, canvas, key):
-        from ui_builders import canvas_wheel_zoom
+        from ui.ui_builders import canvas_wheel_zoom
         return canvas_wheel_zoom(self, event, canvas, key)
 
     def _switch_tab(self, tab: str):
@@ -212,93 +212,93 @@ class Main_Menu(QMainWindow):
     #  Multi-objective optimization
     # ─────────────────────────────────────────────────────────
     def _run_optimize(self):
-        from optimize_panel import run_optimize
+        from ui.optimize_panel import run_optimize
         return run_optimize(self)
 
     def _reshow_pareto(self):
-        from optimize_panel import reshow_pareto
+        from ui.optimize_panel import reshow_pareto
         return reshow_pareto(self)
 
     def _show_pareto(self, res):
-        from optimize_panel import show_pareto
+        from ui.optimize_panel import show_pareto
         return show_pareto(self, res)
 
     def _on_pareto_pick(self, event):
-        from optimize_panel import on_pareto_pick
+        from ui.optimize_panel import on_pareto_pick
         return on_pareto_pick(self, event)
 
     def _save_opt_results(self, res, cfg):
-        from optimize_panel import save_opt_results
+        from ui.optimize_panel import save_opt_results
         return save_opt_results(self, res, cfg)
 
     def _load_pareto_solution(self, x):
-        from optimize_panel import load_pareto_solution
+        from ui.optimize_panel import load_pareto_solution
         return load_pareto_solution(self, x)
 
     # ─────────────────────────────────────────────────────────
     #  Layout helpers
     # ─────────────────────────────────────────────────────────
     def _section(self, parent_lay, title, title_style, frame_style):
-        from ui_builders import section
+        from ui.ui_builders import section
         return section(self, parent_lay, title, title_style, frame_style)
 
     def _row(self, g, row, text, default) -> QLineEdit:
-        from ui_builders import row as _row_impl
+        from ui.ui_builders import row as _row_impl
         return _row_impl(self, g, row, text, default)
 
     def _res_row(self, g, row, text, col=0) -> QLabel:
-        from ui_builders import res_row
+        from ui.ui_builders import res_row
         return res_row(self, g, row, text, col)
 
     def _add_row(self, g, row, text, widget):
-        from ui_builders import add_row
+        from ui.ui_builders import add_row
         return add_row(self, g, row, text, widget)
 
     # ─────────────────────────────────────────────────────────
     #  Zone configuration helpers
     # ─────────────────────────────────────────────────────────
     def _zone_mode_changed(self, idx):
-        from zone_editor import zone_mode_changed
+        from solvers.zone_editor import zone_mode_changed
         return zone_mode_changed(self, idx)
 
     def _zone_is_grid(self):
-        from zone_editor import zone_is_grid
+        from solvers.zone_editor import zone_is_grid
         return zone_is_grid(self)
 
     def _zone_init_1d(self, n):
-        from zone_editor import zone_init_1d
+        from solvers.zone_editor import zone_init_1d
         return zone_init_1d(self, n)
 
     def _zone_add_row(self):
-        from zone_editor import zone_add_row
+        from solvers.zone_editor import zone_add_row
         return zone_add_row(self)
 
     def _zone_remove_row(self):
-        from zone_editor import zone_remove_row
+        from solvers.zone_editor import zone_remove_row
         return zone_remove_row(self)
 
     def _zone_add_col(self):
-        from zone_editor import zone_add_col
+        from solvers.zone_editor import zone_add_col
         return zone_add_col(self)
 
     def _zone_remove_col(self):
-        from zone_editor import zone_remove_col
+        from solvers.zone_editor import zone_remove_col
         return zone_remove_col(self)
 
     def _zone_rebuild_grid(self, ny=None):
-        from zone_editor import zone_rebuild_grid
+        from solvers.zone_editor import zone_rebuild_grid
         return zone_rebuild_grid(self, ny)
 
     def _zone_resize(self):
-        from zone_editor import zone_resize
+        from solvers.zone_editor import zone_resize
         return zone_resize(self)
 
     def _zone_axis(self):
-        from zone_editor import zone_axis
+        from solvers.zone_editor import zone_axis
         return zone_axis(self)
 
     def _build_zone_config(self):
-        from zone_editor import build_zone_config
+        from solvers.zone_editor import build_zone_config
         return build_zone_config(self)
 
     # ─────────────────────────────────────────────────────────
@@ -574,7 +574,7 @@ class Main_Menu(QMainWindow):
 
     def _update_edge_combos(self):
         """Populate edge combo boxes with readable edge descriptions."""
-        import unstructured_mesh as um
+        from solvers import unstructured_mesh as um
         try:
             L = float(self.le_L.text())
             H = float(self.le_H.text())
@@ -623,15 +623,15 @@ class Main_Menu(QMainWindow):
             self.combo_edge_outB.setCurrentIndex(3)
 
     def _draw_layout(self):
-        from layout_drawer import draw_layout
+        from ui.layout_drawer import draw_layout
         return draw_layout(self)
 
     def _draw_layout_rect(self, ax, L, H, Lmm, Hmm):
-        from layout_drawer import draw_layout_rect
+        from ui.layout_drawer import draw_layout_rect
         return draw_layout_rect(self, ax, L, H, Lmm, Hmm)
 
     def _draw_layout_polygon(self, ax, L, H, Lmm, Hmm):
-        from layout_drawer import draw_layout_polygon
+        from ui.layout_drawer import draw_layout_polygon
         return draw_layout_polygon(self, ax, L, H, Lmm, Hmm)
 
     # ─────────────────────────────────────────────────────────
@@ -698,19 +698,19 @@ class Main_Menu(QMainWindow):
 
     def _run_calculation_inner(self):
         """Thin wrapper — delegates to run_calculation module (Task B.9)."""
-        from run_calculation import run_calculation_inner
+        from runs.run_calculation import run_calculation_inner
         return run_calculation_inner(self)
 
     def _finalize_plots(self):
         """Thin wrapper — delegates to run_calculation module (Task B.9)."""
-        from run_calculation import finalize_plots
+        from runs.run_calculation import finalize_plots
         return finalize_plots(self)
 
     # ─────────────────────────────────────────────────────────
     #  Polygon domain solver
     # ─────────────────────────────────────────────────────────
     def _run_polygon_calculation(self):
-        from polygon_calc import run_polygon_calculation
+        from solvers.polygon_calc import run_polygon_calculation
         return run_polygon_calculation(self)
 
     # ─────────────────────────────────────────────────────────

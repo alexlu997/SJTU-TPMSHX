@@ -30,11 +30,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Locate tpms_calc (sibling module in thermoNas/)
+# Locate thermoNas root for data paths and solvers package
 _THIS = Path(__file__).resolve()
 _THERMONAS = _THIS.parent.parent  # .../thermoNas
 sys.path.insert(0, str(_THERMONAS))
-from tpms_calc import geometry as tpms_geometry  # noqa: E402
+from solvers.tpms_calc import geometry as tpms_geometry  # noqa: E402
 
 DATA_XLSX = _THERMONAS.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 

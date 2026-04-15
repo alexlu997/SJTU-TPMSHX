@@ -21,9 +21,9 @@ import numpy as np
 from numba import njit
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
-from tpms_calc import (air_density, air_conductivity, P_atm,
+from .tpms_calc import (air_density, air_conductivity, P_atm,
                        Sa_mm as _SA_MM, _F_COEFFS, nu_from_Re)
-from unstructured_mesh import (BC_INTERIOR, BC_WALL,
+from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
                                BC_INLET_A, BC_OUTLET_A,
                                BC_INLET_B, BC_OUTLET_B)
 

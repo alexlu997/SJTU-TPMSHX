@@ -5,7 +5,7 @@ instance) as first argument. `self.` in original bodies -> `window.`.
 """
 import numpy as np
 from PySide6.QtWidgets import QMessageBox
-from theme import _THEMES
+from .theme import _THEMES
 
 
 def draw_layout(window):
@@ -160,7 +160,7 @@ def draw_layout_polygon(window, ax, L, H, Lmm, Hmm):
     """Ex-Main_Menu._draw_layout_polygon(self, ax, L, H, Lmm, Hmm)."""
     import main as _main_mod
     _t = _THEMES['light']
-    import unstructured_mesh as um
+    from solvers import unstructured_mesh as um
     from matplotlib.patches import Polygon as MplPolygon
 
     shape = window.combo_shape.currentText()

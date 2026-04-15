@@ -46,7 +46,7 @@ convention on both sides, so downstream Q calculations are consistent.
 import functools
 import warnings
 import numpy as np
-from tpms_geometry import compute_geometry as _tpms_geom
+from .tpms_geometry import compute_geometry as _tpms_geom
 
 # ── Physical constants ────────────────────────────────────────
 Pr    = 0.72       # Prandtl number (air, approximately constant)

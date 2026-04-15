@@ -25,10 +25,10 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
-from zone_config import ZoneConfig
-from solve_full import solve_full_domain
-from simple_solver import SIMPLESolver
-from tpms_calc import (compute as tpms_compute, geometry as tpms_geometry,
+from solvers.zone_config import ZoneConfig
+from solvers.solve_full import solve_full_domain
+from solvers.simple_solver import SIMPLESolver
+from solvers.tpms_calc import (compute as tpms_compute, geometry as tpms_geometry,
                        air_density, air_viscosity, adaptive_grid)
 
 # NOTE: batch_runner.run_batch is NOT used here because its case-dict schema
@@ -313,7 +313,7 @@ def evaluate(x, config=None):
 
     # 1-2. Build property arrays (continuous or discrete)
     if cfg.get('use_continuous', True):
-        from sigmoid_field import build_continuous_arrays, get_geometry_lut
+        from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
         lut = get_geometry_lut(cfg['tpms_type'])
         za = build_continuous_arrays(
             x, cfg['L0'], cfg['t0'],
@@ -347,7 +347,7 @@ def evaluate(x, config=None):
 
     # 4. Energy solve with per-cell rho(T)*cp(T) coupling
     #    + variable density SIMPLE re-run after first energy iteration
-    from tpms_calc import air_cp
+    from solvers.tpms_calc import air_cp
     P_in = 101325.0
     rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
     rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
@@ -379,7 +379,7 @@ def evaluate(x, config=None):
         ucA, vcA, ucB, vcB = _simple_var_density(cfg, rho_A_field, rho_B_field)
 
     # 5. Compute objectives (non-uniform cell areas)
-    from simple_solver import _aligned_grid
+    from solvers.simple_solver import _aligned_grid
     _dx_e = _aligned_grid(Nx, L, [])  # uniform for optimizer coarse grid
     _dy_e = _aligned_grid(Ny, H, [])
     _cell_area = _dx_e[:, None] * _dy_e[None, :]
@@ -388,7 +388,7 @@ def evaluate(x, config=None):
 
     # Pressure drop
     if cfg.get('use_continuous', True) and 'L_field' in za:
-        from sigmoid_field import compute_dP_continuous
+        from solvers.sigmoid_field import compute_dP_continuous
         D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
         dP_A_c, dP_B_c = compute_dP_continuous(
             za['L_field'], za['t_field'], za['eps_arr'], D_h_arr,
@@ -396,7 +396,7 @@ def evaluate(x, config=None):
             cfg['tpms_type'], L, H, Nx, Ny, T_inA, T_inB)
         dP_total = dP_A_c + dP_B_c
     else:
-        from tpms_calc import friction_factor, P_atm
+        from solvers.tpms_calc import friction_factor, P_atm
         rho_ref_A = air_density(T_inA, P_atm)
         rho_ref_B = air_density(T_inB, P_atm)
         dP_A_total = 0.0; dP_B_total = 0.0
@@ -442,13 +442,13 @@ def evaluate_richardson(x, config=None):
     P_in = 101325.0
 
     # Build arrays helper
-    from tpms_calc import air_cp
+    from solvers.tpms_calc import air_cp
     _y_trans_in = cfg.get('y_trans_inlet', cfg.get('y_trans', 0.2))
     _y_trans_out = cfg.get('y_trans_outlet', cfg.get('y_trans', 0.2))
 
     def _build_za(nx, ny):
         if cfg.get('use_continuous', True):
-            from sigmoid_field import build_continuous_arrays, get_geometry_lut
+            from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
             lut = get_geometry_lut(cfg['tpms_type'])
             return build_continuous_arrays(
                 x, cfg['L0'], cfg['t0'], _y_trans_in, _y_trans_out,
@@ -492,7 +492,7 @@ def evaluate_richardson(x, config=None):
         rA_avg = 0.7 * rA_new + 0.3 * rA_avg
         rB_avg = 0.7 * rB_new + 0.3 * rB_avg
 
-    from simple_solver import _aligned_grid
+    from solvers.simple_solver import _aligned_grid
     _dx_c = _aligned_grid(Nx_c, L, [])
     _dy_c = _aligned_grid(Ny_c, H, [])
     _area_c = _dx_c[:, None] * _dy_c[None, :]
@@ -528,7 +528,7 @@ def evaluate_richardson(x, config=None):
     rho_B = sc_c['rho_B']; mu_B = sc_c['mu_B']
 
     if cfg.get('use_continuous', True) and 'L_field' in za_c:
-        from sigmoid_field import compute_dP_continuous
+        from solvers.sigmoid_field import compute_dP_continuous
         D_h_c = 2.0 * za_c['eps_arr'] / (za_c['A_0_arr'] + 1e-30)
         dP_A_c, dP_B_c = compute_dP_continuous(
             za_c['L_field'], za_c['t_field'], za_c['eps_arr'], D_h_c,
@@ -536,7 +536,7 @@ def evaluate_richardson(x, config=None):
             cfg['tpms_type'], L, H, Nx_c, Ny_c, T_inA, T_inB)
         dP_total = dP_A_c + dP_B_c
     else:
-        from tpms_calc import friction_factor, P_atm
+        from solvers.tpms_calc import friction_factor, P_atm
         rho_ref_A = air_density(T_inA, P_atm)
         rho_ref_B = air_density(T_inB, P_atm)
         grid_cells = build_grid_cells(x, cfg['L0'], cfg['t0'],
@@ -627,8 +627,8 @@ def _solve_single_point(x, cfg, Nx, Ny):
 
     Returns (Q, dP_A, dP_B) with SIMPLE-based ΔP.
     """
-    from sigmoid_field import build_continuous_arrays, get_geometry_lut
-    from tpms_calc import air_cp
+    from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
+    from solvers.tpms_calc import air_cp
 
     L = cfg['L_domain']; H = cfg['H_domain']
     tpms_type = cfg['tpms_type']; k_s = cfg['k_s']
@@ -693,14 +693,14 @@ def _solve_single_point(x, cfg, Nx, Ny):
         rcp_B = 0.7 * air_density(Tb, P_in) * air_cp(Tb) + 0.3 * rcp_B
 
     # 4. Q and ΔP
-    from simple_solver import _aligned_grid
+    from solvers.simple_solver import _aligned_grid
     _dx_sp = _aligned_grid(Nx, L, [])
     _dy_sp = _aligned_grid(Ny, H, [])
     _area_sp = _dx_sp[:, None] * _dy_sp[None, :]
     Q = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _area_sp))
 
     # ΔP: per-cell f-Re integration from continuous field
-    from sigmoid_field import compute_dP_continuous
+    from solvers.sigmoid_field import compute_dP_continuous
     D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
     dP_A, dP_B = compute_dP_continuous(
         za['L_field'], za['t_field'], za['eps_arr'], D_h_arr,
@@ -865,7 +865,7 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
     # Dispatch to algorithm
     if algorithm == 'qnehvi':
         # Bayesian optimization via BoTorch — separate code path, returns early
-        from optimizer_botorch import run_botorch_optimization
+        from .optimizer_botorch import run_botorch_optimization
         return run_botorch_optimization(config, n_init=50, n_iter=60, q_batch=4,
                                          seed=seed, verbose=verbose, save_dir=save_dir)
     elif algorithm == 'moead':

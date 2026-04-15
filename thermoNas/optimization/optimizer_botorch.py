@@ -14,7 +14,7 @@ import time
 import json
 import numpy as np
 
-from optimizer import (DEFAULT_CONFIG, evaluate, evaluate_richardson,
+from .optimizer import (DEFAULT_CONFIG, evaluate, evaluate_richardson,
                        _resolve_grid, _save_pareto_csv,
                        _compute_simple, _clear_simple_cache, _progress)
 

@@ -8,13 +8,13 @@ import pandas as pd
 sys.stdout.reconfigure(encoding='utf-8')
 warnings.filterwarnings('ignore')
 
-from tpms_calc import (
+from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp, P_atm,
     friction_factor, _F_COEFFS, Sa_mm,
 )
-from simple_solver import SIMPLESolver
-from solve_full import solve_full_domain
+from solvers.simple_solver import SIMPLESolver
+from solvers.solve_full import solve_full_domain
 
 # ── Closure form selector ──
 # Set via env var: CLOSURE=df (default, ConstDF-v1 MLP) or CLOSURE=f_re (legacy).
@@ -36,7 +36,7 @@ N_UNITS = 36
 A_FLOW_PER_UNIT = 18.0565e-6  # m² — single unit cell effective air cross section
 A_FLOW = N_UNITS * A_FLOW_PER_UNIT  # 6.50034e-4 m² — prototype total
 
-from tpms_calc import adaptive_grid
+from solvers.tpms_calc import adaptive_grid
 N_X, N_Y = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.4)
 
 # Fluid B partial BC

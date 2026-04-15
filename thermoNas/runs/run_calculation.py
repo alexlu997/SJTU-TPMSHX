@@ -6,9 +6,9 @@ All functions take `window` (Main_Menu) as first argument.
 """
 import numpy as np
 import matplotlib.pyplot as plt
-from simple_solver import SIMPLESolver
-from solve_full import solve_full_domain
-from tpms_calc import compute as tpms_compute, geometry as tpms_geometry
+from solvers.simple_solver import SIMPLESolver
+from solvers.solve_full import solve_full_domain
+from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 
 
 def run_calculation_inner(window):
@@ -78,7 +78,7 @@ def _parse_inputs(window):
                 # 2D grid mode — use Sigmoid continuous field if decision vector available
                 _x_dec = getattr(window, '_pareto_x_decision', None)
                 if _x_dec is not None:
-                    from sigmoid_field import build_continuous_arrays, get_geometry_lut
+                    from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
                     _lut = get_geometry_lut(tpms_type)
                     za = build_continuous_arrays(
                         _x_dec, Lcell, t_wall,
@@ -89,7 +89,7 @@ def _parse_inputs(window):
                         u_A, u_B, T_inA, T_inB, _lut)
                     print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
-                    from zone_config import ZoneConfig
+                    from solvers.zone_config import ZoneConfig
                     za = ZoneConfig.build_grid_arrays(
                         N_x, N_y, L, H,
                         window._zone_grid['cells'],
@@ -153,7 +153,7 @@ def _build_fields(window, cfg):
     def _build_zone_arrays_for_simple(za_dict, N_flow, N_perp, is_x_flow, mu_fluid):
         """Build 1D per-row arrays for SIMPLE from 2D zone arrays.
         SIMPLE's y-axis = flow direction. Need per-row porous params."""
-        import tpms_calc as _tc
+        from solvers import tpms_calc as _tc
         mu_eff = np.empty(N_flow, dtype=np.float64)
         r_h_a  = np.empty(N_flow, dtype=np.float64)
         ln_eps = np.empty(N_flow, dtype=np.float64)
@@ -201,7 +201,7 @@ def _build_fields(window, cfg):
                 'ln_eps_arr': ln_eps, 'ln_tL_arr': ln_tL, 'ln_XSa_arr': ln_XSa}
 
     # Build aligned grid arrays for energy solver
-    from simple_solver import _aligned_grid
+    from solvers.simple_solver import _aligned_grid
     _x_breaks = set()
     _y_breaks = set()
     # Fluid B (y-flow): inlet/outlet on x-axis
@@ -239,7 +239,7 @@ def _build_fields(window, cfg):
 
         # Build zone arrays for SIMPLE if zones are active
         z_arr = None
-        from zone_config import ZoneConfig
+        from solvers.zone_config import ZoneConfig
         if za is not None:
             if is_x:
                 z_arr = _build_zone_arrays_for_simple(za, N_x, N_y, True, mu_f)
@@ -338,8 +338,8 @@ def _run_solvers(window, cfg, fields):
 
     # ── Outer velocity-temperature coupling loop ──
     import warnings as _warn
-    import tpms_calc as _tc
-    from simple_solver import _aligned_grid
+    from solvers import tpms_calc as _tc
+    from solvers.simple_solver import _aligned_grid
 
     _MAX_COUPLING = 5
     _COUPLING_TOL = 0.01  # 1% relative change in rho
@@ -480,10 +480,10 @@ def _run_solvers(window, cfg, fields):
             window._zone_boundaries_x = [b * L for b in za.get('x_bounds', [])]
             window._zone_boundaries_y = [b * H for b in za.get('y_bounds', [])]
             # Build dummy Zone objects for statistics
-            from zone_config import Zone
+            from solvers.zone_config import Zone
             dummy_zones = [Zone(f'g{r}', gc['y0'], gc['y1'], gc['L'], gc['t'])
                            for r, gc in enumerate(za.get('grid_cells', []))]
-            from zone_config import compute_zone_statistics, format_zone_report
+            from solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
                                             cell_area=_ca)
@@ -492,7 +492,7 @@ def _run_solvers(window, cfg, fields):
             window._zone_stats = stats
         else:
             # 1D mode
-            from zone_config import compute_zone_statistics, format_zone_report
+            from solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
                                             zone_config.zones, cell_area=_ca)
@@ -640,7 +640,7 @@ def _run_solvers(window, cfg, fields):
 
     # ΔP: f-Re for zones, SIMPLE for baseline
     if za is not None and 'L_field' in za and 'A_0_arr' in za:
-        from sigmoid_field import compute_dP_continuous
+        from solvers.sigmoid_field import compute_dP_continuous
         D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
         tpms_type = window.combo_tpms.currentText()
         dP_A, dP_B = compute_dP_continuous(
@@ -697,7 +697,7 @@ def _store_results(window, cfg, result):
 def finalize_plots(window):
     """Ex-Main_Menu._finalize_plots(self). Render plots from stored results.
     MUST run on main thread."""
-    from theme import _THEMES
+    from ui.theme import _THEMES
     import main as _main_mod
     _t = _THEMES['light']
 

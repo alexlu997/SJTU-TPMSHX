@@ -22,7 +22,7 @@ Staggered grid:  P[i,j] cell centre (Nx,Ny)
 
 import numpy as np
 from numba import njit
-from tpms_calc import (air_density, air_viscosity, P_atm,
+from .tpms_calc import (air_density, air_viscosity, P_atm,
                        Sa_mm as _SA_MM, _F_COEFFS)
 
 
@@ -892,7 +892,7 @@ class SIMPLESolver:
             self._ln_XSa_arr = np.full(Ny, self._ln_XSa_val, dtype=np.float64)
 
         # Geometry correction phi(t) for t outside training range
-        from tpms_calc import _phi_t_correction
+        from .tpms_calc import _phi_t_correction
         self._phi_arr = np.empty(Ny, dtype=np.float64)
         if zone_arrays is not None:
             # zone_arrays may have per-row t_mm; use uniform phi for now
@@ -1422,7 +1422,7 @@ def solve_transition_zone(W, H, Nx, Ny,
 if __name__ == '__main__':
     import time
     import warnings; warnings.filterwarnings('ignore')
-    from tpms_calc import compute as tpms_compute
+    from .tpms_calc import compute as tpms_compute
 
     tpms = 'Diamond';  L_mm = 6.0;  t_mm = 0.4
     props = tpms_compute(tpms, L_mm, t_mm, 3.0, 300.0, 101325.0, 17.0)

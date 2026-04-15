@@ -29,7 +29,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # Local imports
-from tpms_calc import (
+from solvers.tpms_calc import (
     _F_COEFFS, friction_factor, geometry as tpms_geometry,
     air_density, air_viscosity, P_atm,
 )

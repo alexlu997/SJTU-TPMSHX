@@ -7,7 +7,7 @@ import numpy as np
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QComboBox, QTableWidgetItem
 import matplotlib.gridspec as gridspec
 
-from theme import _THEMES
+from .theme import _THEMES
 
 
 def run_optimize(window):
@@ -23,7 +23,7 @@ def run_optimize(window):
     dlg.setWindowTitle("Optimize Configuration")
     import os
     from PySide6.QtGui import QIcon
-    _gear_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings_options_preferences_gears_icon_124617.ico')
+    _gear_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'settings_options_preferences_gears_icon_124617.ico')
     if os.path.exists(_gear_path):
         dlg.setWindowIcon(QIcon(_gear_path))
     form = QFormLayout(dlg)
@@ -123,7 +123,7 @@ def run_optimize(window):
 
     def _opt_thread():
         try:
-            from optimizer import run_optimization
+            from optimization.optimizer import run_optimization
             res = run_optimization(cfg, n_gen, pop_size, verbose=False,
                                    algorithm=algo_name)
             window._opt_result = res
@@ -146,7 +146,7 @@ def run_optimize(window):
     def _check():
         window._opt_tick[0] += 1
         if window._opt_thread_ref.is_alive():
-            from optimizer import _progress
+            from optimization.optimizer import _progress
             phase = _progress.get('phase', 'optimize')
             if phase == 'reeval':
                 rc = _progress.get('reeval_count', 0)
@@ -203,7 +203,7 @@ def reshow_pareto(window):
 
 def show_pareto(window, res):
     """Ex-Main_Menu._show_pareto(self, res)."""
-    from theme import _THEMES
+    from .theme import _THEMES
     import main as _main_mod
     _t = _THEMES['light']
     F = res['F']; X = res['X']
@@ -373,7 +373,7 @@ def save_opt_results(window, res, cfg):
 
 def load_pareto_solution(window, x):
     """Ex-Main_Menu._load_pareto_solution(self, x)."""
-    from optimizer import build_grid_cells
+    from optimization.optimizer import build_grid_cells
 
     L0 = float(window.le_Lcell.text())
     t0 = float(window.le_t.text())

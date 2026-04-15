@@ -10,9 +10,10 @@ import matplotlib.tri as mtri
 from matplotlib.gridspec import GridSpec
 
 from PySide6.QtWidgets import QApplication, QMessageBox
-from tpms_calc import geometry as tpms_geometry
-from fvm_solver import solve_polygon_domain
-from theme import _THEMES
+from .tpms_calc import geometry as tpms_geometry
+from .fvm_solver import solve_polygon_domain
+from .unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
+from ui.theme import _THEMES
 
 
 def run_polygon_calculation(window):
@@ -38,8 +39,8 @@ def run_polygon_calculation(window):
 
 def _parse_inputs(window, _log):
     """Phase 1: read UI widgets, validate, build mesh. Returns cfg or None."""
-    import unstructured_mesh as um
-    from unstructured_mesh import BC_INLET_A, BC_OUTLET_A, BC_INLET_B, BC_OUTLET_B
+    from . import unstructured_mesh as um
+    from .unstructured_mesh import BC_INLET_A, BC_OUTLET_A, BC_INLET_B, BC_OUTLET_B
 
     if not window.compute_tpms():
         return None
@@ -122,8 +123,8 @@ def _parse_inputs(window, _log):
         'tpms_type': tpms_type, 'Lcell': Lcell,
         't_wall': t_wall, 'k_s': k_s, 'eps': eps, 'g': g,
         'mesh': mesh,
-        'BC_OUTLET_A': __import__('unstructured_mesh').BC_OUTLET_A,
-        'BC_OUTLET_B': __import__('unstructured_mesh').BC_OUTLET_B,
+        'BC_OUTLET_A': BC_OUTLET_A,
+        'BC_OUTLET_B': BC_OUTLET_B,
     }
     return cfg
 
