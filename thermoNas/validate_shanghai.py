@@ -16,6 +16,13 @@ from tpms_calc import (
 from simple_solver import SIMPLESolver
 from solve_full import solve_full_domain
 
+# ── Closure form selector ──
+# Set via env var: CLOSURE=df (default, ConstDF-v1 MLP) or CLOSURE=f_re (legacy).
+CLOSURE = os.environ.get('CLOSURE', 'df').lower()
+if CLOSURE not in ('df', 'f_re'):
+    raise SystemExit(f"CLOSURE must be 'df' or 'f_re', got {CLOSURE!r}")
+print(f"[validate_shanghai] closure = {CLOSURE}")
+
 # ── Geometry ──
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
@@ -96,7 +103,8 @@ for ci in range(16):
     # is_x=True: SIMPLESolver(W=H, H=L, Nx=N_Y, Ny=N_X)
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho_A, mu_A, T_Ain_K,
-                      0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM)
+                      0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
+                      closure=CLOSURE)
     cA, nA = sA.solve(max_iter=3000, tol=1e-4, verbose=False)
 
     # dP_A: pipe-weighted
