@@ -353,12 +353,20 @@ def compute(tpms_type: str,
     rho = air_density(T_in_K, P_in_Pa)
 
     # ── Reynolds number ──────────────────────────────────────
-    # Re uses REFERENCE density (atmospheric pressure at inlet T),
-    # consistent with how CFD data defined Re.
-    # This ensures Re is independent of inlet pressure buildup.
-    r_h     = D_h_m / 2.0
-    rho_ref = air_density(T_in_K, P_atm)
-    Re      = rho_ref * u * r_h / mu
+    # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
+    #
+    # Uses ACTUAL inlet density (at inlet T and inlet P), because physical
+    # Nu depends on true Re, not on a canonical atmospheric Re (previous
+    # bug was rho_ref=P_atm, which under-predicted high-Re Q by ~22%).
+    #
+    # Convention: u here is the single-stream (per-channel) velocity for
+    # the fluid being computed. For validate_shanghai.py, u_A is computed
+    # from m_air / (rho * A_single_channel_total) and is already single-
+    # stream, so no /2 factor is needed. The training Excel Re column
+    # also uses a single-stream × D_h convention (the /2 applied to the
+    # CFD total mass flow during data processing is absorbed into how
+    # col 13 u relates to its Re).
+    Re = rho * u * D_h_m / mu
 
     # Warn if outside correlation valid range
     if not (600 <= Re <= 30000):

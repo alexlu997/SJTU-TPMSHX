@@ -15,7 +15,8 @@ updated: 2026-04-15
 | [`2026-04-14-DF-re-independence-report.md`](2026-04-14-DF-re-independence-report.md) | 24/24 几何通过 Pearson 残差-Re 检验 → 2 参数 D-F 在当前训练 Re 范围内统计独立于 Re,**论文级证据**,作为 ConstDF-v1 的物理合法性依据 |
 | [`2026-04-14-DF-surrogate-loo-report.md`](2026-04-14-DF-surrogate-loo-report.md) | ConstDF-v1 LOO 主结果:**Diamond 12.79% / Gyroid 16.95%**(由 `train_surrogate.py` 自动写入,跑训练即覆盖) |
 | [`2026-04-15-DF-residual-structure-diagnostic.md`](2026-04-15-DF-residual-structure-diagnostic.md) | 残差 vs Re 诊断:**U 形残差在 24 个几何上普遍存在**,谷底 Re ≈ 800–2000,论证 12–17% MAPE 是 2-term D-F 闭合形式的结构下限,不是模型容量问题 |
-| [`2026-04-15-Re-Nu-convention-audit.md`](2026-04-15-Re-Nu-convention-audit.md) | Re / Nu 约定全链路审计:项目统一用 $r_h$ 约定(等价于 $D_h$ + 单股 m/2),三个 Nu 调用点全部正确。**代码没有 bug**,但 `_nu_*` 的 docstring 原来写错了 $D_h$,已修正为 $r_h$ 并加入项目全局 Re 约定声明。纯文档修复,数值零变化 |
+| [`2026-04-15-Re-Nu-convention-audit.md`](2026-04-15-Re-Nu-convention-audit.md) | Re / Nu 约定全链路审计(第一轮,上午):docstring 修正。发现 Nu 代码约定和 docstring 不一致,数值不变但文档误导。后来经更深入分析发现还有数值 bug,见下一份报告 |
+| [`2026-04-15-shanghai-Q-calculation-flow.md`](2026-04-15-shanghai-Q-calculation-flow.md) | **⭐ Shanghai Q 验证完整计算流程**(Case 16 每一步数值都打出)+ 两次 Re bug 修复总结:(1) `rho_ref = air_density(T, P_atm)` → `rho = air_density(T, P_in_Pa)`,(2) `r_h` → `D_h`。C-1 max \|err_Q%\| 从 21.8% → **3.71%**(除 Case 12 异常),结论"C-1 高 Re 误差 = 热色散缺失"**被证否**,真正原因是 Re 约定 bug |
 
 ## 被否方案(负结果归档,作"为什么不选 X"的论据)
 
