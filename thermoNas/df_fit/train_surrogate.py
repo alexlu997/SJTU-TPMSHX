@@ -13,7 +13,7 @@ K and c_F are geometry-level constants (no Re dependence). The per-row
 Rationale
 ---------
 Per-geometry 2-parameter WLS already passes Re-independence diagnostics on
-all 24 geometries (see ``reports/2026-04-14-DF-re-independence-report.md``).
+all 24 geometries (see ``reports/constdf-v1/2026-04-14-DF-re-independence-report.md``).
 An MLP jointly fitting (K, c_F)(L, t, ε_f) improves on the Piedra 1-D
 power-law baseline by learning the L- and t-trend across geometries while
 keeping the solver-side closure simple: one query per cell, no Re callback.
@@ -72,7 +72,7 @@ _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
 MODEL_DIR = _PROJECT / "models"
-REPORT_MD = _PROJECT / "reports" / "2026-04-14-DF-surrogate-loo-report.md"
+REPORT_MD = _PROJECT / "reports" / "constdf-v1" / "2026-04-14-DF-surrogate-loo-report.md"
 FIG_DIR = _PROJECT / "reports" / "figs" / "df_fit"
 
 FEATURES = ["L_mm", "t_mm", "eps_f"]
@@ -466,7 +466,7 @@ def _render_markdown(loo_all: pd.DataFrame, train_mapes: dict[str, float]) -> st
     lines.append("```")
     lines.append("")
     lines.append("K 和 c_F 是几何级常数(无 Re 依赖)。Re 独立性前置证据见 ")
-    lines.append("`reports/2026-04-14-DF-re-independence-report.md` —— 24/24 几何")
+    lines.append("`reports/constdf-v1/2026-04-14-DF-re-independence-report.md` —— 24/24 几何")
     lines.append("通过 Pearson 残差-Re 检验,物理上 2 参数 D-F 闭合在当前训练集")
     lines.append("Re 范围内是合法的。")
     lines.append("")

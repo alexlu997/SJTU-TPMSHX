@@ -25,7 +25,7 @@ Run::
     python -m thermoNas.df_fit.scratch_egdip_gompertz
 
 Outputs:
-    reports/2026-04-15-egdip-gompertz-scratch.md
+    reports/scratch/2026-04-15-egdip-gompertz-scratch.md
     stdout: per-geom Gompertz fit table + LOO summary
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ from .load_data import load_all  # noqa: E402
 _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
-REPORT_MD = _PROJECT / "reports" / "2026-04-15-egdip-gompertz-fullL8-scratch.md"
+REPORT_MD = _PROJECT / "reports" / "scratch" / "2026-04-15-egdip-gompertz-fullL8-scratch.md"
 FIG_DIR = _PROJECT / "reports" / "figs" / "df_fit"
 FIG_LOO = FIG_DIR / "egdip_gompertz_fullL8_loo.png"
 
@@ -483,7 +483,7 @@ def _render_markdown(ref_all: pd.DataFrame, loo_all: pd.DataFrame,
     L.append("**本次变体**:relative `load_data._L8_RE_MIN = 0.0`,**保留 L=8 低 Re 过渡段**")
     L.append("(每 TPMS 多 18 行,合计 +36 行)。目的:给 Gompertz ramp 提供过渡区梯度信号,")
     L.append("看 L=8 三个几何的 $Re_t$ 能否从初值 1500 解锁到数据范围内。对比第一版本(filtered)见")
-    L.append("`reports/2026-04-15-egdip-gompertz-scratch.md`。")
+    L.append("`reports/scratch/2026-04-15-egdip-gompertz-scratch.md`。")
     L.append("")
     L.append("**一句话**:按 Singh 2026 的 Gompertz β(Re) 形式,把 ConstDF-v1 ")
     L.append("的常系数 $c_F$ 替换为 $\\beta(Re) = \\beta_s \\exp(-\\exp((Re_t - Re)/\\lambda))$,")

@@ -9,7 +9,7 @@ tags: [report, surrogate, EG-DIP, Gompertz, scratch, ThermoNAS]
 **本次变体**:relative `load_data._L8_RE_MIN = 0.0`,**保留 L=8 低 Re 过渡段**
 (每 TPMS 多 18 行,合计 +36 行)。目的:给 Gompertz ramp 提供过渡区梯度信号,
 看 L=8 三个几何的 $Re_t$ 能否从初值 1500 解锁到数据范围内。对比第一版本(filtered)见
-`reports/2026-04-15-egdip-gompertz-scratch.md`。
+`reports/scratch/2026-04-15-egdip-gompertz-scratch.md`。
 
 **一句话**:按 Singh 2026 的 Gompertz β(Re) 形式,把 ConstDF-v1 
 的常系数 $c_F$ 替换为 $\beta(Re) = \beta_s \exp(-\exp((Re_t - Re)/\lambda))$,

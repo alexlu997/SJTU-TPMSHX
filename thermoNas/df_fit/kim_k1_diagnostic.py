@@ -38,7 +38,7 @@ from .load_data import load_all
 _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
-REPORT_MD = _PROJECT / "reports" / "2026-04-15-kim-k1-diagnostic.md"
+REPORT_MD = _PROJECT / "reports" / "constdf-v1" / "2026-04-15-kim-k1-diagnostic.md"
 FIG_DIR = _PROJECT / "reports" / "figs" / "df_fit" / "kim_k1"
 
 # Growth criterion: stop if the NEWLY added point's relative residual

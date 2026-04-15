@@ -12,8 +12,8 @@ tags: [report, surrogate, direct-dP, MLP, Correa, scratch, ThermoNAS]
 仍远小于 Correa 4 层 256 宽的 ~200k)看能否让 Gyroid in-sample 恢复 5% 级并
 把 LOO 从 14.18% 继续压下去。对比:
 
-- 初始版:`reports/2026-04-15-direct-dp-mlp-scratch.md`(LOO 8.89/14.18)
-- 正则版:`reports/2026-04-15-direct-dp-mlp-reg-scratch.md`(LOO 9.33/25.40,失败)
+- 初始版:`reports/scratch/2026-04-15-direct-dp-mlp-scratch.md`(LOO 8.89/14.18)
+- 正则版:`reports/scratch/2026-04-15-direct-dp-mlp-reg-scratch.md`(LOO 9.33/25.40,失败)
 
 **动机**:ConstDF-v1 之后的 5 种 D-F 闭合类改进(死路 1-6+6a)全部失败,
 核心限制是数据 Re 下限(400/1600)钳死了所有物理驱动闭合形式。本次绕开

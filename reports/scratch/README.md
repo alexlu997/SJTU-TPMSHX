@@ -40,7 +40,7 @@ tags: [scratch, surrogate-exploration, failed-alternatives, ThermoNAS]
 
 ## 和 Kim 系列诊断的区别
 
-注意 `reports/2026-04-15-kim-*.md`(Kim K₁ / Kim-adapted / Kim-constrained)也是
+注意 `reports/constdf-v1/2026-04-15-kim-*.md`(Kim K₁ / Kim-adapted / Kim-constrained)也是
 被否的备选方案,但那些**不是** scratch——它们是 ConstDF-v1 baseline 论证里
 "为什么不选 Kim 路线"的正式证据,留在主 `reports/` 目录。
 

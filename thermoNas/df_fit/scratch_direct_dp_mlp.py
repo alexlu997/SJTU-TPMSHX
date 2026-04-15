@@ -13,7 +13,7 @@ ensemble/seed scheme, identical Adam/scheduler/early-stopping config.
 Only the input/output heads and the loss path differ.
 
 Does NOT modify any existing file. Writes report to
-reports/2026-04-15-direct-dp-mlp-scratch.md.
+reports/scratch/2026-04-15-direct-dp-mlp-scratch.md.
 
 Run::
 
@@ -40,7 +40,7 @@ from .load_data import load_all
 _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
-REPORT_MD = _PROJECT / "reports" / "2026-04-15-direct-dp-mlp-wide-scratch.md"
+REPORT_MD = _PROJECT / "reports" / "scratch" / "2026-04-15-direct-dp-mlp-wide-scratch.md"
 FIG_DIR = _PROJECT / "reports" / "figs" / "df_fit"
 FIG_LOO = FIG_DIR / "direct_dp_mlp_wide_loo.png"
 
@@ -305,8 +305,8 @@ def _render_markdown(loo_all: pd.DataFrame,
     L.append("仍远小于 Correa 4 层 256 宽的 ~200k)看能否让 Gyroid in-sample 恢复 5% 级并")
     L.append("把 LOO 从 14.18% 继续压下去。对比:")
     L.append("")
-    L.append("- 初始版:`reports/2026-04-15-direct-dp-mlp-scratch.md`(LOO 8.89/14.18)")
-    L.append("- 正则版:`reports/2026-04-15-direct-dp-mlp-reg-scratch.md`(LOO 9.33/25.40,失败)")
+    L.append("- 初始版:`reports/scratch/2026-04-15-direct-dp-mlp-scratch.md`(LOO 8.89/14.18)")
+    L.append("- 正则版:`reports/scratch/2026-04-15-direct-dp-mlp-reg-scratch.md`(LOO 9.33/25.40,失败)")
     L.append("")
     L.append("**动机**:ConstDF-v1 之后的 5 种 D-F 闭合类改进(死路 1-6+6a)全部失败,")
     L.append("核心限制是数据 Re 下限(400/1600)钳死了所有物理驱动闭合形式。本次绕开")

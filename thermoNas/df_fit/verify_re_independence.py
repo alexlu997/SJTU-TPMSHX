@@ -28,7 +28,7 @@ Two complementary checks on each geometry:
 
 Output
 ------
-- reports/2026-04-14-DF-re-independence-report.md (table + discussion)
+- reports/constdf-v1/2026-04-14-DF-re-independence-report.md (table + discussion)
 - reports/figs/df_fit/{tpms}_L{L}_t{t}_dPu.png (24 per-geometry plots)
 """
 from __future__ import annotations

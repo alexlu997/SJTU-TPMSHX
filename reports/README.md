@@ -14,18 +14,18 @@ updated: 2026-04-15
 
 | 文件 | 一句话结论 |
 |---|---|
-| [`2026-04-14-DF-re-independence-report.md`](2026-04-14-DF-re-independence-report.md) | 24/24 几何通过 Pearson 残差-Re 检验 → 2 参数 D-F 在训练 Re 范围内**统计独立于 Re**,作为 ConstDF-v1 物理合法性的**论文级证据** |
-| [`2026-04-14-DF-surrogate-loo-report.md`](2026-04-14-DF-surrogate-loo-report.md) | ConstDF-v1 LOO 主结果:**Diamond 12.79% / Gyroid 16.95%**(由 `train_surrogate.py` 自动写入,跑训练即覆盖) |
-| [`2026-04-15-DF-residual-structure-diagnostic.md`](2026-04-15-DF-residual-structure-diagnostic.md) | 残差 vs Re 诊断:**U 形残差在 24 个几何上普遍存在**,谷底 Re ≈ 800-2000,论证 12-17% MAPE 是 2-term D-F 闭合形式的**结构下限**,不是模型容量问题 |
+| [`2026-04-14-DF-re-independence-report.md`](constdf-v1/2026-04-14-DF-re-independence-report.md) | 24/24 几何通过 Pearson 残差-Re 检验 → 2 参数 D-F 在训练 Re 范围内**统计独立于 Re**,作为 ConstDF-v1 物理合法性的**论文级证据** |
+| [`2026-04-14-DF-surrogate-loo-report.md`](constdf-v1/2026-04-14-DF-surrogate-loo-report.md) | ConstDF-v1 LOO 主结果:**Diamond 12.79% / Gyroid 16.95%**(由 `train_surrogate.py` 自动写入,跑训练即覆盖) |
+| [`2026-04-15-DF-residual-structure-diagnostic.md`](constdf-v1/2026-04-15-DF-residual-structure-diagnostic.md) | 残差 vs Re 诊断:**U 形残差在 24 个几何上普遍存在**,谷底 Re ≈ 800-2000,论证 12-17% MAPE 是 2-term D-F 闭合形式的**结构下限**,不是模型容量问题 |
 
 ### 被否方案(负结果,作"为什么不选 X"的论据)
 
 | 文件 | 被否原因 |
 |---|---|
-| [`2026-04-14-piedra-baseline.md`](2026-04-14-piedra-baseline.md) | Piedra 4 参数幂律 LOO Diamond 33% / Gyroid 47%,远差于 3D MLP → 证明 $(L, t)$ 输入对代理有用,不只 $\varepsilon_f$ |
-| [`2026-04-15-kim-k1-diagnostic.md`](2026-04-15-kim-k1-diagnostic.md) | Kim 严格 $K_1$ 线性子集判据下,大多几何只剩 ≤ 2 个点,样本不够拟合 |
-| [`2026-04-15-kim-adapted-diagnostic.md`](2026-04-15-kim-adapted-diagnostic.md) | Kim 2-term 在低 Re 子集上的三种判据(固定 Re 阈、子集 MAPE、新点残差),没一个比全范围 $K_{Q1}$ 更好 |
-| [`2026-04-15-kim-constrained-diagnostic.md`](2026-04-15-kim-constrained-diagnostic.md) | Kim 固定 $c_F$、反推 $K_1$ 的方案,全范围 MAPE 比直接 $K_{Q1}$ **大** 0.3-8pp |
+| [`2026-04-14-piedra-baseline.md`](constdf-v1/2026-04-14-piedra-baseline.md) | Piedra 4 参数幂律 LOO Diamond 33% / Gyroid 47%,远差于 3D MLP → 证明 $(L, t)$ 输入对代理有用,不只 $\varepsilon_f$ |
+| [`2026-04-15-kim-k1-diagnostic.md`](constdf-v1/2026-04-15-kim-k1-diagnostic.md) | Kim 严格 $K_1$ 线性子集判据下,大多几何只剩 ≤ 2 个点,样本不够拟合 |
+| [`2026-04-15-kim-adapted-diagnostic.md`](constdf-v1/2026-04-15-kim-adapted-diagnostic.md) | Kim 2-term 在低 Re 子集上的三种判据(固定 Re 阈、子集 MAPE、新点残差),没一个比全范围 $K_{Q1}$ 更好 |
+| [`2026-04-15-kim-constrained-diagnostic.md`](constdf-v1/2026-04-15-kim-constrained-diagnostic.md) | Kim 固定 $c_F$、反推 $K_1$ 的方案,全范围 MAPE 比直接 $K_{Q1}$ **大** 0.3-8pp |
 
 ### baseline 一览
 
@@ -43,8 +43,8 @@ Shanghai 16-case 从"21.8% 高 Re Q 误差"的 C-1 遗留问题到"3.7% 已解�
 
 | 文件 | 一句话结论 |
 |---|---|
-| [`2026-04-15-Re-Nu-convention-audit.md`](2026-04-15-Re-Nu-convention-audit.md) | Re/Nu 约定全链路审计(**上午**,第一轮):纯文档修正。发现 `_nu_diamond`/`_nu_gyroid` 的 docstring 写错了 $D_h$(应为 $r_h$),其他代码自洽。**数值零变化** |
-| [`2026-04-15-shanghai-Q-calculation-flow.md`](2026-04-15-shanghai-Q-calculation-flow.md) | **⭐ Shanghai Q 验证完整计算流程**(Case 16 9 步每一步数值打出)+ 两次实质 bug 修复总结:(1) `rho_ref(P_atm)` → `rho_actual(P_in)`,(2) `r_h` → `D_h`。C-1 `max \|err_Q%\|` 从 **21.8% → 3.71%**(除 Case 12 异常)。**"C-1 高 Re 误差 = 热色散缺失"(Popov A1)假设被证否**,真正原因是 Re 约定 bug |
+| [`2026-04-15-Re-Nu-convention-audit.md`](shanghai-validation/2026-04-15-Re-Nu-convention-audit.md) | Re/Nu 约定全链路审计(**上午**,第一轮):纯文档修正。发现 `_nu_diamond`/`_nu_gyroid` 的 docstring 写错了 $D_h$(应为 $r_h$),其他代码自洽。**数值零变化** |
+| [`2026-04-15-shanghai-Q-calculation-flow.md`](shanghai-validation/2026-04-15-shanghai-Q-calculation-flow.md) | **⭐ Shanghai Q 验证完整计算流程**(Case 16 9 步每一步数值打出)+ 两次实质 bug 修复总结:(1) `rho_ref(P_atm)` → `rho_actual(P_in)`,(2) `r_h` → `D_h`。C-1 `max \|err_Q%\|` 从 **21.8% → 3.71%**(除 Case 12 异常)。**"C-1 高 Re 误差 = 热色散缺失"(Popov A1)假设被证否**,真正原因是 Re 约定 bug |
 
 ---
 

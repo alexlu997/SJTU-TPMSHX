@@ -42,7 +42,7 @@ LOO:    Leave out one (L, t) geometry, refit 4 params on remaining 11,
 
 Output
 ------
-- ``reports/2026-04-14-piedra-baseline.md`` — side-by-side comparison
+- ``reports/constdf-v1/2026-04-14-piedra-baseline.md`` — side-by-side comparison
   table vs the Option-C ensemble numbers loaded from the existing LOO
   report (if that report has been generated).
 """
@@ -61,7 +61,7 @@ _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
 FITS_CSV = _PROJECT / "data" / "df_fit" / "per_geom_fits.csv"
-REPORT_MD = _PROJECT / "reports" / "2026-04-14-piedra-baseline.md"
+REPORT_MD = _PROJECT / "reports" / "constdf-v1" / "2026-04-14-piedra-baseline.md"
 
 
 # ===================================================================

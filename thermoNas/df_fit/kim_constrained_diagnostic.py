@@ -46,7 +46,7 @@ from .load_data import load_all
 _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
-REPORT_MD = _PROJECT / "reports" / "2026-04-15-kim-constrained-diagnostic.md"
+REPORT_MD = _PROJECT / "reports" / "constdf-v1" / "2026-04-15-kim-constrained-diagnostic.md"
 
 MIN_SUBSET = 3
 

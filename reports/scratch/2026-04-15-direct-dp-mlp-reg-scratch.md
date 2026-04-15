@@ -8,7 +8,7 @@ tags: [report, surrogate, direct-dP, MLP, Correa, scratch, ThermoNAS]
 
 **本次变体**:DROPOUT 0.05→0.15,WEIGHT_DECAY 3e-4→1e-3,其余与初始版本一致。
 目的:收紧 in-sample→LOO 泛化 gap(初始 Diamond 3.42→8.89,Gyroid 5.06→14.18)。
-对比初始版本见 `reports/2026-04-15-direct-dp-mlp-scratch.md`。
+对比初始版本见 `reports/scratch/2026-04-15-direct-dp-mlp-scratch.md`。
 
 **动机**:ConstDF-v1 之后的 5 种 D-F 闭合类改进(死路 1-6+6a)全部失败,
 核心限制是数据 Re 下限(400/1600)钳死了所有物理驱动闭合形式。本次绕开

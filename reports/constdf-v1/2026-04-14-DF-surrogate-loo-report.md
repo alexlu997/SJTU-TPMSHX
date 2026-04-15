@@ -26,7 +26,7 @@ L_ch = K_S_CELLS · L_cell_m,    K_S_CELLS = 10
 ```
 
 K 和 c_F 是几何级常数(无 Re 依赖)。Re 独立性前置证据见 
-`reports/2026-04-14-DF-re-independence-report.md` —— 24/24 几何
+`reports/constdf-v1/2026-04-14-DF-re-independence-report.md` —— 24/24 几何
 通过 Pearson 残差-Re 检验,物理上 2 参数 D-F 闭合在当前训练集
 Re 范围内是合法的。
 
