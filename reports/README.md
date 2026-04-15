@@ -14,6 +14,7 @@ updated: 2026-04-15
 |---|---|
 | [`2026-04-14-DF-re-independence-report.md`](2026-04-14-DF-re-independence-report.md) | 24/24 几何通过 Pearson 残差-Re 检验 → 2 参数 D-F 在当前训练 Re 范围内统计独立于 Re,**论文级证据**,作为 ConstDF-v1 的物理合法性依据 |
 | [`2026-04-14-DF-surrogate-loo-report.md`](2026-04-14-DF-surrogate-loo-report.md) | ConstDF-v1 LOO 主结果:**Diamond 12.79% / Gyroid 16.95%**(由 `train_surrogate.py` 自动写入,跑训练即覆盖) |
+| [`2026-04-15-DF-residual-structure-diagnostic.md`](2026-04-15-DF-residual-structure-diagnostic.md) | 残差 vs Re 诊断:**U 形残差在 24 个几何上普遍存在**,谷底 Re ≈ 800–2000,论证 12–17% MAPE 是 2-term D-F 闭合形式的结构下限,不是模型容量问题 |
 
 ## 被否方案(负结果归档,作"为什么不选 X"的论据)
 
