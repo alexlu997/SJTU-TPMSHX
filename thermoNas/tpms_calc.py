@@ -13,6 +13,34 @@ Includes:
 
 Supported TPMS types: 'Diamond', 'Gyroid'
 Fluid: air (Pr = 0.72, properties from T_in and P_in)
+
+──────────────────────────────────────────────────────────────────────
+REYNOLDS NUMBER CONVENTION (project-wide, verified 2026-04-15)
+──────────────────────────────────────────────────────────────────────
+
+All Re computations in this project use hydraulic radius r_h = D_h/2:
+
+    Re = ρ · u · r_h / μ    (r_h convention)
+
+This is equivalent to the "D_h with single-stream correction":
+
+    Re = ρ · u · D_h / (2μ) = ρ · (u/2) · D_h / μ
+
+where the /2 factor reflects the single-stream treatment for two-fluid
+TPMS HX (each fluid occupies one of two interpenetrating channels).
+Numerically r_h-convention Re is HALF of engineering-convention D_h Re.
+
+The training Excel (试验记录表_整理版.xlsx) Re column uses this r_h
+convention (empirically verified on L=6 and L=8 geometries). Both f-Re
+(_F_COEFFS) and Nu (_nu_diamond / _nu_gyroid) correlations are fitted
+on r_h-convention Re.
+
+Nu OUTPUT convention: Nu = h · D_h / k_f   (standard D_h definition).
+
+Mixed convention note: Nu correlations take r_h-convention Re as input
+but output D_h-convention Nu. All solver callers use the correct
+convention on both sides, so downstream Q calculations are consistent.
+──────────────────────────────────────────────────────────────────────
 """
 
 import functools
@@ -58,7 +86,16 @@ def air_cp(T_K):
 # ── Nu correlations ───────────────────────────────────────────
 
 def _nu_diamond(Re: float, eps: float, D_h_mm: float) -> float:
-    """Diamond TPMS Nu correlation.  Re = ρ u D_h / μ,  D_h in mm."""
+    """Diamond TPMS Nu correlation.
+
+    INPUT  convention: Re = ρ·u·r_h / μ    (hydraulic radius, r_h = D_h/2)
+    OUTPUT convention: Nu = h·D_h / k_f    (hydraulic diameter, standard)
+
+    D_h_mm is in mm. This is a mixed convention — Re uses r_h but Nu
+    uses D_h — because the fit was trained on the project's training
+    Excel where the Re column uses r_h convention and the Nu column
+    uses the standard D_h definition (empirically verified).
+    """
     n = 0.618 - 0.800 * np.log(eps)
     return 0.008 * Pr ** (1 / 3) * Re ** n * eps ** 7.41 * (D_h_mm / (1000 * Sa_mm)) ** (-1.92)
 
@@ -72,7 +109,15 @@ def nu_from_Re(tpms_type: str, Re: float, eps: float,
 
 
 def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
-    """Gyroid TPMS Nu correlation.  Re = ρ u D_h / μ,  L_cell in mm."""
+    """Gyroid TPMS Nu correlation.
+
+    INPUT  convention: Re = ρ·u·r_h / μ    (hydraulic radius, r_h = D_h/2)
+    OUTPUT convention: Nu = h·D_h / k_f    (hydraulic diameter, standard)
+
+    L_cell_mm is in mm (Gyroid uses unit cell size as its length scale
+    rather than D_h in the correlation, analogous to friction_factor).
+    Mixed convention rationale: same as _nu_diamond above.
+    """
     n = 0.177 * Re ** 0.1 * eps ** (-2 / 3)
     return 0.17 * Pr ** (1 / 3) * Re ** n * eps ** 2.25 * (L_cell_mm / (1000 * Sa_mm)) ** (-2.01)
 
@@ -87,9 +132,11 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
 #   Diamond: X = D_h  (hydraulic diameter, mm)
 #   Gyroid:  X = L    (unit cell size, mm)
 #
-# Re = rho_ref * u * r_h / mu  (rho_ref at atmospheric pressure)
+# Re convention (r_h, see module docstring): Re = rho_ref * u * r_h / mu
+#   where r_h = D_h / 2 = eps / A_0 and rho_ref is at atmospheric pressure.
+# Equivalent: Re = rho_ref * u * D_h / (2*mu)   ("D_h with single-stream m/2")
+#
 # f  = 2*(dP/L)*r_h / (rho*u^2)
-# r_h = D_h / 2 = eps / A_0
 # Sa = 31 um = 0.031 mm (surface roughness, constant)
 # dP/L = f * rho * u^2 / (2 * r_h)
 #
