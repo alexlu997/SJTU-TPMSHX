@@ -1,0 +1,1304 @@
+"""
+simple_solver.py — 2D SIMPLE solver for porous-media transition zone
+
+Solves steady-state Navier-Stokes + Brinkman porous resistance,
+then frozen-velocity temperature field (LTNE: fluid + solid).
+
+All inner loops are Numba-compiled for speed (~50-100x vs pure Python).
+
+Physics (velocity):
+  du/dx + dv/dy = 0                                         (continuity)
+  rho(u du/dx + v du/dy) = -dP/dx + mu_eff nabla^2 u - Rx  (x-momentum)
+  rho(u dv/dx + v dv/dy) = -dP/dy + mu_eff nabla^2 v - Ry  (y-momentum)
+  Rx = f rho |U| u / (2 r_h),  Ry = f rho |U| v / (2 r_h)
+
+Physics (temperature, frozen velocity):
+  eps rho_cp (u dTf/dx + v dTf/dy) = K_ff nabla^2 Tf + h_v(Ts - Tf)
+  0 = K_ss nabla^2 Ts + h_v(Tf - Ts) + h_v2(T_other - Ts)
+
+Staggered grid:  P[i,j] cell centre (Nx,Ny)
+                 u[i,j] x-face (Nx+1,Ny)    v[i,j] y-face (Nx,Ny+1)
+"""
+
+import numpy as np
+from numba import njit
+from tpms_calc import (air_density, air_viscosity, P_atm,
+                       Sa_mm as _SA_MM, _F_COEFFS)
+
+
+# ===================================================================
+#  Numba kernels
+# ===================================================================
+
+@njit(cache=True)
+def _f_re(Re, ln_eps, ln_tL, ln_XSa, c):
+    """Friction factor (F1 power-law), Numba-safe.
+    c = (C, n0, n1, a, b, c_exp) — 6 coefficients.
+    ln_XSa = ln(X/(1000*Sa)), X = D_h (Diamond) or L (Gyroid).
+    """
+    n = c[1] + c[2] * ln_eps
+    return c[0] * Re**n * np.exp(c[3]*ln_eps + c[4]*ln_tL + c[5]*ln_XSa)
+
+
+@njit(cache=True)
+def _porous_src(umag, rho_ref, r_h, mu, rho, ln_eps, ln_tL, ln_XSa, c):
+    """Linearised porous resistance coefficient [kg/(m3 s)]."""
+    if umag < 1e-10:
+        return 0.0
+    Re = max(rho_ref * umag * r_h / mu, 10.0)
+    f = _f_re(Re, ln_eps, ln_tL, ln_XSa, c)
+    return f * rho * umag / (2.0 * r_h)
+
+
+@njit(cache=True)
+def _umag_u(u, v, i, j, Nx, Ny):
+    """Speed at u-face (i,j)."""
+    il = max(i - 1, 0); ir = min(i, Nx - 1)
+    va = 0.25 * (v[il, j] + v[ir, j] + v[il, j + 1] + v[ir, j + 1])
+    return np.sqrt(u[i, j] ** 2 + va ** 2)
+
+
+@njit(cache=True)
+def _umag_v(u, v, i, j, Nx, Ny):
+    """Speed at v-face (i,j)."""
+    jb = max(j - 1, 0); jt = min(j, Ny - 1)
+    ua = 0.25 * (u[i, jb] + u[i + 1, jb] + u[i, jt] + u[i + 1, jt])
+    return np.sqrt(ua ** 2 + v[i, j] ** 2)
+
+
+# ── SIMPLE Step 1: x-momentum ─────────────────────────────────────
+@njit(cache=True)
+def _sweep_u_jit(u, v, P, d_u, inlet_frac, outlet_frac,
+                 Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
+                 rho_ref, r_h_arr, mu, ln_eps_arr, ln_tL_arr, ln_XSa_arr, fc,
+                 alpha_u, n_sweeps, phi_arr):
+    """rho_field: 2D [Nx, Ny] — variable density.
+    mu_eff_arr, r_h_arr, ln_eps_arr, ln_tL_arr, ln_XSa_arr: 1D [Ny].
+    dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
+    inlet_frac, outlet_frac: 1D [Nx] — Brinkman wall penalty applied where low.
+    phi_arr: 1D [Ny] — geometry correction for t outside training range."""
+    for _ in range(n_sweeps):
+        for i in range(1, Nx):
+            for j in range(Ny):
+                # u-face i is between cells i-1 and i
+                dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
+                dyj = dy_arr[j]
+                vol = dxi * dyj
+                mu_e = mu_eff_arr[j]
+                De0 = mu_e * dyj / dxi
+                Dn0 = mu_e * dxi / dyj
+
+                uE = u[i + 1, j] if i + 1 < Nx else 0.0
+                uW = u[i - 1, j] if i > 1 else 0.0
+                uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+                uS = u[i, j - 1] if j > 0 else 0.0
+
+                De = De0; Dw = De0
+                Dn = Dn0 if j < Ny - 1 else 0.0
+                Ds = Dn0 if j > 0 else 0.0
+
+                ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
+                uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
+                il = max(i - 1, 0); ir = min(i, Nx - 1)
+                vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+                vs = 0.5 * (v[il, j] + v[ir, j])
+
+                # Local rho at u-face (i, j): average of cells i-1 and i
+                il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
+                rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
+
+                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
+                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+
+                aE = De + max(-Fe, 0.0)
+                aW = Dw + max(Fw, 0.0)
+                aN = Dn + max(-Fn, 0.0)
+                aS = Ds + max(Fs, 0.0)
+
+                umag = _umag_u(u, v, i, j, Nx, Ny)
+                Sp = _porous_src(umag, rho_ref, r_h_arr[j], mu, rho_loc,
+                                 ln_eps_arr[j], ln_tL_arr[j], ln_XSa_arr[j],
+                                 fc) * vol * phi_arr[j]
+
+                # Brinkman penalty: continuous wall resistance near outlet
+                il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
+                wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
+                if wall_out > 0.01 and j >= Ny - 8:
+                    wall_dist = Ny - j
+                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+                # Brinkman penalty: continuous wall resistance near inlet
+                wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
+                if wall_in > 0.01 and j < 8:
+                    wall_dist = j + 1
+                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+
+                p_src = (P[i - 1, j] - P[i, j]) * dyj
+                aP0 = aE + aW + aN + aS + Sp
+                rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src
+                aP = aP0 / alpha_u
+                rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j]
+
+                u[i, j] = rhs / aP
+                d_u[i, j] = dyj / aP0
+
+    # Wall BCs
+    for j in range(Ny):
+        u[0, j] = 0.0; u[Nx, j] = 0.0
+
+
+# ── SIMPLE Step 2: y-momentum ─────────────────────────────────────
+@njit(cache=True)
+def _sweep_v_jit(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
+                 Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
+                 rho_ref, r_h_arr, mu, ln_eps_arr, ln_tL_arr, ln_XSa_arr, fc,
+                 alpha_u, n_sweeps, phi_arr):
+    """rho_field: 2D [Nx, Ny] — variable density.
+    dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
+    phi_arr: 1D [Ny] — geometry correction."""
+    for _ in range(n_sweeps):
+        for i in range(Nx):
+            for j in range(1, Ny):
+                # v-face j is between cells j-1 and j
+                jc = min(j, Ny - 1)
+                dxi = dx_arr[i]
+                dyj = 0.5 * (dy_arr[j - 1] + dy_arr[min(j, Ny - 1)])
+                vol = dxi * dyj
+                mu_e = mu_eff_arr[jc]
+                De0 = mu_e * dyj / dxi
+                Dn0 = mu_e * dxi / dyj
+
+                vE = v[i + 1, j] if i < Nx - 1 else v[i, j]
+                vW = v[i - 1, j] if i > 0 else v[i, j]
+                vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+                vS = v[i, j - 1]
+
+                De = De0 if i < Nx - 1 else 0.0
+                Dw = De0 if i > 0 else 0.0
+                Dn = Dn0 if j < Ny - 1 else 0.0
+                Ds = Dn0
+
+                jb = max(j - 1, 0); jt = min(j, Ny - 1)
+                ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
+                uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
+                vn = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
+                vs = 0.5 * (v[i, max(j - 1, 0)] + v[i, j])
+
+                # Local rho at v-face (i, j): average of cells j-1 and j
+                rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
+
+                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
+                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+
+                aE = De + max(-Fe, 0.0)
+                aW = Dw + max(Fw, 0.0)
+                aN = Dn + max(-Fn, 0.0)
+                aS = Ds + max(Fs, 0.0)
+
+                umag = _umag_v(u, v, i, j, Nx, Ny)
+                Sp = _porous_src(umag, rho_ref, r_h_arr[jc], mu, rho_loc,
+                                 ln_eps_arr[jc], ln_tL_arr[jc],
+                                 ln_XSa_arr[jc], fc) * vol * phi_arr[jc]
+
+                # Brinkman penalty: continuous wall resistance near outlet
+                wall_out = 1.0 - outlet_frac[i]
+                if wall_out > 0.01 and j >= Ny - 8:
+                    wall_dist = Ny - j
+                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+                # Brinkman penalty: continuous wall resistance near inlet
+                wall_in = 1.0 - inlet_frac[i]
+                if wall_in > 0.01 and j < 8:
+                    wall_dist = j + 1
+                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+
+                p_src = (P[i, j - 1] - P[i, j]) * dxi
+                aP0 = aE + aW + aN + aS + Sp
+                rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src
+                aP = aP0 / alpha_u
+                rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j]
+
+                v[i, j] = rhs / aP
+                d_v[i, j] = dxi / aP0
+
+    # BCs: inlet at bottom, outlet (partial) at top
+    # For variable density: v[Ny] adjusted by ρ ratio for mass conservation
+    for i in range(Nx):
+        v[i, 0] = v_inlet * inlet_frac[i]
+        if outlet_frac[i] > 0.5:
+            # Outflow with mass conservation: ρ_face*v constant near outlet
+            # rho at face (Ny-1/2) ≈ 0.5*(rho[Ny-2]+rho[Ny-1]); face Ny ≈ rho[Ny-1]
+            if Ny >= 2:
+                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
+                rho_outer_face = rho_field[i, Ny-1]
+                v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+            else:
+                v[i, Ny] = v[i, Ny - 1]
+        else:
+            v[i, Ny] = 0.0
+
+
+# ── SIMPLE Steps 3-4: pressure correction (sparse direct solver) ──
+
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+
+
+def _build_pp_sparsity_pattern(Nx, Ny, outlet_frac):
+    """Precompute CSR sparsity pattern for the pressure-Poisson operator.
+
+    For each cell (i, j) we allocate up to 5 slots in the CSR data array:
+    one for the diagonal (always present), and up to 4 for the east/west/
+    north/south off-diagonal couplings. Boundary cells and outlet-reference
+    cells have fewer non-zeros, but we still allocate 5 slots each and write
+    0.0 into the unused ones at assembly time — simpler bookkeeping and the
+    extra zeros cost nothing in the sparse solve.
+
+    Returns a dict with:
+        indptr   : int32[N+1]  — CSR row pointer
+        indices  : int32[nnz]  — CSR column indices
+        cell_base: int32[N]    — data-array offset for cell k's first slot
+        cell_kind: int8[N]     — 0=interior, 1=outlet_ref
+    All arrays are contiguous and ready to pass to the Numba assembler.
+    """
+    N = Nx * Ny
+    def idx(i, j): return i * Ny + j
+
+    indptr = np.zeros(N + 1, dtype=np.int32)
+    indices_list = []
+    cell_base = np.zeros(N, dtype=np.int32)
+    cell_kind = np.zeros(N, dtype=np.int8)
+
+    pos = 0
+    for i in range(Nx):
+        for j in range(Ny):
+            k = idx(i, j)
+            cell_base[k] = pos
+            # Outlet reference: diagonal only, Pp = 0
+            if j == Ny - 1 and outlet_frac[i] > 0.01:
+                cell_kind[k] = 1
+                indices_list.append(k)
+                pos += 1
+                indptr[k + 1] = pos
+                continue
+            # Standard interior/edge cell: diagonal + up-to-4 off-diagonals.
+            # Order: [self, E, W, N, S]. Unused neighbours still get a slot
+            # pointing back to self (diagonal) with data 0, so the CSR
+            # structure is uniform.
+            indices_list.append(k)                                      # diag
+            indices_list.append(idx(i+1, j) if i < Nx-1 else k)        # E
+            indices_list.append(idx(i-1, j) if i > 0    else k)        # W
+            indices_list.append(idx(i, j+1) if j < Ny-1 else k)        # N
+            indices_list.append(idx(i, j-1) if j > 0    else k)        # S
+            pos += 5
+            indptr[k + 1] = pos
+
+    indices = np.asarray(indices_list, dtype=np.int32)
+    return {
+        'indptr': indptr,
+        'indices': indices,
+        'cell_base': cell_base,
+        'cell_kind': cell_kind,
+        'nnz': pos,
+    }
+
+
+@njit(cache=True)
+def _assemble_pp_data_jit(data, rhs, u, v, d_u, d_v, outlet_frac,
+                          Nx, Ny, dx_arr, dy_arr, rho_field,
+                          cell_base, cell_kind):
+    """Fill CSR `data` array and `rhs` vector for the pressure-Poisson operator.
+
+    For each cell (i, j), writes 5 consecutive slots [diag, E, W, N, S] into
+    `data[cell_base[k] : cell_base[k]+5]`, or a single slot [1.0] for outlet
+    reference cells. `cell_kind` disambiguates:
+        0 = standard interior/edge cell
+        1 = outlet reference (Pp = 0 enforced)
+    """
+    for i in range(Nx):
+        for j in range(Ny):
+            k = i * Ny + j
+            base = cell_base[k]
+
+            if cell_kind[k] == 1:
+                # Outlet reference: single diagonal entry = 1.0
+                data[base] = 1.0
+                rhs[k] = 0.0
+                continue
+
+            dxi = dx_arr[i]
+            dyj = dy_arr[j]
+
+            # Face densities (linear interpolation from cell centres)
+            if i < Nx - 1:
+                rho_e = 0.5 * (rho_field[i, j] + rho_field[i+1, j])
+            else:
+                rho_e = rho_field[i, j]
+            if i > 0:
+                rho_w = 0.5 * (rho_field[i-1, j] + rho_field[i, j])
+            else:
+                rho_w = rho_field[i, j]
+            if j < Ny - 1:
+                rho_n = 0.5 * (rho_field[i, j] + rho_field[i, j+1])
+            else:
+                rho_n = rho_field[i, j]
+            if j > 0:
+                rho_s = 0.5 * (rho_field[i, j-1] + rho_field[i, j])
+            else:
+                rho_s = rho_field[i, j]
+
+            aE = rho_e * d_u[i+1, j] * dyj if i < Nx - 1 else 0.0
+            aW = rho_w * d_u[i,   j] * dyj if i > 0      else 0.0
+            aN = rho_n * d_v[i, j+1] * dxi if j < Ny - 1 else 0.0
+            aS = rho_s * d_v[i, j  ] * dxi if j > 0      else 0.0
+            aP = aE + aW + aN + aS
+
+            if aP < 1e-30:
+                # Degenerate cell: pin Pp = 0
+                data[base] = 1.0
+                data[base + 1] = 0.0  # E slot
+                data[base + 2] = 0.0  # W
+                data[base + 3] = 0.0  # N
+                data[base + 4] = 0.0  # S
+                rhs[k] = 0.0
+                continue
+
+            # Standard 5-point stencil, [diag, E, W, N, S]
+            data[base    ] = aP
+            data[base + 1] = -aE
+            data[base + 2] = -aW
+            data[base + 3] = -aN
+            data[base + 4] = -aS
+
+            rhs[k] = -((rho_e * u[i+1, j] - rho_w * u[i, j]) * dyj
+                      + (rho_n * v[i, j+1] - rho_s * v[i, j]) * dxi)
+
+
+def _solve_pp_sparse_fast(Pp, u, v, d_u, d_v, outlet_frac,
+                          Nx, Ny, dx_arr, dy_arr, rho_field, sparsity):
+    """Pressure-Poisson solve with precomputed sparsity pattern.
+
+    Caller must pass `sparsity` as returned by `_build_pp_sparsity_pattern`.
+    Returns (A, rhs) alongside writing Pp in place, so regression tests can
+    compare the assembled matrix directly.
+    """
+    N = Nx * Ny
+    nnz = sparsity['nnz']
+    data = np.zeros(nnz, dtype=np.float64)
+    rhs = np.zeros(N, dtype=np.float64)
+
+    _assemble_pp_data_jit(data, rhs, u, v, d_u, d_v, outlet_frac,
+                          Nx, Ny, dx_arr, dy_arr, rho_field,
+                          sparsity['cell_base'], sparsity['cell_kind'])
+
+    # NOTE: scipy csr_matrix takes ownership of indptr without copying, and
+    # spsolve may reorder it in-place. We copy indices/indptr so the cached
+    # sparsity pattern is not corrupted across SIMPLE iterations.
+    A = sparse.csr_matrix(
+        (data, sparsity['indices'].copy(), sparsity['indptr'].copy()),
+        shape=(N, N),
+    )
+    pp_flat = spsolve(A, rhs)
+    Pp[:, :] = pp_flat.reshape(Nx, Ny)
+    return A, rhs
+
+
+
+# ── SIMPLE Step 5: correction ─────────────────────────────────────
+@njit(cache=True)
+def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet, outlet_frac,
+                 Nx, Ny, alpha_p, rho_field):
+    # Pressure correction (skip only outlet cells at j=Ny-1)
+    for i in range(Nx):
+        for j in range(Ny):
+            if j == Ny - 1 and outlet_frac[i] > 0.01:
+                continue  # outlet: Pp=0, no correction
+            P[i, j] += alpha_p * Pp[i, j]
+    # u correction
+    for i in range(1, Nx):
+        for j in range(Ny):
+            u[i, j] += d_u[i, j] * (Pp[i - 1, j] - Pp[i, j])
+    # v correction
+    for i in range(Nx):
+        for j in range(1, Ny):
+            v[i, j] += d_v[i, j] * (Pp[i, j - 1] - Pp[i, j])
+    # Re-apply BCs
+    for j in range(Ny):
+        u[0, j] = 0.0; u[Nx, j] = 0.0
+    for i in range(Nx):
+        v[i, 0] = v_inlet * inlet_frac[i]
+        # Variable density outflow: ρ·v conserved across last face
+        if Ny >= 2:
+            rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
+            rho_outer_face = rho_field[i, Ny-1]
+            v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+        else:
+            v[i, Ny] = v[i, Ny - 1]
+
+
+# ── SIMPLE Step 6: convergence ────────────────────────────────────
+@njit(cache=True)
+def _mass_res_jit(u, v, Nx, Ny, dx_arr, dy_arr, rho_field):
+    """Global mass conservation residual for variable-density flow.
+
+    Returns max |Q(j) - Q_inlet| / Q_inlet where Q(j) = Σ_i ρ_face·v[i,j]·dx[i]
+    is the cross-sectional MASS flux (not volumetric).
+    """
+    # Inlet mass flux (j=0): rho at face = rho at cell j=0 (boundary)
+    Q_in = 0.0
+    for i in range(Nx):
+        Q_in += rho_field[i, 0] * abs(v[i, 0]) * dx_arr[i]
+    if Q_in < 1e-30:
+        return 0.0
+    Rmax = 0.0
+    for j in range(1, Ny + 1):
+        Q_j = 0.0
+        for i in range(Nx):
+            # rho at v-face (i, j): average of cells j-1 and j
+            if j < Ny:
+                rho_f = 0.5 * (rho_field[i, j - 1] + rho_field[i, j])
+            else:
+                rho_f = rho_field[i, Ny - 1]
+            Q_j += rho_f * v[i, j] * dx_arr[i]
+        R = abs(Q_j - Q_in) / Q_in
+        if R > Rmax:
+            Rmax = R
+    return Rmax
+
+
+# ── Temperature solver (frozen velocity) ──────────────────────────
+@njit(cache=True)
+def _solve_temp_jit(Tf, Ts, u, v, inlet_mask,
+                    Nx, Ny, dx_arr, dy_arr, eps,
+                    K_ff, K_ss, h_v, h_v2, rho_cp_f,
+                    T_in, T_other,
+                    max_iter, tol):
+    """
+    Iterate fluid + solid temperature to steady state.
+    dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
+    """
+    for it in range(max_iter):
+        max_chg = 0.0
+
+        # ── Fluid temperature ──
+        for i in range(Nx):
+            for j in range(Ny):
+                dxi = dx_arr[i]; dyj = dy_arr[j]
+                vol = dxi * dyj
+                Df_e = K_ff * dyj / dxi; Df_n = K_ff * dxi / dyj
+                Ds_e = K_ss * dyj / dxi; Ds_n = K_ss * dxi / dyj
+                hv  = h_v * vol
+                hv2_loc = h_v2 * vol
+
+                # Diffusion coefficients (0 at boundaries = adiabatic)
+                dE = Df_e if i < Nx - 1 else 0.0
+                dW = Df_e if i > 0      else 0.0
+                dN = Df_n if j < Ny - 1 else 0.0
+                dS = Df_n if j > 0      else 0.0
+
+                # Convective fluxes (staggered velocities at cell faces)
+                Fe = eps * rho_cp_f * u[i + 1, j] * dyj
+                Fw = eps * rho_cp_f * u[i, j]     * dyj
+                Fn = eps * rho_cp_f * v[i, j + 1] * dxi
+                Fs = eps * rho_cp_f * v[i, j]     * dxi
+
+                aE = dE + max(-Fe, 0.0)
+                aW = dW + max(Fw, 0.0)
+                aN = dN + max(-Fn, 0.0)
+                aS = dS + max(Fs, 0.0)
+
+                # Neighbours (adiabatic = zero-grad at boundaries)
+                tE = Tf[i + 1, j] if i < Nx - 1 else Tf[i, j]
+                tW = Tf[i - 1, j] if i > 0      else Tf[i, j]
+                tN = Tf[i, j + 1] if j < Ny - 1 else Tf[i, j]
+                if j > 0:
+                    tS = Tf[i, j - 1]
+                else:
+                    tS = T_in if inlet_mask[i] else Tf[i, j]
+
+                aP = aE + aW + aN + aS + hv
+                rhs = aE * tE + aW * tW + aN * tN + aS * tS + hv * Ts[i, j]
+                # Note: hv and hv2_loc computed per-cell above
+
+                Tf_new = rhs / aP
+                chg = abs(Tf_new - Tf[i, j])
+                if chg > max_chg:
+                    max_chg = chg
+                Tf[i, j] = Tf_new
+
+        # ── Solid temperature ──
+        for i in range(Nx):
+            for j in range(Ny):
+                dxi = dx_arr[i]; dyj = dy_arr[j]
+                Ds_e_loc = K_ss * dyj / dxi; Ds_n_loc = K_ss * dxi / dyj
+                hv_loc = h_v * dxi * dyj
+                hv2_loc2 = h_v2 * dxi * dyj
+
+                sE = Ts[i + 1, j] if i < Nx - 1 else Ts[i, j]
+                sW = Ts[i - 1, j] if i > 0      else Ts[i, j]
+                sN = Ts[i, j + 1] if j < Ny - 1 else Ts[i, j]
+                sS = Ts[i, j - 1] if j > 0      else Ts[i, j]
+
+                aP_s = 2.0 * Ds_e_loc + 2.0 * Ds_n_loc + hv_loc + hv2_loc2
+                rhs_s = (Ds_e_loc * (sE + sW) + Ds_n_loc * (sN + sS)
+                         + hv_loc * Tf[i, j] + hv2_loc2 * T_other)
+
+                Ts_new = rhs_s / aP_s
+                chg = abs(Ts_new - Ts[i, j])
+                if chg > max_chg:
+                    max_chg = chg
+                Ts[i, j] = Ts_new
+
+        if max_chg < tol:
+            return it + 1
+
+    return max_iter
+
+
+# ===================================================================
+#  Adaptive grid generation
+# ===================================================================
+
+def _aligned_grid(N, L, breakpoints):
+    """Generate 1D grid with cell edges aligned to breakpoint positions.
+
+    Breakpoints are positions where inlet/outlet meets wall. Cell edges
+    are guaranteed to fall exactly on these positions, eliminating the
+    velocity discontinuity within any single cell.
+
+    Parameters
+    ----------
+    N : int — total number of cells
+    L : float — domain length [m]
+    breakpoints : iterable of float — positions [m] to align cell edges to
+
+    Returns
+    -------
+    dx_arr : (N,) array — cell widths [m]
+    """
+    # Build sorted unique segment boundaries [0, bp1, bp2, ..., L]
+    eps_b = L * 0.001
+    bps = sorted(set([0.0] + [bp for bp in breakpoints
+                               if eps_b < bp < L - eps_b] + [L]))
+
+    if len(bps) <= 2:
+        return np.full(N, L / N, dtype=np.float64)
+
+    # Segments and their lengths
+    segments = [(bps[i], bps[i + 1]) for i in range(len(bps) - 1)]
+    lengths = [s[1] - s[0] for s in segments]
+    total = sum(lengths)
+
+    # Distribute cells proportional to segment length (min 2 per segment)
+    n_cells = [max(2, round(N * l / total)) for l in lengths]
+    # Adjust last segment to match total N
+    diff = N - sum(n_cells)
+    n_cells[-1] += diff
+    if n_cells[-1] < 2:
+        n_cells[-1] = 2
+        n_cells[-2] -= (2 - n_cells[-1])
+
+    # Build dx array: uniform within each segment
+    dx_list = []
+    for (lo, hi), nc in zip(segments, n_cells):
+        seg_dx = (hi - lo) / nc
+        dx_list.extend([seg_dx] * nc)
+
+    return np.array(dx_list, dtype=np.float64)
+
+
+# ===================================================================
+#  SIMPLESolver class
+# ===================================================================
+
+class SIMPLESolver:
+    """2D steady SIMPLE on staggered grid for porous-media transition zone."""
+
+    def __init__(self, W, H, Nx, Ny,
+                 tpms_type, L_cell_mm, t_mm, eps, r_h,
+                 rho, mu, T_in,
+                 inlet_lo, inlet_hi, v_inlet,
+                 outlet_lo=None, outlet_hi=None,
+                 P_ref=0.0, zone_config=None, zone_arrays=None,
+                 y_breakpoints=None,
+                 fluid_type='ideal_gas',
+                 R_gas=287.05,
+                 T_field=None,
+                 P_ref_abs=None,
+                 alpha_rho=0.3):
+        # Domain
+        self.Nx, self.Ny = Nx, Ny
+        self.dx, self.dy = W / Nx, H / Ny  # scalar for backward compat
+
+        # Aligned grid: cell edges at inlet/outlet-wall junctions
+        x_breaks = []
+        if inlet_lo > W * 0.001:
+            x_breaks.append(inlet_lo)
+        if inlet_hi < W * 0.999:
+            x_breaks.append(inlet_hi)
+        if outlet_lo is not None and outlet_lo > W * 0.001:
+            x_breaks.append(outlet_lo)
+        if outlet_hi is not None and outlet_hi < W * 0.999:
+            x_breaks.append(outlet_hi)
+        self.dx_arr = _aligned_grid(Nx, W, x_breaks)
+        # y-direction: aligned if y_breakpoints provided, else uniform
+        self.dy_arr = _aligned_grid(Ny, H, y_breakpoints or [])
+
+        # Porous medium (scalar, kept for temperature solver & backward compat)
+        self.eps = eps
+        self.r_h = r_h
+        self.mu_eff = mu / eps
+
+        # Fluid — rho can be scalar or 2D array (Nx, Ny)
+        if np.ndim(rho) == 0:
+            self.rho_field = np.full((Nx, Ny), float(rho), dtype=np.float64)
+        else:
+            self.rho_field = np.ascontiguousarray(rho, dtype=np.float64)
+        self.rho = float(self.rho_field.mean())  # scalar mean for backwards-compat
+        self.mu = mu
+        self.rho_ref = air_density(T_in, P_atm)
+
+        # Compressible flow: pressure-density coupling
+        self.fluid_type = fluid_type
+        self.R_gas = R_gas
+        self.alpha_rho = alpha_rho
+        if P_ref_abs is None:
+            self.P_ref_abs = P_atm + P_ref
+        else:
+            self.P_ref_abs = float(P_ref_abs)
+        if T_field is None:
+            self.T_field = np.full((Nx, Ny), float(T_in), dtype=np.float64)
+        elif np.ndim(T_field) == 0:
+            self.T_field = np.full((Nx, Ny), float(T_field), dtype=np.float64)
+        else:
+            self.T_field = np.ascontiguousarray(T_field, dtype=np.float64)
+
+        # f-Re coefficients (precomputed for Numba)
+        self._fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
+
+        # Build 1D arrays [Ny] for per-row zone properties
+        if zone_arrays is not None:
+            # Pre-built 1D arrays passed directly (from grid mode)
+            self._mu_eff_arr = zone_arrays['mu_eff_arr']
+            self._r_h_arr    = zone_arrays['r_h_arr']
+            self._ln_eps_arr = zone_arrays['ln_eps_arr']
+            self._ln_tL_arr  = zone_arrays['ln_tL_arr']
+            self._ln_XSa_arr = zone_arrays['ln_XSa_arr']
+        elif zone_config is not None:
+            dy_val = H / Ny
+            self._mu_eff_arr = np.empty(Ny, dtype=np.float64)
+            self._r_h_arr    = np.empty(Ny, dtype=np.float64)
+            self._ln_eps_arr = np.empty(Ny, dtype=np.float64)
+            self._ln_tL_arr  = np.empty(Ny, dtype=np.float64)
+            self._ln_XSa_arr = np.empty(Ny, dtype=np.float64)
+            for j in range(Ny):
+                yc_frac = (j + 0.5) * dy_val / H
+                # Find zone for this row
+                z = zone_config.zones[-1]
+                for zz in zone_config.zones:
+                    if zz.y_frac_start <= yc_frac < zz.y_frac_end:
+                        z = zz; break
+                z_eps = z.props_A['epsilon'] if z.props_A else eps
+                z_rh  = z.props_A['D_h'] / 2.0 if z.props_A else r_h
+                z_L   = z.L_mm
+                z_t   = z.t_mm
+                self._mu_eff_arr[j] = mu / z_eps
+                self._r_h_arr[j]    = z_rh
+                self._ln_eps_arr[j] = np.log(z_eps / 2.0)  # single-channel porosity
+                self._ln_tL_arr[j]  = np.log(z_t / z_L)
+                X_mm = 2.0 * z_rh * 1000.0 if tpms_type == 'Diamond' else z_L
+                self._ln_XSa_arr[j] = np.log(X_mm / (1000.0 * _SA_MM))
+        else:
+            # Uniform: broadcast scalar to 1D arrays
+            self._ln_eps_val = np.log(eps / 2.0)  # single-channel porosity for f-Re
+            self._ln_tL_val  = np.log(t_mm / L_cell_mm)
+            X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_cell_mm
+            self._ln_XSa_val = np.log(X_mm / (1000.0 * _SA_MM))
+
+            self._mu_eff_arr = np.full(Ny, mu / eps, dtype=np.float64)
+            self._r_h_arr    = np.full(Ny, r_h, dtype=np.float64)
+            self._ln_eps_arr = np.full(Ny, self._ln_eps_val, dtype=np.float64)
+            self._ln_tL_arr  = np.full(Ny, self._ln_tL_val, dtype=np.float64)
+            self._ln_XSa_arr = np.full(Ny, self._ln_XSa_val, dtype=np.float64)
+
+        # Geometry correction phi(t) for t outside training range
+        from tpms_calc import _phi_t_correction
+        self._phi_arr = np.empty(Ny, dtype=np.float64)
+        if zone_arrays is not None:
+            # zone_arrays may have per-row t_mm; use uniform phi for now
+            phi_val = _phi_t_correction(tpms_type, t_mm)
+            self._phi_arr[:] = phi_val
+        elif zone_config is not None:
+            for j in range(Ny):
+                yc_frac = (j + 0.5) * (H / Ny) / H
+                z = zone_config.zones[-1]
+                for zz in zone_config.zones:
+                    if zz.y_frac_start <= yc_frac < zz.y_frac_end:
+                        z = zz; break
+                self._phi_arr[j] = _phi_t_correction(tpms_type, z.t_mm)
+        else:
+            phi_val = _phi_t_correction(tpms_type, t_mm)
+            self._phi_arr[:] = phi_val
+
+        # Inlet — use overlap fraction for exact mass conservation
+        self.v_inlet = v_inlet
+        x_lo_edge = np.concatenate(([0.0], np.cumsum(self.dx_arr[:-1])))
+        x_hi_edge = np.cumsum(self.dx_arr)
+        self.inlet_frac = np.clip(
+            (np.minimum(x_hi_edge, inlet_hi) - np.maximum(x_lo_edge, inlet_lo)) / self.dx_arr,
+            0.0, 1.0)
+        # Smooth lateral edges: 4-cell exponential taper at wall/open boundary
+        inf_raw = self.inlet_frac.copy()
+        for i in range(Nx):
+            if inf_raw[i] > 0.99:
+                for d in range(1, 5):
+                    if (i - d >= 0 and inf_raw[i - d] < 0.01) or \
+                       (i + d < Nx and inf_raw[i + d] < 0.01):
+                        self.inlet_frac[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
+                        break
+        self.inlet_mask = self.inlet_frac > 0.01     # boolean for temperature BC
+
+        # Outlet — partial or full-width, with smooth lateral transition
+        if outlet_lo is not None and outlet_hi is not None:
+            self.outlet_frac = np.clip(
+                (np.minimum(x_hi_edge, outlet_hi) - np.maximum(x_lo_edge, outlet_lo)) / self.dx_arr,
+                0.0, 1.0).astype(np.float64)
+            # Smooth lateral edges: 4-cell exponential taper at wall/open boundary
+            of_raw = self.outlet_frac.copy()
+            for i in range(Nx):
+                if of_raw[i] > 0.99:
+                    # Open cell — check distance to nearest wall
+                    for d in range(1, 5):
+                        if (i - d >= 0 and of_raw[i - d] < 0.01) or \
+                           (i + d < Nx and of_raw[i + d] < 0.01):
+                            self.outlet_frac[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
+                            break
+        else:
+            self.outlet_frac = np.ones(Nx, dtype=np.float64)
+
+        # Fields
+        self.u  = np.zeros((Nx + 1, Ny))
+        self.v  = np.zeros((Nx, Ny + 1))
+        self.P  = np.full((Nx, Ny), P_ref)
+        self.Pp = np.zeros((Nx, Ny))
+        self.d_u = np.zeros((Nx + 1, Ny))
+        self.d_v = np.zeros((Nx, Ny + 1))
+
+        # Temperature (allocated on demand)
+        self.Tf = None
+        self.Ts = None
+
+        # Store initial mass flux for compressible inlet BC
+        self.G_inlet = self.rho_field[:, 0].mean() * self.v_inlet  # rho_in * u_in
+
+        self._pp_sparsity = None  # lazily built on first solve() call
+        self._set_bc()
+        self.residuals = []
+
+    def _set_bc(self):
+        Nx, Ny = self.Nx, self.Ny
+        self.u[0, :] = 0.0;  self.u[Nx, :] = 0.0
+        for i in range(Nx):
+            self.v[i, 0] = self.v_inlet * self.inlet_frac[i]
+            self.v[i, Ny] = self.v[i, Ny - 1]
+
+    def update_rho_field(self, rho_field):
+        """Update density field for variable-density coupling iterations."""
+        self.rho_field = np.ascontiguousarray(rho_field, dtype=np.float64)
+        self.rho = float(self.rho_field.mean())
+
+    def _update_density(self):
+        """Update rho_field from pressure field (ideal gas: rho = P_abs / (R*T)).
+        Under-relaxed to avoid oscillation. Also updates inlet velocity to
+        maintain constant mass flux. No-op for incompressible fluids."""
+        if self.fluid_type != 'ideal_gas':
+            return
+        P_abs = self.P_ref_abs + self.P
+        np.clip(P_abs, 1000.0, None, out=P_abs)
+        rho_new = P_abs / (self.R_gas * self.T_field)
+        np.clip(rho_new, 0.01, 100.0, out=rho_new)
+        self.rho_field = (self.alpha_rho * rho_new
+                          + (1.0 - self.alpha_rho) * self.rho_field)
+        # Update inlet velocity to maintain constant mass flux G = rho * v
+        rho_inlet_avg = self.rho_field[:, 0].mean()
+        if rho_inlet_avg > 0.01:
+            self.v_inlet = self.G_inlet / rho_inlet_avg
+
+    def update_T_field(self, T_field):
+        """Update frozen temperature field for rho=P/(RT) calculation."""
+        if np.ndim(T_field) == 0:
+            self.T_field = np.full((self.Nx, self.Ny), float(T_field), dtype=np.float64)
+        else:
+            self.T_field = np.ascontiguousarray(T_field, dtype=np.float64)
+
+    # ──────────────── velocity solve ──────────────────────────────
+    def solve(self, max_iter=3000, tol=1e-6,
+              alpha_u=0.7, alpha_p=0.3,
+              n_inner=2,
+              verbose=True):
+        """
+        Run SIMPLE iterations. PP equation solved by sparse direct solver.
+
+        Returns (converged: bool, iterations: int).
+        """
+        Nx, Ny = self.Nx, self.Ny
+        dx_a, dy_a = self.dx_arr, self.dy_arr
+        args_porous = (self.rho_ref, self._r_h_arr, self.mu,
+                       self._ln_eps_arr, self._ln_tL_arr,
+                       self._ln_XSa_arr, self._fc)
+
+        for it in range(1, max_iter + 1):
+            _sweep_u_jit(self.u, self.v, self.P, self.d_u,
+                         self.inlet_frac, self.outlet_frac,
+                         Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
+                         *args_porous, alpha_u, n_inner, self._phi_arr)
+            _sweep_v_jit(self.u, self.v, self.P, self.d_v,
+                         self.inlet_frac, self.v_inlet, self.outlet_frac,
+                         Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
+                         *args_porous, alpha_u, n_inner, self._phi_arr)
+            if self._pp_sparsity is None:
+                self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_frac)
+            _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
+                                  self.outlet_frac,
+                                  Nx, Ny, dx_a, dy_a, self.rho_field,
+                                  self._pp_sparsity)
+            _correct_jit(self.u, self.v, self.P, self.Pp,
+                         self.d_u, self.d_v,
+                         self.inlet_frac, self.v_inlet, self.outlet_frac,
+                         Nx, Ny, alpha_p, self.rho_field)
+            self._update_density()  # compressible: update rho from P
+
+            res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, self.rho_field)
+            self.residuals.append(res)
+
+            if verbose and it % 200 == 0:
+                print(f"  iter {it:5d}  |R| = {res:.3e}")
+            # Require minimum iterations for pressure field to develop
+            # (exact PP gives mass convergence in 1 iter, but P needs more)
+            if res < tol and it >= 20:
+                if verbose:
+                    print(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
+                self._enforce_mass_conservation()
+                return True, it
+
+        if verbose:
+            print(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
+
+        # Post-solve: enforce mass conservation at partial outlet
+        self._enforce_mass_conservation()
+
+        return False, max_iter
+
+    def get_wall_masked_velocity(self):
+        """Return velocity fields with wall-region velocities tapered.
+        Matches the 8-cell Brinkman penalty zone at both inlet and outlet."""
+        Nx, Ny = self.Nx, self.Ny
+        u_masked = self.u.copy()
+        v_masked = self.v.copy()
+
+        def _taper(frac_arr, j_range_fn):
+            for i in range(Nx):
+                if frac_arr[i] < 0.5:
+                    for j, wd in j_range_fn(Ny):
+                        taper = 1.0 - np.exp(-1.5 * (wd - 1))
+                        v_masked[i, j] *= taper
+                        v_masked[i, j + 1] *= taper
+                        if i < Nx:
+                            u_masked[i, j] *= taper
+                        if i + 1 <= Nx:
+                            u_masked[i + 1, j] *= taper
+
+        # Outlet wall (j near Ny)
+        _taper(self.outlet_frac, lambda Ny: [(j, Ny - j) for j in range(max(0, Ny - 8), Ny)])
+        # Inlet wall (j near 0)
+        _taper(self.inlet_frac, lambda Ny: [(j, j + 1) for j in range(min(8, Ny))])
+
+        return u_masked, v_masked
+
+    def _enforce_mass_conservation(self):
+        """Scale outlet velocities to enforce global MASS conservation
+        (variable density: ∫ρv dx at outlet = ∫ρv dx at inlet)."""
+        Nx, Ny = self.Nx, self.Ny
+        inlet_mass = 0.0
+        outlet_mass = 0.0
+        for i in range(Nx):
+            inlet_mass += self.rho_field[i, 0] * self.v[i, 0] * self.dx_arr[i]
+            if self.outlet_frac[i] > 0.5:
+                outlet_mass += self.rho_field[i, Ny - 1] * self.v[i, Ny] * self.dx_arr[i]
+        if abs(outlet_mass) > 1e-15:
+            scale = inlet_mass / outlet_mass
+            for i in range(Nx):
+                if self.outlet_frac[i] > 0.5:
+                    self.v[i, Ny] *= scale
+
+    # ──────────────── temperature solve ───────────────────────────
+    def solve_temperature(self, K_ff, K_ss, h_v, rho_cp_f,
+                          T_in, T_other=None, h_v2=0.0,
+                          max_iter=5000, tol=1e-4, verbose=True):
+        """
+        Solve LTNE temperature with frozen velocity field.
+
+        Parameters
+        ----------
+        K_ff      : fluid effective conductivity [W/(m K)]   (= eps * k_f)
+        K_ss      : solid effective conductivity [W/(m K)]   (= (1-eps) * k_s)
+        h_v       : volumetric HTC, fluid <-> solid [W/(m3 K)]  (= H_sf * A_0)
+        rho_cp_f  : fluid volumetric heat capacity [J/(m3 K)]
+        T_in      : fluid inlet temperature [K]
+        T_other   : other-fluid temperature [K] (scalar).
+                    If None, solid is adiabatic (h_v2 forced to 0).
+        h_v2      : volumetric HTC, other-fluid <-> solid [W/(m3 K)]
+        """
+        Nx, Ny = self.Nx, self.Ny
+        if T_other is None:
+            T_other = T_in
+            h_v2 = 0.0
+
+        # Initialise temperature fields
+        self.Tf = np.full((Nx, Ny), T_in)
+        self.Ts = np.full((Nx, Ny), 0.5 * (T_in + T_other))
+
+        iters = _solve_temp_jit(
+            self.Tf, self.Ts, self.u, self.v, self.inlet_mask,
+            Nx, Ny, self.dx_arr, self.dy_arr, self.eps,
+            K_ff, K_ss, h_v, h_v2, rho_cp_f,
+            T_in, T_other, max_iter, tol)
+
+        if verbose:
+            tag = "[OK]" if iters < max_iter else "[!!]"
+            print(f"  {tag} Temperature: {iters} iters, "
+                  f"Tf=[{self.Tf.min():.2f}, {self.Tf.max():.2f}], "
+                  f"Ts=[{self.Ts.min():.2f}, {self.Ts.max():.2f}]")
+        return iters < max_iter, iters
+
+    # ──────────────── output for coupling ─────────────────────────
+    def _check_uniform(self, j, threshold):
+        """Check if cross-section j has uniform flow.
+
+        Two conditions must BOTH be met:
+        1. Main flow (v) uniformity:  std(v) / mean(v) < threshold
+        2. Transverse flow (u) negligible: mean(|u|) / mean(v) < threshold
+
+        References:
+          - Mueller & Chiou (1988): 5% CV = significant maldistribution
+          - Lalot et al. (1999): relative std dev for HX flow distribution
+          - Default threshold 5% is standard for heat exchanger applications
+        """
+        Nx, Ny = self.Nx, self.Ny
+        v_row = self.v[:, j]
+        v_mean = v_row.mean()
+        if v_mean < 1e-10:
+            return False
+
+        # Condition 1: main flow uniformity (coefficient of variation)
+        cv_v = v_row.std() / v_mean
+        if cv_v >= threshold:
+            return False
+
+        # Condition 2: transverse velocity negligible
+        # u lives on x-faces: u[0..Nx, j]. Average |u| at internal faces.
+        u_at_j = self.u[1:Nx, j]   # internal x-face velocities at row j
+        u_ratio = np.abs(u_at_j).mean() / v_mean
+        if u_ratio >= threshold:
+            return False
+
+        return True
+
+    def detect_uniform_boundary(self, threshold=0.045):
+        """Find the first cross-section (from pipe side) where flow is uniform.
+
+        Scans from j=1 (near pipe) toward j=Ny-1 (far from pipe).
+        Checks both v-uniformity AND u-negligibility.
+
+        Parameters
+        ----------
+        threshold : float, default 0.05 (5%, standard for HX applications)
+
+        Returns
+        -------
+        j_uniform : int   (row index where flow becomes uniform, or Ny-1)
+        depth     : float (transition zone depth in metres)
+        """
+        for j in range(1, self.Ny):
+            if self._check_uniform(j, threshold):
+                return j, j * self.dy
+        return self.Ny - 1, (self.Ny - 1) * self.dy
+
+    def detect_nonuniform_boundary(self, threshold=0.045):
+        """Scan from the UNIFORM side (top, j=Ny-1) toward the pipe (j=0).
+
+        Find the first cross-section that is NOT uniform (where converging
+        effects begin). Uses same dual check as detect_uniform_boundary.
+
+        Returns
+        -------
+        j_start : int   (last uniform row, counting from top)
+        depth   : float (outlet transition zone depth in metres)
+        """
+        for j in range(self.Ny - 1, 0, -1):
+            if not self._check_uniform(j, threshold):
+                depth = (self.Ny - 1 - j) * self.dy
+                return j + 1, depth
+        return 0, (self.Ny - 1) * self.dy
+
+    def get_profile_at(self, j_row):
+        """Extract velocity + temperature profiles at a specific row j."""
+        Nx, Ny = self.Nx, self.Ny
+        j = min(max(j_row, 0), Ny - 1)
+        out = {
+            'v_exit': self.v[:, j].copy(),
+            'u_exit': self.u[1:Nx, j].copy(),
+            'x_v':   (np.arange(Nx) + 0.5) * self.dx,
+            'x_u':   np.arange(1, Nx) * self.dx,
+            'j_row':  j,
+            'depth':  j * self.dy,
+        }
+        if self.Tf is not None:
+            out['Tf_exit'] = self.Tf[:, j].copy()
+            out['Ts_exit'] = self.Ts[:, j].copy()
+        return out
+
+    def get_exit_profile(self):
+        """Velocity + temperature at exit (top boundary) for uniform-zone BC."""
+        Nx, Ny = self.Nx, self.Ny
+        out = {
+            'v_exit': self.v[:, Ny - 1].copy(),
+            'u_exit': self.u[1:Nx, Ny - 1].copy(),
+            'x_v':   (np.arange(Nx) + 0.5) * self.dx,
+            'x_u':   np.arange(1, Nx) * self.dx,
+        }
+        if self.Tf is not None:
+            out['Tf_exit'] = self.Tf[:, Ny - 1].copy()
+            out['Ts_exit'] = self.Ts[:, Ny - 1].copy()
+        return out
+
+    def get_fields_trimmed(self, j_start=0, j_end=None):
+        """Return 2D fields trimmed to rows [j_start, j_end).
+
+        Useful for extracting just the transition zone portion for plotting.
+        """
+        if j_end is None:
+            j_end = self.Ny
+        out = {'v': self.v[:, j_start:j_end+1].copy(),
+               'u': self.u[:, j_start:j_end].copy(),
+               'P': self.P[:, j_start:j_end].copy()}
+        if self.Tf is not None:
+            out['Tf'] = self.Tf[:, j_start:j_end].copy()
+            out['Ts'] = self.Ts[:, j_start:j_end].copy()
+        return out
+
+    @staticmethod
+    def solve_outlet_transition(W, H_search, Nx, Ny,
+                                tpms_type, L_cell_mm, t_mm, eps, r_h,
+                                rho, mu, T_uni_exit,
+                                pipe_lo, pipe_hi, u_exit,
+                                K_ff, K_ss, h_v, rho_cp_f,
+                                T_other=None, h_v2=0.0,
+                                threshold=0.02):
+        """Solve outlet transition zone (uniform flow → converging to pipe).
+
+        Uses the flip trick: solve bottom-inlet SIMPLE (spreading flow),
+        then flip the domain vertically. The velocity field is approximately
+        correct (porous media ≈ reversible). Temperature is solved with
+        the flipped velocity and proper outlet BCs.
+
+        Returns
+        -------
+        dict with keys: depth, dP, j_boundary, Tf_field, Ts_field, v_field, solver
+        """
+        # Step 1: Solve spreading flow (pipe at bottom) on oversized domain
+        s = SIMPLESolver(W, H_search, Nx, Ny,
+                         tpms_type, L_cell_mm, t_mm, eps, r_h,
+                         rho, mu, T_uni_exit,
+                         pipe_lo, pipe_hi, u_exit)
+        s.solve(max_iter=3000, tol=1e-6, verbose=False)
+
+        # Step 2: Detect where spreading flow becomes uniform
+        j_uni, depth = s.detect_uniform_boundary(threshold)
+
+        # Step 3: Solve temperature with correct BCs
+        # The "inlet" of the outlet trans zone is the uniform zone exit (T_uni_exit)
+        # which is already set as T_in for this solver.
+        s.solve_temperature(K_ff, K_ss, h_v, rho_cp_f,
+                            T_in=T_uni_exit, T_other=T_other,
+                            h_v2=h_v2, verbose=False)
+
+        # Step 4: Detect the outlet boundary from the uniform side
+        j_start, depth_out = s.detect_nonuniform_boundary(threshold)
+
+        # Pressure drop in the transition zone portion only
+        if j_uni > 0:
+            dP = abs(s.P[:, :j_uni+1].max() - s.P[:, :j_uni+1].min())
+        else:
+            dP = 0.0
+
+        return {
+            'depth': depth_out,
+            'depth_spreading': depth,   # from inlet-like detection
+            'dP': dP,
+            'j_boundary': j_start,
+            'solver': s,
+        }
+
+    def mass_flow_in(self):
+        return self.rho * np.sum(self.v[self.inlet_mask, 0]) * self.dx
+
+    def mass_flow_out(self):
+        return self.rho * np.sum(self.v[:, self.Ny]) * self.dx
+
+
+# ===================================================================
+#  Convenience function
+# ===================================================================
+
+def solve_transition_zone(W, H, Nx, Ny,
+                          tpms_type, L_cell_mm, t_mm, eps, r_h,
+                          T_in, P_in,
+                          inlet_lo, inlet_hi, v_inlet,
+                          # temperature params (optional)
+                          K_ff=None, K_ss=None, h_v=None,
+                          rho_cp_f=None, T_other=None, h_v2=0.0,
+                          **kwargs):
+    """
+    One-call interface: velocity solve + optional temperature solve.
+    """
+    rho = air_density(T_in, P_in)
+    mu  = air_viscosity(T_in)
+
+    solver = SIMPLESolver(W, H, Nx, Ny,
+                          tpms_type, L_cell_mm, t_mm, eps, r_h,
+                          rho, mu, T_in,
+                          inlet_lo, inlet_hi, v_inlet)
+
+    ok_v, it_v = solver.solve(**{k: v for k, v in kwargs.items()
+                                 if k in ('max_iter', 'tol', 'alpha_u',
+                                          'alpha_p', 'n_inner', 'verbose')})
+
+    ok_t = None
+    if K_ff is not None:
+        ok_t, _ = solver.solve_temperature(
+            K_ff, K_ss, h_v, rho_cp_f, T_in,
+            T_other=T_other, h_v2=h_v2,
+            verbose=kwargs.get('verbose', True))
+
+    return {
+        'u': solver.u.copy(), 'v': solver.v.copy(), 'P': solver.P.copy(),
+        'Tf': solver.Tf.copy() if solver.Tf is not None else None,
+        'Ts': solver.Ts.copy() if solver.Ts is not None else None,
+        'converged_v': ok_v, 'converged_T': ok_t,
+        'iterations_v': it_v,
+        'residuals': solver.residuals,
+        'exit': solver.get_exit_profile(),
+        'solver': solver,
+    }
+
+
+# ===================================================================
+#  Verification
+# ===================================================================
+
+if __name__ == '__main__':
+    import time
+    import warnings; warnings.filterwarnings('ignore')
+    from tpms_calc import compute as tpms_compute
+
+    tpms = 'Diamond';  L_mm = 6.0;  t_mm = 0.4
+    props = tpms_compute(tpms, L_mm, t_mm, 3.0, 300.0, 101325.0, 17.0)
+    eps = props['epsilon'];  r_h = props['D_h'] / 2.0
+
+    W, H = 0.03, 0.02;  Nx, Ny = 30, 20;  v_in = 3.0
+
+    # ── Test 1: full-width inlet (uniform flow check) ──
+    print("=" * 60)
+    print("Test 1: full-width inlet")
+    print("=" * 60)
+    rho = air_density(300.0, 101325.0);  mu = air_viscosity(300.0)
+    s = SIMPLESolver(W, H, Nx, Ny,
+                     tpms, L_mm, t_mm, eps, r_h, rho, mu, 300.0,
+                     0.0, W, v_in)
+
+    print("  (first call includes Numba JIT compilation...)")
+    t0 = time.time()
+    ok, it = s.solve(max_iter=500, tol=1e-7, verbose=False)
+    t1 = time.time()
+    v_int = s.v[:, 1:-1];  u_int = s.u[1:-1, :]
+    print(f"  time = {t1-t0:.2f}s  (includes JIT)")
+    print(f"  converged={ok}, iters={it}")
+    print(f"  v: mean={v_int.mean():.4f} std={v_int.std():.2e} (expect {v_in})")
+    print(f"  u: mean={u_int.mean():.2e} (expect 0)")
+
+    # Re-run to measure pure execution time
+    s2 = SIMPLESolver(W, H, Nx, Ny,
+                      tpms, L_mm, t_mm, eps, r_h, rho, mu, 300.0,
+                      0.0, W, v_in)
+    t0 = time.time()
+    s2.solve(max_iter=500, tol=1e-7, verbose=False)
+    t1 = time.time()
+    print(f"  pure solve time (no JIT) = {t1-t0:.2f}s")
+    print()
+
+    # ── Test 2: half-width inlet + temperature ──
+    print("=" * 60)
+    print("Test 2: half-width inlet + temperature (T_other=400K)")
+    print("=" * 60)
+    inlet_lo = 0.25 * W;  inlet_hi = 0.75 * W
+    s3 = SIMPLESolver(W, H, Nx, Ny,
+                      tpms, L_mm, t_mm, eps, r_h, rho, mu, 300.0,
+                      inlet_lo, inlet_hi, v_in)
+    t0 = time.time()
+    ok_v, it_v = s3.solve(max_iter=3000, tol=1e-6, verbose=False)
+    t1 = time.time()
+    print(f"  Velocity: converged={ok_v}, iters={it_v}, time={t1-t0:.2f}s")
+    print(f"  m_in={s3.mass_flow_in():.6f}  m_out={s3.mass_flow_out():.6f}")
+
+    # Temperature: Fluid B enters at 300K, Fluid A (other side) at 400K
+    K_ff = eps * props['k_f']
+    K_ss = (1.0 - eps) * 17.0
+    A_0  = props['A_0']
+    H_sf = props['H_sf']      # face HTC [W/(m2 K)]
+    h_v  = H_sf * A_0         # volumetric HTC [W/(m3 K)]
+    cp_air = 1005.0
+    rho_cp = rho * cp_air
+
+    t0 = time.time()
+    ok_t, it_t = s3.solve_temperature(
+        K_ff, K_ss, h_v, rho_cp,
+        T_in=300.0, T_other=400.0, h_v2=h_v * 0.5)
+    t1 = time.time()
+    print(f"  Temperature: time={t1-t0:.2f}s")
+
+    ex = s3.get_exit_profile()
+    print(f"  Exit v: mean={ex['v_exit'].mean():.3f}")
+    if 'Tf_exit' in ex:
+        print(f"  Exit Tf: mean={ex['Tf_exit'].mean():.2f}K "
+              f"(entered at 300K, other=400K)")
+    print("=" * 60)
+
+
+def _warmup_jit():
+    """Pre-compile _assemble_pp_data_jit on import.
+
+    Builds a tiny 4x4 sparsity pattern and runs one assembly to touch the
+    compiled path. Failures are silently caught — warmup is best-effort.
+    """
+    try:
+        import numpy as _np
+        _Nx, _Ny = 4, 4
+        _u = _np.zeros((_Nx + 1, _Ny), dtype=_np.float64)
+        _v = _np.zeros((_Nx, _Ny + 1), dtype=_np.float64)
+        _d_u = _np.full((_Nx + 1, _Ny), 0.05, dtype=_np.float64)
+        _d_v = _np.full((_Nx, _Ny + 1), 0.05, dtype=_np.float64)
+        _rho = _np.full((_Nx, _Ny), 1.0, dtype=_np.float64)
+        _outlet = _np.zeros(_Nx, dtype=_np.float64)
+        _outlet[_Nx // 2] = 1.0
+        _dx = _np.full(_Nx, 0.01, dtype=_np.float64)
+        _dy = _np.full(_Ny, 0.01, dtype=_np.float64)
+        _pat = _build_pp_sparsity_pattern(_Nx, _Ny, _outlet)
+        _data = _np.zeros(_pat['nnz'], dtype=_np.float64)
+        _rhs = _np.zeros(_Nx * _Ny, dtype=_np.float64)
+        _assemble_pp_data_jit(_data, _rhs, _u, _v, _d_u, _d_v, _outlet,
+                              _Nx, _Ny, _dx, _dy, _rho,
+                              _pat['cell_base'], _pat['cell_kind'])
+    except Exception:
+        pass  # warmup is best-effort; never block import
+
+
+_warmup_jit()

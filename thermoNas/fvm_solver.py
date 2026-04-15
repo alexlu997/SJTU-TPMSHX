@@ -1,0 +1,968 @@
+"""
+fvm_solver.py — FVM solvers on unstructured triangular mesh
+
+1. Brinkman-Forchheimer SIMPLE solver (collocated + Rhie-Chow)
+2. LTNE energy solver (two fluids + solid)
+
+Physics (velocity):
+  ∇·U = 0                                            (continuity)
+  -∇P = R(|U|)·U - μ_eff·∇²U                        (Brinkman-Forchheimer)
+  R = f·ρ·|U|/(2·r_h)                                (porous resistance)
+
+SIMPLE algorithm on collocated triangular mesh:
+  1. Solve x-momentum and y-momentum (sparse direct)
+  2. Rhie-Chow face flux interpolation
+  3. Pressure correction (Poisson)
+  4. Correct P, U, face flux
+  5. Iterate until mass residual converges
+"""
+
+import numpy as np
+from numba import njit
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+from tpms_calc import (air_density, air_conductivity, P_atm,
+                       Sa_mm as _SA_MM, _F_COEFFS, nu_from_Re)
+from unstructured_mesh import (BC_INTERIOR, BC_WALL,
+                               BC_INLET_A, BC_OUTLET_A,
+                               BC_INLET_B, BC_OUTLET_B)
+
+
+# ===================================================================
+#  Friction factor & resistance
+# ===================================================================
+
+@njit(cache=True)
+def _f_re(Re, ln_eps, ln_tL, ln_XSa, c):
+    """Friction factor (F1 power-law), Numba-safe.
+    c = (C, n0, n1, a, b, c_exp) — 6 coefficients.
+    ln_XSa = ln(X/(1000*Sa)), X = D_h (Diamond) or L (Gyroid).
+    """
+    n = c[1] + c[2] * ln_eps
+    Re = max(Re, 10.0)
+    return c[0] * Re**n * np.exp(c[3]*ln_eps + c[4]*ln_tL + c[5]*ln_XSa)
+
+
+@njit(cache=True)
+def _resistance(umag, rho_ref, r_h, mu, rho, ln_eps, ln_tL, ln_XSa, c, phi=1.0):
+    """Porous resistance R [kg/(m³·s)]: source = R·U. phi = geometry correction."""
+    umag = max(umag, 0.01)
+    Re = max(rho_ref * umag * r_h / mu, 10.0)
+    f = _f_re(Re, ln_eps, ln_tL, ln_XSa, c)
+    return f * phi * rho * umag / (2.0 * r_h)
+
+
+# ===================================================================
+#  SIMPLE solver on collocated triangular mesh
+# ===================================================================
+
+def _assemble_momentum(mesh, u_cell, v_cell, P, face_flux,
+                       rho, mu_eff, rho_ref, r_h, mu_fluid,
+                       ln_eps, ln_tL, ln_XSa, fc,
+                       bc_inlet, bc_outlet, u_in_x, u_in_y,
+                       alpha_u, component):
+    """
+    Assemble momentum equation for u or v component.
+
+    Returns: A (CSR), b (RHS), aP_diag (un-relaxed diagonal)
+    """
+    nc = mesh.n_cells
+    phi = u_cell if component == 'u' else v_cell
+    phi_in = u_in_x if component == 'u' else u_in_y
+
+    rows, cols, vals = [], [], []
+    b = np.zeros(nc)
+    aP_diag = np.zeros(nc)  # un-relaxed diagonal (for d_coeff)
+
+    for ci in range(nc):
+        aP0 = 0.0
+        rhs = 0.0
+        vol = mesh.cell_areas[ci]
+
+        for fi in range(3):
+            j    = mesh.nbr[ci, fi]
+            bc   = mesh.bc_type[ci, fi]
+            fl   = mesh.face_len[ci, fi]
+            d    = max(mesh.dCF[ci, fi], 1e-12)
+            nx   = mesh.face_nx[ci, fi]
+            ny   = mesh.face_ny[ci, fi]
+            Df   = mu_eff * fl / d
+            Ff   = face_flux[ci, fi]  # rho * U_n * S_f
+
+            if bc == BC_INTERIOR:
+                a_nb = Df + max(-Ff, 0.0)
+                aP0 += Df + max(Ff, 0.0)
+                rows.append(ci); cols.append(j); vals.append(-a_nb)
+
+            elif bc == bc_inlet:
+                # Dirichlet: phi = phi_in
+                aP0 += Df + max(Ff, 0.0)
+                rhs += (Df + max(-Ff, 0.0)) * phi_in
+
+            elif bc == bc_outlet:
+                # Zero gradient (outflow)
+                aP0 += max(Ff, 0.0)
+
+            # Wall / other fluid's pipes: no flux, no diffusion contribution
+
+        # Porous resistance source (linearized: S = R*vol added to diagonal)
+        umag = np.sqrt(u_cell[ci]**2 + v_cell[ci]**2)
+        R = _resistance(umag, rho_ref, r_h, mu_fluid, rho,
+                        ln_eps, ln_tL, ln_XSa, fc)
+        Sp = R * vol
+        aP0 += Sp
+
+        # Pressure gradient source: -∂P/∂x or -∂P/∂y (Green-Gauss)
+        # ∫_V ∂P/∂x dV = Σ P_f * n_x * S_f  (face pressure × normal × area)
+        gradP_x = 0.0
+        gradP_y = 0.0
+        for fi in range(3):
+            j = mesh.nbr[ci, fi]
+            bc = mesh.bc_type[ci, fi]
+            if bc == BC_INTERIOR:
+                Pf = 0.5 * (P[ci] + P[j])
+            elif bc == bc_outlet:
+                Pf = 0.0  # P = 0 at outlet (gauge)
+            else:
+                Pf = P[ci]  # extrapolate for walls
+            # Pressure force on each face
+            gradP_x += Pf * mesh.face_nx[ci, fi] * mesh.face_len[ci, fi]
+            gradP_y += Pf * mesh.face_ny[ci, fi] * mesh.face_len[ci, fi]
+
+        # Apply correct gradient based on component
+        if component == 'u':
+            rhs -= gradP_x  # -∂P/∂x * vol
+        else:
+            rhs -= gradP_y  # -∂P/∂y * vol
+
+        aP_diag[ci] = aP0
+
+        # Under-relaxation (implicit)
+        aP_relax = aP0 / alpha_u
+        rhs += (1.0 - alpha_u) / alpha_u * aP0 * phi[ci]
+
+        rows.append(ci); cols.append(ci); vals.append(aP_relax)
+        b[ci] = rhs
+
+    # Fix the off-diagonal entries: they were stored as -a_nb,
+    # but we need to account for the matrix equation A*phi = b
+    # where off-diag contributes to rhs via a_nb * phi_j
+    # In sparse matrix form: A[ci,ci] = aP_relax, A[ci,j] = -a_nb
+    # Then A*phi gives: aP_relax*phi_ci - sum(a_nb*phi_j) = b
+    # So b should NOT include the a_nb*phi_j terms (they come from A*phi)
+    A = sparse.coo_matrix((vals, (rows, cols)), shape=(nc, nc)).tocsr()
+    return A, b, aP_diag
+
+
+@njit(cache=True)
+def _compute_face_flux(face_flux, u_cell, v_cell, P, d_coeff,
+                       nbr, face_nx, face_ny, face_len, dCF,
+                       bc_type, n_cells, rho,
+                       bc_inlet, bc_outlet, u_in_x, u_in_y):
+    """
+    Rhie-Chow interpolated face mass flux.
+
+    face_flux[ci, fi] = rho * U_n * S_f  (positive = outward from ci)
+    """
+    for ci in range(n_cells):
+        for fi in range(3):
+            j  = nbr[ci, fi]
+            bc = bc_type[ci, fi]
+            fl = face_len[ci, fi]
+            nx = face_nx[ci, fi]
+            ny = face_ny[ci, fi]
+            d  = max(dCF[ci, fi], 1e-12)
+
+            if bc == BC_INTERIOR:
+                # Interpolated velocity at face
+                Un_avg = 0.5 * ((u_cell[ci] + u_cell[j]) * nx +
+                                (v_cell[ci] + v_cell[j]) * ny)
+                # Rhie-Chow pressure correction
+                d_avg = 0.5 * (d_coeff[ci] + d_coeff[j])
+                dPdn = (P[j] - P[ci]) / d   # geometric distance, NOT d_avg
+                face_flux[ci, fi] = rho * (Un_avg - d_avg * dPdn) * fl
+
+            elif bc == bc_inlet:
+                Un_in = u_in_x * nx + u_in_y * ny
+                face_flux[ci, fi] = rho * Un_in * fl
+
+            elif bc == bc_outlet:
+                Un_out = u_cell[ci] * nx + v_cell[ci] * ny
+                face_flux[ci, fi] = rho * Un_out * fl
+
+            else:
+                # Wall: zero flux
+                face_flux[ci, fi] = 0.0
+
+
+def _assemble_pressure_correction(mesh, face_flux, d_coeff, rho,
+                                   bc_inlet, bc_outlet):
+    """Assemble pressure correction Poisson equation."""
+    nc = mesh.n_cells
+    rows, cols, vals = [], [], []
+    b = np.zeros(nc)
+
+    for ci in range(nc):
+        diag = 0.0
+        # RHS = negative mass imbalance
+        mass_imb = 0.0
+        for fi in range(3):
+            mass_imb += face_flux[ci, fi]
+
+        for fi in range(3):
+            j  = mesh.nbr[ci, fi]
+            bc = mesh.bc_type[ci, fi]
+            fl = mesh.face_len[ci, fi]
+            d  = max(mesh.dCF[ci, fi], 1e-12)
+
+            if bc == BC_INTERIOR:
+                d_avg = 0.5 * (d_coeff[ci] + d_coeff[j])
+                coeff = rho * d_avg * fl / d
+                diag += coeff
+                rows.append(ci); cols.append(j); vals.append(-coeff)
+
+            elif bc == bc_outlet:
+                # Dirichlet: P' = 0
+                d_avg = d_coeff[ci]
+                coeff = rho * d_avg * fl / d
+                diag += coeff
+
+            # Inlet, wall: zero flux correction (Neumann)
+
+        rows.append(ci); cols.append(ci); vals.append(diag)
+        b[ci] = -mass_imb  # drive mass imbalance to zero
+
+    A = sparse.coo_matrix((vals, (rows, cols)), shape=(nc, nc)).tocsr()
+    return A, b
+
+
+# @njit(cache=True)
+def _correct_fields(u_cell, v_cell, P, Pp, d_coeff, face_flux,
+                    nbr, face_nx, face_ny, face_len, dCF,
+                    bc_type, cell_areas, n_cells, rho, alpha_p,
+                    bc_inlet, bc_outlet):
+    """Correct pressure, velocity, and face flux after P' solve."""
+    # Pressure correction
+    for ci in range(n_cells):
+        P[ci] += alpha_p * Pp[ci]
+
+    # Velocity correction: U = U* - d * grad(P') with under-relaxation
+    # Apply clamping to prevent NaN from large corrections
+    for ci in range(n_cells):
+        vol = cell_areas[ci]
+        gradPp_x = 0.0
+        gradPp_y = 0.0
+        for fi in range(3):
+            j  = nbr[ci, fi]
+            bc = bc_type[ci, fi]
+            if bc == BC_INTERIOR:
+                Ppf = 0.5 * (Pp[ci] + Pp[j])
+            elif bc == bc_outlet:
+                Ppf = 0.0
+            else:
+                Ppf = Pp[ci]
+            gradPp_x += Ppf * face_nx[ci, fi] * face_len[ci, fi]
+            gradPp_y += Ppf * face_ny[ci, fi] * face_len[ci, fi]
+        gradPp_x /= vol
+        gradPp_y /= vol
+
+        # Compute corrected values with simple clamping (no np.clip for numba compatibility)
+        du = d_coeff[ci] * gradPp_x
+        dv = d_coeff[ci] * gradPp_y
+
+        # Clamp velocity changes to prevent NaN - use simple comparisons
+        max_change = max(abs(u_cell[ci]), abs(v_cell[ci])) * 0.5 + 0.1
+        if du > max_change:
+            du = max_change
+        elif du < -max_change:
+            du = -max_change
+        if dv > max_change:
+            dv = max_change
+        elif dv < -max_change:
+            dv = -max_change
+
+        u_cell[ci] -= du
+        v_cell[ci] -= dv
+
+    # Face flux correction
+    for ci in range(n_cells):
+        for fi in range(3):
+            j  = nbr[ci, fi]
+            bc = bc_type[ci, fi]
+            fl = face_len[ci, fi]
+            d  = max(dCF[ci, fi], 1e-12)
+
+            if bc == BC_INTERIOR:
+                d_avg = 0.5 * (d_coeff[ci] + d_coeff[j])
+                face_flux[ci, fi] += rho * d_avg * fl * (Pp[ci] - Pp[j]) / d
+            # Inlet/outlet/wall: flux unchanged
+
+
+@njit(cache=True)
+def _mass_residual(face_flux, n_cells):
+    """Max absolute mass imbalance across all cells."""
+    Rmax = 0.0
+    for ci in range(n_cells):
+        R = 0.0
+        for fi in range(3):
+            R += face_flux[ci, fi]
+        if abs(R) > Rmax:
+            Rmax = abs(R)
+    return Rmax
+
+
+# ===================================================================
+#  Darcy-Forchheimer velocity solver (replaces SIMPLE for porous media)
+# ===================================================================
+
+def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
+                         rho, mu, T_in,
+                         u_in, edge_in, bc_inlet, bc_outlet,
+                         max_iter=30, tol=1e-3, verbose=True,
+                         r_h_arr=None, ln_eps_arr=None,
+                         ln_tL_arr=None, ln_XSa_arr=None,
+                         **_ignored):
+    """
+    Darcy-Forchheimer velocity solver for fully porous domain.
+
+    Solves the pressure Poisson equation directly:
+        nabla·(D·nabla P) = 0,   D = 1/R(|U|)
+        U = -D·nabla P
+
+    Supports per-cell porous parameters via optional *_arr arguments
+    (1D arrays [n_cells]). If not provided, scalar values are broadcast.
+
+    Returns: u_cell, v_cell, P_cell, face_Un
+    """
+    nc = mesh.n_cells
+    fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
+    rho_ref = air_density(T_in, P_atm)
+
+    # Build per-cell porous parameter arrays
+    _provided = [x is not None for x in (r_h_arr, ln_eps_arr, ln_tL_arr, ln_XSa_arr)]
+    if any(_provided) and not all(_provided):
+        raise ValueError("Provide all four *_arr arguments or none.")
+    if r_h_arr is None:
+        ln_eps_val = np.log(eps / 2.0)  # single-channel porosity for f-Re
+        ln_tL_val = np.log(t_mm / L_mm)
+        X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_mm
+        ln_XSa_val = np.log(X_mm / (1000.0 * _SA_MM))
+        r_h_arr    = np.full(nc, r_h, dtype=np.float64)
+        ln_eps_arr = np.full(nc, ln_eps_val, dtype=np.float64)
+        ln_tL_arr  = np.full(nc, ln_tL_val, dtype=np.float64)
+        ln_XSa_arr = np.full(nc, ln_XSa_val, dtype=np.float64)
+
+    # Inlet velocity direction (inward normal of inlet edge)
+    in_n = mesh.inlet_normal(edge_in)
+    u_in_x = u_in * in_n[0]
+    u_in_y = u_in * in_n[1]
+
+    # Initial R from inlet velocity (per-cell from zone params)
+    R_cell = np.empty(nc)
+    for ci in range(nc):
+        R_cell[ci] = _resistance(u_in, rho_ref, r_h_arr[ci], mu, rho,
+                                 ln_eps_arr[ci], ln_tL_arr[ci],
+                                 ln_XSa_arr[ci], fc)
+
+    P = np.zeros(nc)
+    u_cell = np.zeros(nc)
+    v_cell = np.zeros(nc)
+    face_Un = np.zeros((nc, 3))
+
+    for it in range(1, max_iter + 1):
+        D_cell = 1.0 / np.maximum(R_cell, 1e-10)
+
+        # ── Assemble: nabla·(D nabla P) = 0 ──
+        rows, cols, vals = [], [], []
+        b = np.zeros(nc)
+
+        for ci in range(nc):
+            diag = 0.0
+            for fi in range(3):
+                j  = mesh.nbr[ci, fi]
+                bc = mesh.bc_type[ci, fi]
+                fl = mesh.face_len[ci, fi]
+                d  = max(mesh.dCF[ci, fi], 1e-12)
+
+                if bc == BC_INTERIOR:
+                    D_f = 0.5 * (D_cell[ci] + D_cell[j])
+                    coeff = D_f * fl / d
+                    diag += coeff
+                    rows.append(ci); cols.append(j); vals.append(-coeff)
+
+                elif bc == bc_inlet:
+                    # Neumann: known velocity flux = U·n * S_f
+                    # Since D·dP/dn = -U_n, boundary flux = -U_n * fl
+                    Un_in = (u_in_x * mesh.face_nx[ci, fi]
+                             + u_in_y * mesh.face_ny[ci, fi])
+                    b[ci] -= Un_in * fl
+
+                elif bc == bc_outlet:
+                    # Dirichlet: P = 0 (gauge)
+                    D_f = D_cell[ci]
+                    coeff = D_f * fl / d
+                    diag += coeff
+
+                # Wall: zero flux → no contribution
+
+            rows.append(ci); cols.append(ci); vals.append(max(diag, 1e-20))
+
+        A = sparse.coo_matrix((vals, (rows, cols)), shape=(nc, nc)).tocsr()
+        P = spsolve(A, b)
+
+        # ── Compute face-normal velocity from P differences ──
+        face_Un[:] = 0.0
+        for ci in range(nc):
+            D_ci = D_cell[ci]
+            for fi in range(3):
+                j  = mesh.nbr[ci, fi]
+                bc = mesh.bc_type[ci, fi]
+                d  = max(mesh.dCF[ci, fi], 1e-12)
+
+                if bc == BC_INTERIOR:
+                    D_f = 0.5 * (D_cell[ci] + D_cell[j])
+                    face_Un[ci, fi] = -D_f * (P[j] - P[ci]) / d
+                elif bc == bc_inlet:
+                    nx = mesh.face_nx[ci, fi]
+                    ny = mesh.face_ny[ci, fi]
+                    face_Un[ci, fi] = u_in_x * nx + u_in_y * ny
+                elif bc == bc_outlet:
+                    face_Un[ci, fi] = -D_ci * (0.0 - P[ci]) / d
+                # wall: 0
+
+        # ── Cell velocity: Green-Gauss for R update, lstsq for display ──
+        u_cell[:] = 0.0
+        v_cell[:] = 0.0
+        _umag_gg = np.empty(nc)   # Green-Gauss |U| (robust, for R)
+
+        # Physical velocity cap: no cell should exceed 20× inlet speed
+        _umag_cap = u_in * 20.0
+        _vol_min = np.percentile(mesh.cell_areas, 5) * 0.1  # robust floor
+
+        for ci in range(nc):
+            vol = max(mesh.cell_areas[ci], _vol_min)
+            D_ci = D_cell[ci]
+
+            # Green-Gauss gradient of P → velocity (robust for R)
+            gradP_x = 0.0; gradP_y = 0.0
+            for fi in range(3):
+                j  = mesh.nbr[ci, fi]
+                bc = mesh.bc_type[ci, fi]
+                if bc == BC_INTERIOR:
+                    Pf = 0.5 * (P[ci] + P[j])
+                elif bc == bc_outlet:
+                    Pf = 0.0
+                else:
+                    Pf = P[ci]
+                gradP_x += Pf * mesh.face_nx[ci, fi] * mesh.face_len[ci, fi]
+                gradP_y += Pf * mesh.face_ny[ci, fi] * mesh.face_len[ci, fi]
+            gradP_x /= vol; gradP_y /= vol
+            ug = -D_ci * gradP_x
+            vg = -D_ci * gradP_y
+            umag_gg = np.sqrt(ug * ug + vg * vg)
+
+            # Clamp degenerate cells
+            if umag_gg > _umag_cap and umag_gg > 0:
+                scale = _umag_cap / umag_gg
+                ug *= scale; vg *= scale
+                umag_gg = _umag_cap
+            _umag_gg[ci] = umag_gg
+
+            # Least-squares from face normals (for display)
+            a00 = a01 = a11 = r0 = r1 = 0.0
+            for fi in range(3):
+                nx = mesh.face_nx[ci, fi]
+                ny = mesh.face_ny[ci, fi]
+                Un = face_Un[ci, fi]
+                a00 += nx * nx; a01 += nx * ny; a11 += ny * ny
+                r0  += nx * Un; r1  += ny * Un
+            det = a00 * a11 - a01 * a01
+            if abs(det) > 1e-20:
+                u_cell[ci] = ( a11 * r0 - a01 * r1) / det
+                v_cell[ci] = (-a01 * r0 + a00 * r1) / det
+                # Also clamp lstsq result
+                umag_ls = np.sqrt(u_cell[ci]**2 + v_cell[ci]**2)
+                if umag_ls > _umag_cap and umag_ls > 0:
+                    scale = _umag_cap / umag_ls
+                    u_cell[ci] *= scale; v_cell[ci] *= scale
+            else:
+                # Degenerate triangle: use clamped Green-Gauss
+                u_cell[ci] = ug
+                v_cell[ci] = vg
+
+        # ── Update R(|U|) using Green-Gauss |U| (always non-zero) ──
+        R_new = np.empty(nc)
+        for ci in range(nc):
+            umag = max(_umag_gg[ci], 0.01)
+            R_new[ci] = _resistance(umag, rho_ref, r_h_arr[ci], mu, rho,
+                                    ln_eps_arr[ci], ln_tL_arr[ci],
+                                    ln_XSa_arr[ci], fc)
+
+        dR = np.abs(R_new - R_cell) / np.maximum(R_cell, 1e-10)
+        max_dR = dR.max()
+        R_cell = 0.7 * R_cell + 0.3 * R_new   # under-relax
+
+        if verbose and (it <= 3 or it % 5 == 0):
+            print(f"  Darcy iter {it:3d}: max(dR/R)={max_dR:.3e}, "
+                  f"|U|=[{_umag_gg.min():.3f}, {_umag_gg.max():.3f}]")
+
+        if max_dR < tol and it > 1:
+            if verbose:
+                print(f"  [OK] Darcy converged at iter {it}")
+            break
+
+    if verbose:
+        umag = np.sqrt(u_cell**2 + v_cell**2)
+        print(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
+
+    return u_cell, v_cell, P, face_Un
+
+
+def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
+                          rho, mu, T_in,
+                          u_in, edge_in, bc_inlet, bc_outlet,
+                          max_iter=2000, tol=1e-5,
+                          alpha_u=0.5, alpha_p=0.2,
+                          verbose=True, **_ignored):
+    """
+    Brinkman-Forchheimer SIMPLE solver for one fluid.
+
+    Returns: u_cell, v_cell, P_cell, face_Un
+    """
+    nc = mesh.n_cells
+    fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
+    ln_eps, ln_tL = np.log(eps / 2.0), np.log(t_mm / L_mm)  # single-channel porosity
+    # Length scale X: D_h for Diamond, L for Gyroid (same as Nu)
+    X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_mm
+    ln_XSa = np.log(X_mm / (1000.0 * _SA_MM))
+    rho_ref = air_density(T_in, P_atm)
+    mu_eff = mu / eps
+
+    # Inlet velocity direction
+    in_n = mesh.inlet_normal(edge_in)
+    u_in_x = u_in * in_n[0]
+    u_in_y = u_in * in_n[1]
+
+    # Initialize fields with small random noise to break symmetry
+    np.random.seed(hash((edge_in, int(u_in * 1000))) % 2**32)
+    u_cell = np.full(nc, u_in_x * 0.5) + np.random.randn(nc) * 0.001
+    v_cell = np.full(nc, u_in_y * 0.5) + np.random.randn(nc) * 0.001
+    P = np.zeros(nc)
+    face_flux = np.zeros((nc, 3))
+    d_coeff = np.full(nc, 1e-3)
+
+    # Initial face flux from uniform velocity
+    _compute_face_flux(face_flux, u_cell, v_cell, P, d_coeff,
+                       mesh.nbr, mesh.face_nx, mesh.face_ny, mesh.face_len,
+                       mesh.dCF, mesh.bc_type, nc, rho,
+                       bc_inlet, bc_outlet, u_in_x, u_in_y)
+
+    for it in range(1, max_iter + 1):
+        # 1. Solve x-momentum
+        Au, bu, aP_u = _assemble_momentum(
+            mesh, u_cell, v_cell, P, face_flux,
+            rho, mu_eff, rho_ref, r_h, mu,
+            ln_eps, ln_tL, ln_XSa, fc,
+            bc_inlet, bc_outlet, u_in_x, u_in_y,
+            alpha_u, 'u')
+        u_cell = spsolve(Au, bu)
+
+        # 2. Solve y-momentum
+        Av, bv, aP_v = _assemble_momentum(
+            mesh, u_cell, v_cell, P, face_flux,
+            rho, mu_eff, rho_ref, r_h, mu,
+            ln_eps, ln_tL, ln_XSa, fc,
+            bc_inlet, bc_outlet, u_in_x, u_in_y,
+            alpha_u, 'v')
+        v_cell = spsolve(Av, bv)
+
+        # d_coeff for pressure correction
+        aP_avg = 0.5 * (aP_u + aP_v)
+        aP_avg = np.maximum(aP_avg, 1e-10)
+        d_coeff = mesh.cell_areas / aP_avg
+
+        # 3. Update Rhie-Chow face flux with momentum solution
+        _compute_face_flux(face_flux, u_cell, v_cell, P, d_coeff,
+                           mesh.nbr, mesh.face_nx, mesh.face_ny, mesh.face_len,
+                           mesh.dCF, mesh.bc_type, nc, rho,
+                           bc_inlet, bc_outlet, u_in_x, u_in_y)
+
+        # 4. Solve pressure correction
+        App, bpp = _assemble_pressure_correction(
+            mesh, face_flux, d_coeff, rho, bc_inlet, bc_outlet)
+        Pp = spsolve(App, bpp)
+
+        # 5. Correct fields
+        _correct_fields(u_cell, v_cell, P, Pp, d_coeff, face_flux,
+                        mesh.nbr, mesh.face_nx, mesh.face_ny, mesh.face_len,
+                        mesh.dCF, mesh.bc_type, mesh.cell_areas, nc, rho, alpha_p,
+                        bc_inlet, bc_outlet)
+
+        # 6. Check convergence
+        res = _mass_residual(face_flux, nc)
+        if verbose and it % 100 == 0:
+            umag = np.sqrt(u_cell**2 + v_cell**2)
+            print(f"  SIMPLE iter {it:4d}: |R|={res:.3e}, "
+                  f"|U|=[{umag.min():.2f}, {umag.max():.2f}]")
+        if res < tol and it > 10:
+            if verbose:
+                print(f"  [OK] Converged at iter {it}, |R|={res:.3e}")
+            break
+
+    # Extract face-normal velocity for energy solver
+    face_Un = face_flux / (rho * np.maximum(
+        np.column_stack([mesh.face_len[:, i] for i in range(3)]), 1e-30))
+
+    if verbose:
+        umag = np.sqrt(u_cell**2 + v_cell**2)
+        print(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
+
+    return u_cell, v_cell, P, face_Un
+
+
+# ===================================================================
+#  LTNE Energy solver (face-velocity based, unchanged)
+# ===================================================================
+
+@njit(cache=True)
+def _energy_sweep(Ta, Tb, Ts,
+                  face_Un_A, face_Un_B,
+                  nbr, face_len, dCF, bc_type,
+                  cell_areas, n_cells,
+                  K_ffA_arr, K_ffB_arr, K_ss_arr,
+                  h_vA, h_vB,
+                  eps_f_arr, rho_cp_fA, rho_cp_fB,
+                  T_inA, T_inB,
+                  n_iters):
+    """Gauss-Seidel LTNE energy solve.
+
+    K_ffA_arr, K_ffB_arr, K_ss_arr, eps_f_arr: 1D per-cell arrays [n_cells].
+    h_vA, h_vB: 1D per-cell arrays [n_cells].
+    Uses harmonic-mean face conductivity at zone interfaces.
+    """
+    max_chg = 0.0
+
+    for _it in range(n_iters):
+        max_chg = 0.0
+
+        # ── Sweep Fluid A ──
+        for ci in range(n_cells):
+            vol = cell_areas[ci]
+            hvA = h_vA[ci]
+            Ka = K_ffA_arr[ci]
+            ef = eps_f_arr[ci]
+            aP = hvA * vol
+            rhs = hvA * vol * Ts[ci]
+
+            for fi in range(3):
+                j = nbr[ci, fi]
+                bc = bc_type[ci, fi]
+                d_inv = face_len[ci, fi] / max(dCF[ci, fi], 1e-10)
+
+                if bc == BC_INTERIOR:
+                    Kj = K_ffA_arr[j]
+                    Kf = 2.0 * Ka * Kj / (Ka + Kj + 1e-30)
+                    Df = Kf * d_inv
+                    Ff = ef * rho_cp_fA * face_Un_A[ci, fi] * face_len[ci, fi]
+                    aP  += Df + max(Ff, 0.0)
+                    rhs += (Df + max(-Ff, 0.0)) * Ta[j]
+                elif bc == BC_INLET_A:
+                    Df = Ka * d_inv
+                    Ff = ef * rho_cp_fA * face_Un_A[ci, fi] * face_len[ci, fi]
+                    aP  += Df + max(Ff, 0.0)
+                    rhs += (Df + max(-Ff, 0.0)) * T_inA
+                elif bc == BC_OUTLET_A:
+                    Ff = ef * rho_cp_fA * face_Un_A[ci, fi] * face_len[ci, fi]
+                    aP += max(Ff, 0.0)
+
+            if aP > 1e-30:
+                new_val = rhs / aP
+                chg = abs(new_val - Ta[ci])
+                if chg > max_chg: max_chg = chg
+                Ta[ci] = new_val
+
+        # ── Sweep Fluid B ──
+        for ci in range(n_cells):
+            vol = cell_areas[ci]
+            hvB = h_vB[ci]
+            Kb = K_ffB_arr[ci]
+            ef = eps_f_arr[ci]
+            aP = hvB * vol
+            rhs = hvB * vol * Ts[ci]
+
+            for fi in range(3):
+                j = nbr[ci, fi]
+                bc = bc_type[ci, fi]
+                d_inv = face_len[ci, fi] / max(dCF[ci, fi], 1e-10)
+
+                if bc == BC_INTERIOR:
+                    Kj = K_ffB_arr[j]
+                    Kf = 2.0 * Kb * Kj / (Kb + Kj + 1e-30)
+                    Df = Kf * d_inv
+                    Ff = ef * rho_cp_fB * face_Un_B[ci, fi] * face_len[ci, fi]
+                    aP  += Df + max(Ff, 0.0)
+                    rhs += (Df + max(-Ff, 0.0)) * Tb[j]
+                elif bc == BC_INLET_B:
+                    Df = Kb * d_inv
+                    Ff = ef * rho_cp_fB * face_Un_B[ci, fi] * face_len[ci, fi]
+                    aP  += Df + max(Ff, 0.0)
+                    rhs += (Df + max(-Ff, 0.0)) * T_inB
+                elif bc == BC_OUTLET_B:
+                    Ff = ef * rho_cp_fB * face_Un_B[ci, fi] * face_len[ci, fi]
+                    aP += max(Ff, 0.0)
+
+            if aP > 1e-30:
+                new_val = rhs / aP
+                chg = abs(new_val - Tb[ci])
+                if chg > max_chg: max_chg = chg
+                Tb[ci] = new_val
+
+        # ── Sweep Solid ──
+        for ci in range(n_cells):
+            vol = cell_areas[ci]
+            hvA = h_vA[ci]; hvB = h_vB[ci]
+            Ks = K_ss_arr[ci]
+            aP = (hvA + hvB) * vol
+            rhs = (hvA * Ta[ci] + hvB * Tb[ci]) * vol
+
+            for fi in range(3):
+                j = nbr[ci, fi]
+                bc = bc_type[ci, fi]
+                d_inv = face_len[ci, fi] / max(dCF[ci, fi], 1e-10)
+                if bc == BC_INTERIOR:
+                    Kj = K_ss_arr[j]
+                    Kf = 2.0 * Ks * Kj / (Ks + Kj + 1e-30)
+                    Ds = Kf * d_inv
+                    aP += Ds
+                    rhs += Ds * Ts[j]
+
+            if aP > 1e-30:
+                new_val = rhs / aP
+                chg = abs(new_val - Ts[ci])
+                if chg > max_chg: max_chg = chg
+                Ts[ci] = new_val
+
+        if max_chg < 1e-10:
+            break
+
+    return max_chg
+
+
+def solve_energy(mesh, face_Un_A, face_Un_B,
+                 K_ffA, K_ffB, K_ss, h_vA, h_vB,
+                 rho_cp_fA, rho_cp_fB, epsilon,
+                 T_inA, T_inB,
+                 max_iter=50000, tol=1e-6, progress_cb=None):
+    """LTNE energy solve on triangular mesh.
+
+    K_ffA, K_ffB, K_ss, epsilon: scalar or 1D array [n_cells].
+    h_vA, h_vB: 1D array [n_cells] (always per-cell).
+
+    Returns Ta, Tb, Ts.
+    """
+    nc = mesh.n_cells
+
+    # Promote scalars to per-cell arrays
+    def _to_1d(val):
+        if np.ndim(val) == 0:
+            return np.full(nc, float(val), dtype=np.float64)
+        return np.ascontiguousarray(np.asarray(val, dtype=np.float64))
+
+    K_ffA_arr = _to_1d(K_ffA)
+    K_ffB_arr = _to_1d(K_ffB)
+    K_ss_arr  = _to_1d(K_ss)
+    h_vA_arr  = _to_1d(h_vA)
+    h_vB_arr  = _to_1d(h_vB)
+
+    if np.ndim(epsilon) == 0:
+        eps_f_arr = np.full(nc, float(epsilon) / 2.0, dtype=np.float64)
+    else:
+        eps_f_arr = np.ascontiguousarray(
+            np.asarray(epsilon, dtype=np.float64) / 2.0)
+
+    Ta = np.full(nc, 0.5 * (T_inA + T_inB))
+    Tb = Ta.copy(); Ts = Ta.copy()
+
+    for ci in range(nc):
+        for fi in range(3):
+            if mesh.bc_type[ci, fi] == BC_INLET_A: Ta[ci] = T_inA
+            if mesh.bc_type[ci, fi] == BC_INLET_B: Tb[ci] = T_inB
+
+    chunk = 500
+    done = 0
+    while done < max_iter:
+        n = min(chunk, max_iter - done)
+        chg = _energy_sweep(
+            Ta, Tb, Ts, face_Un_A, face_Un_B,
+            mesh.nbr, mesh.face_len, mesh.dCF, mesh.bc_type,
+            mesh.cell_areas, nc,
+            K_ffA_arr, K_ffB_arr, K_ss_arr, h_vA_arr, h_vB_arr,
+            eps_f_arr, rho_cp_fA, rho_cp_fB, T_inA, T_inB, n)
+        done += n
+        if progress_cb: progress_cb(done, max_iter)
+        if chg < tol: break
+
+    return Ta, Tb, Ts
+
+
+# ===================================================================
+#  High-level wrapper
+# ===================================================================
+
+_RE_FLOOR = 400.0   # Nu/f correlations validated for Re >= 400
+
+
+def _compute_local_hv(umag, tpms_type, L_mm, t_mm, eps, A_0, D_h,
+                      rho, mu, T_in):
+    """Compute per-cell volumetric HTC from local velocity magnitude.
+
+    Re(x,y) → Nu(x,y) → h_sf(x,y) → h_v(x,y) = h_sf * A_0
+
+    Re is clamped to _RE_FLOOR (400) at the lower end so that the
+    Nu correlation is never extrapolated below its validated range.
+    In low-velocity regions this gives a *conservative* (upper-bound)
+    estimate of h_v, which is physically safer than extrapolating
+    the power-law to near-zero Re.
+    """
+    r_h = D_h / 2.0
+    rho_ref = air_density(T_in, P_atm)
+    k_f = air_conductivity(T_in)
+    D_h_mm = D_h * 1000.0
+    nc = len(umag)
+    h_v = np.empty(nc)
+    n_clamped = 0
+
+    for ci in range(nc):
+        u_local = max(umag[ci], 0.01)
+        Re_local = rho_ref * u_local * r_h / mu
+        if Re_local < _RE_FLOOR:
+            Re_local = _RE_FLOOR
+            n_clamped += 1
+        Nu = nu_from_Re(tpms_type, Re_local, eps, L_mm, D_h_mm)
+        h_sf = Nu * k_f / D_h
+        h_v[ci] = h_sf * A_0
+
+    if n_clamped > 0:
+        import warnings
+        pct = n_clamped / nc * 100
+        warnings.warn(
+            f"{pct:.0f}% of cells have Re < {_RE_FLOOR:.0f} "
+            f"(Nu clamped to Re={_RE_FLOOR:.0f} value).",
+            UserWarning, stacklevel=2)
+
+    return h_v
+
+
+def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
+                         rho_A, mu_A, rho_B, mu_B,
+                         T_inA, T_inB, u_A, u_B,
+                         edge_inA, edge_inB,
+                         K_ffA, K_ffB, K_ss, h_vA, h_vB, cp_f,
+                         A_0=None,
+                         max_iter_energy=50000,
+                         progress_cb=None, verbose=True,
+                         zone_config=None, **_ignored):
+    """Complete solve: Darcy velocity (both fluids) + LTNE energy.
+
+    If A_0 is provided, h_vA/h_vB are recomputed per-cell from the
+    local velocity field (spatially varying h_v). Otherwise the scalar
+    h_vA/h_vB passed by the caller are broadcast to all cells.
+
+    If zone_config is provided, per-cell porous parameters are built
+    from zone definitions (overrides scalar eps, K_ff, K_ss, h_v, etc.).
+    """
+    nc = mesh.n_cells
+    r_h = D_h / 2.0
+
+    # Build per-cell zone arrays if zone_config is provided
+    darcy_kw_A = {}
+    darcy_kw_B = {}
+    energy_kw = {}
+    if zone_config is not None:
+        # Determine domain height from mesh
+        ymin = mesh.cell_centers[:, 1].min()
+        ymax = mesh.cell_centers[:, 1].max()
+        H_mesh = ymax - ymin
+        if H_mesh < 1e-12:
+            H_mesh = 1.0  # fallback
+
+        za = zone_config.build_unstructured_arrays(
+            mesh.cell_centers[:, 1] - ymin, nc, H_mesh)
+
+        # Darcy solver: per-cell porous resistance params
+        fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
+        ln_eps_arr = np.log(za['eps_arr'] / 2.0)  # single-channel porosity
+        r_h_arr = za['r_h_arr']
+        ln_tL_arr = np.empty(nc, dtype=np.float64)
+        ln_XSa_arr = np.empty(nc, dtype=np.float64)
+
+        for ci in range(nc):
+            zi = za['zone_id'][ci]
+            zp = za['zone_params'][zi]
+            ln_tL_arr[ci] = np.log(zp['t_mm'] / zp['L_mm'])
+            X_mm = 2.0 * r_h_arr[ci] * 1000.0 if tpms_type == 'Diamond' else zp['L_mm']
+            ln_XSa_arr[ci] = np.log(X_mm / (1000.0 * _SA_MM))
+
+        darcy_kw_A = dict(r_h_arr=r_h_arr, ln_eps_arr=ln_eps_arr,
+                          ln_tL_arr=ln_tL_arr, ln_XSa_arr=ln_XSa_arr)
+        darcy_kw_B = dict(darcy_kw_A)  # shallow copy to avoid aliasing
+
+        energy_kw = dict(
+            K_ffA=za['K_ffA_arr'], K_ffB=za['K_ffB_arr'],
+            K_ss=za['K_ss_arr'], epsilon=za['eps_arr'],
+        )
+
+    if verbose: print("=== Darcy solver: Fluid A ===")
+    uA, vA, PA, fUnA = solve_velocity_darcy(
+        mesh, tpms_type, L_mm, t_mm, eps, r_h,
+        rho_A, mu_A, T_inA, u_A, edge_inA,
+        BC_INLET_A, BC_OUTLET_A, verbose=verbose, **darcy_kw_A)
+
+    if verbose: print("=== Darcy solver: Fluid B ===")
+    uB, vB, PB, fUnB = solve_velocity_darcy(
+        mesh, tpms_type, L_mm, t_mm, eps, r_h,
+        rho_B, mu_B, T_inB, u_B, edge_inB,
+        BC_INLET_B, BC_OUTLET_B, verbose=verbose, **darcy_kw_B)
+
+    # ── Compute spatially-varying h_v from local velocity ──
+    if zone_config is not None:
+        # Per-cell h_v from zone properties (already in zone arrays)
+        h_vA_arr = za['h_vA_arr'].copy()
+        h_vB_arr = za['h_vB_arr'].copy()
+    elif A_0 is not None:
+        umag_A = np.sqrt(uA**2 + vA**2)
+        umag_B = np.sqrt(uB**2 + vB**2)
+        h_vA_arr = _compute_local_hv(umag_A, tpms_type, L_mm, t_mm,
+                                     eps, A_0, D_h, rho_A, mu_A, T_inA)
+        h_vB_arr = _compute_local_hv(umag_B, tpms_type, L_mm, t_mm,
+                                     eps, A_0, D_h, rho_B, mu_B, T_inB)
+    else:
+        h_vA_arr = np.full(nc, h_vA)
+        h_vB_arr = np.full(nc, h_vB)
+
+    if verbose:
+        print(f"  h_vA: [{h_vA_arr.min():.0f}, {h_vA_arr.max():.0f}] W/(m3.K)")
+        print(f"  h_vB: [{h_vB_arr.min():.0f}, {h_vB_arr.max():.0f}] W/(m3.K)")
+
+    # Energy solver params
+    e_K_ffA = energy_kw.get('K_ffA', K_ffA)
+    e_K_ffB = energy_kw.get('K_ffB', K_ffB)
+    e_K_ss  = energy_kw.get('K_ss', K_ss)
+    e_eps   = energy_kw.get('epsilon', eps)
+
+    if verbose: print("=== Solving energy (LTNE) ===")
+    Ta, Tb, Ts = solve_energy(
+        mesh, fUnA, fUnB,
+        e_K_ffA, e_K_ffB, e_K_ss, h_vA_arr, h_vB_arr,
+        rho_A * cp_f, rho_B * cp_f, e_eps,
+        T_inA, T_inB,
+        max_iter=max_iter_energy, progress_cb=progress_cb)
+
+    if verbose:
+        print(f"  Ta: [{Ta.min():.1f}, {Ta.max():.1f}] K")
+        print(f"  Tb: [{Tb.min():.1f}, {Tb.max():.1f}] K")
+        print(f"  Ts: [{Ts.min():.1f}, {Ts.max():.1f}] K")
+
+    return {'u_A': uA, 'v_A': vA, 'P_A': PA, 'face_Un_A': fUnA,
+            'u_B': uB, 'v_B': vB, 'P_B': PB, 'face_Un_B': fUnB,
+            'Ta': Ta, 'Tb': Tb, 'Ts': Ts}

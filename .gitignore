@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.serena/
+
+# Model artifacts (regeneratable by train_surrogate.py)
+models/*.joblib
+
+# Report figures (regeneratable)
+reports/figs/
+
+# Raw CFD data / spreadsheets
+data/
+*.xlsx
+*.xlsm
+
+# Legacy manual snapshots (replaced by git history from now on)
+thermoNas_*_backup/
+
+# Binary assets
+Pic/
+Picture.zip
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.npz
+
+# Run logs and benchmark result snapshots (regeneratable)
+*.log
+thermoNas/benchmark_a_*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
