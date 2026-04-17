@@ -40,3 +40,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Claude Code superpowers / agent skill files (personal workspace, not project content)
+docs/superpowers/
