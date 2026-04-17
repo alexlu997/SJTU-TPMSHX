@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from solvers.simple_solver import SIMPLESolver
 from solvers.solve_full import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
+from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
 
 
 def run_calculation_inner(window):
@@ -222,8 +223,23 @@ def _build_fields(window, cfg):
     _aohi = cfgA.get('out_ctr', cfgA['in_ctr']) + cfgA.get('out_w', cfgA['in_w']) / 2
     if _aolo > H * 0.001: _y_breaks.add(_aolo)
     if _aohi < H * 0.999: _y_breaks.add(_aohi)
-    energy_dx = _aligned_grid(N_x, L, list(_x_breaks))
-    energy_dy = _aligned_grid(N_y, H, list(_y_breaks))
+
+    # Use 4-wall Brinkman-BL refined grid when inlet/outlet are full-width (no
+    # break points). Otherwise, fall back to aligned uniform grid since
+    # refinement would conflict with inlet/outlet boundary alignment.
+    _wall_refine_gui = (len(_x_breaks) == 0 and len(_y_breaks) == 0)
+    if _wall_refine_gui:
+        from solvers.df_projection import build_master_refined_grid
+        try:
+            energy_dx, energy_dy, N_x, N_y = build_master_refined_grid(
+                L, H, N_x, N_y, n_refine=8, first_cell=0.02e-3, growth=1.8)
+            print(f"[run_calculation] Wall-refined grid: {N_x}×{N_y} cells (4-wall BL resolved)")
+        except ValueError:
+            energy_dx = _aligned_grid(N_x, L, list(_x_breaks))
+            energy_dy = _aligned_grid(N_y, H, list(_y_breaks))
+    else:
+        energy_dx = _aligned_grid(N_x, L, list(_x_breaks))
+        energy_dy = _aligned_grid(N_y, H, list(_y_breaks))
 
     # Build the _run_simple closure here so it captures all needed locals.
     # It is returned in fields and called by Phase 3.
@@ -267,7 +283,8 @@ def _build_fields(window, cfg):
                              eps, r_h, rho_simple, mu_f, T_in_f,
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
-                             zone_arrays=z_arr)
+                             zone_arrays=z_arr,
+                             wall_refine=False)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = _aligned_grid(N_x, L, list(_x_breaks))
@@ -277,10 +294,27 @@ def _build_fields(window, cfg):
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_config=zc_simple,
-                             zone_arrays=z_arr if zc_simple is None else None)
+                             zone_arrays=z_arr if zc_simple is None else None,
+                             wall_refine=False)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
+        # ── Design-specific K/c_F override (2026-04-17) ──
+        # zone_config path above already populates per-row K/c_F via
+        # predict_K_cF_vec inside SIMPLE.__init__. But zone_arrays path and
+        # sigmoid-continuous za don't — SIMPLE falls back to uniform (L0, t0).
+        # Here we project the actual design geometry onto SIMPLE's streamwise
+        # axis and overwrite _K_arr/_cF_arr so dP reflects the heterogeneous
+        # design. See vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md §11.
+        if za is not None and zc_simple is None:
+            Ny_sim = s._K_arr.shape[0]
+            fluid = 'A' if is_x else 'B'
+            if 'L_field' in za and 't_field' in za:
+                override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
+                                     None, za['L_field'], za['t_field'], fluid)
+            elif za.get('grid_cells'):
+                override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
+                                     za['grid_cells'], None, None, fluid)
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         _tol = 5e-4 if _has_partial else 1e-5
         conv, n_it = s.solve(max_iter=5000, tol=_tol, verbose=False)
@@ -638,17 +672,11 @@ def _run_solvers(window, cfg, fields):
         Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
     Q_total = 2.0 * Q_200 - Q_100  # Richardson extrapolation
 
-    # ΔP: f-Re for zones, SIMPLE for baseline
-    if za is not None and 'L_field' in za and 'A_0_arr' in za:
-        from solvers.sigmoid_field import compute_dP_continuous
-        D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
-        tpms_type = window.combo_tpms.currentText()
-        dP_A, dP_B = compute_dP_continuous(
-            za['L_field'], za['t_field'], za['eps_arr'], D_h_arr,
-            u_A, u_B, window._rho_A, window._rho_B,
-            window._mu_A, window._mu_B,
-            tpms_type, L, H, N_x, N_y,
-            T_inA, T_inB)
+    # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
+    # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
+    # overrode dP with compute_dP_continuous (legacy f-Re) when sigmoid fields
+    # were present — that bypassed SIMPLE's D-F closure and is now removed.
+    # Production dP path is strictly SIMPLE (2026-04-17).
 
     # Smooth pressure and velocity fields for display if partial-width
     if _has_partial_A or _has_partial_B:

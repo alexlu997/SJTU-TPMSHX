@@ -30,6 +30,35 @@ from solvers.solve_full import solve_full_domain
 from solvers.simple_solver import SIMPLESolver
 from solvers.tpms_calc import (compute as tpms_compute, geometry as tpms_geometry,
                        air_density, air_viscosity, adaptive_grid)
+from solvers.df_projection import (override_simple_K_cF as _override_simple_K_cF,
+                                    extract_dP_from_simple as _extract_dP_from_simple,
+                                    project_cells_to_streamwise_K_cF as _project_cells_to_streamwise_K_cF,
+                                    project_fields_to_streamwise_K_cF as _project_fields_to_streamwise_K_cF,
+                                    build_master_refined_grid as _build_master_refined_grid)
+
+
+def _resolve_refined_grid(cfg):
+    """Build master refined grid (both real x and real y walls) for the
+    current optimizer cfg. Returns (dx_refined, dy_refined, Nx_r, Ny_r).
+
+    Disabled via cfg['wall_refine']=False (returns uniform grid with original Nx, Ny).
+    """
+    L = cfg['L_domain']; H = cfg['H_domain']
+    Nx_user, Ny_user = _resolve_grid(cfg)
+    if not cfg.get('wall_refine', True):
+        dx = np.full(Nx_user, L / Nx_user, dtype=np.float64)
+        dy = np.full(Ny_user, H / Ny_user, dtype=np.float64)
+        return dx, dy, Nx_user, Ny_user
+    n_refine = cfg.get('n_wall_refine', 8)
+    first_cell = cfg.get('wall_first_cell', 0.02e-3)
+    try:
+        return _build_master_refined_grid(L, H, Nx_user, Ny_user,
+                                           n_refine=n_refine, first_cell=first_cell)
+    except ValueError:
+        # Domain too small; fall back to uniform
+        dx = np.full(Nx_user, L / Nx_user, dtype=np.float64)
+        dy = np.full(Ny_user, H / Ny_user, dtype=np.float64)
+        return dx, dy, Nx_user, Ny_user
 
 # NOTE: batch_runner.run_batch is NOT used here because its case-dict schema
 # (L_cell_mm, t_wall_mm, u_air, T_Ain_C, …) is incompatible with the optimizer's
@@ -177,8 +206,11 @@ def build_grid_cells(x, L0=6.0, t0=0.3, y_trans_inlet=0.2, y_trans_outlet=0.2,
     return cells
 
 
-# ── SIMPLE velocity cache (multi-grid) ───────────────────────
-_simple_cache = {}  # {cache_key: {ucA, vcA, ucB, vcB, rho_A, mu_A, ...}}
+# ── SIMPLE cache (multi-grid) ───────────────────────
+# Stores SIMPLE solver instances (sA, sB) so we can extract both velocity AND
+# pressure from the same object. Cache key includes grid geometry hash to
+# ensure design-specific runs (non-uniform zones) don't reuse stale results.
+_simple_cache = {}  # {cache_key: {sA, sB, ucA, vcA, ucB, vcB, rho_A, mu_A, ...}}
 
 
 def _clear_simple_cache():
@@ -187,13 +219,24 @@ def _clear_simple_cache():
     _simple_cache = {}
 
 
-def _simple_var_density(cfg, rho_A_field, rho_B_field):
+# ── Streamwise projection: moved to solvers/df_projection.py ──
+# Helpers imported at top of file: _project_cells_to_streamwise_K_cF,
+# _project_fields_to_streamwise_K_cF, _extract_dP_from_simple, _override_simple_K_cF
+
+
+def _simple_var_density(cfg, rho_A_field, rho_B_field,
+                         grid_cells=None, L_field=None, t_field=None,
+                         refined_grid=None):
     """Run SIMPLE for both fluids with given 2D rho fields (per-design, no cache).
-    Returns ucA, vcA, ucB, vcB in real coordinates.
-    rho_A_field, rho_B_field have shape (Nx, Ny) in real coords.
+
+    refined_grid : (dx_refined, dy_refined, Nx_r, Ny_r). When supplied, SIMPLE
+    runs on the 4-wall refined grid. rho_A_field and rho_B_field must also
+    be on this grid.
     """
     L = cfg['L_domain']; H = cfg['H_domain']
-    Nx, Ny = _resolve_grid(cfg)
+    if refined_grid is None:
+        refined_grid = _resolve_refined_grid(cfg)
+    dx_refined, dy_refined, Nx, Ny = refined_grid
     g = tpms_geometry(cfg['tpms_type'], cfg['L0'], cfg['t0'], cfg['k_s'])
     eps0 = g['epsilon']; r_h0 = g['D_h'] / 2.0
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
@@ -206,7 +249,11 @@ def _simple_var_density(cfg, rho_A_field, rho_B_field):
                       eps0, r_h0, rho_A_simple, mu_A, T_inA,
                       cfg.get('pipe_lo_A', 0), cfg.get('pipe_hi_A', H), u_A,
                       outlet_lo=cfg.get('outlet_lo_A', 0),
-                      outlet_hi=cfg.get('outlet_hi_A', H))
+                      outlet_hi=cfg.get('outlet_hi_A', H),
+                      wall_refine=False)
+    sA.dx_arr = dy_refined.copy()
+    sA.dy_arr = dx_refined.copy()
+    _override_simple_K_cF(sA, cfg['tpms_type'], cfg['k_s'], Nx, grid_cells, L_field, t_field, 'A')
     sA.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mA = sA.get_wall_masked_velocity()
     ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T  # (Nx, Ny)
@@ -218,21 +265,49 @@ def _simple_var_density(cfg, rho_A_field, rho_B_field):
                       eps0, r_h0, rho_B_simple, mu_B, T_inB,
                       cfg.get('pipe_lo_B', 0), cfg.get('pipe_hi_B', L), u_B,
                       outlet_lo=cfg.get('outlet_lo_B', 0),
-                      outlet_hi=cfg.get('outlet_hi_B', L))
+                      outlet_hi=cfg.get('outlet_hi_B', L),
+                      wall_refine=False)
+    sB.dx_arr = dx_refined.copy()
+    sB.dy_arr = dy_refined.copy()
+    _override_simple_K_cF(sB, cfg['tpms_type'], cfg['k_s'], Ny, grid_cells, L_field, t_field, 'B')
     sB.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mB = sB.get_wall_masked_velocity()
     vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]  # un-flip
     ucB = np.zeros((Nx, Ny))
 
-    return ucA, vcA, ucB, vcB
+    return sA, sB, ucA, vcA, ucB, vcB
 
 
-def _compute_simple(cfg):
-    """Compute SIMPLE velocity fields. Results cached by config key (supports multiple grids)."""
+def _compute_simple(cfg, grid_cells=None, L_field=None, t_field=None,
+                    refined_grid=None):
+    """Compute SIMPLE fields (velocity + pressure) for A and B fluids.
+
+    refined_grid : tuple (dx_refined, dy_refined, Nx_r, Ny_r) or None.
+        When given, SIMPLE runs at refined Nx_r × Ny_r with non-uniform dx/dy
+        so that the Brinkman BL at all four domain walls is resolved. Fluid A
+        and B each get the correct mapping (cross-stream vs streamwise).
+        When None, falls back to uniform grid from _resolve_grid(cfg).
+
+    Returns dict with keys: sA, sB, ucA, vcA, ucB, vcB, rho_A, mu_A, rho_B, mu_B,
+    plus Nx_r, Ny_r, dx_refined, dy_refined for downstream consumers.
+    """
     L = cfg['L_domain']; H = cfg['H_domain']
-    Nx, Ny = _resolve_grid(cfg)
+    if refined_grid is None:
+        refined_grid = _resolve_refined_grid(cfg)
+    dx_refined, dy_refined, Nx, Ny = refined_grid
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
+
+    # Design hash for cache key (grid_cells or field stats)
+    if grid_cells is not None:
+        design_key = tuple((gc['x0'], gc['x1'], gc['y0'], gc['y1'],
+                            gc['L'], gc['t']) for gc in grid_cells)
+    elif L_field is not None:
+        design_key = ('field', L_field.shape, float(L_field.mean()),
+                      float(t_field.mean()),
+                      float(L_field.std()), float(t_field.std()))
+    else:
+        design_key = ('uniform',)
 
     cache_key = (cfg['tpms_type'], cfg['L0'], cfg['t0'],
                  cfg['L_domain'], cfg['H_domain'],
@@ -240,7 +315,8 @@ def _compute_simple(cfg):
                  cfg.get('pipe_lo_A', 0.0), cfg.get('pipe_hi_A', H),
                  cfg.get('pipe_lo_B', 0.0), cfg.get('pipe_hi_B', L),
                  cfg.get('outlet_lo_A'), cfg.get('outlet_hi_A'),
-                 cfg.get('outlet_lo_B'), cfg.get('outlet_hi_B'))
+                 cfg.get('outlet_lo_B'), cfg.get('outlet_hi_B'),
+                 design_key)
 
     if cache_key in _simple_cache:
         return _simple_cache[cache_key]
@@ -250,35 +326,48 @@ def _compute_simple(cfg):
     rho_A = air_density(T_inA, 101325.0); mu_A = air_viscosity(T_inA)
     rho_B = air_density(T_inB, 101325.0); mu_B = air_viscosity(T_inB)
 
-    # Fluid A: flows +x, SIMPLE axis is x (W=H, H=L, Ny_sim=Nx)
+    # Fluid A: flows +x, SIMPLE internal x-axis = real y, y-axis = real x
+    # SIMPLE's dx_arr (cross, Nx_sim=Ny) = dy_refined; dy_arr (stream, Ny_sim=Nx) = dx_refined
     pipe_lo_A = cfg.get('pipe_lo_A', 0.0)
     pipe_hi_A = cfg.get('pipe_hi_A', H)
     out_lo_A = cfg.get('outlet_lo_A', pipe_lo_A)
     out_hi_A = cfg.get('outlet_hi_A', pipe_hi_A)
     sA = SIMPLESolver(H, L, Ny, Nx, cfg['tpms_type'], cfg['L0'], cfg['t0'],
                       eps0, r_h0, rho_A, mu_A, T_inA, pipe_lo_A, pipe_hi_A, u_A,
-                      outlet_lo=out_lo_A, outlet_hi=out_hi_A)
+                      outlet_lo=out_lo_A, outlet_hi=out_hi_A,
+                      wall_refine=False)
+    sA.dx_arr = dy_refined.copy()
+    sA.dy_arr = dx_refined.copy()
+    _override_simple_K_cF(sA, cfg['tpms_type'], cfg['k_s'], Nx, grid_cells, L_field, t_field, 'A')
     sA.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mA = sA.get_wall_masked_velocity()
-    ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T
+    ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T  # (Nx, Ny)
     vcA = np.zeros((Nx, Ny))
 
-    # Fluid B: flows -y, SIMPLE axis is y (W=L, H=H)
+    # Fluid B: flows -y, SIMPLE internal x-axis = real x, y-axis = real y
+    # SIMPLE's dx_arr = dx_refined (cross for B); dy_arr = dy_refined (stream for B)
     pipe_lo_B = cfg.get('pipe_lo_B', 0.0)
     pipe_hi_B = cfg.get('pipe_hi_B', L)
     out_lo_B = cfg.get('outlet_lo_B', pipe_lo_B)
     out_hi_B = cfg.get('outlet_hi_B', pipe_hi_B)
     sB = SIMPLESolver(L, H, Nx, Ny, cfg['tpms_type'], cfg['L0'], cfg['t0'],
                       eps0, r_h0, rho_B, mu_B, T_inB, pipe_lo_B, pipe_hi_B, u_B,
-                      outlet_lo=out_lo_B, outlet_hi=out_hi_B)
+                      outlet_lo=out_lo_B, outlet_hi=out_hi_B,
+                      wall_refine=False)
+    sB.dx_arr = dx_refined.copy()
+    sB.dy_arr = dy_refined.copy()
+    _override_simple_K_cF(sB, cfg['tpms_type'], cfg['k_s'], Ny, grid_cells, L_field, t_field, 'B')
     sB.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mB = sB.get_wall_masked_velocity()
-    vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]
+    vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]  # (Nx, Ny)
     ucB = np.zeros((Nx, Ny))
 
     entry = {
+        'sA': sA, 'sB': sB,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
         'rho_A': rho_A, 'mu_A': mu_A, 'rho_B': rho_B, 'mu_B': mu_B,
+        'Nx_r': Nx, 'Ny_r': Ny,
+        'dx_refined': dx_refined, 'dy_refined': dy_refined,
     }
     _simple_cache[cache_key] = entry
     return entry
@@ -305,13 +394,18 @@ def evaluate(x, config=None):
     cfg = {**DEFAULT_CONFIG, **(config or {})}
 
     L = cfg['L_domain']; H = cfg['H_domain']
-    Nx, Ny = _resolve_grid(cfg)
-    cfg['Nx'] = Nx; cfg['Ny'] = Ny  # ensure downstream sees resolved values
+    # Master refined grid (4-wall BL resolution). Nx, Ny below are the refined
+    # dimensions used consistently by za arrays, SIMPLE, and solve_full_domain.
+    refined_grid = _resolve_refined_grid(cfg)
+    dx_refined, dy_refined, Nx, Ny = refined_grid
+    cfg['Nx'] = Nx; cfg['Ny'] = Ny  # downstream sees refined values
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     cp_f = cfg['cp_f']
 
-    # 1-2. Build property arrays (continuous or discrete)
+    # 1-2. Build property arrays at refined grid (continuous or discrete)
+    grid_cells = None
+    L_field_design = None; t_field_design = None
     if cfg.get('use_continuous', True):
         from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
         lut = get_geometry_lut(cfg['tpms_type'])
@@ -327,7 +421,9 @@ def evaluate(x, config=None):
             sigmoid_width_x=cfg.get('sigmoid_width_x', 0.05),
             fix_L=cfg.get('fix_L', False),
             fix_t=cfg.get('fix_t', False),
-            opt_axis=cfg.get('opt_axis', 'y'))
+            opt_axis=cfg.get('opt_axis', 'y'),
+            dx_arr=dx_refined, dy_arr=dy_refined)
+        L_field_design = za['L_field']; t_field_design = za['t_field']
     else:
         grid_cells = build_grid_cells(x, cfg['L0'], cfg['t0'],
                                       cfg.get('y_trans_inlet', cfg.get('y_trans', 0.2)),
@@ -336,14 +432,18 @@ def evaluate(x, config=None):
         za = ZoneConfig.build_grid_arrays(
             Nx, Ny, L, H, grid_cells,
             cfg['tpms_type'], cfg['k_s'],
-            u_A, u_B, T_inA, T_inB)
+            u_A, u_B, T_inA, T_inB,
+            dx_arr=dx_refined, dy_arr=dy_refined)
 
-    # 3. SIMPLE velocity fields (CACHED — computed once per optimization run)
-    sc = _compute_simple(cfg)
+    # 3. SIMPLE velocity + pressure fields (design-specific via zone projection)
+    sc = _compute_simple(cfg, grid_cells=grid_cells,
+                         L_field=L_field_design, t_field=t_field_design,
+                         refined_grid=refined_grid)
     ucA = sc['ucA']; vcA = sc['vcA']
     ucB = sc['ucB']; vcB = sc['vcB']
     rho_A = sc['rho_A']; mu_A = sc['mu_A']
     rho_B = sc['rho_B']; mu_B = sc['mu_B']
+    sA_final = sc['sA']; sB_final = sc['sB']  # for dP extraction
 
     # 4. Energy solve with per-cell rho(T)*cp(T) coupling
     #    + variable density SIMPLE re-run after first energy iteration
@@ -363,7 +463,8 @@ def evaluate(x, config=None):
             za['eps_arr'], ucA, vcA, ucB, vcB,
             cfg['dir_A'], cfg['dir_B'],
             tol=0.5, max_iter=5000,
-            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts)
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            dx_arr=dx_refined, dy_arr=dy_refined)
         # Update rho fields from temperature
         rho_A_new = air_density(Ta, P_in)
         rho_B_new = air_density(Tb, P_in)
@@ -376,46 +477,25 @@ def evaluate(x, config=None):
         rcp_A = 0.7 * rho_A_new * air_cp(Ta) + 0.3 * rcp_A
         rcp_B = 0.7 * rho_B_new * air_cp(Tb) + 0.3 * rcp_B
         # Re-run SIMPLE with variable rho field (per-design)
-        ucA, vcA, ucB, vcB = _simple_var_density(cfg, rho_A_field, rho_B_field)
+        sA_final, sB_final, ucA, vcA, ucB, vcB = _simple_var_density(
+            cfg, rho_A_field, rho_B_field,
+            grid_cells=grid_cells, L_field=L_field_design, t_field=t_field_design,
+            refined_grid=refined_grid)
 
     # 5. Compute objectives (non-uniform cell areas)
-    from solvers.simple_solver import _aligned_grid
-    _dx_e = _aligned_grid(Nx, L, [])  # uniform for optimizer coarse grid
-    _dy_e = _aligned_grid(Ny, H, [])
-    _cell_area = _dx_e[:, None] * _dy_e[None, :]
+    # Cell area for integrals uses the same refined grid as za / SIMPLE
+    _cell_area = dx_refined[:, None] * dy_refined[None, :]
 
     Q_total = np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area)
 
-    # Pressure drop
-    if cfg.get('use_continuous', True) and 'L_field' in za:
-        from solvers.sigmoid_field import compute_dP_continuous
-        D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
-        dP_A_c, dP_B_c = compute_dP_continuous(
-            za['L_field'], za['t_field'], za['eps_arr'], D_h_arr,
-            u_A, u_B, rho_A, rho_B, mu_A, mu_B,
-            cfg['tpms_type'], L, H, Nx, Ny, T_inA, T_inB)
-        dP_total = dP_A_c + dP_B_c
-    else:
-        from solvers.tpms_calc import friction_factor, P_atm
-        rho_ref_A = air_density(T_inA, P_atm)
-        rho_ref_B = air_density(T_inB, P_atm)
-        dP_A_total = 0.0; dP_B_total = 0.0
-        _geom_cache = {}
-        for gc in grid_cells:
-            _gkey = (gc['L'], gc['t'])
-            if _gkey not in _geom_cache:
-                _geom_cache[_gkey] = tpms_geometry(cfg['tpms_type'], gc['L'], gc['t'], cfg['k_s'])
-            g_loc = _geom_cache[_gkey]
-            eps_loc = g_loc['epsilon']; r_h_loc = g_loc['D_h'] / 2.0
-            zone_Lx = (gc['x1'] - gc['x0']) * L
-            zone_Ly = (gc['y1'] - gc['y0']) * H
-            Re_A = max(rho_ref_A * u_A * r_h_loc / mu_A, 10.0)
-            f_A = friction_factor(cfg['tpms_type'], Re_A, eps_loc, gc['t'], gc['L'])
-            dP_A_total += f_A * rho_A * u_A**2 / (2.0 * r_h_loc) * zone_Lx
-            Re_B = max(rho_ref_B * u_B * r_h_loc / mu_B, 10.0)
-            f_B = friction_factor(cfg['tpms_type'], Re_B, eps_loc, gc['t'], gc['L'])
-            dP_B_total += f_B * rho_B * u_B**2 / (2.0 * r_h_loc) * zone_Ly
-        dP_total = dP_A_total + dP_B_total
+    # Pressure drop: extract from SIMPLE P fields (D-F physics via SurrogateV3)
+    # Legacy f-Re / compute_dP_continuous paths are DEPRECATED — they bypassed
+    # SIMPLE's D-F source term and the grid path had a 7x double-count bug.
+    # See vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md for principle:
+    # production dP path is strictly SIMPLE, never analytical.
+    dP_A = _extract_dP_from_simple(sA_final)
+    dP_B = _extract_dP_from_simple(sB_final)
+    dP_total = dP_A + dP_B
 
     # Mass: sum of (1-eps) * rho_s * cell_volume over all cells
     mass = np.sum((1.0 - za['eps_arr']) * cfg['rho_s'] * _cell_area)
@@ -433,20 +513,27 @@ def evaluate_richardson(x, config=None):
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
     L = cfg['L_domain']; H = cfg['H_domain']
-    Nx_c, Ny_c = _resolve_grid(cfg)
-    cfg['Nx'] = Nx_c; cfg['Ny'] = Ny_c
-    Nx_f = Nx_c * 2;  Ny_f = Ny_c * 2
+    Nx_c_user, Ny_c_user = _resolve_grid(cfg)
+    cfg['Nx'] = Nx_c_user; cfg['Ny'] = Ny_c_user
+    Nx_f_user = Nx_c_user * 2;  Ny_f_user = Ny_c_user * 2
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     cp_f = cfg['cp_f']
     P_in = 101325.0
+
+    # Master refined grids for coarse and fine levels
+    refined_c = _resolve_refined_grid(cfg)
+    dx_c, dy_c, Nx_c, Ny_c = refined_c
+    cfg_f_grid = {**cfg, 'Nx': Nx_f_user, 'Ny': Ny_f_user}
+    refined_f = _resolve_refined_grid(cfg_f_grid)
+    dx_f, dy_f, Nx_f, Ny_f = refined_f
 
     # Build arrays helper
     from solvers.tpms_calc import air_cp
     _y_trans_in = cfg.get('y_trans_inlet', cfg.get('y_trans', 0.2))
     _y_trans_out = cfg.get('y_trans_outlet', cfg.get('y_trans', 0.2))
 
-    def _build_za(nx, ny):
+    def _build_za(nx, ny, dx, dy):
         if cfg.get('use_continuous', True):
             from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
             lut = get_geometry_lut(cfg['tpms_type'])
@@ -458,17 +545,29 @@ def evaluate_richardson(x, config=None):
                 sigmoid_width_x=cfg.get('sigmoid_width_x', 0.05),
                 fix_L=cfg.get('fix_L', False),
                 fix_t=cfg.get('fix_t', False),
-                opt_axis=cfg.get('opt_axis', 'y'))
+                opt_axis=cfg.get('opt_axis', 'y'),
+                dx_arr=dx, dy_arr=dy)
         else:
             gc = build_grid_cells(x, cfg['L0'], cfg['t0'],
                                   _y_trans_in, _y_trans_out, cfg.get('opt_axis', 'y'))
             return ZoneConfig.build_grid_arrays(
                 nx, ny, L, H, gc, cfg['tpms_type'], cfg['k_s'],
-                u_A, u_B, T_inA, T_inB)
+                u_A, u_B, T_inA, T_inB,
+                dx_arr=dx, dy_arr=dy)
+
+    # ── Determine design-specific inputs for SIMPLE ──
+    grid_cells_r = None; L_field_r = None; t_field_r = None
+    if not cfg.get('use_continuous', True):
+        grid_cells_r = build_grid_cells(x, cfg['L0'], cfg['t0'],
+                                        _y_trans_in, _y_trans_out, cfg.get('opt_axis', 'y'))
 
     # ── Coarse grid: full per-cell rho*cp coupling ──
-    za_c = _build_za(Nx_c, Ny_c)
-    sc_c = _compute_simple(cfg)
+    za_c = _build_za(Nx_c, Ny_c, dx_c, dy_c)
+    if cfg.get('use_continuous', True) and 'L_field' in za_c:
+        L_field_r = za_c['L_field']; t_field_r = za_c['t_field']
+    sc_c = _compute_simple(cfg, grid_cells=grid_cells_r,
+                           L_field=L_field_r, t_field=t_field_r,
+                           refined_grid=refined_c)
     rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
     rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
     rA_avg, rB_avg = sc_c['rho_A'], sc_c['rho_B']
@@ -482,7 +581,8 @@ def evaluate_richardson(x, config=None):
             za_c['eps_arr'], sc_c['ucA'], sc_c['vcA'], sc_c['ucB'], sc_c['vcB'],
             cfg['dir_A'], cfg['dir_B'],
             tol=0.5, max_iter=5000,
-            Ta_init=Ta_c, Tb_init=Tb_c, Ts_init=Ts_c)
+            Ta_init=Ta_c, Tb_init=Tb_c, Ts_init=Ts_c,
+            dx_arr=dx_c, dy_arr=dy_c)
         rA_new = air_density(float(Ta_c.mean()), P_in)
         rB_new = air_density(float(Tb_c.mean()), P_in)
         if abs(rA_new - rA_avg) / rA_avg < 0.01 and abs(rB_new - rB_avg) / rB_avg < 0.01:
@@ -492,20 +592,25 @@ def evaluate_richardson(x, config=None):
         rA_avg = 0.7 * rA_new + 0.3 * rA_avg
         rB_avg = 0.7 * rB_new + 0.3 * rB_avg
 
-    from solvers.simple_solver import _aligned_grid
-    _dx_c = _aligned_grid(Nx_c, L, [])
-    _dy_c = _aligned_grid(Ny_c, H, [])
-    _area_c = _dx_c[:, None] * _dy_c[None, :]
+    _area_c = dx_c[:, None] * dy_c[None, :]
     Q_coarse = np.sum(za_c['h_vB_arr'] * (Ts_c - Tb_c) * _area_c)
 
-    # ── Fine grid: single energy solve with coarse-grid rho*cp ──
+    # ── Fine grid: single energy solve with coarse-grid rho*cp (upsample) ──
     from scipy.ndimage import zoom
-    rcp_A_f = zoom(rcp_A if np.ndim(rcp_A) > 0 else np.full((Nx_c, Ny_c), float(rcp_A)), 2, order=1)
-    rcp_B_f = zoom(rcp_B if np.ndim(rcp_B) > 0 else np.full((Nx_c, Ny_c), float(rcp_B)), 2, order=1)
+    # Upsample from coarse refined grid to fine refined grid (both are irregular)
+    zoom_factor_x = Nx_f / Nx_c
+    zoom_factor_y = Ny_f / Ny_c
+    rcp_A_f = zoom(rcp_A if np.ndim(rcp_A) > 0 else np.full((Nx_c, Ny_c), float(rcp_A)),
+                   (zoom_factor_x, zoom_factor_y), order=1)
+    rcp_B_f = zoom(rcp_B if np.ndim(rcp_B) > 0 else np.full((Nx_c, Ny_c), float(rcp_B)),
+                   (zoom_factor_x, zoom_factor_y), order=1)
 
-    cfg_f = {**cfg, 'Nx': Nx_f, 'Ny': Ny_f}
-    za_f = _build_za(Nx_f, Ny_f)
-    sc_f = _compute_simple(cfg_f)
+    za_f = _build_za(Nx_f, Ny_f, dx_f, dy_f)
+    L_field_rf = za_f['L_field'] if (cfg.get('use_continuous', True) and 'L_field' in za_f) else None
+    t_field_rf = za_f['t_field'] if (cfg.get('use_continuous', True) and 't_field' in za_f) else None
+    sc_f = _compute_simple(cfg_f_grid, grid_cells=grid_cells_r,
+                            L_field=L_field_rf, t_field=t_field_rf,
+                            refined_grid=refined_f)
     Ta_f, Tb_f, Ts_f = solve_full_domain(
         L, H, Nx_f, Ny_f, T_inA, T_inB,
         za_f['K_ffA_arr'], za_f['K_ffB_arr'], za_f['K_ss_arr'],
@@ -513,51 +618,22 @@ def evaluate_richardson(x, config=None):
         rcp_A_f, rcp_B_f,
         za_f['eps_arr'], sc_f['ucA'], sc_f['vcA'], sc_f['ucB'], sc_f['vcB'],
         cfg['dir_A'], cfg['dir_B'],
-        tol=0.5, max_iter=5000)
+        tol=0.5, max_iter=5000,
+        dx_arr=dx_f, dy_arr=dy_f)
 
-    _dx_f = _aligned_grid(Nx_f, L, [])
-    _dy_f = _aligned_grid(Ny_f, H, [])
-    _area_f = _dx_f[:, None] * _dy_f[None, :]
+    _area_f = dx_f[:, None] * dy_f[None, :]
     Q_fine = np.sum(za_f['h_vB_arr'] * (Ts_f - Tb_f) * _area_f)
 
     # ── Richardson extrapolation (first-order, ratio=2) ──
     Q_extrap = 2.0 * Q_fine - Q_coarse
 
-    # ── dP and mass ──
-    rho_A = sc_c['rho_A']; mu_A = sc_c['mu_A']
-    rho_B = sc_c['rho_B']; mu_B = sc_c['mu_B']
-
-    if cfg.get('use_continuous', True) and 'L_field' in za_c:
-        from solvers.sigmoid_field import compute_dP_continuous
-        D_h_c = 2.0 * za_c['eps_arr'] / (za_c['A_0_arr'] + 1e-30)
-        dP_A_c, dP_B_c = compute_dP_continuous(
-            za_c['L_field'], za_c['t_field'], za_c['eps_arr'], D_h_c,
-            u_A, u_B, rho_A, rho_B, mu_A, mu_B,
-            cfg['tpms_type'], L, H, Nx_c, Ny_c, T_inA, T_inB)
-        dP_total = dP_A_c + dP_B_c
-    else:
-        from solvers.tpms_calc import friction_factor, P_atm
-        rho_ref_A = air_density(T_inA, P_atm)
-        rho_ref_B = air_density(T_inB, P_atm)
-        grid_cells = build_grid_cells(x, cfg['L0'], cfg['t0'],
-                                      _y_trans_in, _y_trans_out, cfg.get('opt_axis', 'y'))
-        dP_A_total = 0.0; dP_B_total = 0.0
-        _geom_cache = {}
-        for gc in grid_cells:
-            _gkey = (gc['L'], gc['t'])
-            if _gkey not in _geom_cache:
-                _geom_cache[_gkey] = tpms_geometry(cfg['tpms_type'], gc['L'], gc['t'], cfg['k_s'])
-            g_loc = _geom_cache[_gkey]
-            eps_loc = g_loc['epsilon']; r_h_loc = g_loc['D_h'] / 2.0
-            zone_Lx = (gc['x1'] - gc['x0']) * L
-            zone_Ly = (gc['y1'] - gc['y0']) * H
-            Re_A = max(rho_ref_A * u_A * r_h_loc / mu_A, 10.0)
-            f_A = friction_factor(cfg['tpms_type'], Re_A, eps_loc, gc['t'], gc['L'])
-            dP_A_total += f_A * rho_A * u_A**2 / (2.0 * r_h_loc) * zone_Lx
-            Re_B = max(rho_ref_B * u_B * r_h_loc / mu_B, 10.0)
-            f_B = friction_factor(cfg['tpms_type'], Re_B, eps_loc, gc['t'], gc['L'])
-            dP_B_total += f_B * rho_B * u_B**2 / (2.0 * r_h_loc) * zone_Ly
-        dP_total = dP_A_total + dP_B_total
+    # ── dP (from coarse-grid SIMPLE P field) and mass ──
+    # dP comes from SIMPLE's converged pressure field (D-F physics).
+    # Coarse grid used for speed; fine-grid dP would be marginally different.
+    # See vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md.
+    dP_A_r = _extract_dP_from_simple(sc_c['sA'])
+    dP_B_r = _extract_dP_from_simple(sc_c['sB'])
+    dP_total = dP_A_r + dP_B_r
 
     mass = np.sum((1.0 - za_c['eps_arr']) * cfg['rho_s'] * _area_c)
 
@@ -622,10 +698,11 @@ def _make_problem(config=None):
 
 # ── Run optimization ─────────────────────────────────────────
 
-def _solve_single_point(x, cfg, Nx, Ny):
-    """Full physical solve for a single design point at given grid resolution.
+def _solve_single_point(x, cfg, Nx_user, Ny_user):
+    """Full physical solve for a single design point at given USER grid resolution.
 
-    Returns (Q, dP_A, dP_B) with SIMPLE-based ΔP.
+    Internally builds refined 4-wall BL grid and consistently uses it for za,
+    SIMPLE, and solve_full_domain. Returns (Q, dP_total, 0.0).
     """
     from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
     from solvers.tpms_calc import air_cp
@@ -637,26 +714,36 @@ def _solve_single_point(x, cfg, Nx, Ny):
     L0 = cfg['L0']; t0 = cfg['t0']
     P_in = 101325.0
 
+    # Build master refined grid from user resolution
+    cfg_local = {**cfg, 'Nx': Nx_user, 'Ny': Ny_user}
+    refined_grid = _resolve_refined_grid(cfg_local)
+    dx_r, dy_r, Nx, Ny = refined_grid
+
     lut = get_geometry_lut(tpms_type)
     g0 = tpms_geometry(tpms_type, L0, t0, k_s)
     eps0 = g0['epsilon']; r_h0 = g0['D_h'] / 2.0
 
-    # 1. Sigmoid continuous property arrays
+    # 1. Sigmoid continuous property arrays at refined grid
     za = build_continuous_arrays(
         x, L0, t0,
         cfg.get('y_trans_inlet', 0.2), cfg.get('y_trans_outlet', 0.2),
         Nx, Ny, L, H, tpms_type, k_s,
         u_A, u_B, T_inA, T_inB, lut,
-        fix_L=cfg.get('fix_L', False), fix_t=cfg.get('fix_t', False))
+        fix_L=cfg.get('fix_L', False), fix_t=cfg.get('fix_t', False),
+        dx_arr=dx_r, dy_arr=dy_r)
 
-    # 2. SIMPLE
+    # 2. SIMPLE at refined grid (design-specific K/c_F override + refined dx/dy)
     rho_A = air_density(T_inA, P_in); mu_A = air_viscosity(T_inA)
     rho_B = air_density(T_inB, P_in); mu_B = air_viscosity(T_inB)
+    L_field_sp = za['L_field']; t_field_sp = za['t_field']
 
     sA = SIMPLESolver(H, L, Ny, Nx, tpms_type, L0, t0,
                       eps0, r_h0, rho_A, mu_A, T_inA,
                       cfg.get('pipe_lo_A', 0.0), cfg.get('pipe_hi_A', H), u_A,
-                      outlet_lo=cfg.get('outlet_lo_A'), outlet_hi=cfg.get('outlet_hi_A'))
+                      outlet_lo=cfg.get('outlet_lo_A'), outlet_hi=cfg.get('outlet_hi_A'),
+                      wall_refine=False)
+    sA.dx_arr = dy_r.copy(); sA.dy_arr = dx_r.copy()
+    _override_simple_K_cF(sA, cfg['tpms_type'], cfg['k_s'], Nx, None, L_field_sp, t_field_sp, 'A')
     sA.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mA = sA.get_wall_masked_velocity()
     ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T
@@ -665,13 +752,16 @@ def _solve_single_point(x, cfg, Nx, Ny):
     sB = SIMPLESolver(L, H, Nx, Ny, tpms_type, L0, t0,
                       eps0, r_h0, rho_B, mu_B, T_inB,
                       cfg.get('pipe_lo_B', 0.0), cfg.get('pipe_hi_B', L), u_B,
-                      outlet_lo=cfg.get('outlet_lo_B'), outlet_hi=cfg.get('outlet_hi_B'))
+                      outlet_lo=cfg.get('outlet_lo_B'), outlet_hi=cfg.get('outlet_hi_B'),
+                      wall_refine=False)
+    sB.dx_arr = dx_r.copy(); sB.dy_arr = dy_r.copy()
+    _override_simple_K_cF(sB, cfg['tpms_type'], cfg['k_s'], Ny, None, L_field_sp, t_field_sp, 'B')
     sB.solve(max_iter=5000, tol=1e-5, verbose=False)
     _, v_mB = sB.get_wall_masked_velocity()
     vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]
     ucB = np.zeros((Nx, Ny))
 
-    # 3. Energy solve with ρ*cp coupling
+    # 3. Energy solve with ρ*cp coupling at refined grid
     rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
     rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
     Ta = Tb = Ts = None
@@ -684,7 +774,8 @@ def _solve_single_point(x, cfg, Nx, Ny):
             za['eps_arr'], ucA, vcA, ucB, vcB,
             cfg.get('dir_A', 0), cfg.get('dir_B', 3),
             tol=0.5, max_iter=5000,
-            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts)
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            dx_arr=dx_r, dy_arr=dy_r)
         rA_new = air_density(float(Ta.mean()), P_in)
         rB_new = air_density(float(Tb.mean()), P_in)
         if abs(rA_new - float(np.mean(rcp_A / air_cp(Ta) if np.ndim(rcp_A) > 0 else rcp_A / air_cp(T_inA)))) / rA_new < 0.01:
@@ -692,20 +783,12 @@ def _solve_single_point(x, cfg, Nx, Ny):
         rcp_A = 0.7 * air_density(Ta, P_in) * air_cp(Ta) + 0.3 * rcp_A
         rcp_B = 0.7 * air_density(Tb, P_in) * air_cp(Tb) + 0.3 * rcp_B
 
-    # 4. Q and ΔP
-    from solvers.simple_solver import _aligned_grid
-    _dx_sp = _aligned_grid(Nx, L, [])
-    _dy_sp = _aligned_grid(Ny, H, [])
-    _area_sp = _dx_sp[:, None] * _dy_sp[None, :]
+    # 4. Q and ΔP using refined cell_area
+    _area_sp = dx_r[:, None] * dy_r[None, :]
     Q = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _area_sp))
 
-    # ΔP: per-cell f-Re integration from continuous field
-    from solvers.sigmoid_field import compute_dP_continuous
-    D_h_arr = 2.0 * za['eps_arr'] / (za['A_0_arr'] + 1e-30)
-    dP_A, dP_B = compute_dP_continuous(
-        za['L_field'], za['t_field'], za['eps_arr'], D_h_arr,
-        u_A, u_B, rho_A, rho_B, mu_A, mu_B,
-        tpms_type, L, H, Nx, Ny, T_inA, T_inB)
+    dP_A = _extract_dP_from_simple(sA)
+    dP_B = _extract_dP_from_simple(sB)
 
     return Q, dP_A + dP_B, 0.0
 

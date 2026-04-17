@@ -182,7 +182,8 @@ class ZoneConfig:
     @staticmethod
     def build_grid_arrays(Nx, Ny, L, H, grid_cells,
                           tpms_type, k_s,
-                          u_A, u_B, T_inA, T_inB, P_in=101325.0):
+                          u_A, u_B, T_inA, T_inB, P_in=101325.0,
+                          dx_arr=None, dy_arr=None):
         """Build per-cell arrays from a list of 2D zone rectangles.
 
         Parameters
@@ -192,6 +193,9 @@ class ZoneConfig:
         grid_cells  : list of dict, each with keys:
                       y0, y1 (frac 0~1), x0, x1 (frac 0~1), L (mm), t (mm)
         tpms_type, k_s, u_A, u_B, T_inA, T_inB, P_in : physics params
+        dx_arr, dy_arr : optional 1D arrays (m) of actual cell widths for
+                         non-uniform grid. Length must equal Nx, Ny respectively.
+                         If None, uniform spacing is assumed.
 
         Returns
         -------
@@ -221,6 +225,22 @@ class ZoneConfig:
         r_h_arr   = np.empty((Nx, Ny), dtype=np.float64)
         A_0_arr   = np.empty((Nx, Ny), dtype=np.float64)
 
+        # Cell-centre fractional positions for non-uniform grid support
+        if dx_arr is not None:
+            dx = np.asarray(dx_arr, dtype=np.float64)
+            x_total = dx.sum()
+            x_cum = np.concatenate([[0.0], np.cumsum(dx)])
+            xf_centres = 0.5 * (x_cum[:-1] + x_cum[1:]) / x_total
+        else:
+            xf_centres = (np.arange(Nx) + 0.5) / Nx
+        if dy_arr is not None:
+            dy = np.asarray(dy_arr, dtype=np.float64)
+            y_total = dy.sum()
+            y_cum = np.concatenate([[0.0], np.cumsum(dy)])
+            yf_centres = 0.5 * (y_cum[:-1] + y_cum[1:]) / y_total
+        else:
+            yf_centres = (np.arange(Ny) + 0.5) / Ny
+
         # Collect unique y and x boundaries for visualization
         y_bounds = set()
         x_bounds = set()
@@ -229,9 +249,9 @@ class ZoneConfig:
             x_bounds.update([gc['x0'], gc['x1']])
 
         for i in range(Nx):
-            xf = (i + 0.5) / Nx  # fractional x of cell centre
+            xf = float(xf_centres[i])
             for j in range(Ny):
-                yf = (j + 0.5) / Ny  # fractional y of cell centre
+                yf = float(yf_centres[j])
                 # Find which grid cell this belongs to
                 for gi, gc in enumerate(grid_cells):
                     if gc['x0'] <= xf < gc['x1'] and gc['y0'] <= yf < gc['y1']:

@@ -30,6 +30,162 @@ from .tpms_calc import (air_density, air_viscosity, P_atm,
 #  Numba kernels
 # ===================================================================
 
+# ── SOU deferred correction for momentum (minmod limiter) ──────────
+@njit(cache=True)
+def _sou_corr_u_x(u, i, j, Nx, Fe):
+    """SOU deferred correction for u-momentum in x-direction.
+    u is on x-faces: u[i,j] at face between cells i-1 and i.
+    Fe = rho*ue*dy is the east-face convective flux for this u-cell.
+    """
+    ue_loc = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
+    if ue_loc >= 0:
+        phi_w = 0.0
+        if i > 2:
+            gu = u[i - 1, j] - u[i - 2, j]
+            gd = u[i, j] - u[i - 1, j]
+            if gu * gd > 0:
+                phi_w = min(abs(gu), abs(gd))
+                if gu < 0: phi_w = -phi_w
+        phi_e = 0.0
+        if i + 1 < Nx and i > 1:
+            gu = u[i, j] - u[i - 1, j]
+            gd = u[i + 1, j] - u[i, j]
+            if gu * gd > 0:
+                phi_e = min(abs(gu), abs(gd))
+                if gu < 0: phi_e = -phi_e
+        return 0.5 * Fe * (phi_w - phi_e)
+    else:
+        phi_e = 0.0
+        if i + 2 <= Nx:
+            gu = u[i + 1, j] - u[min(i + 2, Nx), j]
+            gd = u[i, j] - u[i + 1, j]
+            if gu * gd > 0:
+                phi_e = min(abs(gu), abs(gd))
+                if gu < 0: phi_e = -phi_e
+        phi_w = 0.0
+        if i > 1 and i + 1 <= Nx:
+            gu = u[i, j] - u[i + 1, j]
+            gd = u[i - 1, j] - u[i, j]
+            if gu * gd > 0:
+                phi_w = min(abs(gu), abs(gd))
+                if gu < 0: phi_w = -phi_w
+        return 0.5 * Fe * (phi_e - phi_w)
+
+
+@njit(cache=True)
+def _sou_corr_u_y(u, i, j, Ny, Fn):
+    """SOU deferred correction for u-momentum in y-direction."""
+    if Fn >= 0:
+        phi_s = 0.0
+        if j > 1:
+            gu = u[i, j - 1] - u[i, j - 2]
+            gd = u[i, j] - u[i, j - 1]
+            if gu * gd > 0:
+                phi_s = min(abs(gu), abs(gd))
+                if gu < 0: phi_s = -phi_s
+        phi_n = 0.0
+        if j < Ny - 1 and j > 0:
+            gu = u[i, j] - u[i, j - 1]
+            gd = u[i, j + 1] - u[i, j]
+            if gu * gd > 0:
+                phi_n = min(abs(gu), abs(gd))
+                if gu < 0: phi_n = -phi_n
+        return 0.5 * Fn * (phi_s - phi_n)
+    else:
+        phi_n = 0.0
+        if j < Ny - 2:
+            gu = u[i, j + 1] - u[i, j + 2]
+            gd = u[i, j] - u[i, j + 1]
+            if gu * gd > 0:
+                phi_n = min(abs(gu), abs(gd))
+                if gu < 0: phi_n = -phi_n
+        phi_s = 0.0
+        if j > 0 and j < Ny - 1:
+            gu = u[i, j] - u[i, j + 1]
+            gd = u[i, j - 1] - u[i, j]
+            if gu * gd > 0:
+                phi_s = min(abs(gu), abs(gd))
+                if gu < 0: phi_s = -phi_s
+        return 0.5 * Fn * (phi_n - phi_s)
+
+
+@njit(cache=True)
+def _sou_corr_v_x(v, i, j, Nx, Fe):
+    """SOU deferred correction for v-momentum in x-direction."""
+    if Fe >= 0:
+        phi_w = 0.0
+        if i > 1:
+            gu = v[i - 1, j] - v[i - 2, j]
+            gd = v[i, j] - v[i - 1, j]
+            if gu * gd > 0:
+                phi_w = min(abs(gu), abs(gd))
+                if gu < 0: phi_w = -phi_w
+        phi_e = 0.0
+        if i < Nx - 1 and i > 0:
+            gu = v[i, j] - v[i - 1, j]
+            gd = v[i + 1, j] - v[i, j]
+            if gu * gd > 0:
+                phi_e = min(abs(gu), abs(gd))
+                if gu < 0: phi_e = -phi_e
+        return 0.5 * Fe * (phi_w - phi_e)
+    else:
+        phi_e = 0.0
+        if i < Nx - 2:
+            gu = v[i + 1, j] - v[i + 2, j]
+            gd = v[i, j] - v[i + 1, j]
+            if gu * gd > 0:
+                phi_e = min(abs(gu), abs(gd))
+                if gu < 0: phi_e = -phi_e
+        phi_w = 0.0
+        if i > 0 and i < Nx - 1:
+            gu = v[i, j] - v[i + 1, j]
+            gd = v[i - 1, j] - v[i, j]
+            if gu * gd > 0:
+                phi_w = min(abs(gu), abs(gd))
+                if gu < 0: phi_w = -phi_w
+        return 0.5 * Fe * (phi_e - phi_w)
+
+
+@njit(cache=True)
+def _sou_corr_v_y(v, i, j, Ny, Fn):
+    """SOU deferred correction for v-momentum in y-direction.
+    v is on y-faces: v[i,j] at face between cells j-1 and j.
+    """
+    vn_loc = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
+    if vn_loc >= 0:
+        phi_s = 0.0
+        if j > 2:
+            gu = v[i, j - 1] - v[i, j - 2]
+            gd = v[i, j] - v[i, j - 1]
+            if gu * gd > 0:
+                phi_s = min(abs(gu), abs(gd))
+                if gu < 0: phi_s = -phi_s
+        phi_n = 0.0
+        if j + 1 <= Ny and j > 1:
+            gu = v[i, j] - v[i, j - 1]
+            gd = v[i, min(j + 1, Ny)] - v[i, j]
+            if gu * gd > 0:
+                phi_n = min(abs(gu), abs(gd))
+                if gu < 0: phi_n = -phi_n
+        return 0.5 * Fn * (phi_s - phi_n)
+    else:
+        phi_n = 0.0
+        if j + 2 <= Ny:
+            gu = v[i, j + 1] - v[i, min(j + 2, Ny)]
+            gd = v[i, j] - v[i, j + 1]
+            if gu * gd > 0:
+                phi_n = min(abs(gu), abs(gd))
+                if gu < 0: phi_n = -phi_n
+        phi_s = 0.0
+        if j > 1 and j + 1 <= Ny:
+            gu = v[i, j] - v[i, j + 1]
+            gd = v[i, j - 1] - v[i, j]
+            if gu * gd > 0:
+                phi_s = min(abs(gu), abs(gd))
+                if gu < 0: phi_s = -phi_s
+        return 0.5 * Fn * (phi_n - phi_s)
+
+
 @njit(cache=True)
 def _f_re(Re, ln_eps, ln_tL, ln_XSa, c):
     """Friction factor (F1 power-law), Numba-safe.
@@ -162,20 +318,23 @@ def _sweep_u_jit(u, v, P, d_u, inlet_frac, outlet_frac,
 # ── SIMPLE Step 1 (D-F variant): x-momentum with ConstDF-v1 closure ──
 @njit(cache=True)
 def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
-                    Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
-                    K_arr, cF_arr, mu,
+                    Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
+                    K_arr, cF_arr, mu_field,
                     alpha_u, n_sweeps):
     """D-F variant of _sweep_u_jit: porous source uses (K, c_F) per row from
     the ConstDF-v1 surrogate, no phi_arr correction (MLP covers training range
-    natively). Signature drops rho_ref, r_h_arr, ln_eps/tL/XSa_arr, fc, phi_arr
-    and adds K_arr, cF_arr."""
+    natively). mu_eff_field and mu_field are 2D (Nx, Ny) arrays so that
+    viscosity tracks the temperature field in non-isothermal compressible flow.
+    """
     for _ in range(n_sweeps):
         for i in range(1, Nx):
             for j in range(Ny):
                 dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
                 dyj = dy_arr[j]
                 vol = dxi * dyj
-                mu_e = mu_eff_arr[j]
+
+                il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
+                mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
                 De0 = mu_e * dyj / dxi
                 Dn0 = mu_e * dxi / dyj
 
@@ -194,8 +353,8 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
                 vs = 0.5 * (v[il, j] + v[ir, j])
 
-                il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
                 rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
+                mu_loc  = 0.5 * (mu_field[il_r, j] + mu_field[ir_r, j])
 
                 Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
                 Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
@@ -206,7 +365,7 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_u(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu, rho_loc) * vol
+                Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
 
                 # Brinkman penalty: continuous wall resistance near outlet
                 il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
@@ -221,8 +380,10 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                     Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
 
                 p_src = (P[i - 1, j] - P[i, j]) * dyj
+                sou = (_sou_corr_u_x(u, i, j, Nx, Fe)
+                     + _sou_corr_u_y(u, i, j, Ny, Fn))
                 aP0 = aE + aW + aN + aS + Sp
-                rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src
+                rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src + sou
                 aP = aP0 / alpha_u
                 rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j]
 
@@ -326,10 +487,11 @@ def _sweep_v_jit(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
 # ── SIMPLE Step 2 (D-F variant): y-momentum with ConstDF-v1 closure ──
 @njit(cache=True)
 def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
-                    Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
-                    K_arr, cF_arr, mu,
+                    Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
+                    K_arr, cF_arr, mu_field,
                     alpha_u, n_sweeps):
-    """D-F variant of _sweep_v_jit, mirrors _sweep_u_jit_df changes."""
+    """D-F variant of _sweep_v_jit, mirrors _sweep_u_jit_df changes.
+    mu_eff_field and mu_field are 2D (Nx, Ny) for non-isothermal coupling."""
     for _ in range(n_sweeps):
         for i in range(Nx):
             for j in range(1, Ny):
@@ -337,27 +499,39 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                 dxi = dx_arr[i]
                 dyj = 0.5 * (dy_arr[j - 1] + dy_arr[min(j, Ny - 1)])
                 vol = dxi * dyj
-                mu_e = mu_eff_arr[jc]
+
+                jb = max(j - 1, 0); jt = min(j, Ny - 1)
+                mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
                 De0 = mu_e * dyj / dxi
                 Dn0 = mu_e * dxi / dyj
 
-                vE = v[i + 1, j] if i < Nx - 1 else v[i, j]
-                vW = v[i - 1, j] if i > 0 else v[i, j]
+                # No-slip at side walls (x=0, x=W): tangential velocity v=0 at
+                # wall. Distance from cell centre to wall = dxi/2, so the wall
+                # diffusion coefficient is mu_e * dyj / (0.5*dxi) = 2*De0.
+                # Previously free-slip (De=0 at i=Nx-1, Dw=0 at i=0); corrected
+                # 2026-04-17 to match physical outer-housing walls in TPMS heat
+                # exchangers. For symmetry/periodic boundaries, revert to 0/0.
+                if i < Nx - 1:
+                    vE = v[i + 1, j]; De = De0
+                else:
+                    vE = 0.0; De = 2.0 * De0   # east wall (no-slip)
+                if i > 0:
+                    vW = v[i - 1, j]; Dw = De0
+                else:
+                    vW = 0.0; Dw = 2.0 * De0   # west wall (no-slip)
                 vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
                 vS = v[i, j - 1]
 
-                De = De0 if i < Nx - 1 else 0.0
-                Dw = De0 if i > 0 else 0.0
                 Dn = Dn0 if j < Ny - 1 else 0.0
                 Ds = Dn0
 
-                jb = max(j - 1, 0); jt = min(j, Ny - 1)
                 ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
                 uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
                 vn = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
                 vs = 0.5 * (v[i, max(j - 1, 0)] + v[i, j])
 
                 rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
+                mu_loc  = 0.5 * (mu_field[i, jb] + mu_field[i, jt])
 
                 Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
                 Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
@@ -368,7 +542,7 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_v(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu, rho_loc) * vol
+                Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
 
                 wall_out = 1.0 - outlet_frac[i]
                 if wall_out > 0.01 and j >= Ny - 8:
@@ -380,8 +554,10 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                     Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
 
                 p_src = (P[i, j - 1] - P[i, j]) * dxi
+                sou = (_sou_corr_v_x(v, i, j, Nx, Fe)
+                     + _sou_corr_v_y(v, i, j, Ny, Fn))
                 aP0 = aE + aW + aN + aS + Sp
-                rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src
+                rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src + sou
                 aP = aP0 / alpha_u
                 rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j]
 
@@ -770,12 +946,66 @@ def _aligned_grid(N, L, breakpoints):
     return np.array(dx_list, dtype=np.float64)
 
 
+def build_wall_refined_1d(W, N_bulk, n_refine=8, first_cell=0.02e-3, growth=1.8):
+    """Build a 1D cross-stream grid with geometric refinement at both walls.
+
+    Layout: [refine_fine → refine_coarse | uniform bulk | refine_coarse → refine_fine]
+    Total cells = 2*n_refine + N_bulk.
+
+    Parameters
+    ----------
+    W : float — domain width (cross-stream extent) [m]
+    N_bulk : int — number of uniform bulk cells in the interior
+    n_refine : int — refinement layers per wall (default 8)
+    first_cell : float — thickness of cell touching the wall [m] (default 0.02 mm)
+    growth : float — geometric growth ratio (default 1.8)
+
+    Returns
+    -------
+    dx_arr : np.ndarray shape (2*n_refine + N_bulk,), sum == W
+
+    Used to resolve Brinkman boundary layer at outer housing walls. See
+    vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md §12.
+    """
+    refine_sizes = np.array([first_cell * growth**k for k in range(n_refine)], dtype=np.float64)
+    total_refine = 2.0 * refine_sizes.sum()
+    bulk_width = W - total_refine
+    if bulk_width <= 0:
+        raise ValueError(
+            f"build_wall_refined_1d: refinement {total_refine*1000:.3f}mm exceeds "
+            f"domain width {W*1000:.3f}mm. Reduce n_refine or first_cell.")
+    bulk_cell = bulk_width / N_bulk
+    bulk = np.full(N_bulk, bulk_cell, dtype=np.float64)
+    return np.concatenate([refine_sizes, bulk, refine_sizes[::-1]])
+
+
 # ===================================================================
 #  SIMPLESolver class
 # ===================================================================
 
 class SIMPLESolver:
-    """2D steady SIMPLE on staggered grid for porous-media transition zone."""
+    """2D steady SIMPLE on staggered grid for porous-media transition zone.
+
+    Parameters of note
+    ------------------
+    wall_refine : bool (default True)
+        If True, use geometric refinement near cross-stream walls to resolve
+        the Brinkman boundary layer (δ_B ≈ 0.05 mm for typical TPMS). Adds
+        2*n_wall_refine cells on top of Nx. Automatically disabled when any
+        external 2D field (rho, T_field) is passed at init or when inlet/outlet
+        is not full-width, because downstream consumers expect matched Nx.
+
+        Production paths (optimizer, validate_shanghai, run_calculation) pass
+        wall_refine=False because their outer coupling loops feed SIMPLE outputs
+        back to solvers that expect the coarse (pre-refine) Nx. Standalone
+        diagnostic / visualisation scripts benefit from the default (True) and
+        can see the Brinkman BL directly.
+
+    n_wall_refine : int (default 8)
+        Refinement layers per wall.
+    wall_first_cell : float (default 0.02e-3 m)
+        First cell thickness at the wall (should be < δ_B for full resolution).
+    """
 
     def __init__(self, W, H, Nx, Ny,
                  tpms_type, L_cell_mm, t_mm, eps, r_h,
@@ -789,18 +1019,22 @@ class SIMPLESolver:
                  T_field=None,
                  P_ref_abs=None,
                  alpha_rho=0.3,
-                 closure='df'):
+                 closure='df',
+                 wall_refine=True,
+                 n_wall_refine=8,
+                 wall_first_cell=0.02e-3):
         # Closure form selector. 'df' uses ConstDF-v1 MLP surrogate
         # (thermoNas/df_fit/predict.py); 'f_re' keeps the legacy f-Re power
         # law. D-F is the default since 2026-04-15 baseline commit ab7a39e.
         if closure not in ('df', 'f_re'):
             raise ValueError(f"closure must be 'df' or 'f_re', got {closure!r}")
         self.closure = closure
-        # Domain
-        self.Nx, self.Ny = Nx, Ny
-        self.dx, self.dy = W / Nx, H / Ny  # scalar for backward compat
 
-        # Aligned grid: cell edges at inlet/outlet-wall junctions
+        # Wall refinement (cross-stream, x direction): geometric grid at both
+        # side walls to resolve Brinkman boundary layer. Default ON since
+        # 2026-04-17. Adds 2*n_wall_refine cells on top of Nx (interpreted as
+        # bulk cell count). Disabled if inlet/outlet are not full-width
+        # (x_breaks present) or if the user passes wall_refine=False.
         x_breaks = []
         if inlet_lo > W * 0.001:
             x_breaks.append(inlet_lo)
@@ -810,7 +1044,34 @@ class SIMPLESolver:
             x_breaks.append(outlet_lo)
         if outlet_hi is not None and outlet_hi < W * 0.999:
             x_breaks.append(outlet_hi)
-        self.dx_arr = _aligned_grid(Nx, W, x_breaks)
+
+        # Wall refinement is only safe when all external 2D fields (rho, T_field)
+        # are scalars — otherwise the user's pre-built fields won't match the
+        # refined Nx. Auto-disable if any 2D array is passed.
+        external_2d = (np.ndim(rho) == 2) or (T_field is not None and np.ndim(T_field) == 2)
+        self._wall_refined = False
+        if (wall_refine and len(x_breaks) == 0 and n_wall_refine > 0
+                and not external_2d):
+            try:
+                dx_refined = build_wall_refined_1d(
+                    W, N_bulk=Nx, n_refine=n_wall_refine,
+                    first_cell=wall_first_cell, growth=1.8)
+                Nx = Nx + 2 * n_wall_refine   # actual cell count after refinement
+                self._wall_refined = True
+            except ValueError:
+                dx_refined = None  # fall back to uniform
+        else:
+            dx_refined = None
+
+        # Domain
+        self.Nx, self.Ny = Nx, Ny
+        self.dx, self.dy = W / Nx, H / Ny  # scalar for backward compat
+
+        # Aligned grid: cell edges at inlet/outlet-wall junctions
+        if self._wall_refined and dx_refined is not None:
+            self.dx_arr = dx_refined
+        else:
+            self.dx_arr = _aligned_grid(Nx, W, x_breaks)
         # y-direction: aligned if y_breakpoints provided, else uniform
         self.dy_arr = _aligned_grid(Ny, H, y_breakpoints or [])
 
@@ -842,6 +1103,12 @@ class SIMPLESolver:
             self.T_field = np.full((Nx, Ny), float(T_field), dtype=np.float64)
         else:
             self.T_field = np.ascontiguousarray(T_field, dtype=np.float64)
+
+        # Non-isothermal coupling: 2D viscosity fields that track T_field.
+        # For D-F path these are the authoritative arrays; the scalar self.mu
+        # and 1D self._mu_eff_arr below are kept only for legacy f-Re path.
+        self.mu_field = np.full((Nx, Ny), float(mu), dtype=np.float64)
+        self._mu_eff_field = np.full((Nx, Ny), float(mu) / float(eps), dtype=np.float64)
 
         # f-Re coefficients (precomputed for Numba)
         self._fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
@@ -1005,6 +1272,14 @@ class SIMPLESolver:
         self._set_bc()
         self.residuals = []
 
+        # If an explicit non-uniform T_field was passed (not the default T_in
+        # broadcast), refresh mu_field / mu_eff_field to match. For the default
+        # uniform T_in case the initial scalar-broadcast from L846-848 is
+        # already consistent with Sutherland at T_in, but calling it is cheap
+        # and guarantees mu_field is in sync with T_field at all times.
+        if self.fluid_type == 'ideal_gas':
+            self._refresh_mu_from_T()
+
     def _set_bc(self):
         Nx, Ny = self.Nx, self.Ny
         self.u[0, :] = 0.0;  self.u[Nx, :] = 0.0
@@ -1035,11 +1310,52 @@ class SIMPLESolver:
             self.v_inlet = self.G_inlet / rho_inlet_avg
 
     def update_T_field(self, T_field):
-        """Update frozen temperature field for rho=P/(RT) calculation."""
+        """Update temperature field. Also refreshes mu_field / mu_eff_field via
+        Sutherland so that non-isothermal D-F coupling stays consistent.
+
+        If wall refinement is on and the incoming T_field has the pre-refine
+        shape, we linearly interpolate along the cross-stream axis so the user
+        can keep passing fields at their original resolution (common in the
+        non-isothermal coupling loop of validate_shanghai.py).
+        """
         if np.ndim(T_field) == 0:
             self.T_field = np.full((self.Nx, self.Ny), float(T_field), dtype=np.float64)
         else:
-            self.T_field = np.ascontiguousarray(T_field, dtype=np.float64)
+            T_in = np.asarray(T_field, dtype=np.float64)
+            if T_in.shape != (self.Nx, self.Ny) and self._wall_refined:
+                # Interpolate cross-stream axis from pre-refine Nx to refined Nx
+                T_in = self._interp_to_refined_cross(T_in)
+            self.T_field = np.ascontiguousarray(T_in, dtype=np.float64)
+        if self.fluid_type == 'ideal_gas':
+            self._refresh_mu_from_T()
+
+    def _interp_to_refined_cross(self, field_2d):
+        """Interpolate a (Nx_coarse, Ny) field onto refined (Nx, Ny) grid along
+        cross-stream axis (axis=0). Uses cell-center physical positions."""
+        Nx_in, Ny_in = field_2d.shape
+        if Ny_in != self.Ny:
+            raise ValueError(
+                f"field Ny mismatch: got {Ny_in}, expected {self.Ny}")
+        # Cell-center positions (pre-refine uniform)
+        W_total = self.dx_arr.sum()
+        dx_coarse = W_total / Nx_in
+        y_coarse = (np.arange(Nx_in) + 0.5) * dx_coarse
+        # Refined cell centers
+        y_edges = np.concatenate([[0.0], np.cumsum(self.dx_arr)])
+        y_refined = 0.5 * (y_edges[:-1] + y_edges[1:])
+        # Linear interp per y-column (streamwise index)
+        out = np.empty((self.Nx, self.Ny), dtype=np.float64)
+        for j in range(self.Ny):
+            out[:, j] = np.interp(y_refined, y_coarse, field_2d[:, j])
+        return out
+
+    def _refresh_mu_from_T(self):
+        """Recompute mu_field and mu_eff_field from self.T_field via Sutherland.
+        Called after update_T_field (and once during __init__ for ideal gas)."""
+        from .tpms_calc import air_viscosity
+        mu_new = air_viscosity(self.T_field).astype(np.float64)
+        self.mu_field = np.ascontiguousarray(mu_new)
+        self._mu_eff_field = np.ascontiguousarray(mu_new / self.eps)
 
     # ──────────────── velocity solve ──────────────────────────────
     def solve(self, max_iter=3000, tol=1e-6,
@@ -1058,13 +1374,13 @@ class SIMPLESolver:
             if self.closure == 'df':
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                                 self.inlet_frac, self.outlet_frac,
-                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
-                                self._K_arr, self._cF_arr, self.mu,
+                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
                                 alpha_u, n_inner)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet, self.outlet_frac,
-                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
-                                self._K_arr, self._cF_arr, self.mu,
+                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
                                 alpha_u, n_inner)
             else:  # 'f_re' legacy path
                 args_porous = (self.rho_ref, self._r_h_arr, self.mu,

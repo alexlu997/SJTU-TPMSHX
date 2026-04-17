@@ -331,35 +331,11 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
     }
 
 
-def compute_dP_continuous(L_field, t_field, eps_arr, D_h_arr,
-                          u_A, u_B, rho_A, rho_B, mu_A, mu_B,
-                          tpms_type, L_domain, H_domain, Nx, Ny,
-                          T_inA=400.0, T_inB=300.0):
-    """Compute pressure drop from continuous fields via per-cell integration.
-
-    Returns (dP_A, dP_B) separately.
-    """
-    r_h_arr = D_h_arr / 2.0
-    D_h_mm = D_h_arr * 1000.0
-    rho_ref_A = air_density(T_inA, P_atm)
-    rho_ref_B = air_density(T_inB, P_atm)
-
-    Re_A = np.maximum(rho_ref_A * u_A * r_h_arr / mu_A, 10.0)
-    Re_B = np.maximum(rho_ref_B * u_B * r_h_arr / mu_B, 10.0)
-
-    f_A = _f_vec(tpms_type, Re_A, eps_arr, t_field, L_field, D_h_mm)
-    f_B = _f_vec(tpms_type, Re_B, eps_arr, t_field, L_field, D_h_mm)
-
-    dx = L_domain / Nx
-    dy = H_domain / Ny
-
-    # A flows in x: sum along x (axis=0), average over y
-    dP_A = float(np.mean(np.sum(f_A * rho_A * u_A**2 / (2.0 * r_h_arr) * dx, axis=0)))
-
-    # B flows in y: sum along y (axis=1), average over x
-    dP_B = float(np.mean(np.sum(f_B * rho_B * u_B**2 / (2.0 * r_h_arr) * dy, axis=1)))
-
-    return dP_A, dP_B
+# compute_dP_continuous: REMOVED 2026-04-17.
+# Legacy f-Re path that bypassed SIMPLE's D-F closure. All production dP
+# extraction now goes through df_projection.extract_dP_from_simple() which
+# uses SIMPLE's converged pressure field. See
+# vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md §11.
 
 
 # ── Standalone test ──────────────────────────────────────────
