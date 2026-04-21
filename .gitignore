@@ -18,7 +18,7 @@ data/
 *.xlsm
 
 # Legacy manual snapshots (replaced by git history from now on)
-thermoNas_*_backup/
+sjtu_tpmshx_*_backup/
 
 # Binary assets
 Pic/
@@ -32,7 +32,7 @@ Picture.zip
 
 # Run logs and benchmark result snapshots (regeneratable)
 *.log
-thermoNas/benchmark_a_*.json
+sjtu_tpmshx/benchmark_a_*.json
 
 # OS / editor
 .DS_Store
