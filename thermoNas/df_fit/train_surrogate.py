@@ -441,7 +441,7 @@ def _render_markdown(loo_all: pd.DataFrame, train_mapes: dict[str, float]) -> st
     lines.append("---")
     lines.append("type: report")
     lines.append("date: 2026-04-14")
-    lines.append("tags: [report, surrogate, joint-fit, MLP, DF, ConstDF-v1, ThermoNAS]")
+    lines.append("tags: [report, surrogate, joint-fit, MLP, DF, ConstDF-v1, SJTU-TPMSHX]")
     lines.append("---")
     lines.append("")
     lines.append("# D-F 代理模型 LOO 验证报告 (ConstDF-v1)")

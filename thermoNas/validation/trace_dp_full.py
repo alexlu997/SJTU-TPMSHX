@@ -59,11 +59,11 @@ print(f"                  eps_f [0.31,0.44]✓  Re [400,16000]✓(Shanghai 526-9
 print()
 
 # ── Load experimental data ──
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 raw = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 # ── Load SIMPLE results (from latest validate_shanghai.py run) ──
-sim_df = pd.read_excel(r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx', engine='openpyxl')
+sim_df = pd.read_excel(r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx', engine='openpyxl')
 
 print("=" * 90)
 print("PER-CASE TRACE")

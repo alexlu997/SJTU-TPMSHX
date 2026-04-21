@@ -338,7 +338,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         try:
             from df_fit.predict import predict_K_cF
         except ImportError:
-            from thermoNas.df_fit.predict import predict_K_cF
+            from sjtu_tpmshx.df_fit.predict import predict_K_cF
         K_val, cF_val = predict_K_cF(tpms_type, float(L_mm), float(t_mm),
                                      float(eps) / 2.0)
         K_arr = np.full(nc, K_val, dtype=np.float64)
@@ -523,7 +523,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     try:
         from df_fit.predict import predict_K_cF
     except ImportError:
-        from thermoNas.df_fit.predict import predict_K_cF
+        from sjtu_tpmshx.df_fit.predict import predict_K_cF
     K, cF = predict_K_cF(tpms_type, float(L_mm), float(t_mm), float(eps) / 2.0)
     mu_eff = mu / eps
 
@@ -880,7 +880,7 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
         try:
             from df_fit.predict import predict_K_cF_vec
         except ImportError:
-            from thermoNas.df_fit.predict import predict_K_cF_vec
+            from sjtu_tpmshx.df_fit.predict import predict_K_cF_vec
         L_row = np.empty(nc, dtype=np.float64)
         t_row = np.empty(nc, dtype=np.float64)
         for ci in range(nc):

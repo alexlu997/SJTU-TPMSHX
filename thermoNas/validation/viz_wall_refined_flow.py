@@ -50,7 +50,7 @@ A_FLOW = N_UNITS * 18.0565e-6
 from solvers.tpms_calc import adaptive_grid
 N_X, N_Y = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.2)
 
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 df = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 ci = CASE - 1
@@ -109,7 +109,7 @@ print(f"dP_sim = {dP_sim:.0f} Pa (exp {dP_exp:.0f}, err {(dP_sim-dP_exp)/dP_exp*
 # ────────────────────────────────────────────────────────────────
 # 绘图
 # ────────────────────────────────────────────────────────────────
-os.makedirs(r'D:\Postgraduate\均质化\ThermoNAS\data\plots', exist_ok=True)
+os.makedirs(r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\plots', exist_ok=True)
 
 fig = plt.figure(figsize=(14, 10))
 gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 1], hspace=0.4, wspace=0.3)
@@ -179,7 +179,7 @@ ax5.set_aspect('equal')
 
 plt.suptitle(f'Shanghai Case 8 (Re={rho_A*u_A*D_H/mu_A:.0f}): 近壁加密网格下的 2D 流场诊断', fontsize=14, y=0.995)
 
-out_path = r'D:\Postgraduate\均质化\ThermoNAS\data\plots\wall_refined_case8.png'
+out_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\plots\wall_refined_case8.png'
 plt.savefig(out_path, dpi=120, bbox_inches='tight')
 print(f"\n已保存：{out_path}")
 print()

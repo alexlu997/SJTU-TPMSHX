@@ -347,7 +347,7 @@ def main():
                     help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
     args = ap.parse_args()
 
-    data_path = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+    data_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)
 

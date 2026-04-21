@@ -10,7 +10,7 @@ Panel layout:
     (1,1) L-field volume render — zoning design field (fake 108-d vector
                                      applied to uniform Shanghai geometry)
 
-Writes PNG to thermoNas/ui/demo_vis_3d.png
+Writes PNG to sjtu_tpmshx/ui/demo_vis_3d.png
 Run: python -u ui/demo_vis_3d.py
 """
 
@@ -56,7 +56,7 @@ A_FLOW = N_UNITS * 18.0565e-6
 
 def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
     """Run Shanghai case 8 (mid-Re) and return solver + Ta for visualisation."""
-    data_path = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+    data_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)
 

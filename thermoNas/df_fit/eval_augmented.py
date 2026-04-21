@@ -17,9 +17,9 @@ import numpy as np
 import pandas as pd
 
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+_PROJECT_ROOT = _THIS.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from .augment_shanghai import load_augmented, shanghai_synth_rows, SH_L, SH_T
 from .eval_arms import (

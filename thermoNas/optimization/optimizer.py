@@ -67,7 +67,7 @@ def _resolve_refined_grid(cfg):
 # 36-variable zoning vector.  Parallelism is implemented directly via
 # concurrent.futures.ProcessPoolExecutor.
 #
-# Set THERMONAS_SERIAL=1 to force single-process execution (useful for debugging
+# Set TPMSHX_SERIAL=1 to force single-process execution (useful for debugging
 # or when running inside a child process that already holds GIL-heavy resources).
 
 def _parallel_workers():
@@ -77,11 +77,11 @@ def _parallel_workers():
     numba caches). On a 16-thread machine the previous cap of 4 left most
     cores idle; default is now ``cpu_count - 1`` capped at 12 to stay under
     ~6-8 GB for typical sweeps while keeping Pareto scans an order of
-    magnitude faster. Override via ``THERMONAS_WORKERS``.
+    magnitude faster. Override via ``TPMSHX_WORKERS``.
     """
-    if os.environ.get('THERMONAS_SERIAL') == '1':
+    if os.environ.get('TPMSHX_SERIAL') == '1':
         return 1
-    override = os.environ.get('THERMONAS_WORKERS')
+    override = os.environ.get('TPMSHX_WORKERS')
     if override:
         try:
             return max(1, int(override))
@@ -223,14 +223,14 @@ def _auto_max_workers(cfg):
 
     Rules:
       explicit cfg['max_workers']       → use it
-      THERMONAS_WORKERS env             → override
+      TPMSHX_WORKERS env             → override
       estimated mem > budget            → drop to fit, warn if forced to 1
       otherwise                         → min(cpu-1, 12, budget/mem_per_worker)
     """
     dim = int(cfg.get('dim', 2))
     if cfg.get('max_workers') is not None:
         return max(1, int(cfg['max_workers']))
-    env = os.environ.get('THERMONAS_WORKERS')
+    env = os.environ.get('TPMSHX_WORKERS')
     if env:
         try:
             return max(1, int(env))
@@ -1070,7 +1070,7 @@ def _make_problem(config=None):
                         if -Q_neg > _progress['best_Q']:
                             _progress['best_Q'] = -Q_neg
             else:
-                # Serial path (THERMONAS_SERIAL=1 or single candidate)
+                # Serial path (TPMSHX_SERIAL=1 or single candidate)
                 if dim == 3:
                     eval_fn = evaluate_3d
                 elif use_richardson:

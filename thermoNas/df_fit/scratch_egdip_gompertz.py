@@ -22,7 +22,7 @@ read-only from the ConstDF-v1 baseline.
 
 Run::
 
-    python -m thermoNas.df_fit.scratch_egdip_gompertz
+    python -m sjtu_tpmshx.df_fit.scratch_egdip_gompertz
 
 Outputs:
     reports/scratch/2026-04-15-egdip-gompertz-scratch.md
@@ -475,7 +475,7 @@ def _render_markdown(ref_all: pd.DataFrame, loo_all: pd.DataFrame,
     L.append("---")
     L.append("type: report")
     L.append("date: 2026-04-15")
-    L.append("tags: [report, surrogate, EG-DIP, Gompertz, scratch, ThermoNAS]")
+    L.append("tags: [report, surrogate, EG-DIP, Gompertz, scratch, SJTU-TPMSHX]")
     L.append("---")
     L.append("")
     L.append("# EG-DIP Gompertz β(Re) 代理模型 — full-L8 变体(scratch 实验)")
@@ -490,7 +490,7 @@ def _render_markdown(ref_all: pd.DataFrame, loo_all: pd.DataFrame,
     L.append("每几何 4 参数 $(K, \\beta_s, Re_t, \\lambda)$,LOO 看能否把 ΔP MAPE ")
     L.append("从 Diamond 12.79% / Gyroid 16.95% 压到 6-8% 目标。")
     L.append("")
-    L.append("**定位**:scratch 诊断,**不入主干**。代码 `thermoNas/df_fit/scratch_egdip_gompertz.py`,")
+    L.append("**定位**:scratch 诊断,**不入主干**。代码 `sjtu_tpmshx/df_fit/scratch_egdip_gompertz.py`,")
     L.append("不修改 v1 任何文件,不保存 checkpoint。")
     L.append("")
 

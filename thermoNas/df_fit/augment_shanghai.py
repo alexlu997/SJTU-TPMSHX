@@ -20,11 +20,11 @@ import numpy as np
 import pandas as pd
 
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent
-_PROJECT = _THERMONAS.parent
+_PROJECT_ROOT = _THIS.parent.parent
+_PROJECT = _PROJECT_ROOT.parent
 
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from solvers.tpms_calc import (  # noqa: E402
     geometry as tpms_geometry,

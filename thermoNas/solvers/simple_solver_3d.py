@@ -61,9 +61,9 @@ except ImportError:
 # Above it, red-black GS with `prange` wins by roughly #cores / 2.
 #
 # Break-even at ~150-200k cells on an 8-core desktop, empirically measured.
-# Override via env `THERMONAS_PARALLEL_THRESHOLD`.
+# Override via env `TPMSHX_PARALLEL_THRESHOLD`.
 _PARALLEL_CELL_THRESHOLD = int(
-    os.environ.get('THERMONAS_PARALLEL_THRESHOLD', '200000'))
+    os.environ.get('TPMSHX_PARALLEL_THRESHOLD', '200000'))
 
 
 def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:

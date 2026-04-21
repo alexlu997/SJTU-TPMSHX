@@ -45,9 +45,9 @@ print(f"  u_mps : [{gy.u_mps.min():.3g}, {gy.u_mps.max():.3g}]  Shanghai uses ~4
 print()
 
 # ── Step 2: per-case loop ──
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 raw = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
-sim_xlsx = r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx'
+sim_xlsx = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx'
 sim_df = pd.read_excel(sim_xlsx, engine='openpyxl')
 
 print("Per-case breakdown — all columns derived from (m_air, T_in, P_in, K, c_F):\n")

@@ -1,7 +1,7 @@
 """快速检查 Excel 列含义"""
 import pandas as pd, sys
 sys.stdout.reconfigure(encoding='utf-8')
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 
 # Read header rows
 df_hdr = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, nrows=2)

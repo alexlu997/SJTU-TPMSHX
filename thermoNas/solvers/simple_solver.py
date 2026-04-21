@@ -946,7 +946,7 @@ class SIMPLESolver:
         try:
             from df_fit.predict import predict_K_cF, predict_K_cF_vec
         except ImportError:
-            from thermoNas.df_fit.predict import predict_K_cF, predict_K_cF_vec
+            from sjtu_tpmshx.df_fit.predict import predict_K_cF, predict_K_cF_vec
 
         if zone_config is not None:
             # Per-row (L, t, eps_f) → batched prediction

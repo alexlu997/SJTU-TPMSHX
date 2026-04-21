@@ -17,7 +17,7 @@ reports/scratch/2026-04-15-direct-dp-mlp-scratch.md.
 
 Run::
 
-    python -m thermoNas.df_fit.scratch_direct_dp_mlp
+    python -m sjtu_tpmshx.df_fit.scratch_direct_dp_mlp
 """
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ def _render_markdown(loo_all: pd.DataFrame,
     L.append("---")
     L.append("type: report")
     L.append("date: 2026-04-15")
-    L.append("tags: [report, surrogate, direct-dP, MLP, Correa, scratch, ThermoNAS]")
+    L.append("tags: [report, surrogate, direct-dP, MLP, Correa, scratch, SJTU-TPMSHX]")
     L.append("---")
     L.append("")
     L.append("# Direct-ΔP MLP 代理模型 — wide 变体(scratch 实验)")

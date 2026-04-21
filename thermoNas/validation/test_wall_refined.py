@@ -64,7 +64,7 @@ A_FLOW = N_UNITS * 18.0565e-6
 from solvers.tpms_calc import adaptive_grid
 N_X, N_Y = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.2)
 
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 df = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 ci = CASE - 1

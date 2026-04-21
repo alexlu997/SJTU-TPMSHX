@@ -15,7 +15,7 @@ Runs:
 
 Wall time: ~15 min on 1 CPU, or ~3 min parallel.
 
-Outputs (written to thermoNas/runs/demo_output/):
+Outputs (written to sjtu_tpmshx/runs/demo_output/):
     summary.json           — config + baseline values
     pareto.csv             — final Pareto front (X, F)
     pareto.png             — Q vs dP scatter
@@ -35,9 +35,9 @@ from pathlib import Path
 import numpy as np
 
 _HERE = Path(__file__).resolve()
-_THERMONAS = _HERE.parent.parent
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+_PROJECT_ROOT = _HERE.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 

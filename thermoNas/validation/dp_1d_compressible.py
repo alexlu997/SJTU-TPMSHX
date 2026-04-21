@@ -33,9 +33,9 @@ print(f"ConstDF-v1:  K = {K:.4e} m²   c_F = {cF:.4e} 1/m")
 print(f"Geometry:    L_dom = {L_DOM} m   A_flow = {A_FLOW*1e4:.3f} cm²")
 print()
 
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 raw = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
-sim_df = pd.read_excel(r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx', engine='openpyxl')
+sim_df = pd.read_excel(r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx', engine='openpyxl')
 
 def integrate_dp_1d_profile(P_in, G, L_dom, K, cF, T_profile_fn, n_steps=500):
     """Numerical 1D compressible D-F integration along an arbitrary T(x)

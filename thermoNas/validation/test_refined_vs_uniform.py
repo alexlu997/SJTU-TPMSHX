@@ -27,7 +27,7 @@ EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2
 L_DOM = 0.231; H_DOM = 0.042
 A_FLOW = 36 * 18.0565e-6
 
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 df = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 # Case 8 (mid Re)

@@ -35,11 +35,11 @@ import matplotlib.pyplot as plt
 
 _THIS = Path(__file__).resolve()
 _DF_FIT = _THIS.parent
-_THERMONAS = _DF_FIT.parent
-_PROJECT = _THERMONAS.parent
+_PROJECT_ROOT = _DF_FIT.parent
+_PROJECT = _PROJECT_ROOT.parent
 
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from .load_data import load_all  # noqa: E402
 from .fit_df_per_geom import K_S_CELLS, _wls_momentum, _nnls_momentum  # noqa: E402

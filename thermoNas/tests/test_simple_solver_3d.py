@@ -10,9 +10,9 @@ import warnings
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
-_THERMONAS = _HERE.parent.parent
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+_PROJECT_ROOT = _HERE.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 

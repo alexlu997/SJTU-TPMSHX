@@ -33,7 +33,7 @@ A_FLOW = 36 * 18.0565e-6
 N_X, N_Y = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.2)
 
 # ── Load Shanghai data ──
-DATA = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 raw = pd.read_excel(DATA, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 # Pre-compute per-case constants (don't recompute each optimization step)
@@ -202,7 +202,7 @@ print()
 
 # Per-case breakdown with optimal (K, c_F)
 print(f"{'C':>2} {'Re':>6} {'dP_exp':>8} {'dP_opt':>8} {'err_opt%':>9} {'dP_mlp':>8} {'err_mlp%':>9}")
-sim_df = pd.read_excel(r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx', engine='openpyxl')
+sim_df = pd.read_excel(r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx', engine='openpyxl')
 for i, c in enumerate(cases):
     dP_opt = run_one_case(c, K_opt, cF_opt)
     dP_mlp = float(sim_df.iloc[i]['dP_air_sim'])

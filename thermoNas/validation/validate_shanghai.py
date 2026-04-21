@@ -77,7 +77,7 @@ def water_cp(T_K):
     return 4182.0
 
 # ── Load data ──
-DATA_PATH = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA_PATH = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
 df = pd.read_excel(DATA_PATH, engine='openpyxl', sheet_name='Sheet1', header=None, skiprows=2)
 
 print(f"Geometry: {TPMS} L={L_CELL} t={T_WALL} eps={EPS:.4f} D_h={D_H*1000:.3f}mm")
@@ -307,6 +307,6 @@ for ci in range(16):
 
 # ── Save ──
 out_df = pd.DataFrame(results)
-out_path = r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx'
+out_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx'
 out_df.to_excel(out_path, index=False, engine='openpyxl')
 print(f"\nSaved: {out_path}")

@@ -719,7 +719,7 @@ def build_canvas_area(window):
     import os as _os
     if (_os.environ.get('QT_QPA_PLATFORM', '').lower() == 'offscreen'
             or _os.environ.get(
-                'THERMONAS_DISABLE_3D_PANEL', '').lower() in ('1', 'true', 'yes')):
+                'TPMSHX_DISABLE_3D_PANEL', '').lower() in ('1', 'true', 'yes')):
         window._vis3d_import_error = 'headless/offscreen — 3D panel skipped'
 
     # Accent colors per canvas tab

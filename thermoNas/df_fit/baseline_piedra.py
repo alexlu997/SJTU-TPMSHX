@@ -252,7 +252,7 @@ def main() -> None:
 
     if not FITS_CSV.exists():
         raise SystemExit(
-            f"Missing {FITS_CSV}. Run thermoNas.df_fit.fit_df_per_geom first."
+            f"Missing {FITS_CSV}. Run sjtu_tpmshx.df_fit.fit_df_per_geom first."
         )
     fits = pd.read_csv(FITS_CSV)
     print(f"Loaded {len(fits)} per-geometry fits from "

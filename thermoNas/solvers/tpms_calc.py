@@ -273,7 +273,7 @@ def compute(tpms_type: str,
     try:
         from df_fit.predict import predict_K_cF
     except ImportError:
-        from thermoNas.df_fit.predict import predict_K_cF
+        from sjtu_tpmshx.df_fit.predict import predict_K_cF
     K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
                                float(eps) / 2.0)
     dP_per_L = mu * u / K_df + rho * cF_df * u * u

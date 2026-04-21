@@ -82,8 +82,8 @@ from scipy.optimize import nnls
 from .load_data import load_all
 
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent
-_PROJECT = _THERMONAS.parent
+_PROJECT_ROOT = _THIS.parent.parent
+_PROJECT = _PROJECT_ROOT.parent
 
 OUT_CSV = _PROJECT / "data" / "df_fit" / "per_geom_fits.csv"
 

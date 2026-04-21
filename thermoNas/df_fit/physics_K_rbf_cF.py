@@ -10,10 +10,10 @@ from pathlib import Path
 import numpy as np, pandas as pd
 
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent
-_PROJECT = _THERMONAS.parent
-if str(_THERMONAS) not in sys.path:
-    sys.path.insert(0, str(_THERMONAS))
+_PROJECT_ROOT = _THIS.parent.parent
+_PROJECT = _PROJECT_ROOT.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from scipy.interpolate import RBFInterpolator
 from solvers.tpms_calc import geometry as tpms_geometry, air_viscosity, P_atm

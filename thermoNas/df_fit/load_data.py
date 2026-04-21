@@ -30,13 +30,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Locate thermoNas root for data paths and solvers package
+# Locate sjtu_tpmshx root for data paths and solvers package
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent  # .../thermoNas
-sys.path.insert(0, str(_THERMONAS))
+_PROJECT_ROOT = _THIS.parent.parent  # .../sjtu_tpmshx
+sys.path.insert(0, str(_PROJECT_ROOT))
 from solvers.tpms_calc import geometry as tpms_geometry  # noqa: E402
 
-DATA_XLSX = _THERMONAS.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
+DATA_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 
 # Sheet names (GBK 汇总)
 _SHEETS = {"Diamond": "Diamond_汇总", "Gyroid": "Gyroid_汇总"}

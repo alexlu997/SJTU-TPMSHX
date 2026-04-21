@@ -59,7 +59,7 @@ def project_cells_to_streamwise_K_cF(grid_cells, tpms_type, k_s, Ny_sim, fluid,
     try:
         from df_fit.predict import predict_K_cF_vec
     except ImportError:
-        from thermoNas.df_fit.predict import predict_K_cF_vec
+        from sjtu_tpmshx.df_fit.predict import predict_K_cF_vec
 
     # Cell-centre s_frac: uniform or from streamwise_dx
     if streamwise_dx is None:
@@ -119,7 +119,7 @@ def project_fields_to_streamwise_K_cF(L_field, t_field, tpms_type, k_s,
     try:
         from df_fit.predict import predict_K_cF_vec
     except ImportError:
-        from thermoNas.df_fit.predict import predict_K_cF_vec
+        from sjtu_tpmshx.df_fit.predict import predict_K_cF_vec
 
     if fluid == 'A':
         L_1d = L_field.mean(axis=1)
@@ -216,7 +216,7 @@ def project_fields_to_streamwise_K_cF_3d(L_field, t_field, eps_f_field,
     try:
         from df_fit.predict import predict_K_cF_vec
     except ImportError:
-        from thermoNas.df_fit.predict import predict_K_cF_vec
+        from sjtu_tpmshx.df_fit.predict import predict_K_cF_vec
 
     if fluid == 'A':
         L2 = L_field.mean(axis=1)

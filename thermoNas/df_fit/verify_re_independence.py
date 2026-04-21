@@ -48,8 +48,8 @@ from .fit_df_per_geom import K_S_CELLS, _nnls_momentum, _wls_momentum
 from .load_data import load_all
 
 _THIS = Path(__file__).resolve()
-_THERMONAS = _THIS.parent.parent
-_PROJECT = _THERMONAS.parent
+_PROJECT_ROOT = _THIS.parent.parent
+_PROJECT = _PROJECT_ROOT.parent
 
 REPORT_MD = _PROJECT / "reports" / "2026-04-14-DF-re-independence-report.md"
 FIG_DIR = _PROJECT / "reports" / "figs" / "df_fit"
@@ -214,7 +214,7 @@ def _render_markdown(res: pd.DataFrame) -> str:
     lines.append("---")
     lines.append("type: report")
     lines.append("date: 2026-04-14")
-    lines.append("tags: [report, verification, DF, Re-independence, ThermoNAS]")
+    lines.append("tags: [report, verification, DF, Re-independence, SJTU-TPMSHX]")
     lines.append("---")
     lines.append("")
     lines.append("# D-F 闭合 Re 独立性验证报告 (动量方程直接形式)")

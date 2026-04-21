@@ -35,12 +35,12 @@ def _run_validation_subprocess():
     env = dict(os.environ)
     result = subprocess.run(
         [sys.executable, '-m', 'validation.validate_shanghai'],
-        cwd=r'D:\Postgraduate\均质化\ThermoNAS\thermoNas',
+        cwd=r'D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx',
         capture_output=True, text=True, env=env, timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(f"validate_shanghai failed:\n{result.stderr}")
-    xlsx = r'D:\Postgraduate\均质化\ThermoNAS\data\shanghai_validation.xlsx'
+    xlsx = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation.xlsx'
     return pd.read_excel(xlsx, engine='openpyxl')
 
 
