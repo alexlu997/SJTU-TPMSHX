@@ -55,7 +55,7 @@ sA = SIMPLESolver(
     eps_base, r_h_base, rho_val, mu_val, T_in,
     0.0, H_DOM, u_air,
     outlet_lo=0.0, outlet_hi=H_DOM,
-    closure='df', P_ref_abs=P_out_est,
+    P_ref_abs=P_out_est,
     zone_config=zc,  # 关键：传入 zone_config
 )
 
@@ -108,7 +108,7 @@ sA_L5 = SIMPLESolver(
     H_DOM, L_DOM, Ny_s, Nx_s, TPMS, 5.0, t_mm,
     eps_base, r_h_base, rho_val, mu_val, T_in,
     0.0, H_DOM, u_air, outlet_lo=0.0, outlet_hi=H_DOM,
-    closure='df', P_ref_abs=P_out_est)
+    P_ref_abs=P_out_est)
 sA_L5.solve(max_iter=3000, tol=1e-4, verbose=False)
 dP_L5 = float(np.average(sA_L5.P[mI, 0], weights=wI[mI]) - np.average(sA_L5.P[mO, -1], weights=wO[mO]))
 
@@ -117,7 +117,7 @@ sA_L8 = SIMPLESolver(
     H_DOM, L_DOM, Ny_s, Nx_s, TPMS, 8.0, t_mm,
     g_L8['epsilon'], g_L8['D_h']/2, rho_val, mu_val, T_in,
     0.0, H_DOM, u_air, outlet_lo=0.0, outlet_hi=H_DOM,
-    closure='df', P_ref_abs=P_out_est)
+    P_ref_abs=P_out_est)
 sA_L8.solve(max_iter=3000, tol=1e-4, verbose=False)
 wI8 = sA_L8.inlet_frac; wO8 = sA_L8.outlet_frac
 mI8 = wI8 > 0.01; mO8 = wO8 > 0.5

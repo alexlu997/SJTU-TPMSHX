@@ -180,6 +180,89 @@ def override_simple_K_cF(sim, tpms_type, k_s, Ny_sim, grid_cells, L_field, t_fie
     sim._cF_arr[:] = cF_arr
 
 
+def build_master_refined_grid_3d(L_dom, H_dom, D_dom, Nx_user, Ny_user, Nz_user,
+                                   n_refine=8, first_cell=0.02e-3, growth=1.8):
+    """Six-wall tensor-product refined grid (3D).
+
+    Returns (dx_arr, dy_arr, dz_arr, Nx_refined, Ny_refined, Nz_refined).
+    Uses build_wall_refined_1d for each axis independently.
+    """
+    dx = build_wall_refined_1d(L_dom, Nx_user, n_refine=n_refine,
+                                first_cell=first_cell, growth=growth)
+    dy = build_wall_refined_1d(H_dom, Ny_user, n_refine=n_refine,
+                                first_cell=first_cell, growth=growth)
+    dz = build_wall_refined_1d(D_dom, Nz_user, n_refine=n_refine,
+                                first_cell=first_cell, growth=growth)
+    return dx, dy, dz, len(dx), len(dy), len(dz)
+
+
+def project_fields_to_streamwise_K_cF_3d(L_field, t_field, eps_f_field,
+                                          tpms_type, Ny_sim, Nz_sim, fluid,
+                                          streamwise_dx=None, z_dx=None):
+    """Project 3D sigmoid fields onto SIMPLE 3D (Ny_sim, Nz_sim) K / c_F arrays.
+
+    Fluid A: +x streamwise. Mean over real y (axis 1) → (Nx, Nz) then resample to
+             (Ny_sim, Nz_sim).
+    Fluid B: -y streamwise. Mean over real x (axis 0) → (Ny, Nz), flip along 0,
+             resample to (Ny_sim, Nz_sim).
+
+    L_field, t_field, eps_f_field shape: (Nx, Ny, Nz).
+    streamwise_dx, z_dx: optional 1D arrays of SIMPLE-internal cell widths along
+        the SIMPLE y (streamwise) and SIMPLE z axes respectively. Used to place
+        resample probe points.
+
+    Returns (K_arr, cF_arr) both shape (Ny_sim, Nz_sim) float64.
+    """
+    try:
+        from df_fit.predict import predict_K_cF_vec
+    except ImportError:
+        from thermoNas.df_fit.predict import predict_K_cF_vec
+
+    if fluid == 'A':
+        L2 = L_field.mean(axis=1)
+        t2 = t_field.mean(axis=1)
+        e2 = eps_f_field.mean(axis=1)
+        src_stream = L_field.shape[0]
+    elif fluid == 'B':
+        L2 = L_field.mean(axis=0)
+        t2 = t_field.mean(axis=0)
+        e2 = eps_f_field.mean(axis=0)
+        L2 = L2[::-1].copy(); t2 = t2[::-1].copy(); e2 = e2[::-1].copy()
+        src_stream = L_field.shape[1]
+    else:
+        raise ValueError(f"fluid must be 'A' or 'B', got {fluid!r}")
+    src_z = L_field.shape[2]
+
+    # Streamwise cell-centre fractions
+    if streamwise_dx is None:
+        s_fracs = (np.arange(Ny_sim) + 0.5) / Ny_sim
+    else:
+        sw = np.asarray(streamwise_dx, dtype=np.float64)
+        total = sw.sum()
+        cum = np.concatenate([[0.0], np.cumsum(sw)])
+        s_fracs = 0.5 * (cum[:-1] + cum[1:]) / total
+
+    # Z cell-centre fractions
+    if z_dx is None:
+        z_fracs = (np.arange(Nz_sim) + 0.5) / Nz_sim
+    else:
+        zw = np.asarray(z_dx, dtype=np.float64)
+        total_z = zw.sum()
+        cum_z = np.concatenate([[0.0], np.cumsum(zw)])
+        z_fracs = 0.5 * (cum_z[:-1] + cum_z[1:]) / total_z
+
+    # Nearest-neighbor resample on (stream, z) indices
+    s_idx = np.clip((s_fracs * src_stream).astype(int), 0, src_stream - 1)
+    z_idx = np.clip((z_fracs * src_z).astype(int), 0, src_z - 1)
+
+    L_proj = L2[np.ix_(s_idx, z_idx)]
+    t_proj = t2[np.ix_(s_idx, z_idx)]
+    eps_proj = e2[np.ix_(s_idx, z_idx)]
+
+    K_arr, cF_arr = predict_K_cF_vec(tpms_type, L_proj, t_proj, eps_proj)
+    return K_arr.astype(np.float64), cF_arr.astype(np.float64)
+
+
 def extract_dP_from_simple(s):
     """Extract inlet/outlet-averaged dP from a converged SIMPLE instance.
 

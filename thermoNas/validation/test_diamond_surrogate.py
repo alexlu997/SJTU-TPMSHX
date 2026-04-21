@@ -122,7 +122,6 @@ sA = SIMPLESolver(
     eps, r_h, rho, mu, T_in,
     0.0, 0.04, u_air,
     outlet_lo=0.0, outlet_hi=0.04,
-    closure='df',
     P_ref_abs=float(np.sqrt(max(P_out_sq, 1e4))),
 )
 sA.solve(max_iter=3000, tol=1e-4, verbose=False)

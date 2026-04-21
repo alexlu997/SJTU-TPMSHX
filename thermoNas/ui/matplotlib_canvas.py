@@ -209,7 +209,7 @@ class MatplotlibCanvas(FigureCanvas):
         ]
         for ax, (field, main_title, subtitle) in zip(axes_p, p_data):
             ax.set_facecolor(_t['ax_bg'])
-            cf = ax.contourf(X, Y, field, levels=512, cmap="viridis")
+            cf = ax.contourf(X, Y, field, levels=512, cmap="turbo")
             cb = self.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format="%.0f")
             cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
             cb.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=7))

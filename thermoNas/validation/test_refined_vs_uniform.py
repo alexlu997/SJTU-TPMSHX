@@ -50,8 +50,7 @@ N_X_USER, N_Y_USER = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.2)
 def run_uniform():
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y_USER, N_X_USER, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho, mu, T_in, 0.0, H_DOM, u_A,
-                      outlet_lo=0.0, outlet_hi=H_DOM, closure='df',
-                      P_ref_abs=P_out_est, wall_refine=False)
+                      outlet_lo=0.0, outlet_hi=H_DOM, P_ref_abs=P_out_est, wall_refine=False)
     sA.solve(max_iter=3000, tol=1e-4, verbose=False)
     return extract_dP_from_simple(sA), sA.Nx, sA.Ny
 
@@ -60,8 +59,7 @@ def run_refined():
         L_DOM, H_DOM, N_X_USER, N_Y_USER, n_refine=8, first_cell=0.02e-3, growth=1.8)
     sA = SIMPLESolver(H_DOM, L_DOM, Ny_r, Nx_r, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho, mu, T_in, 0.0, H_DOM, u_A,
-                      outlet_lo=0.0, outlet_hi=H_DOM, closure='df',
-                      P_ref_abs=P_out_est, wall_refine=False)
+                      outlet_lo=0.0, outlet_hi=H_DOM, P_ref_abs=P_out_est, wall_refine=False)
     sA.dx_arr = dy_r.copy()
     sA.dy_arr = dx_r.copy()
     sA.solve(max_iter=3000, tol=1e-4, verbose=False)

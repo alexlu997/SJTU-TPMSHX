@@ -10,8 +10,7 @@ warnings.filterwarnings('ignore')
 
 from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
-    air_density, air_viscosity, air_conductivity, air_cp, P_atm,
-    friction_factor, _F_COEFFS, Sa_mm,
+    air_density, air_viscosity, air_conductivity, air_cp, P_atm, Sa_mm,
 )
 from solvers.simple_solver import SIMPLESolver
 from solvers.solve_full import solve_full_domain
@@ -31,13 +30,6 @@ MAX_OUTER = 8         # outer iterations (typically 3-5 suffice)
 OUTER_TOL = 0.5       # K, ΔT_max convergence criterion
 ALPHA_T   = 0.6       # under-relaxation factor for T_field update
 
-# ── Closure form selector ──
-# Set via env var: CLOSURE=df (default, ConstDF-v1 MLP) or CLOSURE=f_re (legacy).
-CLOSURE = os.environ.get('CLOSURE', 'df').lower()
-if CLOSURE not in ('df', 'f_re'):
-    raise SystemExit(f"CLOSURE must be 'df' or 'f_re', got {CLOSURE!r}")
-print(f"[validate_shanghai] closure = {CLOSURE}")
-
 # ── Geometry ──
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
@@ -48,7 +40,13 @@ L_DOM = 0.231; H_DOM = 0.042
 # geometry). We scale A_FLOW to prototype and read prototype-scale mass flows
 # below, so Q_sim comes out at the same scale as Q_exp (c33 = 空气换热量 / W).
 N_UNITS = 36
-A_FLOW_PER_UNIT = 18.0565e-6  # m² — single unit cell effective air cross section
+# A_FLOW_PER_UNIT is the *void* (pore) cross section: 18.0565 mm² per unit cell
+# ≈ eps_f × L_cell² (e.g. 0.368 × 49 mm² for L=7 mm). Consequently the velocity
+# u_A = m_air / (rho_A * A_FLOW) computed below is the *interstitial* (pore-
+# average) velocity, matching the training-data convention in df_fit/ and the
+# solver convention documented in simple_solver.py. K and c_F from the D-F
+# surrogate are effective interstitial coefficients (absorb the eps_f factor).
+A_FLOW_PER_UNIT = 18.0565e-6  # m² — single unit cell void (interstitial) cross section
 A_FLOW = N_UNITS * A_FLOW_PER_UNIT  # 6.50034e-4 m² — prototype total
 
 from solvers.tpms_calc import adaptive_grid
@@ -84,7 +82,8 @@ df = pd.read_excel(DATA_PATH, engine='openpyxl', sheet_name='Sheet1', header=Non
 
 print(f"Geometry: {TPMS} L={L_CELL} t={T_WALL} eps={EPS:.4f} D_h={D_H*1000:.3f}mm")
 print(f"Domain: {L_DOM*1000:.0f}x{H_DOM*1000:.0f}mm, Grid: {N_X}x{N_Y}")
-print(f"f-Re coeffs: {_F_COEFFS['Gyroid']}")
+K_pred_header, cF_pred_header = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+print(f"D-F coeffs (ConstDF-v1): K={K_pred_header:.4e} m², c_F={cF_pred_header:.4e} 1/m")
 print()
 
 results = []
@@ -101,7 +100,7 @@ for ci in range(16):
     mu_A = air_viscosity(T_Ain_K)
     k_A = air_conductivity(T_Ain_K)
     cp_A = air_cp(T_Ain_K)
-    u_A = m_air / (rho_A * A_FLOW)
+    u_A = m_air / (rho_A * A_FLOW)  # interstitial (pore-average) velocity; see A_FLOW block above
 
     # ── Water (Fluid B) ──
     m_water = float(df.iloc[ci, 7])  # c7 = 样机水流量 kg/s (was c4 = 单个)
@@ -137,7 +136,6 @@ for ci in range(16):
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho_A, mu_A, T_Ain_K,
                       0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                      closure=CLOSURE,
                       P_ref_abs=P_out_est,
                       wall_refine=False)
     # Apply master refined grid (4-wall BL resolved): Fluid A SIMPLE coord =

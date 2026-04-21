@@ -14,7 +14,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from .tpms_geometry import compute_geometry, _phi_grid, _C_from_tL, _eps_from_C, _A0_from_C
-from .tpms_calc import (Pr, Sa_mm, P_atm, _F_COEFFS, _T_TRAIN_MAX, _GAMMA_CORR,
+from .tpms_calc import (Pr, Sa_mm, P_atm,
                        air_density, air_viscosity, air_conductivity, air_cp)
 
 
@@ -204,23 +204,6 @@ def _nu_vec(tpms_type, Re, eps, L_mm, D_h_mm):
     else:
         n = 0.177 * Re**0.1 * eps**(-2/3)
         return 0.17 * Pr**(1/3) * Re**n * eps**2.25 * (L_mm / (1000*Sa_mm))**(-2.01)
-
-
-def _f_vec(tpms_type, Re, eps, t_mm, L_mm, D_h_mm):
-    """Vectorized friction factor for arrays."""
-    C, n0, n1, a, b, c = _F_COEFFS[tpms_type]
-    Re = np.maximum(Re, 10.0)
-    eps_f = eps / 2.0  # single-channel porosity
-    n = n0 + n1 * np.log(eps_f)
-    X = D_h_mm if tpms_type == 'Diamond' else L_mm
-    f = C * Re**n * eps_f**a * (t_mm / L_mm)**b * (X / (1000 * Sa_mm))**c
-    # Geometry correction for t outside training range
-    t_max = _T_TRAIN_MAX.get(tpms_type, 0.5)
-    gamma = _GAMMA_CORR.get(tpms_type, 0.0)
-    if gamma > 0.0:
-        phi = np.where(t_mm > t_max, (t_max / t_mm) ** gamma, 1.0)
-        f = f * phi
-    return f
 
 
 # ── Main entry point ─────────────────────────────────────────

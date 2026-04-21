@@ -81,7 +81,7 @@ sA_indep = SIMPLESolver(
     eps, r_h, rho_A_val, mu_A_val, T_inA,
     0.0, H_DOM, u_A,
     outlet_lo=0.0, outlet_hi=H_DOM,
-    closure='df', P_ref_abs=P_out_est_A,
+    P_ref_abs=P_out_est_A,
 )
 sA_indep.solve(max_iter=3000, tol=1e-4, verbose=False)
 
@@ -101,7 +101,7 @@ sB_indep = SIMPLESolver(
     eps, r_h, rho_B_val, mu_B_val, T_inB,
     0.0, L_DOM, u_B,
     outlet_lo=0.0, outlet_hi=L_DOM,
-    closure='df', P_ref_abs=P_out_est_B,
+    P_ref_abs=P_out_est_B,
 )
 sB_indep.solve(max_iter=3000, tol=1e-4, verbose=False)
 

@@ -62,14 +62,26 @@ def predict_K_cF(tpms_type: str, L_mm: float, t_mm: float,
 def predict_K_cF_vec(tpms_type: str, L_mm: np.ndarray, t_mm: np.ndarray,
                      eps_f: np.ndarray
                      ) -> tuple[np.ndarray, np.ndarray]:
-    """Vectorised variant for solver iteration over grid cells."""
+    """Vectorised variant for solver iteration over grid cells.
+
+    Shape-agnostic: accepts any compatible array shape (1D, 2D, 3D). The
+    returned (K, c_F) arrays match the input shape. Inputs are broadcast
+    together.
+    """
     model = _get_model(tpms_type)
-    K_out = np.empty(len(L_mm))
-    cF_out = np.empty(len(L_mm))
-    for i in range(len(L_mm)):
-        K_out[i], cF_out[i] = model.predict(
-            float(L_mm[i]), float(t_mm[i]), float(eps_f[i]))
-    return K_out, cF_out
+    L_arr = np.asarray(L_mm, dtype=np.float64)
+    t_arr = np.asarray(t_mm, dtype=np.float64)
+    e_arr = np.asarray(eps_f, dtype=np.float64)
+    shape = np.broadcast(L_arr, t_arr, e_arr).shape
+    Lf = np.broadcast_to(L_arr, shape).ravel()
+    tf = np.broadcast_to(t_arr, shape).ravel()
+    ef = np.broadcast_to(e_arr, shape).ravel()
+    n = Lf.size
+    K_out = np.empty(n, dtype=np.float64)
+    cF_out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        K_out[i], cF_out[i] = model.predict(float(Lf[i]), float(tf[i]), float(ef[i]))
+    return K_out.reshape(shape), cF_out.reshape(shape)
 
 
 def predict_dP(tpms_type: str, L_mm: float, t_mm: float, eps_f: float,

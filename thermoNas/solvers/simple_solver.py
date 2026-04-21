@@ -18,12 +18,23 @@ Physics (temperature, frozen velocity):
 
 Staggered grid:  P[i,j] cell centre (Nx,Ny)
                  u[i,j] x-face (Nx+1,Ny)    v[i,j] y-face (Nx,Ny+1)
+
+Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
+  u, v are *interstitial* (pore-average) velocities, not superficial. Inlet BC
+  `v_inlet = m_dot / (rho * A_void)` where A_void = eps_f * A_total; training
+  data (df_fit/) uses the same convention. Consequently K and c_F from the D-F
+  surrogate are *effective interstitial* coefficients that already absorb the
+  eps_f factor — they are not the canonical Darcy/Forchheimer values one would
+  cite from a textbook. This is algebraically equivalent to the superficial
+  form when eps_f is spatially uniform (e.g. Shanghai). For spatially varying
+  eps_f (future zoned-TPMS work) the convection and Laplacian operators on
+  interstitial u deviate from the homogenised BFNS derivation — flag before
+  extending to non-uniform porosity.
 """
 
 import numpy as np
 from numba import njit
-from .tpms_calc import (air_density, air_viscosity, P_atm,
-                       Sa_mm as _SA_MM, _F_COEFFS)
+from .tpms_calc import (air_density, air_viscosity, P_atm)
 
 
 # ===================================================================
@@ -187,26 +198,6 @@ def _sou_corr_v_y(v, i, j, Ny, Fn):
 
 
 @njit(cache=True)
-def _f_re(Re, ln_eps, ln_tL, ln_XSa, c):
-    """Friction factor (F1 power-law), Numba-safe.
-    c = (C, n0, n1, a, b, c_exp) — 6 coefficients.
-    ln_XSa = ln(X/(1000*Sa)), X = D_h (Diamond) or L (Gyroid).
-    """
-    n = c[1] + c[2] * ln_eps
-    return c[0] * Re**n * np.exp(c[3]*ln_eps + c[4]*ln_tL + c[5]*ln_XSa)
-
-
-@njit(cache=True)
-def _porous_src(umag, rho_ref, r_h, mu, rho, ln_eps, ln_tL, ln_XSa, c):
-    """Linearised porous resistance coefficient [kg/(m3 s)]. Legacy f-Re closure."""
-    if umag < 1e-10:
-        return 0.0
-    Re = max(rho_ref * umag * r_h / mu, 10.0)
-    f = _f_re(Re, ln_eps, ln_tL, ln_XSa, c)
-    return f * rho * umag / (2.0 * r_h)
-
-
-@njit(cache=True)
 def _porous_src_df(umag, K, cF, mu, rho):
     """Linearised porous resistance coefficient [kg/(m3 s)] for ConstDF-v1.
 
@@ -235,87 +226,7 @@ def _umag_v(u, v, i, j, Nx, Ny):
     return np.sqrt(ua ** 2 + v[i, j] ** 2)
 
 
-# ── SIMPLE Step 1: x-momentum ─────────────────────────────────────
-@njit(cache=True)
-def _sweep_u_jit(u, v, P, d_u, inlet_frac, outlet_frac,
-                 Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
-                 rho_ref, r_h_arr, mu, ln_eps_arr, ln_tL_arr, ln_XSa_arr, fc,
-                 alpha_u, n_sweeps, phi_arr):
-    """rho_field: 2D [Nx, Ny] — variable density.
-    mu_eff_arr, r_h_arr, ln_eps_arr, ln_tL_arr, ln_XSa_arr: 1D [Ny].
-    dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
-    inlet_frac, outlet_frac: 1D [Nx] — Brinkman wall penalty applied where low.
-    phi_arr: 1D [Ny] — geometry correction for t outside training range."""
-    for _ in range(n_sweeps):
-        for i in range(1, Nx):
-            for j in range(Ny):
-                # u-face i is between cells i-1 and i
-                dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
-                dyj = dy_arr[j]
-                vol = dxi * dyj
-                mu_e = mu_eff_arr[j]
-                De0 = mu_e * dyj / dxi
-                Dn0 = mu_e * dxi / dyj
-
-                uE = u[i + 1, j] if i + 1 < Nx else 0.0
-                uW = u[i - 1, j] if i > 1 else 0.0
-                uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
-                uS = u[i, j - 1] if j > 0 else 0.0
-
-                De = De0; Dw = De0
-                Dn = Dn0 if j < Ny - 1 else 0.0
-                Ds = Dn0 if j > 0 else 0.0
-
-                ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
-                uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
-                il = max(i - 1, 0); ir = min(i, Nx - 1)
-                vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
-                vs = 0.5 * (v[il, j] + v[ir, j])
-
-                # Local rho at u-face (i, j): average of cells i-1 and i
-                il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
-                rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
-
-                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
-
-                aE = De + max(-Fe, 0.0)
-                aW = Dw + max(Fw, 0.0)
-                aN = Dn + max(-Fn, 0.0)
-                aS = Ds + max(Fs, 0.0)
-
-                umag = _umag_u(u, v, i, j, Nx, Ny)
-                Sp = _porous_src(umag, rho_ref, r_h_arr[j], mu, rho_loc,
-                                 ln_eps_arr[j], ln_tL_arr[j], ln_XSa_arr[j],
-                                 fc) * vol * phi_arr[j]
-
-                # Brinkman penalty: continuous wall resistance near outlet
-                il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
-                wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
-                if wall_out > 0.01 and j >= Ny - 8:
-                    wall_dist = Ny - j
-                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
-                # Brinkman penalty: continuous wall resistance near inlet
-                wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
-                if wall_in > 0.01 and j < 8:
-                    wall_dist = j + 1
-                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
-
-                p_src = (P[i - 1, j] - P[i, j]) * dyj
-                aP0 = aE + aW + aN + aS + Sp
-                rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src
-                aP = aP0 / alpha_u
-                rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j]
-
-                u[i, j] = rhs / aP
-                d_u[i, j] = dyj / aP0
-
-    # Wall BCs
-    for j in range(Ny):
-        u[0, j] = 0.0; u[Nx, j] = 0.0
-
-
-# ── SIMPLE Step 1 (D-F variant): x-momentum with ConstDF-v1 closure ──
+# ── SIMPLE Step 1: x-momentum with D-F closure ───────────────────
 @njit(cache=True)
 def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
@@ -394,97 +305,7 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
         u[0, j] = 0.0; u[Nx, j] = 0.0
 
 
-# ── SIMPLE Step 2: y-momentum ─────────────────────────────────────
-@njit(cache=True)
-def _sweep_v_jit(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
-                 Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_arr,
-                 rho_ref, r_h_arr, mu, ln_eps_arr, ln_tL_arr, ln_XSa_arr, fc,
-                 alpha_u, n_sweeps, phi_arr):
-    """rho_field: 2D [Nx, Ny] — variable density.
-    dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
-    phi_arr: 1D [Ny] — geometry correction."""
-    for _ in range(n_sweeps):
-        for i in range(Nx):
-            for j in range(1, Ny):
-                # v-face j is between cells j-1 and j
-                jc = min(j, Ny - 1)
-                dxi = dx_arr[i]
-                dyj = 0.5 * (dy_arr[j - 1] + dy_arr[min(j, Ny - 1)])
-                vol = dxi * dyj
-                mu_e = mu_eff_arr[jc]
-                De0 = mu_e * dyj / dxi
-                Dn0 = mu_e * dxi / dyj
-
-                vE = v[i + 1, j] if i < Nx - 1 else v[i, j]
-                vW = v[i - 1, j] if i > 0 else v[i, j]
-                vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
-                vS = v[i, j - 1]
-
-                De = De0 if i < Nx - 1 else 0.0
-                Dw = De0 if i > 0 else 0.0
-                Dn = Dn0 if j < Ny - 1 else 0.0
-                Ds = Dn0
-
-                jb = max(j - 1, 0); jt = min(j, Ny - 1)
-                ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
-                uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
-                vn = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
-                vs = 0.5 * (v[i, max(j - 1, 0)] + v[i, j])
-
-                # Local rho at v-face (i, j): average of cells j-1 and j
-                rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
-
-                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
-
-                aE = De + max(-Fe, 0.0)
-                aW = Dw + max(Fw, 0.0)
-                aN = Dn + max(-Fn, 0.0)
-                aS = Ds + max(Fs, 0.0)
-
-                umag = _umag_v(u, v, i, j, Nx, Ny)
-                Sp = _porous_src(umag, rho_ref, r_h_arr[jc], mu, rho_loc,
-                                 ln_eps_arr[jc], ln_tL_arr[jc],
-                                 ln_XSa_arr[jc], fc) * vol * phi_arr[jc]
-
-                # Brinkman penalty: continuous wall resistance near outlet
-                wall_out = 1.0 - outlet_frac[i]
-                if wall_out > 0.01 and j >= Ny - 8:
-                    wall_dist = Ny - j
-                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
-                # Brinkman penalty: continuous wall resistance near inlet
-                wall_in = 1.0 - inlet_frac[i]
-                if wall_in > 0.01 and j < 8:
-                    wall_dist = j + 1
-                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
-
-                p_src = (P[i, j - 1] - P[i, j]) * dxi
-                aP0 = aE + aW + aN + aS + Sp
-                rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src
-                aP = aP0 / alpha_u
-                rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j]
-
-                v[i, j] = rhs / aP
-                d_v[i, j] = dxi / aP0
-
-    # BCs: inlet at bottom, outlet (partial) at top
-    # For variable density: v[Ny] adjusted by ρ ratio for mass conservation
-    for i in range(Nx):
-        v[i, 0] = v_inlet * inlet_frac[i]
-        if outlet_frac[i] > 0.5:
-            # Outflow with mass conservation: ρ_face*v constant near outlet
-            # rho at face (Ny-1/2) ≈ 0.5*(rho[Ny-2]+rho[Ny-1]); face Ny ≈ rho[Ny-1]
-            if Ny >= 2:
-                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
-                rho_outer_face = rho_field[i, Ny-1]
-                v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
-            else:
-                v[i, Ny] = v[i, Ny - 1]
-        else:
-            v[i, Ny] = 0.0
-
-
-# ── SIMPLE Step 2 (D-F variant): y-momentum with ConstDF-v1 closure ──
+# ── SIMPLE Step 2: y-momentum with D-F closure ───────────────────
 @njit(cache=True)
 def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
@@ -613,7 +434,19 @@ def _build_pp_sparsity_pattern(Nx, Ny, outlet_frac):
         for j in range(Ny):
             k = idx(i, j)
             cell_base[k] = pos
-            # Outlet reference: diagonal only, Pp = 0
+            # Outlet reference: diagonal only, Pp = 0.
+            # Threshold 0.01 is permissive on purpose — any cell that *might*
+            # pass flow becomes a pressure anchor. For Shanghai and optimizer
+            # full-width outlets (outlet_frac identically 1.0) this has no
+            # effect. For partial-outlet / zoned configurations, the taper
+            # logic in __init__ (L1255-1264) keeps outlet_frac of open cells
+            # ≥ 0.706 (d=1 of the 4-cell exp decay), so transition cells in
+            # (0.01, 0.5] should not normally appear — but if a straddling
+            # cell does land in that band, it is pinned here while the v-face
+            # sweep treats it as a wall (L567-577). The mismatch is benign
+            # only because _correct_jit L781-787 unconditionally re-writes
+            # v[i, Ny] via the mass-conservation outflow rule, effectively
+            # promoting such a cell to outlet semantics. Audit: 2026-04-19.
             if j == Ny - 1 and outlet_frac[i] > 0.01:
                 cell_kind[k] = 1
                 indices_list.append(k)
@@ -1019,16 +852,13 @@ class SIMPLESolver:
                  T_field=None,
                  P_ref_abs=None,
                  alpha_rho=0.3,
-                 closure='df',
                  wall_refine=True,
                  n_wall_refine=8,
-                 wall_first_cell=0.02e-3):
-        # Closure form selector. 'df' uses ConstDF-v1 MLP surrogate
-        # (thermoNas/df_fit/predict.py); 'f_re' keeps the legacy f-Re power
-        # law. D-F is the default since 2026-04-15 baseline commit ab7a39e.
-        if closure not in ('df', 'f_re'):
-            raise ValueError(f"closure must be 'df' or 'f_re', got {closure!r}")
-        self.closure = closure
+                 wall_first_cell=0.02e-3,
+                 **_legacy_kw):
+        # Historical 'closure' kwarg is accepted but ignored; ConstDF-v1 D-F
+        # is the only closure since 2026-04-19 f-Re cleanup.
+        _legacy_kw.pop('closure', None)
 
         # Wall refinement (cross-stream, x direction): geometric grid at both
         # side walls to resolve Brinkman boundary layer. Default ON since
@@ -1087,7 +917,6 @@ class SIMPLESolver:
             self.rho_field = np.ascontiguousarray(rho, dtype=np.float64)
         self.rho = float(self.rho_field.mean())  # scalar mean for backwards-compat
         self.mu = mu
-        self.rho_ref = air_density(T_in, P_atm)
 
         # Compressible flow: pressure-density coupling
         self.fluid_type = fluid_type
@@ -1105,117 +934,46 @@ class SIMPLESolver:
             self.T_field = np.ascontiguousarray(T_field, dtype=np.float64)
 
         # Non-isothermal coupling: 2D viscosity fields that track T_field.
-        # For D-F path these are the authoritative arrays; the scalar self.mu
-        # and 1D self._mu_eff_arr below are kept only for legacy f-Re path.
+        # Authoritative arrays consumed by D-F sweeps; update via
+        # _refresh_mu_from_T whenever T_field changes.
         self.mu_field = np.full((Nx, Ny), float(mu), dtype=np.float64)
         self._mu_eff_field = np.full((Nx, Ny), float(mu) / float(eps), dtype=np.float64)
 
-        # f-Re coefficients (precomputed for Numba)
-        self._fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
+        # ── ConstDF-v1 surrogate: precompute (K, c_F) per row ──
+        # Broadcast for uniform geometry; per-row predictions for zone_config
+        # graded designs. zone_arrays path doesn't carry L/t/eps metadata, so
+        # it falls back to the uniform (scalar) prediction.
+        try:
+            from df_fit.predict import predict_K_cF, predict_K_cF_vec
+        except ImportError:
+            from thermoNas.df_fit.predict import predict_K_cF, predict_K_cF_vec
 
-        # Build 1D arrays [Ny] for per-row zone properties
-        if zone_arrays is not None:
-            # Pre-built 1D arrays passed directly (from grid mode)
-            self._mu_eff_arr = zone_arrays['mu_eff_arr']
-            self._r_h_arr    = zone_arrays['r_h_arr']
-            self._ln_eps_arr = zone_arrays['ln_eps_arr']
-            self._ln_tL_arr  = zone_arrays['ln_tL_arr']
-            self._ln_XSa_arr = zone_arrays['ln_XSa_arr']
-        elif zone_config is not None:
+        if zone_config is not None:
+            # Per-row (L, t, eps_f) → batched prediction
+            L_row = np.empty(Ny, dtype=np.float64)
+            t_row = np.empty(Ny, dtype=np.float64)
+            eps_f_row = np.empty(Ny, dtype=np.float64)
             dy_val = H / Ny
-            self._mu_eff_arr = np.empty(Ny, dtype=np.float64)
-            self._r_h_arr    = np.empty(Ny, dtype=np.float64)
-            self._ln_eps_arr = np.empty(Ny, dtype=np.float64)
-            self._ln_tL_arr  = np.empty(Ny, dtype=np.float64)
-            self._ln_XSa_arr = np.empty(Ny, dtype=np.float64)
             for j in range(Ny):
                 yc_frac = (j + 0.5) * dy_val / H
-                # Find zone for this row
                 z = zone_config.zones[-1]
                 for zz in zone_config.zones:
                     if zz.y_frac_start <= yc_frac < zz.y_frac_end:
                         z = zz; break
+                L_row[j] = z.L_mm
+                t_row[j] = z.t_mm
                 z_eps = z.props_A['epsilon'] if z.props_A else eps
-                z_rh  = z.props_A['D_h'] / 2.0 if z.props_A else r_h
-                z_L   = z.L_mm
-                z_t   = z.t_mm
-                self._mu_eff_arr[j] = mu / z_eps
-                self._r_h_arr[j]    = z_rh
-                self._ln_eps_arr[j] = np.log(z_eps / 2.0)  # single-channel porosity
-                self._ln_tL_arr[j]  = np.log(z_t / z_L)
-                X_mm = 2.0 * z_rh * 1000.0 if tpms_type == 'Diamond' else z_L
-                self._ln_XSa_arr[j] = np.log(X_mm / (1000.0 * _SA_MM))
+                eps_f_row[j] = z_eps / 2.0  # single-channel porosity
+            K_vec, cF_vec = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_row)
+            self._K_arr = K_vec.astype(np.float64)
+            self._cF_arr = cF_vec.astype(np.float64)
         else:
-            # Uniform: broadcast scalar to 1D arrays
-            self._ln_eps_val = np.log(eps / 2.0)  # single-channel porosity for f-Re
-            self._ln_tL_val  = np.log(t_mm / L_cell_mm)
-            X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_cell_mm
-            self._ln_XSa_val = np.log(X_mm / (1000.0 * _SA_MM))
-
-            self._mu_eff_arr = np.full(Ny, mu / eps, dtype=np.float64)
-            self._r_h_arr    = np.full(Ny, r_h, dtype=np.float64)
-            self._ln_eps_arr = np.full(Ny, self._ln_eps_val, dtype=np.float64)
-            self._ln_tL_arr  = np.full(Ny, self._ln_tL_val, dtype=np.float64)
-            self._ln_XSa_arr = np.full(Ny, self._ln_XSa_val, dtype=np.float64)
-
-        # Geometry correction phi(t) for t outside training range
-        from .tpms_calc import _phi_t_correction
-        self._phi_arr = np.empty(Ny, dtype=np.float64)
-        if zone_arrays is not None:
-            # zone_arrays may have per-row t_mm; use uniform phi for now
-            phi_val = _phi_t_correction(tpms_type, t_mm)
-            self._phi_arr[:] = phi_val
-        elif zone_config is not None:
-            for j in range(Ny):
-                yc_frac = (j + 0.5) * (H / Ny) / H
-                z = zone_config.zones[-1]
-                for zz in zone_config.zones:
-                    if zz.y_frac_start <= yc_frac < zz.y_frac_end:
-                        z = zz; break
-                self._phi_arr[j] = _phi_t_correction(tpms_type, z.t_mm)
-        else:
-            phi_val = _phi_t_correction(tpms_type, t_mm)
-            self._phi_arr[:] = phi_val
-
-        # ── ConstDF-v1 surrogate: precompute (K, c_F) per row ──
-        # Only built when closure='df'. Broadcast for uniform geometry;
-        # per-row predictions for zone_config graded designs. zone_arrays
-        # path doesn't carry L/t/eps metadata, so it falls back to the
-        # uniform (scalar) prediction.
-        self._K_arr = np.ones(Ny, dtype=np.float64)   # dummy when f_re
-        self._cF_arr = np.zeros(Ny, dtype=np.float64)
-        if closure == 'df':
-            try:
-                from df_fit.predict import predict_K_cF, predict_K_cF_vec
-            except ImportError:
-                from thermoNas.df_fit.predict import predict_K_cF, predict_K_cF_vec
-
-            if zone_config is not None:
-                # Per-row (L, t, eps_f) → batched prediction
-                L_row = np.empty(Ny, dtype=np.float64)
-                t_row = np.empty(Ny, dtype=np.float64)
-                eps_f_row = np.empty(Ny, dtype=np.float64)
-                dy_val = H / Ny
-                for j in range(Ny):
-                    yc_frac = (j + 0.5) * dy_val / H
-                    z = zone_config.zones[-1]
-                    for zz in zone_config.zones:
-                        if zz.y_frac_start <= yc_frac < zz.y_frac_end:
-                            z = zz; break
-                    L_row[j] = z.L_mm
-                    t_row[j] = z.t_mm
-                    z_eps = z.props_A['epsilon'] if z.props_A else eps
-                    eps_f_row[j] = z_eps / 2.0  # single-channel porosity
-                K_vec, cF_vec = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_row)
-                self._K_arr = K_vec.astype(np.float64)
-                self._cF_arr = cF_vec.astype(np.float64)
-            else:
-                # Uniform (or zone_arrays fallback): single (K, c_F), broadcast
-                K_val, cF_val = predict_K_cF(
-                    tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
-                )
-                self._K_arr = np.full(Ny, K_val, dtype=np.float64)
-                self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
+            # Uniform (or zone_arrays fallback): single (K, c_F), broadcast
+            K_val, cF_val = predict_K_cF(
+                tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
+            )
+            self._K_arr = np.full(Ny, K_val, dtype=np.float64)
+            self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
 
         # Inlet — use overlap fraction for exact mass conservation
         self.v_inlet = v_inlet
@@ -1371,29 +1129,16 @@ class SIMPLESolver:
         dx_a, dy_a = self.dx_arr, self.dy_arr
 
         for it in range(1, max_iter + 1):
-            if self.closure == 'df':
-                _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
-                                self.inlet_frac, self.outlet_frac,
-                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
-                _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
-                                self.inlet_frac, self.v_inlet, self.outlet_frac,
-                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
-            else:  # 'f_re' legacy path
-                args_porous = (self.rho_ref, self._r_h_arr, self.mu,
-                               self._ln_eps_arr, self._ln_tL_arr,
-                               self._ln_XSa_arr, self._fc)
-                _sweep_u_jit(self.u, self.v, self.P, self.d_u,
-                             self.inlet_frac, self.outlet_frac,
-                             Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
-                             *args_porous, alpha_u, n_inner, self._phi_arr)
-                _sweep_v_jit(self.u, self.v, self.P, self.d_v,
-                             self.inlet_frac, self.v_inlet, self.outlet_frac,
-                             Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_arr,
-                             *args_porous, alpha_u, n_inner, self._phi_arr)
+            _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
+                            self.inlet_frac, self.outlet_frac,
+                            Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                            self._K_arr, self._cF_arr, self.mu_field,
+                            alpha_u, n_inner)
+            _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
+                            self.inlet_frac, self.v_inlet, self.outlet_frac,
+                            Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                            self._K_arr, self._cF_arr, self.mu_field,
+                            alpha_u, n_inner)
             if self._pp_sparsity is None:
                 self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_frac)
             _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,

@@ -7,7 +7,7 @@ fvm_solver.py — FVM solvers on unstructured triangular mesh
 Physics (velocity):
   ∇·U = 0                                            (continuity)
   -∇P = R(|U|)·U - μ_eff·∇²U                        (Brinkman-Forchheimer)
-  R = f·ρ·|U|/(2·r_h)                                (porous resistance)
+  R = μ/K + ρ·c_F·|U|                                (ConstDF-v1 D-F closure)
 
 SIMPLE algorithm on collocated triangular mesh:
   1. Solve x-momentum and y-momentum (sparse direct)
@@ -15,6 +15,11 @@ SIMPLE algorithm on collocated triangular mesh:
   3. Pressure correction (Poisson)
   4. Correct P, U, face flux
   5. Iterate until mass residual converges
+
+Velocity / closure convention: same as simple_solver.py — u is interstitial,
+K and c_F are effective interstitial coefficients from df_fit/predict.py
+(SurrogateV3 RBF on (L_mm, t_mm, eps_f)). Legacy f-Re closure was removed
+2026-04-19.
 """
 
 import numpy as np
@@ -22,34 +27,26 @@ from numba import njit
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from .tpms_calc import (air_density, air_conductivity, P_atm,
-                       Sa_mm as _SA_MM, _F_COEFFS, nu_from_Re)
+                       Sa_mm as _SA_MM, nu_from_Re)
 from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
                                BC_INLET_A, BC_OUTLET_A,
                                BC_INLET_B, BC_OUTLET_B)
 
 
 # ===================================================================
-#  Friction factor & resistance
+#  Porous resistance (Darcy-Forchheimer)
 # ===================================================================
 
 @njit(cache=True)
-def _f_re(Re, ln_eps, ln_tL, ln_XSa, c):
-    """Friction factor (F1 power-law), Numba-safe.
-    c = (C, n0, n1, a, b, c_exp) — 6 coefficients.
-    ln_XSa = ln(X/(1000*Sa)), X = D_h (Diamond) or L (Gyroid).
+def _resistance(umag, K, cF, mu, rho):
+    """Porous resistance R [kg/(m³·s)]: source = R·U.
+
+    D-F closure: R = μ/K + ρ·c_F·|u|. K and c_F are interstitial-form
+    coefficients supplied by the caller (scalar or per-cell array).
     """
-    n = c[1] + c[2] * ln_eps
-    Re = max(Re, 10.0)
-    return c[0] * Re**n * np.exp(c[3]*ln_eps + c[4]*ln_tL + c[5]*ln_XSa)
-
-
-@njit(cache=True)
-def _resistance(umag, rho_ref, r_h, mu, rho, ln_eps, ln_tL, ln_XSa, c, phi=1.0):
-    """Porous resistance R [kg/(m³·s)]: source = R·U. phi = geometry correction."""
-    umag = max(umag, 0.01)
-    Re = max(rho_ref * umag * r_h / mu, 10.0)
-    f = _f_re(Re, ln_eps, ln_tL, ln_XSa, c)
-    return f * phi * rho * umag / (2.0 * r_h)
+    if umag < 1e-10:
+        return mu / K  # pure Darcy when velocity vanishes
+    return mu / K + rho * cF * umag
 
 
 # ===================================================================
@@ -57,8 +54,7 @@ def _resistance(umag, rho_ref, r_h, mu, rho, ln_eps, ln_tL, ln_XSa, c, phi=1.0):
 # ===================================================================
 
 def _assemble_momentum(mesh, u_cell, v_cell, P, face_flux,
-                       rho, mu_eff, rho_ref, r_h, mu_fluid,
-                       ln_eps, ln_tL, ln_XSa, fc,
+                       rho, mu_eff, K, cF, mu_fluid,
                        bc_inlet, bc_outlet, u_in_x, u_in_y,
                        alpha_u, component):
     """
@@ -107,8 +103,7 @@ def _assemble_momentum(mesh, u_cell, v_cell, P, face_flux,
 
         # Porous resistance source (linearized: S = R*vol added to diagonal)
         umag = np.sqrt(u_cell[ci]**2 + v_cell[ci]**2)
-        R = _resistance(umag, rho_ref, r_h, mu_fluid, rho,
-                        ln_eps, ln_tL, ln_XSa, fc)
+        R = _resistance(umag, K, cF, mu_fluid, rho)
         Sp = R * vol
         aP0 += Sp
 
@@ -319,8 +314,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
                          rho, mu, T_in,
                          u_in, edge_in, bc_inlet, bc_outlet,
                          max_iter=30, tol=1e-3, verbose=True,
-                         r_h_arr=None, ln_eps_arr=None,
-                         ln_tL_arr=None, ln_XSa_arr=None,
+                         K_arr=None, cF_arr=None,
                          **_ignored):
     """
     Darcy-Forchheimer velocity solver for fully porous domain.
@@ -329,28 +323,26 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         nabla·(D·nabla P) = 0,   D = 1/R(|U|)
         U = -D·nabla P
 
-    Supports per-cell porous parameters via optional *_arr arguments
-    (1D arrays [n_cells]). If not provided, scalar values are broadcast.
+    D-F closure via ConstDF-v1 surrogate (df_fit.predict.predict_K_cF).
+    Supports per-cell (K, c_F) via optional K_arr / cF_arr (shape [n_cells]).
+    If not provided, uniform (L_mm, t_mm, eps) is used and broadcast.
 
     Returns: u_cell, v_cell, P_cell, face_Un
     """
     nc = mesh.n_cells
-    fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
-    rho_ref = air_density(T_in, P_atm)
 
-    # Build per-cell porous parameter arrays
-    _provided = [x is not None for x in (r_h_arr, ln_eps_arr, ln_tL_arr, ln_XSa_arr)]
-    if any(_provided) and not all(_provided):
-        raise ValueError("Provide all four *_arr arguments or none.")
-    if r_h_arr is None:
-        ln_eps_val = np.log(eps / 2.0)  # single-channel porosity for f-Re
-        ln_tL_val = np.log(t_mm / L_mm)
-        X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_mm
-        ln_XSa_val = np.log(X_mm / (1000.0 * _SA_MM))
-        r_h_arr    = np.full(nc, r_h, dtype=np.float64)
-        ln_eps_arr = np.full(nc, ln_eps_val, dtype=np.float64)
-        ln_tL_arr  = np.full(nc, ln_tL_val, dtype=np.float64)
-        ln_XSa_arr = np.full(nc, ln_XSa_val, dtype=np.float64)
+    # Build per-cell (K, c_F) arrays from ConstDF-v1 surrogate
+    if (K_arr is None) ^ (cF_arr is None):
+        raise ValueError("Provide both K_arr and cF_arr, or neither.")
+    if K_arr is None:
+        try:
+            from df_fit.predict import predict_K_cF
+        except ImportError:
+            from thermoNas.df_fit.predict import predict_K_cF
+        K_val, cF_val = predict_K_cF(tpms_type, float(L_mm), float(t_mm),
+                                     float(eps) / 2.0)
+        K_arr = np.full(nc, K_val, dtype=np.float64)
+        cF_arr = np.full(nc, cF_val, dtype=np.float64)
 
     # Inlet velocity direction (inward normal of inlet edge)
     in_n = mesh.inlet_normal(edge_in)
@@ -360,9 +352,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     # Initial R from inlet velocity (per-cell from zone params)
     R_cell = np.empty(nc)
     for ci in range(nc):
-        R_cell[ci] = _resistance(u_in, rho_ref, r_h_arr[ci], mu, rho,
-                                 ln_eps_arr[ci], ln_tL_arr[ci],
-                                 ln_XSa_arr[ci], fc)
+        R_cell[ci] = _resistance(u_in, K_arr[ci], cF_arr[ci], mu, rho)
 
     P = np.zeros(nc)
     u_cell = np.zeros(nc)
@@ -494,9 +484,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         R_new = np.empty(nc)
         for ci in range(nc):
             umag = max(_umag_gg[ci], 0.01)
-            R_new[ci] = _resistance(umag, rho_ref, r_h_arr[ci], mu, rho,
-                                    ln_eps_arr[ci], ln_tL_arr[ci],
-                                    ln_XSa_arr[ci], fc)
+            R_new[ci] = _resistance(umag, K_arr[ci], cF_arr[ci], mu, rho)
 
         dR = np.abs(R_new - R_cell) / np.maximum(R_cell, 1e-10)
         max_dR = dR.max()
@@ -525,17 +513,18 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
                           alpha_u=0.5, alpha_p=0.2,
                           verbose=True, **_ignored):
     """
-    Brinkman-Forchheimer SIMPLE solver for one fluid.
+    Brinkman-Forchheimer SIMPLE solver for one fluid (D-F closure, uniform
+    geometry). For zoned polygon domains use solve_velocity_darcy with
+    K_arr / cF_arr instead.
 
     Returns: u_cell, v_cell, P_cell, face_Un
     """
     nc = mesh.n_cells
-    fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
-    ln_eps, ln_tL = np.log(eps / 2.0), np.log(t_mm / L_mm)  # single-channel porosity
-    # Length scale X: D_h for Diamond, L for Gyroid (same as Nu)
-    X_mm = 2.0 * r_h * 1000.0 if tpms_type == 'Diamond' else L_mm
-    ln_XSa = np.log(X_mm / (1000.0 * _SA_MM))
-    rho_ref = air_density(T_in, P_atm)
+    try:
+        from df_fit.predict import predict_K_cF
+    except ImportError:
+        from thermoNas.df_fit.predict import predict_K_cF
+    K, cF = predict_K_cF(tpms_type, float(L_mm), float(t_mm), float(eps) / 2.0)
     mu_eff = mu / eps
 
     # Inlet velocity direction
@@ -561,8 +550,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         # 1. Solve x-momentum
         Au, bu, aP_u = _assemble_momentum(
             mesh, u_cell, v_cell, P, face_flux,
-            rho, mu_eff, rho_ref, r_h, mu,
-            ln_eps, ln_tL, ln_XSa, fc,
+            rho, mu_eff, K, cF, mu,
             bc_inlet, bc_outlet, u_in_x, u_in_y,
             alpha_u, 'u')
         u_cell = spsolve(Au, bu)
@@ -570,8 +558,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         # 2. Solve y-momentum
         Av, bv, aP_v = _assemble_momentum(
             mesh, u_cell, v_cell, P, face_flux,
-            rho, mu_eff, rho_ref, r_h, mu,
-            ln_eps, ln_tL, ln_XSa, fc,
+            rho, mu_eff, K, cF, mu,
             bc_inlet, bc_outlet, u_in_x, u_in_y,
             alpha_u, 'v')
         v_cell = spsolve(Av, bv)
@@ -889,22 +876,22 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
         za = zone_config.build_unstructured_arrays(
             mesh.cell_centers[:, 1] - ymin, nc, H_mesh)
 
-        # Darcy solver: per-cell porous resistance params
-        fc = np.array(_F_COEFFS[tpms_type], dtype=np.float64)
-        ln_eps_arr = np.log(za['eps_arr'] / 2.0)  # single-channel porosity
-        r_h_arr = za['r_h_arr']
-        ln_tL_arr = np.empty(nc, dtype=np.float64)
-        ln_XSa_arr = np.empty(nc, dtype=np.float64)
-
+        # Darcy solver: per-cell (K, c_F) via ConstDF-v1 surrogate
+        try:
+            from df_fit.predict import predict_K_cF_vec
+        except ImportError:
+            from thermoNas.df_fit.predict import predict_K_cF_vec
+        L_row = np.empty(nc, dtype=np.float64)
+        t_row = np.empty(nc, dtype=np.float64)
         for ci in range(nc):
             zi = za['zone_id'][ci]
             zp = za['zone_params'][zi]
-            ln_tL_arr[ci] = np.log(zp['t_mm'] / zp['L_mm'])
-            X_mm = 2.0 * r_h_arr[ci] * 1000.0 if tpms_type == 'Diamond' else zp['L_mm']
-            ln_XSa_arr[ci] = np.log(X_mm / (1000.0 * _SA_MM))
+            L_row[ci] = zp['L_mm']
+            t_row[ci] = zp['t_mm']
+        eps_f_arr = za['eps_arr'] / 2.0  # single-channel porosity
+        K_arr, cF_arr = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_arr)
 
-        darcy_kw_A = dict(r_h_arr=r_h_arr, ln_eps_arr=ln_eps_arr,
-                          ln_tL_arr=ln_tL_arr, ln_XSa_arr=ln_XSa_arr)
+        darcy_kw_A = dict(K_arr=K_arr, cF_arr=cF_arr)
         darcy_kw_B = dict(darcy_kw_A)  # shallow copy to avoid aliasing
 
         energy_kw = dict(

@@ -61,7 +61,6 @@ print(f"  P_ref_abs seed = {P_out_est:.0f} Pa (1D closed-form outlet estimate)")
 sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                   EPS, R_H, rho_A, mu_A, T_in_K,
                   0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                  closure='df',
                   P_ref_abs=P_out_est)
 
 print(f"=== Solver internal state after construction ===")

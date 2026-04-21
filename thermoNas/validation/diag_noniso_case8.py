@@ -91,7 +91,7 @@ print("\n--- ISOTHERMAL SIMPLE (T_field = T_in) ---")
 sA_iso = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                      EPS, R_H, rho_A, mu_A, T_Ain_K,
                      0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                     closure='df', P_ref_abs=P_out_iso)
+                     P_ref_abs=P_out_iso)
 sA_iso.solve(max_iter=3000, tol=1e-4, verbose=False)
 
 wA_in = sA_iso.inlet_frac; wA_out = sA_iso.outlet_frac
@@ -110,7 +110,7 @@ print("\n--- NON-ISOTHERMAL SIMPLE (coupled with solve_full) ---")
 sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                   EPS, R_H, rho_A, mu_A, T_Ain_K,
                   0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                  closure='df', P_ref_abs=P_out_iso)
+                  P_ref_abs=P_out_iso)
 sA.solve(max_iter=3000, tol=1e-4, verbose=False)
 
 # Setup solve_full inputs

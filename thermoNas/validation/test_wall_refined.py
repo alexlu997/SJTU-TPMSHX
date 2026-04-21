@@ -105,7 +105,7 @@ def run_and_profile(label, dx_arr_cross=None):
         EPS, R_H, rho_A, mu_A, T_Ain_K,
         0.0, H_DOM, u_A,
         outlet_lo=0.0, outlet_hi=H_DOM,
-        closure='df', P_ref_abs=P_out_est,
+        P_ref_abs=P_out_est,
         wall_refine=False,  # manually managed grid via override
     )
     # 覆盖 cross-stream 网格（full-width inlet/outlet 下 inlet_frac/outlet_frac 仍全为 1）

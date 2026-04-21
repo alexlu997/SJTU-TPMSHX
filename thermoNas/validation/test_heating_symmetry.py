@@ -70,7 +70,7 @@ def run_case(Tb_scalar_C, label):
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho_A, mu_A, T_Ain_K,
                       0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                      closure='df', P_ref_abs=P_out_est)
+                      P_ref_abs=P_out_est)
     cA, nA = sA.solve(max_iter=3000, tol=1e-4, verbose=False)
     dP_iso = sA.P[:,0].mean() - sA.P[:,-1].mean()
 

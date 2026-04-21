@@ -56,7 +56,7 @@ def run_one_case(ci, K_override, cF_override):
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                       EPS, R_H, rho_A, mu_A, T_Ain_K,
                       0.0, H_DOM, u_A, outlet_lo=0.0, outlet_hi=H_DOM,
-                      closure='df', P_ref_abs=P_out_est)
+                      P_ref_abs=P_out_est)
     # Override K/cF arrays (SIMPLE populated them from predict_K_cF during init)
     sA._K_arr[:] = K_override
     sA._cF_arr[:] = cF_override

@@ -108,7 +108,7 @@ def run_one_case(c, K_val, cF_val):
     sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                       EPS, R_H, c['rho_A'], c['mu_A'], c['T_Ain_K'],
                       0.0, H_DOM, c['u_A'], outlet_lo=0.0, outlet_hi=H_DOM,
-                      closure='df', P_ref_abs=P_out_est)
+                      P_ref_abs=P_out_est)
     # Override MLP's K/cF with trial values
     sA._K_arr[:] = K_val
     sA._cF_arr[:] = cF_val

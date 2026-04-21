@@ -73,7 +73,7 @@ sA = SIMPLESolver(
     EPS, R_H, rho_A, mu_A, T_Ain_K,
     0.0, H_DOM, u_A,
     outlet_lo=0.0, outlet_hi=H_DOM,
-    closure='df', P_ref_abs=P_out_est,
+    P_ref_abs=P_out_est,
 )
 sA.solve(max_iter=3000, tol=1e-4, verbose=False)
 

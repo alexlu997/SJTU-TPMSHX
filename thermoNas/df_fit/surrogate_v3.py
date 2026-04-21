@@ -9,6 +9,13 @@ Model:
     K:   RBF interpolation + clamp K_min = 1e-7
          (physical basis: Darcy fraction ≤ 15% at lowest operational Re)
 
+Velocity / mass-flux convention:
+    G = m_dot / A_void (interstitial mass flux), i.e. A_void already absorbs
+    the eps_f factor. Consequently the fitted K and c_F are *effective
+    interstitial* coefficients — not canonical Darcy/Forchheimer values.
+    Downstream consumers (simple_solver.py) use the same convention; do not
+    mix with superficial-form equations from textbooks.
+
 Calibration:
     1. Compressible WLS on raw Pressureloss_TPMS (col 43) + G (col 48):
        (P_in² - P_out²) / (2·R·T·L_ch) = μG/K + c_F·G²

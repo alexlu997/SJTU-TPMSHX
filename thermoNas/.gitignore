@@ -4,3 +4,8 @@ __pycache__/
 *.nbi
 *.nbc
 .pytest_cache/
+
+# Reproducible artefacts (regenerate via runs/production_optimizer_sweep.py,
+# runs/demo_optimizer_shanghai.py, runs/overlay_fast_vs_full.py)
+runs/demo_output/
+runs/production_output/

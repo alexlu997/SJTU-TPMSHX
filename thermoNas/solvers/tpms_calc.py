@@ -31,9 +31,11 @@ TPMS HX (each fluid occupies one of two interpenetrating channels).
 Numerically r_h-convention Re is HALF of engineering-convention D_h Re.
 
 The training Excel (试验记录表_整理版.xlsx) Re column uses this r_h
-convention (empirically verified on L=6 and L=8 geometries). Both f-Re
-(_F_COEFFS) and Nu (_nu_diamond / _nu_gyroid) correlations are fitted
-on r_h-convention Re.
+convention (empirically verified on L=6 and L=8 geometries). The Nu
+(_nu_diamond / _nu_gyroid) correlations are fitted on r_h-convention Re.
+Pressure drop is no longer a correlation here — the Darcy-Forchheimer
+closure lives in df_fit/predict.py (ConstDF-v1 MLP surrogate), queried
+directly by the solvers. See commit of 2026-04-19 f-Re removal.
 
 Nu OUTPUT convention: Nu = h · D_h / k_f   (standard D_h definition).
 
@@ -115,7 +117,7 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
     OUTPUT convention: Nu = h·D_h / k_f    (hydraulic diameter, standard)
 
     L_cell_mm is in mm (Gyroid uses unit cell size as its length scale
-    rather than D_h in the correlation, analogous to friction_factor).
+    rather than D_h in the correlation).
     Mixed convention rationale: same as _nu_diamond above.
     """
     n = 0.177 * Re ** 0.1 * eps ** (-2 / 3)
@@ -137,125 +139,6 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
 # Equivalent: Re = rho_ref * u * D_h / (2*mu)   ("D_h with single-stream m/2")
 #
 # f  = 2*(dP/L)*r_h / (rho*u^2)
-# Sa = 31 um = 0.031 mm (surface roughness, constant)
-# dP/L = f * rho * u^2 / (2 * r_h)
-#
-# IMPORTANT: eps in the correlation is the SINGLE-CHANNEL porosity (eps_full/2),
-# because each fluid flows through only one side of the TPMS.
-# Callers pass full eps; friction_factor() divides by 2 internally.
-# Coefficients were reparameterized from the original fit (which used eps_full)
-# via: C_new = C_old * 2^a, n0_new = n0_old + n1*ln(2).
-#
-# Fitted on corrected experimental data, Re >= 600, outliers removed.
-# Diamond MAPE: 7.4% (156 pts), Gyroid MAPE: 6.7% (189 pts).
-# Valid range: Re 600–30000, eps_full 0.53–0.88, L 4–8mm, t 0.3–0.5mm.
-
-# Coefficients: (C, n0, n1, a, b, c) — reparameterized for single-channel eps
-_F_COEFFS = {
-    'Diamond': (0.006786, 0.271020, 0.4363, -3.47, -0.50, -1.03),
-    'Gyroid':  (0.059472, 0.238731, 0.4304, -3.25, -0.02, -1.37),  # v1 reparam for eps/2
-    # v2 backup (eps/2): (0.000697, 0.721984, 0.430400, -3.2500, -0.0200, -1.3700)
-    # Original v1 (eps_full): (0.5658, -0.0596, 0.4304, -3.25, -0.02, -1.37)
-    # Original v2 (eps_full): (0.006634, 0.423653, 0.430400, -3.25, -0.02, -1.37)
-}
-
-# Geometry correction for t outside training range [0.3, 0.5]mm.
-# phi(t) = (t_max/t)^gamma when t > t_max, else 1.0.
-# Calibrated on (L=7, t=0.6) experimental data: gamma=4.523.
-_T_TRAIN_MAX = {'Diamond': 0.5, 'Gyroid': 0.5}   # mm, training upper bound
-_GAMMA_CORR  = {'Diamond': 0.0, 'Gyroid': 4.523}  # 0 = no correction (no data)
-
-
-def _phi_t_correction(tpms_type: str, t_mm: float) -> float:
-    """Geometry correction factor for t outside training range."""
-    t_max = _T_TRAIN_MAX.get(tpms_type, 0.5)
-    gamma = _GAMMA_CORR.get(tpms_type, 0.0)
-    if gamma > 0.0 and t_mm > t_max:
-        return (t_max / t_mm) ** gamma
-    return 1.0
-
-
-def friction_factor(tpms_type: str, Re: float, eps: float,
-                    t_mm: float, L_mm: float,
-                    D_h_mm: float = None) -> float:
-    """
-    Dimensionless friction factor for TPMS porous media.
-
-    f = C * Re^n * eps^a * (t/L)^b * (X/(1000*Sa))^c
-    n = n0 + n1*ln(eps)
-
-    Length scale X: D_h (Diamond) or L (Gyroid), same as Nu correlation.
-
-    Parameters
-    ----------
-    tpms_type : 'Diamond' or 'Gyroid'
-    Re        : Reynolds number = rho_ref * u * r_h / mu  [-]
-    eps       : porosity [-]
-    t_mm      : wall thickness [mm]
-    L_mm      : unit cell size [mm]
-    D_h_mm    : hydraulic diameter [mm]. If None, computed from
-                TPMS geometry (requires tpms_geometry module).
-
-    Returns
-    -------
-    f : friction factor [-]
-    """
-    if D_h_mm is None:
-        g = _tpms_geom(tpms_type, L_mm, t_mm)
-        D_h_mm = g['D_h'] * 1000.0
-
-    C, n0, n1, a, b, c = _F_COEFFS[tpms_type]
-    eps_f = eps / 2.0  # single-channel porosity (each fluid occupies one side of TPMS)
-    n = n0 + n1 * np.log(eps_f)
-
-    # Length scale: Diamond uses D_h, Gyroid uses L (same as Nu)
-    if tpms_type == 'Diamond':
-        X = D_h_mm
-    else:
-        X = L_mm
-
-    f = C * Re**n * eps_f**a * (t_mm / L_mm)**b * (X / (1000 * Sa_mm))**c
-    return f * _phi_t_correction(tpms_type, t_mm)
-
-
-def pressure_drop(tpms_type: str, L_mm: float, t_mm: float,
-                  eps: float, D_h: float, u_c: float,
-                  mu: float, rho: float, T_K: float) -> dict:
-    """
-    Pressure drop via f–Re correlation.
-
-    Parameters
-    ----------
-    tpms_type : 'Diamond' or 'Gyroid'
-    L_mm      : unit cell size [mm]
-    t_mm      : wall thickness [mm]
-    eps       : porosity [-]
-    D_h       : hydraulic diameter [m]  (= 2*eps/A_0)
-    u_c       : pore (interstitial) velocity [m/s]
-    mu        : dynamic viscosity [Pa·s]
-    rho       : density [kg/m³] (actual, used for dP calculation)
-    T_K       : inlet temperature [K] (used for reference density in Re)
-
-    Returns
-    -------
-    dict with keys: f, Re, dP_per_L
-    """
-    r_h     = D_h / 2.0
-    rho_ref = air_density(T_K, P_atm)        # reference density at atmospheric pressure
-    Re      = rho_ref * u_c * r_h / mu       # Re uses reference density
-    f       = friction_factor(tpms_type, Re, eps, t_mm, L_mm,
-                              D_h_mm=D_h * 1000.0 if D_h is not None else None)
-    dP_per_L = f * rho * u_c**2 / (2.0 * r_h)  # dP uses ACTUAL density
-
-    if Re < 600:
-        warnings.warn(
-            f"{tpms_type}: Re = {Re:.1f} < 600. "
-            "f-Re correlation has reduced accuracy below Re = 600.",
-            UserWarning, stacklevel=2)
-
-    return {'f': f, 'Re': Re, 'dP_per_L': dP_per_L}
-
-
 # ── Geometry-only interface (no fluid needed) ─────────────────
 
 def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float) -> dict:
@@ -384,8 +267,16 @@ def compute(tpms_type: str,
 
     H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
 
-    # ── Pressure drop via f-Re correlation ──────────────────────
-    dp = pressure_drop(tpms_type, L_cell_mm, t_mm, eps, D_h_m, u, mu, rho, T_in_K)
+    # ── Pressure drop via ConstDF-v1 D-F surrogate ──────────────
+    # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
+    # convention, see df_fit/predict.py).
+    try:
+        from df_fit.predict import predict_K_cF
+    except ImportError:
+        from thermoNas.df_fit.predict import predict_K_cF
+    K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
+                               float(eps) / 2.0)
+    dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────
     K_ff = eps * k_f               # fluid phase [W/(m·K)]
@@ -397,8 +288,9 @@ def compute(tpms_type: str,
         'D_h':      D_h_m,
         'Re':       Re,
         'Nu':       Nu,
-        'f':        dp['f'],
-        'dP_per_L': dp['dP_per_L'],
+        'K_df':     K_df,       # permeability [m²] (ConstDF-v1)
+        'cF_df':    cF_df,      # Forchheimer coeff [1/m] (ConstDF-v1)
+        'dP_per_L': dP_per_L,
         'H_sf':     H_sf,
         'K_ff':     K_ff,
         'K_ss':     K_ss,
@@ -406,97 +298,6 @@ def compute(tpms_type: str,
         'mu':       mu,
         'k_f':      k_f,
     }
-
-
-# ── Pressure field post-processing ────────────────────────────
-
-def compute_pressure_field(tpms_type: str, T_f: np.ndarray,
-                           L_mm: float, t_mm: float,
-                           eps: float, D_h: float,
-                           u: float, P_in: float,
-                           dx: float, dy: float,
-                           flow_dir: str = '+x',
-                           eps_arr=None, D_h_arr=None,
-                           L_mm_arr=None, t_mm_arr=None) -> np.ndarray:
-    """
-    Compute 2D pressure field from temperature field using local fluid properties.
-
-    At each grid point, local T -> local rho, mu -> local Re, f -> local dP/dx.
-    Then integrate along flow direction.
-
-    Supports per-cell TPMS parameters via optional *_arr arguments (2D arrays).
-    If not provided, scalar values are used uniformly.
-
-    Parameters
-    ----------
-    tpms_type : 'Diamond' or 'Gyroid'
-    T_f       : 2D temperature field [K], shape (N_x, N_y)
-    L_mm, t_mm: TPMS geometry [mm] (scalar, used if *_arr not given)
-    eps       : porosity [-] (scalar, used if eps_arr not given)
-    D_h       : hydraulic diameter [m] (scalar, used if D_h_arr not given)
-    u         : pore velocity [m/s]
-    P_in      : inlet pressure [Pa]
-    dx, dy    : grid spacing [m]
-    flow_dir  : '+x', '-x', '+y', '-y'
-    eps_arr   : optional 2D array (N_x, N_y), per-cell porosity
-    D_h_arr   : optional 2D array (N_x, N_y), per-cell hydraulic diameter [m]
-    L_mm_arr  : optional 2D array (N_x, N_y), per-cell unit cell size [mm]
-    t_mm_arr  : optional 2D array (N_x, N_y), per-cell wall thickness [mm]
-
-    Returns
-    -------
-    P : 2D pressure field [Pa], same shape as T_f
-    """
-    N_x, N_y = T_f.shape
-    P = np.zeros_like(T_f)
-
-    # Helper to get per-cell or scalar value
-    def _val(arr, scalar, i, j):
-        return arr[i, j] if arr is not None else scalar
-
-    def _dP_local(i_prev, j_prev, i_cur, j_cur):
-        """Compute local pressure drop from previous cell to current."""
-        T_local = T_f[i_prev, j_prev]
-        mu_local = air_viscosity(T_local)
-        rho_local = air_density(T_local, P[i_prev, j_prev])
-        rho_ref = air_density(T_local, P_atm)
-
-        eps_loc = _val(eps_arr, eps, i_prev, j_prev)
-        D_h_loc = _val(D_h_arr, D_h, i_prev, j_prev)
-        L_loc   = _val(L_mm_arr, L_mm, i_prev, j_prev)
-        t_loc   = _val(t_mm_arr, t_mm, i_prev, j_prev)
-        r_h_loc = D_h_loc / 2.0
-
-        Re_local = max(rho_ref * u * r_h_loc / mu_local, 10.0)
-        f_local = friction_factor(tpms_type, Re_local, eps_loc,
-                                  t_loc, L_loc, D_h_loc * 1000.0)
-        return f_local * rho_local * u**2 / (2.0 * r_h_loc)
-
-    if flow_dir == '+x':
-        P[0, :] = P_in
-        for i in range(1, N_x):
-            for j in range(N_y):
-                P[i, j] = P[i-1, j] - _dP_local(i-1, j, i, j) * dx
-
-    elif flow_dir == '-x':
-        P[-1, :] = P_in
-        for i in range(N_x - 2, -1, -1):
-            for j in range(N_y):
-                P[i, j] = P[i+1, j] - _dP_local(i+1, j, i, j) * dx
-
-    elif flow_dir == '-y':
-        P[:, -1] = P_in
-        for j in range(N_y - 2, -1, -1):
-            for i in range(N_x):
-                P[i, j] = P[i, j+1] - _dP_local(i, j+1, i, j) * dy
-
-    elif flow_dir == '+y':
-        P[:, 0] = P_in
-        for j in range(1, N_y):
-            for i in range(N_x):
-                P[i, j] = P[i, j-1] - _dP_local(i, j-1, i, j) * dy
-
-    return P
 
 
 # ── Quick verification ────────────────────────────────────────
