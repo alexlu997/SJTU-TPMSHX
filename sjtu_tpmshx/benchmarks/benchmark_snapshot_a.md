@@ -1,4 +1,4 @@
-# ThermoNAS A Performance Snapshot
+# SJTU-TPMSHX A Performance Snapshot
 
 **Saved**: 2026-04-13
 **Spec**: `docs/superpowers/specs/2026-04-13-thermonas-a-performance-design.md`
@@ -94,17 +94,17 @@ scipy's `csr_matrix((data, indices, indptr))` constructor takes **ownership** of
 
 ## Files produced by subproject A
 
-- `thermoNas/simple_solver.py` — modified: `_build_pp_sparsity_pattern`, `_assemble_pp_data_jit`, `_solve_pp_sparse_fast` added; old `_solve_pp_sparse` deleted; `_warmup_jit` added
-- `thermoNas/solve_full.py` — modified: `_warmup_jit` added
-- `thermoNas/tpms_calc.py` — modified: `@functools.lru_cache(maxsize=4096)` on `compute()`
-- `thermoNas/optimizer.py` — modified: `_eval_worker`, `_solve_single_point_worker`, `_parallel_workers` added; main sweep loop wrapped in `ProcessPoolExecutor`
-- `thermoNas/batch_runner.py` — new: `run_single_case`, `run_batch` (serial + parallel)
-- `thermoNas/test_pp_sparse_assembly.py` — new: 3 regression tests for fast pp_sparse
-- `thermoNas/test_batch_runner.py` — new: 3 smoke tests for batch runner
-- `thermoNas/benchmark_a.py` — new: automated before/after timing harness
-- `thermoNas/benchmark_a_baseline.json` — Task 1 baseline snapshot
-- `thermoNas/benchmark_a_results.json` — Task 12 results (noise-affected)
-- `thermoNas/benchmark_snapshot_a.md` — this file
+- `sjtu_tpmshx/simple_solver.py` — modified: `_build_pp_sparsity_pattern`, `_assemble_pp_data_jit`, `_solve_pp_sparse_fast` added; old `_solve_pp_sparse` deleted; `_warmup_jit` added
+- `sjtu_tpmshx/solve_full.py` — modified: `_warmup_jit` added
+- `sjtu_tpmshx/tpms_calc.py` — modified: `@functools.lru_cache(maxsize=4096)` on `compute()`
+- `sjtu_tpmshx/optimizer.py` — modified: `_eval_worker`, `_solve_single_point_worker`, `_parallel_workers` added; main sweep loop wrapped in `ProcessPoolExecutor`
+- `sjtu_tpmshx/batch_runner.py` — new: `run_single_case`, `run_batch` (serial + parallel)
+- `sjtu_tpmshx/test_pp_sparse_assembly.py` — new: 3 regression tests for fast pp_sparse
+- `sjtu_tpmshx/test_batch_runner.py` — new: 3 smoke tests for batch runner
+- `sjtu_tpmshx/benchmark_a.py` — new: automated before/after timing harness
+- `sjtu_tpmshx/benchmark_a_baseline.json` — Task 1 baseline snapshot
+- `sjtu_tpmshx/benchmark_a_results.json` — Task 12 results (noise-affected)
+- `sjtu_tpmshx/benchmark_snapshot_a.md` — this file
 
 ## Known follow-ups (out of A scope)
 

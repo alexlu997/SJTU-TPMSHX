@@ -1,7 +1,7 @@
 ---
 type: report
 date: 2026-04-14
-tags: [report, surrogate, joint-fit, MLP, DF, ConstDF-v1, ThermoNAS]
+tags: [report, surrogate, joint-fit, MLP, DF, ConstDF-v1, SJTU-TPMSHX]
 ---
 
 # D-F 代理模型 LOO 验证报告 (ConstDF-v1)

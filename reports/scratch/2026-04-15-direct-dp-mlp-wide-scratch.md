@@ -1,7 +1,7 @@
 ---
 type: report
 date: 2026-04-15
-tags: [report, surrogate, direct-dP, MLP, Correa, scratch, ThermoNAS]
+tags: [report, surrogate, direct-dP, MLP, Correa, scratch, SJTU-TPMSHX]
 ---
 
 # Direct-ΔP MLP 代理模型 — wide 变体(scratch 实验)

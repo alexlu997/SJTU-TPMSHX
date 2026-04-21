@@ -1,4 +1,4 @@
-# ThermoNAS 开发日志
+# SJTU-TPMSHX 开发日志
 
 > 每天记录做了什么、遇到了什么问题、怎么解决的、改了哪些代码/方程。
 > 按**倒序**（最新在上），方便快速查看最近进展。
@@ -76,7 +76,7 @@
    - `test_main_smoke.py`：删 `test_main_menu_theme_toggle`，留 startup
    - 删 `test_theme_dp_card.py`（Bug 2 的回归测试，dark 没了所以这个 test 没意义）
    - 把 Bug 1 的回归测试改名 `test_theme_stylesheet_braces.py` → `test_stylesheet_braces.py`，作为通用 CSS sanity check 留下
-   - 写 `.gitignore`（之前没有，导致 thermoNas 仓库索引里堆了一堆 `__pycache__/*.pyc`）
+   - 写 `.gitignore`（之前没有，导致 sjtu_tpmshx 仓库索引里堆了一堆 `__pycache__/*.pyc`）
 
 ### 🐛 发现的问题 / 遇到的困难
 
@@ -131,7 +131,7 @@
 
 - D-1 spec 还没写。是否补一份 retroactive spec 记一下"原本要修两个 bug，最终选择删 dark mode"的决策？或者这条 devlog 已经够档案
 - D-2 / D-3 GUI 打磨任务还没开。等用户具体提需求
-- ThermoNAS 主仓库（`D:/Postgraduate/均质化/ThermoNAS/thermoNas/`）这次才第一次有 git commit。之前 staged 了 ~300 个文件（CSVdata + pyc）从来没 commit。需要决定那些 baseline / CSV / npz / log 文件要不要也入库
+- SJTU-TPMSHX 主仓库（`D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx/`）这次才第一次有 git commit。之前 staged 了 ~300 个文件（CSVdata + pyc）从来没 commit。需要决定那些 baseline / CSV / npz / log 文件要不要也入库
 
 ### 💡 学到的 / 重要发现
 
@@ -275,29 +275,29 @@ $$
 
 ### 📁 代码改动文件清单
 
-- `thermoNas/main.py:337-338` — L, H 默认从 0.10/0.05 改到 0.231/0.042
-- `thermoNas/main.py:476-479` — A pipe 中心/宽度改 0.021/0.042
-- `thermoNas/main.py:488-491` — B pipe 中心/宽度改 0.203/0.042 和 0.028/0.042
-- `thermoNas/main.py:354-359` — TPMS 默认从 Diamond 8/0.3 改到 Gyroid 7/0.6
-- `thermoNas/main.py:2621-2633` — 耦合 drho 判据改为质量通量加权 L1
-- `thermoNas/main.py:2714-2752` — dP 计算改为管道加权，修复 row-mean dilution bug
-- `thermoNas/main.py:750-784` — canvas card 外框加大（2px/5px/12px/16px）
-- `thermoNas/main.py:2954-3010` — 速度云图改 PowerNorm(γ=0.4)，加 hover 轴注册
-- `thermoNas/main.py:2933, 3010` — temp/vel subplots_adjust bottom 加宽（防 x 标签裁剪）
-- `thermoNas/main.py:3629` — pressure GridSpec bottom 加宽
-- `thermoNas/tpms_calc.py:102` — Gyroid `_F_COEFFS` 元组：(C, n0) 更新到 v2
+- `sjtu_tpmshx/main.py:337-338` — L, H 默认从 0.10/0.05 改到 0.231/0.042
+- `sjtu_tpmshx/main.py:476-479` — A pipe 中心/宽度改 0.021/0.042
+- `sjtu_tpmshx/main.py:488-491` — B pipe 中心/宽度改 0.203/0.042 和 0.028/0.042
+- `sjtu_tpmshx/main.py:354-359` — TPMS 默认从 Diamond 8/0.3 改到 Gyroid 7/0.6
+- `sjtu_tpmshx/main.py:2621-2633` — 耦合 drho 判据改为质量通量加权 L1
+- `sjtu_tpmshx/main.py:2714-2752` — dP 计算改为管道加权，修复 row-mean dilution bug
+- `sjtu_tpmshx/main.py:750-784` — canvas card 外框加大（2px/5px/12px/16px）
+- `sjtu_tpmshx/main.py:2954-3010` — 速度云图改 PowerNorm(γ=0.4)，加 hover 轴注册
+- `sjtu_tpmshx/main.py:2933, 3010` — temp/vel subplots_adjust bottom 加宽（防 x 标签裁剪）
+- `sjtu_tpmshx/main.py:3629` — pressure GridSpec bottom 加宽
+- `sjtu_tpmshx/tpms_calc.py:102` — Gyroid `_F_COEFFS` 元组：(C, n0) 更新到 v2
 
 ### 📚 产出文件
 
 - `data/v2_fitting/fit_report_gyroid_v2.md` — 完整 Gyroid 重拟合报告（10 个章节，含量纲校核、16 工况端到端对比、局限性）
-- `thermoNas/validation_results.csv` — 16 工况仿真 vs 实验完整数据（CSV）
+- `sjtu_tpmshx/validation_results.csv` — 16 工况仿真 vs 实验完整数据（CSV）
 
 ### ⏭️ 待办 / 后续问题
 
 1. **Fluid B 还差 40%**
    - 不是 f-Re 关联式问题（A 侧同一关联式已 ±4%）
    - 是 2D partial BC 流动的**额外损失**：inlet 收缩、对角转折、corner 加速
-   - 需要独立的 CFD 标定 → 对 Gyroid 7/0.6 partial BC 几何做 full-scale CFD，和 ThermoNAS 2D SIMPLE 对比，校准等效损失系数
+   - 需要独立的 CFD 标定 → 对 Gyroid 7/0.6 partial BC 几何做 full-scale CFD，和 SJTU-TPMSHX 2D SIMPLE 对比，校准等效损失系数
 
 2. **Row 1-2（Re_ref < 600）外推区**
    - 关联式下限 Re=600，用户实验 row 1-2 在 Re=263-528

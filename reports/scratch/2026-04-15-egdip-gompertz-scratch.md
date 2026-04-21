@@ -1,7 +1,7 @@
 ---
 type: report
 date: 2026-04-15
-tags: [report, surrogate, EG-DIP, Gompertz, scratch, ThermoNAS]
+tags: [report, surrogate, EG-DIP, Gompertz, scratch, SJTU-TPMSHX]
 ---
 
 # EG-DIP Gompertz β(Re) 代理模型(scratch 实验)
@@ -11,7 +11,7 @@ tags: [report, surrogate, EG-DIP, Gompertz, scratch, ThermoNAS]
 每几何 4 参数 $(K, \beta_s, Re_t, \lambda)$,LOO 看能否把 ΔP MAPE 
 从 Diamond 12.79% / Gyroid 16.95% 压到 6-8% 目标。
 
-**定位**:scratch 诊断,**不入主干**。代码 `thermoNas/df_fit/scratch_egdip_gompertz.py`,
+**定位**:scratch 诊断,**不入主干**。代码 `sjtu_tpmshx/df_fit/scratch_egdip_gompertz.py`,
 不修改 v1 任何文件,不保存 checkpoint。
 
 ## 记分板

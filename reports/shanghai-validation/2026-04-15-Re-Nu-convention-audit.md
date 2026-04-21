@@ -226,7 +226,7 @@ t=0.5 水平。见 [`2026-04-15-DF-residual-structure-diagnostic.md`]。
 
 ## 相关文件
 
-- `thermoNas/tpms_calc.py`(修改:_nu_diamond / _nu_gyroid docstring,
+- `sjtu_tpmshx/tpms_calc.py`(修改:_nu_diamond / _nu_gyroid docstring,
   模块顶部 Re 约定声明,f-Re 注释补充)
 - `reports/shanghai-validation/2026-04-15-Re-Nu-convention-audit.md`(本文件)
 - `reports/constdf-v1/2026-04-15-DF-residual-structure-diagnostic.md`(独立的 U 形残差分析)

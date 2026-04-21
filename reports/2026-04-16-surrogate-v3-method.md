@@ -1,10 +1,10 @@
 ---
-title: ThermoNAS 压降与换热量预测方法
+title: SJTU-TPMSHX 压降与换热量预测方法
 date: 2026-04-16
-tags: [ThermoNAS, D-F, 压降, 换热, TPMS, 方法论]
+tags: [SJTU-TPMSHX, D-F, 压降, 换热, TPMS, 方法论]
 ---
 
-# ThermoNAS 压降 (dP) 与换热量 (Q) 预测方法
+# SJTU-TPMSHX 压降 (dP) 与换热量 (Q) 预测方法
 
 ## 一、压降预测
 
@@ -81,7 +81,7 @@ K 钳位原因：训练数据最低 Re ≈ 400，此时 Forchheimer 已主导。
 ### 1.4 代码入口
 
 ```python
-from thermoNas.df_fit.predict import predict_K_cF, predict_dP_compressible
+from sjtu_tpmshx.df_fit.predict import predict_K_cF, predict_dP_compressible
 
 # 获取 D-F 系数
 K, c_F = predict_K_cF('Gyroid', L_mm=7.0, t_mm=0.6, eps_f=0.368)
@@ -93,8 +93,8 @@ dP = predict_dP_compressible('Gyroid', L_mm=7.0, t_mm=0.6, eps_f=0.368,
 ```
 
 核心文件：
-- `thermoNas/df_fit/surrogate_v3.py` — SurrogateV3 模型（标定 + RBF + 钳位）
-- `thermoNas/df_fit/predict.py` — 统一接口
+- `sjtu_tpmshx/df_fit/surrogate_v3.py` — SurrogateV3 模型（标定 + RBF + 钳位）
+- `sjtu_tpmshx/df_fit/predict.py` — 统一接口
 
 ---
 

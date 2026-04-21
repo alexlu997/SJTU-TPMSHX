@@ -1,4 +1,4 @@
-# ThermoNAS B Refactor Snapshot
+# SJTU-TPMSHX B Refactor Snapshot
 
 **Saved**: 2026-04-13
 **Spec**: `docs/superpowers/specs/2026-04-13-thermonas-b-main-refactor-design.md`
@@ -92,21 +92,21 @@ Future work (C-2, C-3, D, or any further B iterations) must:
 ## Files produced by subproject B
 
 New:
-- `thermoNas/test_main_smoke.py` (48 lines)
-- `thermoNas/theme.py` (288)
-- `thermoNas/matplotlib_canvas.py` (278)
-- `thermoNas/layout_drawer.py` (231)
-- `thermoNas/zone_editor.py` (173)
-- `thermoNas/ui_builders.py` (797)
-- `thermoNas/optimize_panel.py` (412)
-- `thermoNas/polygon_calc.py` (419)
-- `thermoNas/run_calculation.py` (875)
-- `thermoNas/docs/superpowers/specs/2026-04-13-thermonas-b-main-refactor-design.md`
-- `thermoNas/docs/superpowers/plans/2026-04-13-thermonas-b-main-refactor-plan.md`
-- `thermoNas/benchmark_snapshot_b.md` (this file)
+- `sjtu_tpmshx/test_main_smoke.py` (48 lines)
+- `sjtu_tpmshx/theme.py` (288)
+- `sjtu_tpmshx/matplotlib_canvas.py` (278)
+- `sjtu_tpmshx/layout_drawer.py` (231)
+- `sjtu_tpmshx/zone_editor.py` (173)
+- `sjtu_tpmshx/ui_builders.py` (797)
+- `sjtu_tpmshx/optimize_panel.py` (412)
+- `sjtu_tpmshx/polygon_calc.py` (419)
+- `sjtu_tpmshx/run_calculation.py` (875)
+- `sjtu_tpmshx/docs/superpowers/specs/2026-04-13-thermonas-b-main-refactor-design.md`
+- `sjtu_tpmshx/docs/superpowers/plans/2026-04-13-thermonas-b-main-refactor-plan.md`
+- `sjtu_tpmshx/benchmark_snapshot_b.md` (this file)
 
 Deleted:
-- `thermoNas/solve.py` (718 lines, DEPRECATED, zero references)
+- `sjtu_tpmshx/solve.py` (718 lines, DEPRECATED, zero references)
 
 Modified:
-- `thermoNas/main.py` (3713 → 796 lines, −2917)
+- `sjtu_tpmshx/main.py` (3713 → 796 lines, −2917)

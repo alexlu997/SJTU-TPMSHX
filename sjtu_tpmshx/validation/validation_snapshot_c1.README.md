@@ -7,7 +7,7 @@
 
 ## What this snapshot represents
 
-16 Shanghai Electric test cases (上海电气天然气加热器实验工况) run through the ThermoNAS
+16 Shanghai Electric test cases (上海电气天然气加热器实验工况) run through the SJTU-TPMSHX
 prediction model after the C-1 fixes:
 
 1. **Prototype-scale dimensioning** — `A_FLOW = 36 × 18.0565e-6 m²`, `m_air` from
@@ -85,11 +85,11 @@ on `err_Q%` or `err_dP%` must be explained in the changing PR / commit message.
 Quick regression check:
 
 ```bash
-cd D:/Postgraduate/均质化/ThermoNAS/thermoNas
+cd D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
 python -c "
 import pandas as pd, numpy as np
 old = pd.read_csv('validation_snapshot_c1.csv')
-new = pd.read_excel(r'D:/Postgraduate/均质化/ThermoNAS/data/shanghai_validation.xlsx', engine='openpyxl')
+new = pd.read_excel(r'D:/Postgraduate/均质化/SJTU-TPMSHX/data/shanghai_validation.xlsx', engine='openpyxl')
 for col in ['err_Q%', 'err_dP%']:
     d = np.abs(pd.to_numeric(new[col], errors='coerce') - pd.to_numeric(old[col], errors='coerce'))
     print(f'{col}: max drift = {d.max():.2f} percentage points')

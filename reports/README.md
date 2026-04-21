@@ -3,7 +3,7 @@ type: index
 updated: 2026-04-15
 ---
 
-# ThermoNAS reports — 索引
+# SJTU-TPMSHX reports — 索引
 
 本目录按**工作话题**分组,不只是按日期排。所有报告文件名保留 `YYYY-MM-DD-` 日期前缀,
 便于和 git 历史、devlog 对齐。
@@ -32,7 +32,7 @@ updated: 2026-04-15
 **ConstDF-v1** = 常系数 2 参数 Darcy-Forchheimer + 3 输入 $(L, t, \varepsilon_f)$ → $(K, c_F)$,
 per-TPMS MLP ensemble(5×)。LOO ΔP MAPE **Diamond 12.79% / Gyroid 16.95%**。
 
-代码在 `thermoNas/df_fit/`,git baseline commit `ab7a39e`。方案详细论证和物理限制讨论
+代码在 `sjtu_tpmshx/df_fit/`,git baseline commit `ab7a39e`。方案详细论证和物理限制讨论
 见 memory `project_thermonas_df_baseline.md`。
 
 ---

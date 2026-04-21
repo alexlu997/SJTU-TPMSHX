@@ -1,6 +1,6 @@
 ---
 type: archive
-tags: [scratch, surrogate-exploration, failed-alternatives, ThermoNAS]
+tags: [scratch, surrogate-exploration, failed-alternatives, SJTU-TPMSHX]
 ---
 
 # Scratch Experiments Archive — ConstDF-v1 之外的探索记录
@@ -32,8 +32,8 @@ tags: [scratch, surrogate-exploration, failed-alternatives, ThermoNAS]
 
 ## 对应的 Python 代码(scratch,留在原地)
 
-- `thermoNas/df_fit/scratch_direct_dp_mlp.py`
-- `thermoNas/df_fit/scratch_egdip_gompertz.py`
+- `sjtu_tpmshx/df_fit/scratch_direct_dp_mlp.py`
+- `sjtu_tpmshx/df_fit/scratch_egdip_gompertz.py`
 
 这两个脚本产生了上面 5 个报告,**留在原地**不动(移动会破坏 import 路径)。
 它们被 `.gitignore` 接管但命名前缀 `scratch_` 明确标识其状态。

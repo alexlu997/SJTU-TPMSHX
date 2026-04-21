@@ -1,7 +1,7 @@
 ---
 type: report
 date: 2026-04-15
-tags: [report, diagnostic, ConstDF-v1, residual-structure, Forchheimer-transition, ThermoNAS]
+tags: [report, diagnostic, ConstDF-v1, residual-structure, Forchheimer-transition, SJTU-TPMSHX]
 ---
 
 # ConstDF-v1 ΔP 残差结构诊断 —— 2-term D-F 闭合的物理下限
@@ -23,7 +23,7 @@ tags: [report, diagnostic, ConstDF-v1, residual-structure, Forchheimer-transitio
   $$\varepsilon_i = (\Delta P_{{\rm pred},i} - \Delta P_{{\rm obs},i}) / \Delta P_{{\rm obs},i}$$
 - **in-sample**(非 LOO):留一会把 generalisation 噪声混进来,而我们要
   隔离的是闭合形式自身的误差分量
-- 脚本:`thermoNas/df_fit/plot_residual_vs_re.py`
+- 脚本:`sjtu_tpmshx/df_fit/plot_residual_vs_re.py`
 - 图:`reports/figs/df_fit/residual_vs_re.png`,3 行 × 2 列
     - 行 1:signed 散点 + log-Re 分箱中位数平滑
     - 行 2:|residual| 散点 + 平滑
@@ -100,7 +100,7 @@ $$\frac{d^2 f}{d u^2}\bigg|_{u^\star} > 2b$$
   耦合
 
 (文献笔记全在 vault,`Balhoff-Mikelic-Wheeler-2010-Polynomial-Filtration-Laws.md`
-和 `Popov-2025-TPMS-Two-Medium-ThermoNAS.md`)
+和 `Popov-2025-TPMS-Two-Medium-SJTU-TPMSHX.md`)
 
 ## 对 ConstDF-v1 的含义
 
@@ -155,7 +155,7 @@ C-1 baseline 时,**预期的误差方向是系统性的,不是随机的**:
 ## 相关
 
 - 图:[`figs/df_fit/residual_vs_re.png`](figs/df_fit/residual_vs_re.png)
-- 脚本:`thermoNas/df_fit/plot_residual_vs_re.py`
+- 脚本:`sjtu_tpmshx/df_fit/plot_residual_vs_re.py`
 - 上游 ensemble:`models/df_surrogate_{diamond,gyroid}.joblib`(ConstDF-v1)
 - 对比报告:
   - [`2026-04-14-DF-surrogate-loo-report.md`](2026-04-14-DF-surrogate-loo-report.md) — LOO 主结果
