@@ -33,31 +33,37 @@ def main():
     assert w.btn_tab_3d.text() == '3D View', f"got: {w.btn_tab_3d.text()!r}"
     assert hasattr(w, 'canvas_3d'), "canvas_3d missing"
 
-    # Lazy: canvas_3d is None until first 3D tab switch
+    # Lazy: canvas_3d is None until compute completes
     from ui.panel_vis_3d import ThreeDVisPanel
-    assert w.canvas_3d is None, "canvas_3d should start None (lazy)"
     assert '3d' in w._canvas_cards, f"card keys: {list(w._canvas_cards)}"
     assert isinstance(w._canvas_cards['3d'], QFrame)
 
-    # First 3D tab switch triggers lazy init
+    # Before compute: 3D tab button is hidden (tab-visibility gating added
+    # 2026-04-21 — tabs reveal only after their data arrives).
+    assert w.btn_tab_3d.isHidden(), \
+        "3D tab button should be hidden until Run Calculation produces 3D results"
+    # _switch_tab('3d') falls back to layout because button is hidden
     w._switch_tab('3d')
-    assert w._active_tab == '3d', f"_active_tab = {w._active_tab!r}"
-    assert not w._canvas_cards['3d'].isHidden()
-    assert isinstance(w.canvas_3d, ThreeDVisPanel), \
-        f"canvas_3d after switch is {type(w.canvas_3d).__name__}"
+    assert w._active_tab == 'layout', \
+        f"expected fallback to layout; got {w._active_tab!r}"
+    assert w._canvas_cards['3d'].isHidden(), \
+        "3D card should stay hidden until Run Calculation populates it"
 
     # Dimensionality controls
     assert hasattr(w, 'combo_dim'), "combo_dim missing"
     assert hasattr(w, 'le_Lz'), "le_Lz missing"
     assert hasattr(w, 'le_Nz'), "le_Nz missing"
     assert w.combo_dim.count() == 2
-    # Default 2D → Lz/Nz hidden
-    assert w.le_Lz.isHidden(), "le_Lz should be hidden in 2D"
-    assert w.le_Nz.isHidden(), "le_Nz should be hidden in 2D"
-    # Flip to 3D → Lz/Nz visible
-    w.combo_dim.setCurrentIndex(1)
+    # Shanghai preset defaults to 3D → Lz/Nz visible
+    assert w.combo_dim.currentIndex() == 1, "Shanghai preset should default to 3D"
     assert not w.le_Lz.isHidden(), "le_Lz should show in 3D"
     assert not w.le_Nz.isHidden(), "le_Nz should show in 3D"
+    # Flip to 2D → Lz/Nz hidden
+    w.combo_dim.setCurrentIndex(0)
+    assert w.le_Lz.isHidden(), "le_Lz should hide in 2D"
+    assert w.le_Nz.isHidden(), "le_Nz should hide in 2D"
+    # Restore 3D for subsequent checks
+    w.combo_dim.setCurrentIndex(1)
 
     # Runner module imports cleanly
     from runs.run_calculation_3d import run_calculation_3d_inner, finalize_plots_3d
@@ -79,8 +85,13 @@ def main():
         assert key in res, f"result missing {key}"
     print(f"  Q = {res['Q']:.2f} W   dP = {res['dP']:.0f} Pa")
     print(f"  Ta range [{res['Ta'].min():.1f}, {res['Ta'].max():.1f}] K")
-    # Push into panel
+    # Push into panel (triggers lazy VTK init + card visible)
+    # Need lazy-init first, since finalize doesn't instantiate panel itself
+    if w.canvas_3d is None:
+        w._lazy_init_3d_panel()
     finalize_plots_3d(w)
+    assert isinstance(w.canvas_3d, ThreeDVisPanel), \
+        f"canvas_3d after compute is {type(w.canvas_3d).__name__}"
 
     print("SMOKE PASS: 3D tab wired.")
     print(f"  btn_tab_3d  : {w.btn_tab_3d.text()}")

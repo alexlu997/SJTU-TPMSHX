@@ -1,7 +1,7 @@
-"""Batch runner for ThermoNAS single-case evaluations.
+"""Batch runner for SJTU-TPMSHX single-case evaluations.
 
 Provides a uniform interface for running a list of self-contained "case" dicts
-through the full ThermoNAS solver stack. Task 9 implements the serial path;
+through the full SJTU-TPMSHX solver stack. Task 9 implements the serial path;
 Task 10 adds parallel execution via concurrent.futures.ProcessPoolExecutor.
 
 Case dict schema (all keys required):
@@ -37,7 +37,7 @@ import numpy as np
 
 
 def run_single_case(case: dict) -> dict:
-    """Evaluate one case through the full ThermoNAS pipeline.
+    """Evaluate one case through the full SJTU-TPMSHX pipeline.
 
     Self-contained: imports solver modules on first call so worker processes
     in a multiprocessing pool each trigger their own JIT warmup on spawn.

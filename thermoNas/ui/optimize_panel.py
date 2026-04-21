@@ -205,6 +205,10 @@ def show_pareto(window, res):
     """Ex-Main_Menu._show_pareto(self, res)."""
     from .theme import _THEMES
     import main as _main_mod
+    # Reveal Pareto tab — visibility is gated on _has_pareto
+    window._has_pareto = True
+    if hasattr(window, '_update_tab_visibility'):
+        window._update_tab_visibility()
     _t = _THEMES['light']
     F = res['F']; X = res['X']
     Q = -F[:, 0]; dP = F[:, 1]

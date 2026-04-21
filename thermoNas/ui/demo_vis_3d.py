@@ -1,4 +1,4 @@
-"""demo_vis_3d.py — minimal 3D visualization demo for ThermoNAS.
+"""demo_vis_3d.py — minimal 3D visualization demo for SJTU-TPMSHX.
 
 Runs Shanghai case 8 (mid-Re) on a coarse uniform grid, then renders a 2×2
 PyVista panel showing the four canonical 3D visualization modes.

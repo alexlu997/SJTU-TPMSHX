@@ -1,4 +1,4 @@
-"""UI construction helpers for ThermoNAS Main_Menu.
+"""UI construction helpers for SJTU-TPMSHX Main_Menu.
 
 Extracted from main.py (Task B.6). All functions take `window` (Main_Menu
 instance) as first argument. Widget attributes are stored directly on
@@ -35,8 +35,22 @@ def _on_dim_changed(window):
     widgets = [window.le_Lz, window._lbl_Lz, window.le_Nz, window._lbl_Nz]
     if hasattr(window, 'chk_wall_refine_3d'):
         widgets.append(window.chk_wall_refine_3d)
+    # z-partial BC 4 fields per fluid (+ labels) — hidden in 2D mode
+    for name in ('le_pipeA_in_z_ctr', 'le_pipeA_in_z_w',
+                 'le_pipeA_out_z_ctr', 'le_pipeA_out_z_w',
+                 '_lbl_pipeA_in_z_ctr', '_lbl_pipeA_in_z_w',
+                 '_lbl_pipeA_out_z_ctr', '_lbl_pipeA_out_z_w',
+                 'le_pipeB_in_z_ctr', 'le_pipeB_in_z_w',
+                 'le_pipeB_out_z_ctr', 'le_pipeB_out_z_w',
+                 '_lbl_pipeB_in_z_ctr', '_lbl_pipeB_in_z_w',
+                 '_lbl_pipeB_out_z_ctr', '_lbl_pipeB_out_z_w'):
+        if hasattr(window, name):
+            widgets.append(getattr(window, name))
     for w in widgets:
         w.setVisible(is_3d)
+    # Mode change also reveals/hides the result tabs for the current mode
+    if hasattr(window, '_update_tab_visibility'):
+        window._update_tab_visibility()
 
 
 def build_ui(window):
@@ -63,7 +77,7 @@ def build_ui(window):
     header_row = QHBoxLayout(header_widget)
     header_row.setContentsMargins(8, 4, 8, 4)
     header_row.setSpacing(8)
-    hdr = QLabel("Homogenization")
+    hdr = QLabel("SJTU-TPMSHX")
     hdr.setStyleSheet(
         "background:transparent; color:white; font-size:11pt;"
         "font-weight:bold; border:none; padding:0;")
@@ -84,7 +98,13 @@ def build_ui(window):
     # Splitter: param_tabs 35% / canvas_area 65%
     splitter = QSplitter(Qt.Orientation.Horizontal)
     splitter.setStyleSheet(
-        "QSplitter::handle{background:rgba(0,0,0,25); width:3px;}")
+        "QSplitter::handle{background:rgba(0,0,0,35); width:6px;}"
+        "QSplitter::handle:hover{background:rgba(44,82,130,120);}")
+    # Non-opaque resize: only recompute layout on mouse release. The rubber
+    # band indicator drags at screen refresh rate, avoiding per-pixel child
+    # re-layout which was causing noticeable drag lag on the 3D panel side.
+    splitter.setOpaqueResize(False)
+    splitter.setChildrenCollapsible(False)
     splitter.addWidget(build_param_tabs(window))
     splitter.addWidget(build_canvas_area(window))
     splitter.setStretchFactor(0, 35)
@@ -236,6 +256,31 @@ def build_page_domain(window):
         "Enable six-wall boundary-layer refinement for 3D solves. "
         "Adds 8 cells per wall (first_cell=0.02 mm, growth 1.8). "
         "Turn off for pure uniform grid.")
+    window.chk_wall_refine_3d.setStyleSheet("""
+        QCheckBox {
+            color: #1a1f24;
+            font-size: 10pt;
+            font-weight: 600;
+            background: #ffffff;
+            border: 1px solid #aeb4ba;
+            border-radius: 6px;
+            padding: 6px 10px;
+            spacing: 8px;
+        }
+        QCheckBox:hover { border-color: #2c5282; background: #eef2f6; }
+        QCheckBox::indicator {
+            width: 16px; height: 16px;
+            border: 1.5px solid #606870;
+            border-radius: 3px;
+            background: #ffffff;
+        }
+        QCheckBox::indicator:hover { border-color: #2c5282; }
+        QCheckBox::indicator:checked {
+            background: #2c5282;
+            border-color: #1e3a5f;
+            image: none;
+        }
+    """)
     g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
     window._chk_wall_refine_3d = window.chk_wall_refine_3d  # alias
 
@@ -337,7 +382,8 @@ def build_page_fluids(window):
 
     # ── Inlet / Outlet configuration (unified) ─────────────
     _DIR_ITEMS = ["+x  (left \u2192 right)", "-x  (right \u2192 left)",
-                  "+y  (bottom \u2192 top)", "-y  (top \u2192 bottom)"]
+                  "+y  (bottom \u2192 top)", "-y  (top \u2192 bottom)",
+                  "+z  (front \u2192 back, 3D)", "-z  (back \u2192 front, 3D)"]
 
     gio, sec_pipeA = section(window, lay, "  \u25c8  Fluid A  Inlet / Outlet", _T_HOT, _F_HOT)
     window._rect_only_widgets.append(sec_pipeA)
@@ -347,9 +393,26 @@ def build_page_fluids(window):
     window.combo_dirA.currentIndexChanged.connect(window._on_dir_changed)
     add_row(window, gio, 0, "Flow direction", window.combo_dirA)
     window.le_pipeA_in_ctr  = row(window, gio, 1, "Inlet centre [m]",   "0.021")
+    window._lbl_pipeA_in_ctr  = gio.itemAtPosition(1, 0).widget()
     window.le_pipeA_in_w    = row(window, gio, 2, "Inlet width [m]",    "0.042")
+    window._lbl_pipeA_in_w    = gio.itemAtPosition(2, 0).widget()
     window.le_pipeA_out_ctr = row(window, gio, 3, "Outlet centre [m]",  "0.021")
+    window._lbl_pipeA_out_ctr = gio.itemAtPosition(3, 0).widget()
     window.le_pipeA_out_w   = row(window, gio, 4, "Outlet width [m]",   "0.042")
+    window._lbl_pipeA_out_w   = gio.itemAtPosition(4, 0).widget()
+    # 3D-only z-partial BC (hidden in 2D — default full-depth)
+    window.le_pipeA_in_z_ctr  = row(window, gio, 5,
+                                     "Inlet z-centre [m] (3D)",  "0.010")
+    window._lbl_pipeA_in_z_ctr  = gio.itemAtPosition(5, 0).widget()
+    window.le_pipeA_in_z_w    = row(window, gio, 6,
+                                     "Inlet z-width [m] (3D)",   "0.020")
+    window._lbl_pipeA_in_z_w    = gio.itemAtPosition(6, 0).widget()
+    window.le_pipeA_out_z_ctr = row(window, gio, 7,
+                                     "Outlet z-centre [m] (3D)", "0.010")
+    window._lbl_pipeA_out_z_ctr = gio.itemAtPosition(7, 0).widget()
+    window.le_pipeA_out_z_w   = row(window, gio, 8,
+                                     "Outlet z-width [m] (3D)",  "0.020")
+    window._lbl_pipeA_out_z_w   = gio.itemAtPosition(8, 0).widget()
 
     gio2, sec_pipeB = section(window, lay, "  \u25c8  Fluid B  Inlet / Outlet", _T_COLD, _F_COLD)
     window._rect_only_widgets.append(sec_pipeB)
@@ -359,9 +422,26 @@ def build_page_fluids(window):
     window.combo_dirB.currentIndexChanged.connect(window._on_dir_changed)
     add_row(window, gio2, 0, "Flow direction", window.combo_dirB)
     window.le_pipeB_in_ctr  = row(window, gio2, 1, "Inlet centre [m]",   "0.203")
+    window._lbl_pipeB_in_ctr  = gio2.itemAtPosition(1, 0).widget()
     window.le_pipeB_in_w    = row(window, gio2, 2, "Inlet width [m]",    "0.042")
+    window._lbl_pipeB_in_w    = gio2.itemAtPosition(2, 0).widget()
     window.le_pipeB_out_ctr = row(window, gio2, 3, "Outlet centre [m]",  "0.028")
+    window._lbl_pipeB_out_ctr = gio2.itemAtPosition(3, 0).widget()
     window.le_pipeB_out_w   = row(window, gio2, 4, "Outlet width [m]",   "0.042")
+    window._lbl_pipeB_out_w   = gio2.itemAtPosition(4, 0).widget()
+    # 3D-only z-partial BC for fluid B (mirror Fluid A)
+    window.le_pipeB_in_z_ctr  = row(window, gio2, 5,
+                                     "Inlet z-centre [m] (3D)",  "0.010")
+    window._lbl_pipeB_in_z_ctr  = gio2.itemAtPosition(5, 0).widget()
+    window.le_pipeB_in_z_w    = row(window, gio2, 6,
+                                     "Inlet z-width [m] (3D)",   "0.020")
+    window._lbl_pipeB_in_z_w    = gio2.itemAtPosition(6, 0).widget()
+    window.le_pipeB_out_z_ctr = row(window, gio2, 7,
+                                     "Outlet z-centre [m] (3D)", "0.010")
+    window._lbl_pipeB_out_z_ctr = gio2.itemAtPosition(7, 0).widget()
+    window.le_pipeB_out_z_w   = row(window, gio2, 8,
+                                     "Outlet z-width [m] (3D)",  "0.020")
+    window._lbl_pipeB_out_z_w   = gio2.itemAtPosition(8, 0).widget()
 
     # ── Polygon pipe edge config (hidden by default) ──────
     window._poly_pipe_frame = QFrame()
@@ -394,6 +474,11 @@ def build_page_fluids(window):
     lay.addWidget(btn_preview)
 
     lay.addStretch()
+    # Initial dir-aware label sync (cross1 axis name per current combo_dirA/B)
+    try:
+        window._on_dir_changed()
+    except Exception:
+        pass
     scroll.setWidget(w)
     return scroll
 
@@ -538,6 +623,14 @@ def build_canvas_area(window):
     for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
               window.btn_tab_pareto, window.btn_tab_3d):
         b.setStyleSheet(window._PTAB_OFF)
+    # Initial visibility: only Geometry (Layout) tab shown until data arrives.
+    # Other tabs revealed lazily by `Main_Menu._update_tab_visibility`:
+    #   - temp/pres/vel ← 2D Run success + dim=2D
+    #   - 3d            ← 3D Run success + dim=3D
+    #   - pareto        ← optimizer finish
+    for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
+              window.btn_tab_pareto, window.btn_tab_3d):
+        b.hide()
     window.btn_tab_layout.clicked.connect(lambda: window._switch_tab('layout'))
     window.btn_tab_temp.clicked.connect(lambda: window._switch_tab('temp'))
     window.btn_tab_pres.clicked.connect(lambda: window._switch_tab('pres'))
@@ -615,7 +708,7 @@ def build_canvas_area(window):
         window.canvas_temp   = MatplotlibCanvas(3, 1, figsize=(14, 24))
         window.canvas_pres   = MatplotlibCanvas(1, 1, figsize=(14, 18))
         window.canvas_vel    = MatplotlibCanvas(2, 1, figsize=(14, 16))
-        window.canvas_layout = MatplotlibCanvas(1, 1, figsize=(14, 8))
+        window.canvas_layout = MatplotlibCanvas(1, 1, figsize=(14, 11))
         window.canvas_pareto = MatplotlibCanvas(1, 1, figsize=(14, 8))
 
     # PyVistaQt init is heavy (~1-2s VTK/OpenGL context setup).
@@ -645,39 +738,39 @@ def build_canvas_area(window):
         (window.canvas_temp,   'temp',   1500),
         (window.canvas_pres,   'pres',   1200),
         (window.canvas_vel,    'vel',    1100),
-        (window.canvas_layout, 'layout', 550),
+        (window.canvas_layout, 'layout', 900),
         (window.canvas_pareto, 'pareto', 600),
     ]
-    # 3D card inserted lazily (card reserved here as placeholder QWidget)
+    # 3D card inserted lazily (card reserved here as placeholder QWidget).
+    # Taller card (1100 vs earlier 820) gives PyVistaQt ~950 px for the
+    # plotter — the slice fills more of the available real-estate.
     from PySide6.QtWidgets import QWidget as _QW
     window._canvas_3d_placeholder = _QW()
-    _card_specs.append((window._canvas_3d_placeholder, '3d', 820))
+    _card_specs.append((window._canvas_3d_placeholder, '3d', 1100))
     for c, key, h in _card_specs:
-        # Card frame
+        # Card frame. 3D card skips top-accent stripe (its curved arc was
+        # visually colliding with embedded toolbar labels — user report
+        # 2026-04-21). Other cards keep the coloured accent.
         card = QFrame()
         accent = _accents.get(key, '#4472c4')
-        card.setStyleSheet(
-            f"QFrame{{background:{_t['card_bg']};"
-            f"border:2px solid {_t['card_border']};"
-            f"border-top:5px solid {accent};"
-            "border-radius:12px;}")
+        if key == '3d':
+            card.setStyleSheet(
+                f"QFrame{{background:{_t['card_bg']};"
+                f"border:1px solid {_t['card_border']};"
+                "border-radius:10px;}")
+        else:
+            card.setStyleSheet(
+                f"QFrame{{background:{_t['card_bg']};"
+                f"border:2px solid {_t['card_border']};"
+                f"border-top:5px solid {accent};"
+                "border-radius:12px;}")
         card_lay = QVBoxLayout(card)
         card_lay.setContentsMargins(16, 16, 16, 16)
         card_lay.setSpacing(0)
 
-        # Drop shadow
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 2)
-        _sc = _t['card_shadow']
-        if 'rgba' in _sc:
-            # parse rgba(r,g,b,a)
-            parts = _sc.replace('rgba(','').replace(')','').split(',')
-            shadow.setColor(QColor(int(parts[0]),int(parts[1]),
-                                   int(parts[2]),int(parts[3])))
-        else:
-            shadow.setColor(QColor(0, 0, 0, 30))
-        card.setGraphicsEffect(shadow)
+        # Drop shadow removed — `QGraphicsDropShadowEffect` per card triggers
+        # expensive off-screen render on every show/hide, causing tab-switch
+        # lag. 2D/3D cards now use flat border only.
 
         # Canvas inside card
         c.setSizePolicy(QSizePolicy.Policy.Expanding,

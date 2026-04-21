@@ -1023,8 +1023,7 @@ class SIMPLESolver:
         self.Tf = None
         self.Ts = None
 
-        # Store initial mass flux for compressible inlet BC
-        self.G_inlet = self.rho_field[:, 0].mean() * self.v_inlet  # rho_in * u_in
+        # (v_inlet is a fixed-velocity BC; density updates do not modify it)
 
         self._pp_sparsity = None  # lazily built on first solve() call
         self._set_bc()
@@ -1052,8 +1051,8 @@ class SIMPLESolver:
 
     def _update_density(self):
         """Update rho_field from pressure field (ideal gas: rho = P_abs / (R*T)).
-        Under-relaxed to avoid oscillation. Also updates inlet velocity to
-        maintain constant mass flux. No-op for incompressible fluids."""
+        Under-relaxed to avoid oscillation. v_inlet stays fixed (velocity-inlet
+        BC); mass flux at inlet floats with density. No-op for incompressible."""
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
@@ -1062,10 +1061,6 @@ class SIMPLESolver:
         np.clip(rho_new, 0.01, 100.0, out=rho_new)
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
-        # Update inlet velocity to maintain constant mass flux G = rho * v
-        rho_inlet_avg = self.rho_field[:, 0].mean()
-        if rho_inlet_avg > 0.01:
-            self.v_inlet = self.G_inlet / rho_inlet_avg
 
     def update_T_field(self, T_field):
         """Update temperature field. Also refreshes mu_field / mu_eff_field via

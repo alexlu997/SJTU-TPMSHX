@@ -1,5 +1,5 @@
 """
-validate_shanghai.py — Validate ThermoNAS against Shanghai Electric data.
+validate_shanghai.py — Validate SJTU-TPMSHX against Shanghai Electric data.
 Air = Fluid A (侧边, +x, full-width), Water = Fluid B (X方向, -y, partial BC)
 """
 import os, sys, warnings

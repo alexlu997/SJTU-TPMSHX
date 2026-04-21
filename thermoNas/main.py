@@ -55,7 +55,7 @@ class Main_Menu(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-        self.setWindowTitle("Homogenization")
+        self.setWindowTitle("SJTU-TPMSHX")
         self.resize(1350, 1100)
         self.setMinimumSize(900, 720)
         self.showMaximized()
@@ -85,6 +85,104 @@ class Main_Menu(QMainWindow):
         self._poly_only_widgets = []
 
         self._build_ui()
+        self._apply_shanghai_defaults()
+        # Track manual grid edits so `compute_tpms` (invoked by Auto-fill)
+        # does NOT overwrite user-customised Nx/Ny/Nz. textEdited fires on
+        # keyboard input only, not on programmatic `setText`.
+        self._user_edited_grid = False
+        for le in (self.le_Nx, self.le_Ny, self.le_Nz):
+            le.textEdited.connect(self._mark_grid_edited)
+        self._schedule_3d_preinit()
+
+    def _mark_grid_edited(self, _txt=None):
+        self._user_edited_grid = True
+
+    # ─────────────────────────────────────────────────────────
+    #  Shanghai presets + deferred 3D init
+    # ─────────────────────────────────────────────────────────
+    def _apply_shanghai_defaults(self):
+        """Overwrite default text fields with Shanghai Electric case-8 params
+        and switch to 3D mode. Single-call post-build_ui, users can edit after.
+        """
+        presets = {
+            # Shanghai Electric gas-heater experimental log (工况8, Re_air=5000,
+            # Re_water=400) — raw values from `data/raw_data/
+            # 20260401-上海电气天然气加热器实验工况.xlsx` Sheet1 row 9:
+            #   col 24 water_in  = 26.89 °C   → 300.04 K
+            #   col 26 water_P   = 647.60 Pa (gauge)  → 101972.60 abs
+            #   col 28 air_in    = 148.908 °C → 422.06 K
+            #   col 30 air_P     = 91037.40 Pa (gauge) → 192362.40 abs
+            #   col 10 air_SLM   = 1057  → u_A ~20 m/s interstitial (Gyroid L7/t0.6)
+            #   col 11 water_flow= 5193 ml/min → u_B ~0.114 m/s (Re=400, D_h~3 mm)
+            'le_L':     '0.231',  # L domain [m]
+            'le_H':     '0.042',
+            'le_Lz':    '0.020',
+            'le_Lcell': '7.0',
+            'le_t':     '0.6',
+            'le_ks':    '16.0',   # Shanghai SS solid k_s
+            'le_uA':    '20.0',   # Fluid A (air) interstitial, back-calc Re=5000
+            'le_TinA':  '422.0',  # Fluid A inlet (Excel col 28: 148.908 °C)
+            'le_PinA':  '192362', # Fluid A inlet absolute (Excel 91037 Pa gauge + atm)
+            'le_uB':    '0.114',  # Fluid B (water) back-calc Re=400; B is frozen symbolically
+            'le_TinB':  '300.0',  # Fluid B inlet (Excel col 24: 26.89 °C)
+            'le_PinB':  '101973', # Fluid B inlet absolute (Excel 647.6 Pa gauge + atm)
+            # 3D grid: wall-refine expands +16 per axis, so 30/20/5 →
+            # refined 46×36×21 = ~35k cells, compressible dual-fluid
+            # solve ~2–3 min. Keeping the 2D default 100/50 here would
+            # push refined 3D to ~160k cells and 10+ min.
+            'le_Nx':    '30',
+            'le_Ny':    '20',
+            'le_Nz':    '5',
+            # Shanghai pipe inlet/outlet: A full-width (42 mm strip), B
+            # staggered cross-flow (water enters top-right +x end, exits
+            # bottom-left -x end; inlet/outlet 42 mm strips along real x).
+            'le_pipeA_in_ctr':  '0.021', 'le_pipeA_in_w':  '0.042',
+            'le_pipeA_out_ctr': '0.021', 'le_pipeA_out_w': '0.042',
+            'le_pipeB_in_ctr':  '0.203', 'le_pipeB_in_w':  '0.042',
+            'le_pipeB_out_ctr': '0.028', 'le_pipeB_out_w': '0.042',
+        }
+        for attr, val in presets.items():
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.setText(val)
+                except Exception:
+                    pass
+        # TPMS type → Gyroid (index 1)
+        try:
+            if hasattr(self, 'combo_tpms'):
+                self.combo_tpms.setCurrentIndex(1)
+        except Exception:
+            pass
+        # Dimensionality → 3D (index 1)
+        try:
+            if hasattr(self, 'combo_dim'):
+                self.combo_dim.setCurrentIndex(1)
+        except Exception:
+            pass
+        self.statusBar().showMessage(
+            "Loaded Shanghai Electric preset (3D, Gyroid L=7 t=0.6, 231×42×20 mm).",
+            5000)
+
+    def _schedule_3d_preinit(self):
+        """Pre-initialise PyVistaQt panel 500 ms after window.show() so the
+        first click on '3D View' tab is responsive. Runs on main thread but
+        deferred → UI is already visible, user sees brief status blip."""
+        from PySide6.QtCore import QTimer
+        def _preinit():
+            if getattr(self, 'canvas_3d', None) is not None:
+                return
+            self.statusBar().showMessage("Preparing 3D viewer…")
+            QApplication.processEvents()
+            try:
+                self._lazy_init_3d_panel()
+            except Exception as e:
+                self.statusBar().showMessage(
+                    f"3D viewer init deferred (will retry on first click): {e}",
+                    5000)
+                return
+            self.statusBar().showMessage("3D viewer ready.", 2000)
+        QTimer.singleShot(500, _preinit)
 
     # ─────────────────────────────────────────────────────────
     #  Top-level layout
@@ -144,10 +242,61 @@ class Main_Menu(QMainWindow):
         from ui.ui_builders import canvas_wheel_zoom
         return canvas_wheel_zoom(self, event, canvas, key)
 
+    def _update_tab_visibility(self):
+        """Show/hide tab buttons based on available results and current mode.
+
+        Rules (finalized 2026-04-21):
+          - Layout : always
+          - Temp/Pres/Vel : 2D mode AND _has_results_2d
+          - 3D View : 3D mode AND _has_results_3d
+          - Pareto  : _has_pareto (independent of mode)
+
+        If the currently active tab disappears, fall back to Layout.
+        Safe to call before ui_builders finishes — returns if buttons absent.
+        """
+        if not hasattr(self, 'btn_tab_layout'):
+            return  # Tab buttons not yet constructed (early _on_dim_changed)
+        is_3d = (hasattr(self, 'combo_dim')
+                 and self.combo_dim.currentIndex() == 1)
+        rules = {
+            'layout': True,
+            'temp':   (not is_3d) and getattr(self, '_has_results_2d', False),
+            'pres':   (not is_3d) and getattr(self, '_has_results_2d', False),
+            'vel':    (not is_3d) and getattr(self, '_has_results_2d', False),
+            '3d':     is_3d and getattr(self, '_has_results_3d', False),
+            'pareto': getattr(self, '_has_pareto', False),
+        }
+        btn_map = {
+            'layout': self.btn_tab_layout,
+            'temp':   self.btn_tab_temp,
+            'pres':   self.btn_tab_pres,
+            'vel':    self.btn_tab_vel,
+            '3d':     self.btn_tab_3d,
+            'pareto': self.btn_tab_pareto,
+        }
+        for key, visible in rules.items():
+            btn_map[key].setVisible(visible)
+            card = self._canvas_cards.get(key)
+            if card is not None and not visible:
+                card.hide()
+        # Fall back to Layout if active tab just vanished
+        if not rules.get(getattr(self, '_active_tab', 'layout'), True):
+            self._switch_tab('layout')
+
     def _switch_tab(self, tab: str):
-        # Lazy instantiate PyVistaQt panel on first 3D tab click
-        if tab == '3d' and self.canvas_3d is None:
-            self._lazy_init_3d_panel()
+        # Reject clicks on hidden tabs (defensive — buttons are hidden anyway)
+        btn_lookup = {
+            'layout': getattr(self, 'btn_tab_layout', None),
+            'temp':   getattr(self, 'btn_tab_temp', None),
+            'pres':   getattr(self, 'btn_tab_pres', None),
+            'vel':    getattr(self, 'btn_tab_vel', None),
+            '3d':     getattr(self, 'btn_tab_3d', None),
+            'pareto': getattr(self, 'btn_tab_pareto', None),
+        }
+        target_btn = btn_lookup.get(tab)
+        if target_btn is not None and target_btn.isHidden() and tab != 'layout':
+            tab = 'layout'
+
         self._active_tab = tab
         tabs = [
             ('temp',   self.btn_tab_temp),
@@ -157,16 +306,23 @@ class Main_Menu(QMainWindow):
             ('pareto', self.btn_tab_pareto),
             ('3d',     self.btn_tab_3d),
         ]
+        drawn = getattr(self, '_drawn_tabs', set())
         for key, btn in tabs:
             card = self._canvas_cards.get(key)
             if key == tab:
-                # 3D tab is self-populating (has its own Load button) — always visible
-                # when selected, regardless of compute state.
-                drawn = getattr(self, '_drawn_tabs', set())
-                if card and (key == '3d'
-                             or getattr(self, '_has_results', False)
+                if card and (getattr(self, '_has_results', False)
                              or key in drawn):
                     card.show()
+                elif key == '3d':
+                    # No 3D compute yet — hide card + gentle hint instead of
+                    # rendering a heavyweight placeholder (which was what made
+                    # the first tab-click feel slow). User runs Compute →
+                    # finalize_plots_3d will populate + show.
+                    if card:
+                        card.hide()
+                    self.statusBar().showMessage(
+                        "3D view is empty — switch to 3D mode in Domain panel "
+                        "and click Run Calculation to populate.", 6000)
                 btn.setStyleSheet(self._PTAB_ON)
             else:
                 if card: card.hide()
@@ -333,13 +489,44 @@ class Main_Menu(QMainWindow):
         self._v_Dh.setText(f"{r['D_h'] * 1000:.4f}")
         self._v_Kss.setText(f"{r['K_ss']:.5f}")
 
-        # Auto-update suggested grid from D_h (alpha=0.4 → ~5% Q accuracy)
+        # Auto-update suggested grid from D_h.
+        #   2D: alpha=0.4 (~5% Q accuracy)
+        #   3D: alpha=1.0 (streamwise x), 0.5 (cross-stream y, z) — with
+        #       wall-refine adding 16 BL cells/axis, N_user ~ 2-3x Nx_target
+        #       gives "paper-run" ~90k-cell refined grid matching Shanghai
+        #       17.83% RMSRE baseline without runaway timing.
+        is_3d = (hasattr(self, 'combo_dim')
+                 and self.combo_dim.currentIndex() == 1)
         try:
             L_dom = float(self.le_L.text())
             H_dom = float(self.le_H.text())
-            Nx_sug, Ny_sug = adaptive_grid(L_dom, H_dom, r['D_h'], alpha=0.4)
-            self.le_Nx.setText(str(Nx_sug))
-            self.le_Ny.setText(str(Ny_sug))
+            if is_3d:
+                try:
+                    Lz_dom = float(self.le_Lz.text())
+                except ValueError:
+                    Lz_dom = 0.02
+                D_h = r['D_h']
+                # Stream axis coarser (flow is near-1D), cross-axes finer for BL
+                Nx_sug = max(14, round(L_dom / (1.0 * D_h)))
+                Ny_sug = max(8,  round(H_dom / (0.5 * D_h)))
+                Nz_sug = max(3,  round(Lz_dom / (0.5 * D_h)))
+                # Cap to keep refined total cells under ~100k
+                # (user_cells + 16 per axis tensor-product)
+                while ((Nx_sug + 16) * (Ny_sug + 16) * (Nz_sug + 16)
+                       > 150_000 and Nx_sug > 14):
+                    Nx_sug = max(14, int(Nx_sug * 0.8))
+                # Only overwrite if user hasn't manually edited grid fields —
+                # otherwise Auto-fill (which calls compute_tpms) would stomp
+                # on user's custom Nx/Ny/Nz between TPMS Compute and Run.
+                if not getattr(self, '_user_edited_grid', False):
+                    self.le_Nx.setText(str(Nx_sug))
+                    self.le_Ny.setText(str(Ny_sug))
+                    self.le_Nz.setText(str(Nz_sug))
+            else:
+                Nx_sug, Ny_sug = adaptive_grid(L_dom, H_dom, r['D_h'], alpha=0.4)
+                if not getattr(self, '_user_edited_grid', False):
+                    self.le_Nx.setText(str(Nx_sug))
+                    self.le_Ny.setText(str(Ny_sug))
         except ValueError:
             pass  # L or H not yet filled
 
@@ -423,7 +610,7 @@ class Main_Menu(QMainWindow):
     # ─────────────────────────────────────────────────────────
     def save_config(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Config", "thermonas_config.json",
+            self, "Save Config", "SJTU-TPMSHX_config.json",
             "JSON Files (*.json)")
         if not path:
             return
@@ -528,22 +715,49 @@ class Main_Menu(QMainWindow):
     # ─────────────────────────────────────────────────────────
     #  Inlet / Outlet helpers (unified)
     # ─────────────────────────────────────────────────────────
-    _DIR_MAP = {0: '+x', 1: '-x', 2: '+y', 3: '-y'}
+    _DIR_MAP = {0: '+x', 1: '-x', 2: '+y', 3: '-y', 4: '+z', 5: '-z'}
 
     def _dir_int(self, combo):
-        return combo.currentIndex()           # 0=+x, 1=-x, 2=+y, 3=-y
+        # 0=+x 1=-x 2=+y 3=-y 4=+z 5=-z (z-dirs: 3D only)
+        return combo.currentIndex()
 
-    def _is_x_dir(self, d): return d <= 1
-    def _is_y_dir(self, d): return d >= 2
+    def _is_x_dir(self, d): return d in (0, 1)
+    def _is_y_dir(self, d): return d in (2, 3)
+    def _is_z_dir(self, d): return d in (4, 5)
 
     def _inlet_wall(self, d):
-        return {0: 'left', 1: 'right', 2: 'bottom', 3: 'top'}[d]
+        return {0: 'left', 1: 'right', 2: 'bottom', 3: 'top',
+                4: 'front', 5: 'back'}[d]
     def _outlet_wall(self, d):
-        return {0: 'right', 1: 'left', 2: 'top', 3: 'bottom'}[d]
+        return {0: 'right', 1: 'left', 2: 'top', 3: 'bottom',
+                4: 'back', 5: 'front'}[d]
 
     def _on_dir_changed(self):
-        """Called when a flow-direction combo changes."""
-        pass
+        """Relabel inlet/outlet fields to match selected flow-axis.
+
+        dir 0/1 (±x) stream → cross1 = Y, cross2 = Z
+        dir 2/3 (±y) stream → cross1 = X, cross2 = Z
+        dir 4/5 (±z) stream → cross1 = X, cross2 = Y
+        The UI fields `in_ctr/in_w/out_ctr/out_w` always control cross1;
+        `in_z_ctr` etc. always control cross2 — labels show the real axis
+        so user knows which coord they're editing.
+        """
+        _axis_by_dir = {
+            0: ('Y', 'Z'), 1: ('Y', 'Z'),
+            2: ('X', 'Z'), 3: ('X', 'Z'),
+            4: ('X', 'Y'), 5: ('X', 'Y'),
+        }
+        for combo, prefix in [(self.combo_dirA, 'pipeA'),
+                              (self.combo_dirB, 'pipeB')]:
+            c1, c2 = _axis_by_dir.get(combo.currentIndex(), ('Y', 'Z'))
+            for io, cap in (('in', 'Inlet'), ('out', 'Outlet')):
+                for kind, suffix in (('ctr', 'centre'), ('w', 'width')):
+                    lbl1 = getattr(self, f'_lbl_{prefix}_{io}_{kind}', None)
+                    if lbl1 is not None:
+                        lbl1.setText(f"{cap} {c1}-{suffix} [m]")
+                    lbl2 = getattr(self, f'_lbl_{prefix}_{io}_z_{kind}', None)
+                    if lbl2 is not None:
+                        lbl2.setText(f"{cap} {c2}-{suffix} [m] (3D)")
 
     def _on_shape_changed(self, idx):
         """Show/hide controls based on domain shape (Rectangle vs Polygon)."""
@@ -561,21 +775,44 @@ class Main_Menu(QMainWindow):
             self._update_edge_combos()
 
     def _fluid_config(self, which):
-        """Read config for fluid A or B. Returns dict."""
+        """Read config for fluid A or B. Returns dict (optional z-partial keys
+        for fluid A: `in_z_ctr`, `in_z_w`, `out_z_ctr`, `out_z_w`)."""
         if which == 'A':
             d = self._dir_int(self.combo_dirA)
-            return dict(dir=d,
+            cfg = dict(dir=d,
                 in_ctr=float(self.le_pipeA_in_ctr.text()),
                 in_w=float(self.le_pipeA_in_w.text()),
                 out_ctr=float(self.le_pipeA_out_ctr.text()),
                 out_w=float(self.le_pipeA_out_w.text()))
+            # z-partial (only when 3D mode shows the fields)
+            if (hasattr(self, 'le_pipeA_in_z_ctr')
+                    and not self.le_pipeA_in_z_ctr.isHidden()):
+                try:
+                    cfg['in_z_ctr']  = float(self.le_pipeA_in_z_ctr.text())
+                    cfg['in_z_w']    = float(self.le_pipeA_in_z_w.text())
+                    cfg['out_z_ctr'] = float(self.le_pipeA_out_z_ctr.text())
+                    cfg['out_z_w']   = float(self.le_pipeA_out_z_w.text())
+                except ValueError:
+                    pass
+            return cfg
         else:
             d = self._dir_int(self.combo_dirB)
-            return dict(dir=d,
+            cfg = dict(dir=d,
                 in_ctr=float(self.le_pipeB_in_ctr.text()),
                 in_w=float(self.le_pipeB_in_w.text()),
                 out_ctr=float(self.le_pipeB_out_ctr.text()),
                 out_w=float(self.le_pipeB_out_w.text()))
+            # z-partial (only when 3D mode shows the fields)
+            if (hasattr(self, 'le_pipeB_in_z_ctr')
+                    and not self.le_pipeB_in_z_ctr.isHidden()):
+                try:
+                    cfg['in_z_ctr']  = float(self.le_pipeB_in_z_ctr.text())
+                    cfg['in_z_w']    = float(self.le_pipeB_in_z_w.text())
+                    cfg['out_z_ctr'] = float(self.le_pipeB_out_z_ctr.text())
+                    cfg['out_z_w']   = float(self.le_pipeB_out_z_w.text())
+                except ValueError:
+                    pass
+            return cfg
 
     def _update_edge_combos(self):
         """Populate edge combo boxes with readable edge descriptions."""
@@ -701,6 +938,8 @@ class Main_Menu(QMainWindow):
                 from PySide6.QtCore import QTimer as QT
                 QT.singleShot(500, self.progress.hide)
                 self._has_results = True
+                self._has_results_2d = True
+                self._update_tab_visibility()
                 self._switch_tab('temp')
                 self.statusBar().showMessage("Done.", 5000)
         timer.timeout.connect(_check)
@@ -789,7 +1028,13 @@ class Main_Menu(QMainWindow):
 
         self.progress.show()
         self.progress.setValue(10)
-        self.statusBar().showMessage("Computing 3D (uniform)...")
+        import time as _time
+        self._compute_t0 = _time.time()
+        Nx_r, Ny_r, Nz_r = Nx_u + 16, Ny_u + 16, Nz_u + 16
+        est_cells_r = Nx_r * Ny_r * Nz_r
+        self.statusBar().showMessage(
+            f"Computing 3D (refined {Nx_r}×{Ny_r}×{Nz_r} = {est_cells_r:,} cells, "
+            f"compressible dual-fluid SIMPLE; typical ~2–10 min)…")
         QApplication.processEvents()
 
         import threading
@@ -814,6 +1059,9 @@ class Main_Menu(QMainWindow):
         def _check():
             if t.is_alive():
                 self.progress.setValue(min(90, self._compute_progress))
+                elapsed = _time.time() - self._compute_t0
+                self.statusBar().showMessage(
+                    f"Computing 3D… {elapsed:5.0f} s elapsed ({est_cells_r:,} cells)")
                 return
             timer.stop()
             if self._compute_error:
@@ -826,11 +1074,13 @@ class Main_Menu(QMainWindow):
                 from PySide6.QtCore import QTimer as QT
                 QT.singleShot(500, self.progress.hide)
                 self._has_results = True
+                self._has_results_3d = True
                 drawn = getattr(self, '_drawn_tabs', set())
                 # All 2D canvases also populated via mid-z slice — mark drawn
                 for k in ('3d', 'temp', 'pres', 'vel'):
                     drawn.add(k)
                 self._drawn_tabs = drawn
+                self._update_tab_visibility()
                 self._switch_tab('3d')
                 res = getattr(self, '_result_3d', {})
                 self.statusBar().showMessage(
@@ -886,7 +1136,7 @@ class Main_Menu(QMainWindow):
             return
         key = tab_keys[items.index(choice)]
         canvas = tab_canvas[key]
-        default = f"ThermoNAS_{key}.png"
+        default = f"SJTU-TPMSHX_{key}.png"
         path, _ = QFileDialog.getSaveFileName(
             self, "Export Figure", default,
             "PNG (*.png);;SVG (*.svg);;PDF (*.pdf);;All Files (*)")
@@ -898,25 +1148,22 @@ class Main_Menu(QMainWindow):
 
 # ── Entry point ───────────────────────────────────────────────
 def _apply_app_font(app):
-    """Pick JetBrainsMono Nerd Font if available; fall back gracefully.
+    """Pick modern sans-serif (Inter / Segoe UI / Roboto) for UI chrome.
 
-    Uses only `QApplication.setFont` — avoids global `* { font-family }` QSS
-    rule which triggers a `polish()` cascade across every child widget
-    and causes noticeable lag on compute-geometry / auto-fill / run buttons.
-    Widgets without explicit `font-family` in their QSS inherit this default.
+    Monospace (JetBrainsMono) is reserved for chart tick labels only; UI chrome
+    uses sans-serif per 2026-04-21 redesign request.
     """
     from PySide6.QtGui import QFont, QFontDatabase
     candidates = [
-        "JetBrainsMono Nerd Font",
-        "JetBrainsMono NF",
-        "JetBrainsMono Nerd Font Mono",
-        "JetBrains Mono",
-        "Consolas",
+        "Inter", "Inter Display",
+        "Segoe UI", "Segoe UI Variable",
+        "Roboto",
+        "Helvetica Neue", "Arial",
     ]
     families = set(QFontDatabase.families())
     chosen = next((n for n in candidates if n in families), None)
     if chosen is None:
-        print(f"[font] none of {candidates} found; system default")
+        print("[font] no sans-serif candidate found; system default")
         return None
     app.setFont(QFont(chosen, 10))
     print(f"[font] using {chosen!r}")

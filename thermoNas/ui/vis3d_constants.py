@@ -8,17 +8,33 @@ from __future__ import annotations
 
 
 # Display order + per-field rendering metadata.
-# Matches 2D canvas convention (turbo for T/speed/P; cividis for design field).
-FIELD_ORDER = ['Ta', 'vmag', 'P_kPa', 'L_mm']
+# Matches 2D canvas convention (turbo for T/speed; coolwarm for solid; plasma for P).
+# `Ta`/`vmag`/`P_kPa`/`L_mm` retained for backward compatibility with legacy
+# callers (load_shanghai_demo, hover probe). The full 3D result now also feeds
+# Tb / Ts / vmag_B / P_B_kPa when cross-flow fluid B has run.
+FIELD_ORDER = [
+    'Ta', 'Tb', 'Ts',
+    'vmag', 'vmag_B',
+    'P_kPa', 'P_B_kPa',
+    'L_mm',
+]
 FIELD_META = {
-    'Ta':    {'cmap': 'turbo',   'title': 'T_a (K)',       'fmt': '%.1f',
-              'label': 'Temperature'},
-    'vmag':  {'cmap': 'turbo',   'title': 'speed (m/s)',   'fmt': '%.1f',
-              'label': 'Speed'},
-    'P_kPa': {'cmap': 'turbo',   'title': 'P gauge (kPa)', 'fmt': '%.1f',
-              'label': 'Pressure'},
-    'L_mm':  {'cmap': 'cividis', 'title': 'L (mm)',        'fmt': '%.2f',
-              'label': 'Design L'},
+    'Ta':      {'cmap': 'turbo',    'title': 'T_a (K)',       'fmt': '%.1f',
+                'label': 'Temperature A'},
+    'Tb':      {'cmap': 'turbo',    'title': 'T_b (K)',       'fmt': '%.1f',
+                'label': 'Temperature B'},
+    'Ts':      {'cmap': 'coolwarm', 'title': 'T_s (K)',       'fmt': '%.1f',
+                'label': 'Temperature Solid'},
+    'vmag':    {'cmap': 'turbo',    'title': 'speed A (m/s)', 'fmt': '%.2f',
+                'label': 'Velocity A'},
+    'vmag_B':  {'cmap': 'turbo',    'title': 'speed B (m/s)', 'fmt': '%.2f',
+                'label': 'Velocity B'},
+    'P_kPa':   {'cmap': 'plasma',   'title': 'P_A gauge (kPa)','fmt': '%.1f',
+                'label': 'Pressure A'},
+    'P_B_kPa': {'cmap': 'plasma',   'title': 'P_B gauge (kPa)','fmt': '%.1f',
+                'label': 'Pressure B'},
+    'L_mm':    {'cmap': 'cividis',  'title': 'L (mm)',         'fmt': '%.2f',
+                'label': 'Design L'},
 }
 
 

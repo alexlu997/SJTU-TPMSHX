@@ -1,4 +1,4 @@
-"""Sanity check: every Qt stylesheet built by ThermoNAS must have balanced
+"""Sanity check: every Qt stylesheet built by SJTU-TPMSHX must have balanced
 `{`/`}` braces, and Qt must accept all of them at Main_Menu build time.
 
 Origin: D-1 Bug 1 — three call sites in theme.py and ui_builders.py had a

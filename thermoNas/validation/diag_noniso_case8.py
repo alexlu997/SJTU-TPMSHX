@@ -103,7 +103,7 @@ print(f"  T_field: min={sA_iso.T_field.min():.1f} max={sA_iso.T_field.max():.1f}
 print(f"  rho_field: min={sA_iso.rho_field.min():.3f} max={sA_iso.rho_field.max():.3f} mean={sA_iso.rho_field.mean():.3f}")
 print(f"  mu_field: min={sA_iso.mu_field.min():.3e} max={sA_iso.mu_field.max():.3e}")
 print(f"  P_ref_abs (outlet) = {sA_iso.P_ref_abs:.0f} Pa")
-print(f"  v_inlet = {sA_iso.v_inlet:.3f}, G_inlet = {sA_iso.G_inlet:.3f}")
+print(f"  v_inlet = {sA_iso.v_inlet:.3f}, G_inlet = {sA_iso.rho_field[:,0].mean()*sA_iso.v_inlet:.3f}")
 
 # ── Run non-isothermal coupled SIMPLE ──
 print("\n--- NON-ISOTHERMAL SIMPLE (coupled with solve_full) ---")
@@ -195,7 +195,7 @@ print(f"  T_field: min={sA.T_field.min():.1f} max={sA.T_field.max():.1f} mean={s
 print(f"  rho_field: min={sA.rho_field.min():.3f} max={sA.rho_field.max():.3f} mean={sA.rho_field.mean():.3f}")
 print(f"  mu_field: min={sA.mu_field.min():.3e} max={sA.mu_field.max():.3e}")
 print(f"  P_ref_abs (outlet) = {sA.P_ref_abs:.0f} Pa")
-print(f"  v_inlet = {sA.v_inlet:.3f}, G_inlet = {sA.G_inlet:.3f}")
+print(f"  v_inlet = {sA.v_inlet:.3f}, G_inlet = {sA.rho_field[:,0].mean()*sA.v_inlet:.3f}")
 
 # 1D formula with T_avg of non-isothermal
 T_avg_final = float(sA.T_field.mean())

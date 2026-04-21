@@ -1,4 +1,4 @@
-"""Matplotlib canvas for ThermoNAS result visualization.
+"""Matplotlib canvas for SJTU-TPMSHX result visualization.
 
 Extracted from main.py (Task B.2). Light-only as of D-1 (dark mode and
 the runtime toggle were removed; `_current_theme` and `_dp_card_colors`

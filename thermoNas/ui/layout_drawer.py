@@ -1,4 +1,4 @@
-"""Layout drawing helpers for ThermoNAS GUI.
+"""Layout drawing helpers for SJTU-TPMSHX GUI.
 
 Extracted from main.py (Task B.4). All functions take `window` (a Main_Menu
 instance) as first argument. `self.` in original bodies -> `window.`.
@@ -34,7 +34,11 @@ def draw_layout(window):
         draw_layout_rect_3d(window, ax, L, H, Lz)
         ax.set_facecolor(_t['ax_bg'])
     else:
-        ax = window.canvas_layout.fig.add_subplot(111)
+        # Restore canvas_wheel_zoom behaviour if a prior 3D draw overrode it
+        _canvas = window.canvas_layout
+        if hasattr(_canvas, '_orig_wheel_event'):
+            _canvas.wheelEvent = _canvas._orig_wheel_event
+        ax = _canvas.fig.add_subplot(111)
         window.canvas_layout.axes = [[ax]]
         shape_idx = window.combo_shape.currentIndex()
         if shape_idx == 0:
@@ -92,39 +96,13 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
 
     INLET_COL = '#e8751a'
     OUTLET_COL = '#1e5a9e'
-    ARROW_COL_A = '#8B1A1A'   # deep crimson — fluid A arrows
-    ARROW_COL_B = '#1f3a5f'   # deep navy — fluid B arrows (distinct from A)
     face_alpha = 0.68
 
-    # External-arrow helper: arrow sits OUTSIDE the face, points INTO (inlet)
-    # or OUT (outlet). `face_axis` is 'x'|'y'; `face_val` is the face coord;
-    # `sign_in` is the direction the flow moves through the face
-    # (+1 means increasing coord). Inlet arrow starts outside, ends at face.
-    # Outlet arrow starts at face, ends outside.
-    def _draw_ext_arrows(face_axis, in_val, out_val, in_ctr, out_ctr,
-                          sign_in, arrow_col, off_scale):
-        # offset proportional to domain for visual clarity
-        off = off_scale
-        if face_axis == 'x':
-            inlet_start = (in_val - sign_in * off, in_ctr, Lzmm / 2)
-            inlet_vec   = (sign_in * off, 0, 0)
-            outlet_start = (out_val, out_ctr, Lzmm / 2)
-            outlet_vec   = (sign_in * off, 0, 0)
-        else:
-            inlet_start = (in_ctr, in_val - sign_in * off, Lzmm / 2)
-            inlet_vec   = (0, sign_in * off, 0)
-            outlet_start = (out_ctr, out_val, Lzmm / 2)
-            outlet_vec   = (0, sign_in * off, 0)
-        ax.quiver(*inlet_start, *inlet_vec, color=arrow_col,
-                   arrow_length_ratio=0.25, linewidth=3.0, zorder=10)
-        ax.quiver(*outlet_start, *outlet_vec, color=arrow_col,
-                   arrow_length_ratio=0.25, linewidth=3.0, zorder=10)
-
-    def _draw_fluid(cfg, arrow_col, label_tag, off_scale):
+    def _draw_fluid(cfg, label_tag, label_offset):
+        """Shade inlet (orange) + outlet (blue) faces and place inline labels."""
         d = cfg['dir']
         in_ctr_mm = cfg['in_ctr'] * 1000; in_w_mm = cfg['in_w'] * 1000
         out_ctr_mm = cfg['out_ctr'] * 1000; out_w_mm = cfg['out_w'] * 1000
-
         if d in (0, 1):
             in_face_val = 0.0 if d == 0 else Lmm
             out_face_val = Lmm if d == 0 else 0.0
@@ -132,14 +110,10 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
                         INLET_COL, face_alpha)
             _face_patch(_rect_face('x', out_face_val, out_ctr_mm, out_w_mm, 0, Hmm),
                         OUTLET_COL, face_alpha)
-            sign_in = 1 if d == 0 else -1
-            _draw_ext_arrows('x', in_face_val, out_face_val,
-                              in_ctr_mm, out_ctr_mm, sign_in, arrow_col, off_scale)
-            # Inline labels
-            ax.text(in_face_val - sign_in * off_scale * 0.7, in_ctr_mm, Lzmm + 3,
+            ax.text(in_face_val, in_ctr_mm, Lzmm + label_offset,
                     f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
                     fontweight='bold', ha='center')
-            ax.text(out_face_val + sign_in * off_scale * 0.3, out_ctr_mm, Lzmm + 3,
+            ax.text(out_face_val, out_ctr_mm, Lzmm + label_offset,
                     f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
                     fontweight='bold', ha='center')
         else:
@@ -149,30 +123,22 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
                         INLET_COL, face_alpha)
             _face_patch(_rect_face('y', out_face_val, out_ctr_mm, out_w_mm, 0, Lmm),
                         OUTLET_COL, face_alpha)
-            sign_in = 1 if d == 2 else -1
-            _draw_ext_arrows('y', in_face_val, out_face_val,
-                              in_ctr_mm, out_ctr_mm, sign_in, arrow_col, off_scale)
-            ax.text(in_ctr_mm, in_face_val - sign_in * off_scale * 0.7, Lzmm + 3,
+            ax.text(in_ctr_mm, in_face_val, Lzmm + label_offset,
                     f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
                     fontweight='bold', ha='center')
-            ax.text(out_ctr_mm, out_face_val + sign_in * off_scale * 0.3, Lzmm + 3,
+            ax.text(out_ctr_mm, out_face_val, Lzmm + label_offset,
                     f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
                     fontweight='bold', ha='center')
 
-    # Fluid A
     try:
         fA = window._fluid_config('A')
     except Exception:
         fA = dict(dir=0, in_ctr=H / 2, in_w=H, out_ctr=H / 2, out_w=H)
-    # Arrow length: ~15% of the axis the arrow lives on
-    off_A = Lmm * 0.15 if fA['dir'] <= 1 else Hmm * 0.15
-    _draw_fluid(fA, ARROW_COL_A, 'A', off_A)
+    _draw_fluid(fA, 'A', Lzmm * 0.15)
 
-    # Fluid B
     try:
         fB = window._fluid_config('B')
-        off_B = Lmm * 0.15 if fB['dir'] <= 1 else Hmm * 0.15
-        _draw_fluid(fB, ARROW_COL_B, 'B', off_B)
+        _draw_fluid(fB, 'B', Lzmm * 0.30)
     except Exception:
         pass
 
@@ -218,8 +184,25 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
         pass
 
     # Clean title — legend now inline
-    ax.set_title('3D Computational Domain',
+    ax.set_title('3D Computational Domain   (inlet orange · outlet blue)',
                  color='#1a1f24', fontsize=12, fontweight='bold', pad=14)
+
+    # ── Mouse-wheel camera zoom (override canvas_wheel_zoom which scrolls) ──
+    # Save original wheelEvent once so 2D mode can restore it.
+    canvas = ax.figure.canvas
+    if not hasattr(canvas, '_orig_wheel_event'):
+        canvas._orig_wheel_event = canvas.wheelEvent
+
+    def _qt_wheel_zoom_3d(evt):
+        delta = evt.angleDelta().y()
+        if delta == 0:
+            evt.ignore(); return
+        factor = 0.88 if delta > 0 else 1.14
+        ax.dist = max(2.0, min(30.0, ax.dist * factor))
+        canvas.draw_idle()
+        evt.accept()
+
+    canvas.wheelEvent = _qt_wheel_zoom_3d
 
     # Aspect ratio (soft-stretch thin axes for visibility)
     max_dim = max(Lmm, Hmm, Lzmm)

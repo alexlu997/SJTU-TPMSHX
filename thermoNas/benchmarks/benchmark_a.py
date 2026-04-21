@@ -1,4 +1,4 @@
-"""Benchmark harness for ThermoNAS A (performance subproject).
+"""Benchmark harness for SJTU-TPMSHX A (performance subproject).
 
 Measures:
   1. Cold import of solve_full (with __pycache__ cleared)
@@ -83,7 +83,7 @@ def measure_batch(max_workers):
 
 
 def main():
-    print('--- ThermoNAS A benchmark ---')
+    print('--- SJTU-TPMSHX A benchmark ---')
     print('1. Measuring cold import...')
     cold = measure_cold_import()
     print(f'   cold: {cold:.3f} s')

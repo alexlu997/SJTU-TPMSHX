@@ -1,4 +1,4 @@
-"""run_calculation_3d.py — 3D compute pipeline for ThermoNAS UI.
+"""run_calculation_3d.py — 3D compute pipeline for SJTU-TPMSHX UI.
 
 Mirrors `runs.run_calculation` (2D) but dispatches the 3D stack:
     SIMPLESolver3D (fluid A, compressible) + Tb-prescribed (water frozen)
@@ -32,6 +32,44 @@ from solvers.tpms_calc import (
 )
 from df_fit.predict import predict_K_cF
 
+
+def _run_two_simple_parallel(sA, sB, *, max_iter=400, tol=1e-3):
+    """Run SIMPLE A and SIMPLE B concurrently on two OS threads.
+
+    `SIMPLESolver3D.solve` spends its wall-clock inside Numba njit kernels
+    and PyAMG/BiCGStab (both release the GIL), so pure Python threading
+    delivers real parallelism. Fluid A and Fluid B use independent instances
+    (own matrix, ml_cache, arrays) — no shared mutable state.
+
+    Raises the first worker's exception (if any) after both threads finish.
+    """
+    import threading
+
+    err = [None, None]
+
+    def _solve_A():
+        try:
+            sA.solve(max_iter=max_iter, tol=tol, verbose=False)
+        except Exception as e:
+            err[0] = e
+
+    def _solve_B():
+        try:
+            sB.solve(max_iter=max_iter, tol=tol, verbose=False)
+        except Exception as e:
+            err[1] = e
+
+    tA = threading.Thread(target=_solve_A, daemon=True)
+    tB = threading.Thread(target=_solve_B, daemon=True)
+    tA.start(); tB.start()
+    tA.join();  tB.join()
+
+    if err[0] is not None:
+        raise err[0]
+    if err[1] is not None:
+        raise err[1]
+
+
 R_AIR = 287.05
 _MAX_OUTER = 3        # outer SIMPLE ↔ LTNE iterations
 _OUTER_TOL = 0.5      # K
@@ -61,13 +99,23 @@ def finalize_plots_3d(window):
     panel = getattr(window, 'canvas_3d', None)
     if panel is not None:
         try:
+            P_B_kPa = None
+            if res.get('P_Pa_B') is not None:
+                P_B_kPa = np.ascontiguousarray(res['P_Pa_B'] / 1000.0)
             panel.set_fields(
-                Ta=res['Ta'], vmag=res['vmag'],
-                P_kPa=res['P_kPa'], L_mm=res['L_mm'],
+                Ta=res['Ta'],
+                Tb=res.get('Tb'),
+                Ts=res.get('Ts'),
+                vmag=res['vmag'],
+                vmag_B=res.get('vmag_B'),
+                P_kPa=res['P_kPa'],
+                P_B_kPa=P_B_kPa,
+                L_mm=res['L_mm'],
                 dx=res['dx'], dy=res['dy'], dz=res['dz'],
                 real_dims=(res['Lx'], res['Ly'], res['Lz']),
             )
         except Exception as e:
+            import traceback; traceback.print_exc()
             print(f"[3D vis] set_fields failed: {e}")
 
     # ── 2. 2D canvases: auto mid-z slice (keeps Temperature/Pressure/Velocity
@@ -99,13 +147,26 @@ def _render_2d_slices_from_3d(window, res):
     xc = (np.cumsum(dx) - dx / 2) * 1000.0
     yc = (np.cumsum(dy) - dy / 2) * 1000.0
 
+    # Fluid B optional (cross-flow). Detect by presence of P_Pa_B
+    P_Pa_B = res.get('P_Pa_B')
+    vmag_B = res.get('vmag_B')
+    uc_B = res.get('uc_real_B')
+    vc_B = res.get('vc_real_B')
+    dP_B = res.get('dP_B', 0.0)
+    has_B = P_Pa_B is not None
+
     plot_jobs = [
         ('canvas_temp', _plot_3d_temperature,
             (Ta[:, :, k_mid], Tb[:, :, k_mid], Ts[:, :, k_mid], xc, yc, z_info)),
         ('canvas_pres', _plot_3d_pressure,
-            (P_Pa[:, :, k_mid], xc, yc, res['dP'], z_info)),
+            (P_Pa[:, :, k_mid],
+             P_Pa_B[:, :, k_mid] if has_B else None,
+             xc, yc, res['dP'], dP_B, z_info)),
         ('canvas_vel', _plot_3d_velocity_slice,
-            (uc[:, :, k_mid], vc[:, :, k_mid], xc, yc, z_info)),
+            (uc[:, :, k_mid], vc[:, :, k_mid],
+             uc_B[:, :, k_mid] if has_B else None,
+             vc_B[:, :, k_mid] if has_B else None,
+             xc, yc, z_info)),
     ]
     for attr, fn, args in plot_jobs:
         canvas = getattr(window, attr, None)
@@ -169,29 +230,43 @@ def _plot_3d_temperature(canvas, Ta_slice, Tb_slice, Ts_slice, xc, yc, z_info):
     canvas.draw()
 
 
-def _plot_3d_pressure(canvas, P_slice, xc, yc, dP, z_info):
-    """Single-panel pressure (Fluid A only — B frozen)."""
-    ax = _begin_canvas_plot(canvas)
+def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
+    """Pressure panels. If P_slice_B is None → single panel (A only, B frozen)."""
+    if P_slice_B is None:
+        axes = [_begin_canvas_plot(canvas)]
+        P_data = [(P_slice_A, 'A', dP_A)]
+    else:
+        axes = _begin_canvas_plot(canvas, 1, 2)
+        P_data = [(P_slice_A, 'A', dP_A), (P_slice_B, 'B', dP_B)]
     Y, X = np.meshgrid(yc, xc)
-    cf = ax.contourf(X, Y, P_slice / 1000.0, levels=512, cmap='turbo')
-    cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.1f')
-    cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
-    _style_axis(ax, title=(f'$P_A$ (kPa) — Fluid A — 3D {z_info}   '
-                            rf'$|\Delta P|$ = {dP:.0f} Pa'))
-    canvas.fig.subplots_adjust(left=0.08, right=0.95, top=0.90, bottom=0.10)
+    for ax, (p, tag, dp) in zip(axes, P_data):
+        cf = ax.contourf(X, Y, p / 1000.0, levels=512, cmap='turbo')
+        cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.1f')
+        cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
+        _style_axis(ax, title=(f'$P_{tag}$ (kPa) — Fluid {tag} — 3D {z_info}   '
+                                rf'$|\Delta P|$ = {dp:.0f} Pa'))
+    canvas.fig.subplots_adjust(left=0.06, right=0.96, top=0.90, bottom=0.10,
+                                wspace=0.25)
     canvas.draw()
 
 
-def _plot_3d_velocity_slice(canvas, u_slice, v_slice, xc, yc, z_info):
-    """Velocity magnitude contourf."""
-    ax = _begin_canvas_plot(canvas)
+def _plot_3d_velocity_slice(canvas, uA, vA, uB, vB, xc, yc, z_info):
+    """Velocity magnitude panels. If uB is None → single panel (A only)."""
+    if uB is None:
+        axes = [_begin_canvas_plot(canvas)]
+        V_data = [(uA, vA, 'A')]
+    else:
+        axes = _begin_canvas_plot(canvas, 1, 2)
+        V_data = [(uA, vA, 'A'), (uB, vB, 'B')]
     Y, X = np.meshgrid(yc, xc)
-    vmag = np.sqrt(u_slice ** 2 + v_slice ** 2)
-    cf = ax.contourf(X, Y, vmag, levels=512, cmap='turbo')
-    cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.2f')
-    cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
-    _style_axis(ax, title=f'|v| (m/s) — Fluid A — 3D {z_info}')
-    canvas.fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.08)
+    for ax, (u, v, tag) in zip(axes, V_data):
+        vmag = np.sqrt(u ** 2 + v ** 2)
+        cf = ax.contourf(X, Y, vmag, levels=512, cmap='turbo')
+        cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.2f')
+        cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
+        _style_axis(ax, title=f'|v| (m/s) — Fluid {tag} — 3D {z_info}')
+    canvas.fig.subplots_adjust(left=0.06, right=0.96, top=0.92, bottom=0.08,
+                                wspace=0.25)
     canvas.draw()
 
 
@@ -237,12 +312,20 @@ def _parse_inputs(window):
     eps = g['epsilon']
     D_h = g['D_h']
 
-    # Fluid A inlet/outlet config (for partial BC). Fallback = full face.
+    # Fluid A + B inlet/outlet config (for partial BC). Fallback = full face.
     try:
         fluid_A_cfg = window._fluid_config('A')
     except Exception:
         fluid_A_cfg = dict(dir=0, in_ctr=H / 2, in_w=H,
                            out_ctr=H / 2, out_w=H)
+    try:
+        fluid_B_cfg = window._fluid_config('B')
+    except Exception:
+        fluid_B_cfg = None
+    try:
+        u_B = float(window.le_uB.text())
+    except Exception:
+        u_B = u_A
 
     # 3D wall refinement toggle (default ON — adds 8 BL cells near each of
     # the 6 walls with first_cell=0.02 mm + growth ratio 1.8).
@@ -250,13 +333,24 @@ def _parse_inputs(window):
     if hasattr(window, 'chk_wall_refine_3d'):
         wall_refine = bool(window.chk_wall_refine_3d.isChecked())
 
+    # Optional zone grid (2D design broadcast over z for 3D z-uniform zoning)
+    zone_grid_cells = None
+    if (getattr(window, 'chk_zones', None) is not None
+            and window.chk_zones.isChecked()
+            and getattr(window, '_zone_grid', None) is not None):
+        zg = window._zone_grid
+        if isinstance(zg, dict) and zg.get('cells'):
+            zone_grid_cells = zg['cells']
+
     return dict(
         L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
-        u_A=u_A, T_inA=T_inA, T_inB=T_inB, P_inA=P_inA,
+        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB, P_inA=P_inA,
         Lcell=Lcell, t_wall=t_wall, k_s=k_s, tpms_type=tpms_type,
         eps=eps, D_h=D_h,
         fluid_A_cfg=fluid_A_cfg,
+        fluid_B_cfg=fluid_B_cfg,
         wall_refine_3d=wall_refine,
+        zone_grid_cells=zone_grid_cells,
     )
 
 
@@ -265,54 +359,134 @@ def _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz):
 
     `dir_A`: 0=+x 1=-x 2=+y 3=-y  (matches 2D `_dir_int` convention).
 
-    Returns dict with is_x_stream, is_reverse, solver_init, N_cross/N_stream,
-    L_cross/L_stream, dcross/dstream, stream_real_axis. Callers apply
-    `arr.transpose(1, 0, 2)` themselves if `is_x_stream` is True (solver/real
-    axis swap is self-inverse; inlining keeps call sites explicit).
+    Maps fluid direction (0/1=±x, 2/3=±y, 4/5=±z) to SIMPLESolver3D axes.
+    SIMPLE3D enforces streamwise = solver Y axis, inlet at solver y=0.
+    We permute real (x, y, z) → solver (X_sol, Y_sol=stream, Z_sol) so the
+    streamwise face is at solver y=0, then transpose fields back for visualisation.
+
+    Returns dict with:
+      is_x_stream (dir ∈ {0,1}), is_y_stream (2,3), is_z_stream (4,5)
+      is_reverse (dir ∈ {1,3,5}: negative direction)
+      solver_init, N_stream, N_cross1, N_cross2, L_stream, L_cross1, L_cross2
+      dstream, dcross1, dcross2
+      stream_real_axis (0, 1, or 2)
+      cross1_real_axis, cross2_real_axis
+      solver_to_real_perm : tuple for arr.transpose() mapping solver → real
     """
     d = fA['dir']
-    is_x_stream = d <= 1
-    is_reverse = d in (1, 3)
-    if is_x_stream:
+    is_reverse = d in (1, 3, 5)
+    if d in (0, 1):
+        # Streamwise real x.  Solver Ly=L(x), Lx=H(y), Lz=Lz(z).
         return dict(
-            is_x_stream=True, is_reverse=is_reverse,
+            is_x_stream=True, is_y_stream=False, is_z_stream=False,
+            is_reverse=is_reverse,
             solver_init=dict(Lx=H, Ly=L, Lz=Lz, Nx=Ny, Ny=Nx, Nz=Nz),
-            N_cross=Ny, N_stream=Nx, L_cross=H, L_stream=L,
-            dcross=dy, dstream=dx, stream_real_axis=0,
+            N_stream=Nx, N_cross1=Ny, N_cross2=Nz,
+            L_stream=L, L_cross1=H, L_cross2=Lz,
+            dstream=dx, dcross1=dy, dcross2=dz,
+            stream_real_axis=0, cross1_real_axis=1, cross2_real_axis=2,
+            solver_to_real_perm=(1, 0, 2),   # solver (Ny,Nx,Nz) → real (Nx,Ny,Nz)
+            N_cross=Ny, L_cross=H, dcross=dy,  # back-compat aliases
         )
+    if d in (2, 3):
+        # Streamwise real y.  Solver Ly=H(y), Lx=L(x), Lz=Lz(z).
+        return dict(
+            is_x_stream=False, is_y_stream=True, is_z_stream=False,
+            is_reverse=is_reverse,
+            solver_init=dict(Lx=L, Ly=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz),
+            N_stream=Ny, N_cross1=Nx, N_cross2=Nz,
+            L_stream=H, L_cross1=L, L_cross2=Lz,
+            dstream=dy, dcross1=dx, dcross2=dz,
+            stream_real_axis=1, cross1_real_axis=0, cross2_real_axis=2,
+            solver_to_real_perm=(0, 1, 2),   # solver (Nx,Ny,Nz) = real (Nx,Ny,Nz)
+            N_cross=Nx, L_cross=L, dcross=dx,
+        )
+    # d in (4, 5): streamwise real z.  Solver Ly=Lz(z), Lx=L(x), Lz=H(y).
     return dict(
-        is_x_stream=False, is_reverse=is_reverse,
-        solver_init=dict(Lx=L, Ly=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz),
-        N_cross=Nx, N_stream=Ny, L_cross=L, L_stream=H,
-        dcross=dx, dstream=dy, stream_real_axis=1,
+        is_x_stream=False, is_y_stream=False, is_z_stream=True,
+        is_reverse=is_reverse,
+        solver_init=dict(Lx=L, Ly=Lz, Lz=H, Nx=Nx, Ny=Nz, Nz=Ny),
+        N_stream=Nz, N_cross1=Nx, N_cross2=Ny,
+        L_stream=Lz, L_cross1=L, L_cross2=H,
+        dstream=dz, dcross1=dx, dcross2=dy,
+        stream_real_axis=2, cross1_real_axis=0, cross2_real_axis=1,
+        solver_to_real_perm=(0, 2, 1),   # solver (Nx,Nz,Ny) → real (Nx,Ny,Nz)
+        N_cross=Nx, L_cross=L, dcross=dx,
     )
 
 
-def _build_partial_masks(fA, dcross, Nz, N_cross, is_reverse):
-    """Build inlet/outlet boolean masks on cross-stream axis + optional z-partial.
+def _build_zone_fields_3d(cells, Nx, Ny, Nz, L, H, tpms_type, k_s,
+                           default_L, default_t):
+    """Map 2D grid zones to 3D (Nx, Ny, Nz) L/t/eps fields (z-uniform).
 
-    Supports `in_z_ctr`/`in_z_w`/`out_z_ctr`/`out_z_w` (optional — default full depth).
+    cells: list of dicts {y0, y1, x0, x1, L, t} with 0-1 normalised x/y.
+    Returns L_field / t_field / eps_field (mm, mm, 0-1).
     """
-    cross_centres = np.cumsum(dcross) - dcross / 2
+    from scipy.ndimage import gaussian_filter
+    from solvers.tpms_calc import geometry as tpms_geometry
+    L_2d = np.full((Nx, Ny), float(default_L), dtype=np.float64)
+    t_2d = np.full((Nx, Ny), float(default_t), dtype=np.float64)
+    for cell in cells:
+        x_lo = int(round(cell['x0'] * Nx)); x_hi = int(round(cell['x1'] * Nx))
+        y_lo = int(round(cell['y0'] * Ny)); y_hi = int(round(cell['y1'] * Ny))
+        x_lo = max(0, min(x_lo, Nx)); x_hi = max(0, min(x_hi, Nx))
+        y_lo = max(0, min(y_lo, Ny)); y_hi = max(0, min(y_hi, Ny))
+        L_2d[x_lo:x_hi, y_lo:y_hi] = float(cell['L'])
+        t_2d[x_lo:x_hi, y_lo:y_hi] = float(cell['t'])
+    L_2d = gaussian_filter(L_2d, sigma=2.0)
+    t_2d = gaussian_filter(t_2d, sigma=2.0)
+    eps_2d = np.empty_like(L_2d)
+    for i in range(Nx):
+        for j in range(Ny):
+            g = tpms_geometry(tpms_type, float(L_2d[i, j]),
+                              float(t_2d[i, j]), float(k_s))
+            eps_2d[i, j] = g['epsilon']
+    L_field = np.broadcast_to(L_2d[:, :, None], (Nx, Ny, Nz)).copy()
+    t_field = np.broadcast_to(t_2d[:, :, None], (Nx, Ny, Nz)).copy()
+    eps_field = np.broadcast_to(eps_2d[:, :, None], (Nx, Ny, Nz)).copy()
+    return L_field, t_field, eps_field
+
+
+def _build_partial_masks(fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse):
+    """Build inlet/outlet boolean masks on the 2-axis inlet face.
+
+    Solver's inlet_frac shape is (Nx_sol, Nz_sol) = (N_cross1, N_cross2).
+    UI inputs `in_ctr/in_w` → cross1 axis; `in_z_ctr/in_z_w` → cross2 axis.
+    For ±x/±y streamwise cross2 is real-z; for ±z streamwise cross2 is real-y.
+    (Semantic mismatch noted in UI docs — future UI pass may relabel.)
+    """
+    c1_centres = np.cumsum(dcross1) - dcross1 / 2
     in_lo = fA['in_ctr'] - fA['in_w'] / 2
     in_hi = fA['in_ctr'] + fA['in_w'] / 2
     out_lo = fA['out_ctr'] - fA['out_w'] / 2
     out_hi = fA['out_ctr'] + fA['out_w'] / 2
-    in_c = (cross_centres >= in_lo - 1e-12) & (cross_centres <= in_hi + 1e-12)
-    out_c = (cross_centres >= out_lo - 1e-12) & (cross_centres <= out_hi + 1e-12)
-    if not in_c.any() or not out_c.any():
-        raise ValueError("Inlet / outlet range resolves to zero cells — check "
-                         "in_ctr / in_w / out_ctr / out_w vs cross-stream length.")
+    in_c1 = (c1_centres >= in_lo - 1e-12) & (c1_centres <= in_hi + 1e-12)
+    out_c1 = (c1_centres >= out_lo - 1e-12) & (c1_centres <= out_hi + 1e-12)
+    if not in_c1.any() or not out_c1.any():
+        raise ValueError("Inlet / outlet range (cross1) resolves to zero cells.")
 
-    # Optional z-partial (future UI hook). Default = full depth.
-    in_z = np.ones(Nz, dtype=bool)
-    out_z = np.ones(Nz, dtype=bool)
+    # cross2 (z-partial keys — treated as second cross-axis regardless of label)
+    has_c2_partial = all(k in fA for k in
+                          ('in_z_ctr', 'in_z_w', 'out_z_ctr', 'out_z_w'))
+    if has_c2_partial and dcross2 is not None:
+        c2_centres = np.cumsum(dcross2) - dcross2 / 2
+        in_z_lo = fA['in_z_ctr'] - fA['in_z_w'] / 2
+        in_z_hi = fA['in_z_ctr'] + fA['in_z_w'] / 2
+        out_z_lo = fA['out_z_ctr'] - fA['out_z_w'] / 2
+        out_z_hi = fA['out_z_ctr'] + fA['out_z_w'] / 2
+        in_c2 = (c2_centres >= in_z_lo - 1e-12) & (c2_centres <= in_z_hi + 1e-12)
+        out_c2 = (c2_centres >= out_z_lo - 1e-12) & (c2_centres <= out_z_hi + 1e-12)
+        if not in_c2.any() or not out_c2.any():
+            raise ValueError("Inlet / outlet range (cross2) resolves to zero cells.")
+    else:
+        in_c2 = np.ones(N_cross2, dtype=bool)
+        out_c2 = np.ones(N_cross2, dtype=bool)
     # Reverse dir swaps which face the solver calls "inlet"
     if is_reverse:
-        in_c, out_c = out_c, in_c
-        in_z, out_z = out_z, in_z
-    in_mask = np.outer(in_c, in_z).astype(np.float64)     # (N_cross, Nz)
-    out_mask = np.outer(out_c, out_z).astype(np.float64)
+        in_c1, out_c1 = out_c1, in_c1
+        in_c2, out_c2 = out_c2, in_c2
+    in_mask = np.outer(in_c1, in_c2).astype(np.float64)   # (N_cross1, N_cross2)
+    out_mask = np.outer(out_c1, out_c2).astype(np.float64)
     return in_mask, out_mask
 
 
@@ -361,13 +535,19 @@ def _run_3d_stack(cfg):
     # Resolve streamwise geometry from dir_A
     axis_map = _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
     is_x_stream = axis_map['is_x_stream']
+    is_y_stream = axis_map['is_y_stream']
+    is_z_stream = axis_map['is_z_stream']
     is_reverse = axis_map['is_reverse']
-    N_cross, L_cross = axis_map['N_cross'], axis_map['L_cross']
+    N_cross1, N_cross2 = axis_map['N_cross1'], axis_map['N_cross2']
+    L_cross1, L_cross2 = axis_map['L_cross1'], axis_map['L_cross2']
     L_stream = axis_map['L_stream']
-    dcross = axis_map['dcross']
+    dcross1, dcross2 = axis_map['dcross1'], axis_map['dcross2']
     stream_real_axis = axis_map['stream_real_axis']
     solver_init = axis_map['solver_init']
     N_stream = axis_map['N_stream']
+    solver_to_real_perm = axis_map['solver_to_real_perm']
+    # Back-compat: L_cross alias for mass-flow area calc (uses both cross axes)
+    L_cross = axis_map['L_cross']
 
     # Fluid A properties at inlet
     rho_A = air_density(T_inA, P_inA)
@@ -377,9 +557,30 @@ def _run_3d_stack(cfg):
 
     # D-F surrogate. SIMPLE3D K_arr/cF_arr shape = (Ny_sA, Nz) where Ny_sA
     # is the solver streamwise axis = N_stream in real coords.
-    K_pred, cF_pred = predict_K_cF(tpms_type, Lcell, t_wall, eps / 2.0)
-    K_A_arr = np.full((N_stream, Nz), K_pred)
-    cF_A_arr = np.full((N_stream, Nz), cF_pred)
+    # If zones enabled: per-cell K/cF via 2D grid zones broadcast over z.
+    zone_cells = cfg.get('zone_grid_cells')
+    L_mm_field = None      # (Nx, Ny, Nz) for vis; None → uniform Lcell later
+    eps_field_3d = None    # per-cell porosity if zoned
+    if zone_cells:
+        L_mm_field, t_field_3d, eps_field_3d = _build_zone_fields_3d(
+            zone_cells, Nx, Ny, Nz, L, H, tpms_type, k_s, Lcell, t_wall)
+        from df_fit.predict import predict_K_cF_vec
+        K_field_3d, cF_field_3d = predict_K_cF_vec(
+            tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0)
+        # Real → solver coord permutation (inverse equals same tuple for 2-swaps),
+        # then mean over solver Nx axis (cross1) → (N_stream, N_cross2) for K_arr.
+        K_sol = K_field_3d.transpose(solver_to_real_perm)
+        cF_sol = cF_field_3d.transpose(solver_to_real_perm)
+        K_A_arr = np.ascontiguousarray(K_sol.mean(axis=0))
+        cF_A_arr = np.ascontiguousarray(cF_sol.mean(axis=0))
+        K_pred = float(K_A_arr.mean())
+        cF_pred = float(cF_A_arr.mean())
+        print(f"[3D zones] using {len(zone_cells)} zone cells; "
+              f"K range [{K_field_3d.min():.2e}, {K_field_3d.max():.2e}]")
+    else:
+        K_pred, cF_pred = predict_K_cF(tpms_type, Lcell, t_wall, eps / 2.0)
+        K_A_arr = np.full((N_stream, N_cross2), K_pred)
+        cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream)
     G_A = rho_A * u_A
@@ -387,12 +588,12 @@ def _run_3d_stack(cfg):
     P_out_sq = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_est * L_stream
     P_ref_A = float(np.sqrt(max(P_out_sq, 1.0e4)))
 
-    # Partial inlet / outlet (cross-stream + optional z-partial)
+    # Partial inlet / outlet on the 2-axis inlet face.
     in_mask_2d, out_mask_2d = _build_partial_masks(
-        fA, dcross, Nz, N_cross, is_reverse)
+        fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse)
     v_inlet_field = np.where(in_mask_2d > 0.5, u_A, 0.0).astype(np.float64)
 
-    # ── SIMPLE A (3D, compressible) ──
+    # ── SIMPLE A (3D, compressible) — BUILD ONLY ──
     sA = SIMPLESolver3D(
         **solver_init,
         rho=rho_A, mu=mu_A, T_in=T_inA, v_inlet=v_inlet_field,
@@ -403,18 +604,80 @@ def _run_3d_stack(cfg):
     sA.outlet_frac = out_mask_2d
     sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
     sA.outlet_frac = (sA.outlet_frac * out_mask_2d).astype(np.float64)
-    sA.solve(max_iter=400, tol=1e-3, verbose=False)
+    # A.solve() deferred — build B first then run both in parallel threads.
 
-    # ── Fluid B frozen: Tb linear along real y ──
-    ucB = np.zeros((Nx, Ny, Nz))
-    vcB = np.zeros((Nx, Ny, Nz))
-    wcB = np.zeros((Nx, Ny, Nz))
-
-    # Fluid B uniform at T_inB (frozen — no mass flow, acts as constant sink)
-    Tb_presc = np.full((Nx, Ny, Nz), T_inB, dtype=np.float64)
+    # ── Fluid B: cross-flow SIMPLE — BUILD ONLY (solve in parallel with A) ──
+    fB = cfg.get('fluid_B_cfg')
+    sB = None
+    sB_info = None
+    if fB is not None:
+        u_B = cfg.get('u_B', u_A)
+        rho_B = air_density(T_inB, P_inA)
+        mu_B = air_viscosity(T_inB)
+        axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
+        is_x_stream_B = axis_map_B['is_x_stream']
+        is_y_stream_B = axis_map_B['is_y_stream']
+        is_z_stream_B = axis_map_B['is_z_stream']
+        is_reverse_B = axis_map_B['is_reverse']
+        N_stream_B = axis_map_B['N_stream']
+        N_cross2_B = axis_map_B['N_cross2']
+        L_stream_B = axis_map_B['L_stream']
+        dcross1_B = axis_map_B['dcross1']; dcross2_B = axis_map_B['dcross2']
+        perm_B = axis_map_B['solver_to_real_perm']
+        K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred)
+        cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred)
+        G_B = rho_B * u_B
+        C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
+        P_out_sq_B = P_inA ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
+        P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
+        in_mask_B, out_mask_B = _build_partial_masks(
+            fB, dcross1_B, dcross2_B,
+            axis_map_B['N_cross1'], axis_map_B['N_cross2'], is_reverse_B)
+        v_inlet_B = np.where(in_mask_B > 0.5, u_B, 0.0).astype(np.float64)
+        sB = SIMPLESolver3D(
+            **axis_map_B['solver_init'],
+            rho=rho_B, mu=mu_B, T_in=T_inB, v_inlet=v_inlet_B,
+            eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
+            P_ref_abs=P_ref_B, fluid_type='ideal_gas',
+        )
+        sB.inlet_frac = in_mask_B
+        sB.outlet_frac = out_mask_B
+        sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
+        sB.outlet_frac = (sB.outlet_frac * out_mask_B).astype(np.float64)
+        # sB.solve deferred — dispatched with sA below in parallel threads.
+        sB_info = dict(
+            axis_map=axis_map_B,
+            u_B=u_B, rho_B=rho_B, mu_B=mu_B,
+            G_B=G_B, T_inB=T_inB,
+        )
+        # ── Parallel SIMPLE A + B solve (threads, njit releases GIL) ──
+        _run_two_simple_parallel(sA, sB)
+        # LTNE fluid B velocity: extract real-coord stream component via perm
+        v_cc_B = 0.5 * (sB.v[:, :-1, :] + sB.v[:, 1:, :])
+        streamB = v_cc_B.transpose(perm_B)
+        if is_reverse_B:
+            streamB = -streamB
+        ucB = np.zeros((Nx, Ny, Nz))
+        vcB = np.zeros((Nx, Ny, Nz))
+        wcB = np.zeros((Nx, Ny, Nz))
+        if is_x_stream_B:
+            ucB = streamB
+        elif is_y_stream_B:
+            vcB = streamB
+        else:
+            wcB = streamB
+        Tb_presc = None  # let LTNE solve Tb from convection
+    else:
+        # No B: run A alone (serial)
+        sA.solve(max_iter=400, tol=1e-3, verbose=False)
+        ucB = np.zeros((Nx, Ny, Nz))
+        vcB = np.zeros((Nx, Ny, Nz))
+        wcB = np.zeros((Nx, Ny, Nz))
+        Tb_presc = np.full((Nx, Ny, Nz), T_inB, dtype=np.float64)
 
     # LTNE inputs
-    eps_arr = np.full((Nx, Ny, Nz), eps)
+    eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
+               else np.full((Nx, Ny, Nz), eps))
     eps_f = eps / 2.0
     K_ffA = np.full((Nx, Ny, Nz), eps_f * k_A)
     K_ffB = np.full((Nx, Ny, Nz), eps_f * 0.6)    # water-equivalent k
@@ -426,16 +689,21 @@ def _run_3d_stack(cfg):
     rho_cp_A = rho_A * cp_A
     rho_cp_B = 998.0 * 4182.0
 
-    # Helper: solver streamwise velocity → real component (uc or vc)
+    # Helper: solver streamwise velocity → correct real component (uc/vc/wc).
+    # Transposes solver (Nx_sol, Ny_sol, Nz_sol) → real (Nx, Ny, Nz) via
+    # `solver_to_real_perm` (self-inverse for all 3 supported perms), then
+    # assigns the streamwise vector to the matching real axis.
     def _assemble_real_velocity():
-        v_cc = 0.5 * (sA.v[:, :-1, :] + sA.v[:, 1:, :])   # (Nx_sA, Ny_sA, Nz)
-        stream = v_cc.transpose(1, 0, 2) if is_x_stream else v_cc
+        v_cc = 0.5 * (sA.v[:, :-1, :] + sA.v[:, 1:, :])
+        stream = v_cc.transpose(solver_to_real_perm)
         if is_reverse:
             stream = -stream
         zeros = np.zeros((Nx, Ny, Nz))
         if is_x_stream:
             return stream, zeros, zeros.copy()
-        return zeros, stream, zeros.copy()
+        if is_y_stream:
+            return zeros, stream, zeros.copy()
+        return zeros, zeros.copy(), stream          # z-stream
 
     # ── Outer SIMPLE ↔ LTNE coupling ──
     Ta = Tb = Ts = None
@@ -448,7 +716,8 @@ def _run_3d_stack(cfg):
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
             rho_cp_A, rho_cp_B, eps_arr,
             ucA, vcA, wcA, ucB, vcB, wcB,
-            dir_A=fA['dir'], dir_B=3,
+            dir_A=fA['dir'],
+            dir_B=(fB['dir'] if fB is not None else 3),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             Tb_prescribed=Tb_presc, max_iter=20000, tol=1e-5,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts, alpha_T=0.7)
@@ -459,8 +728,8 @@ def _run_3d_stack(cfg):
                 break
         Ta_prev = Ta.copy()
 
-        # Non-iso coupling: update ρ/μ in solver coords (transpose if x-stream)
-        Ta_sA = Ta.transpose(1, 0, 2).copy() if is_x_stream else Ta.copy()
+        # Non-iso coupling: Ta real → solver coords via self-inverse perm
+        Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
         P_abs = sA.P_ref_abs + sA.P
         rho_new = P_abs / (R_AIR * Ta_sA)
         if outer > 0:
@@ -490,7 +759,8 @@ def _run_3d_stack(cfg):
 
     # ── Extract metrics + fields ──
     # Q: mass flow uses void cross-section (eps * L_cross * Lz)
-    m_dot = rho_A * u_A * (eps * L_cross * Lz)
+    # Void cross-section = eps × (cross1 × cross2)
+    m_dot = rho_A * u_A * (eps * L_cross1 * L_cross2)
     # Outlet real index depends on streamwise axis + reverse
     out_idx = 0 if is_reverse else -1
     T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
@@ -501,16 +771,32 @@ def _run_3d_stack(cfg):
     uc_real, vc_real, wc_real = _assemble_real_velocity()
     vmag = np.sqrt(uc_real ** 2 + vc_real ** 2 + wc_real ** 2)
 
-    # P field → real coords (transpose if x-streamwise, else identity copy)
-    P_real = sA.P.transpose(1, 0, 2).copy() if is_x_stream else sA.P.copy()
+    # P field → real coords via solver perm
+    P_real = np.ascontiguousarray(sA.P.transpose(solver_to_real_perm))
     P_kPa = P_real / 1000.0
-    L_mm = np.full((Nx, Ny, Nz), Lcell, dtype=np.float64)
+    L_mm = (L_mm_field.copy() if L_mm_field is not None
+            else np.full((Nx, Ny, Nz), Lcell, dtype=np.float64))
+
+    # Fluid B fields (if sB solved): real-coord P + velocity magnitude
+    if sB is not None:
+        perm_B = sB_info['axis_map']['solver_to_real_perm']
+        P_real_B = np.ascontiguousarray(sB.P.transpose(perm_B))
+        vmag_B = np.sqrt(ucB ** 2 + vcB ** 2 + wcB ** 2)
+        dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
+    else:
+        P_real_B = None
+        vmag_B = None
+        dP_B = 0.0
 
     return dict(
         Ta=Ta, Tb=Tb, Ts=Ts,
         vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
         P_Pa=P_real,
         uc_real=uc_real, vc_real=vc_real,
+        # Fluid B (None if frozen)
+        P_Pa_B=P_real_B,
+        uc_real_B=ucB, vc_real_B=vcB,
+        vmag_B=vmag_B, dP_B=dP_B,
         dx=dx, dy=dy, dz=dz,
         Lx=L, Ly=H, Lz=Lz,
         Q=Q, dP=dP, u_A=u_A, T_in=T_inA,

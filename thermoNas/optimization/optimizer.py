@@ -73,9 +73,11 @@ def _resolve_refined_grid(cfg):
 def _parallel_workers():
     """Return number of parallel workers; 1 means serial (no subprocess overhead).
 
-    Each worker may allocate up to ~300 MB (256³ phi voxel grid + SIMPLE
-    fields + numba caches), so the default caps at 4 workers to stay under
-    ~2 GB RAM for typical optimizer sweeps. Override via THERMONAS_WORKERS.
+    Each 2D worker allocates ~300-500 MB (phi voxel grid + SIMPLE fields +
+    numba caches). On a 16-thread machine the previous cap of 4 left most
+    cores idle; default is now ``cpu_count - 1`` capped at 12 to stay under
+    ~6-8 GB for typical sweeps while keeping Pareto scans an order of
+    magnitude faster. Override via ``THERMONAS_WORKERS``.
     """
     if os.environ.get('THERMONAS_SERIAL') == '1':
         return 1
@@ -85,7 +87,7 @@ def _parallel_workers():
             return max(1, int(override))
         except ValueError:
             pass
-    return max(1, min(4, (os.cpu_count() or 2) - 1))
+    return max(1, min(12, (os.cpu_count() or 2) - 1))
 
 
 # ── Top-level worker functions (must be module-level for pickle on Windows) ──
@@ -214,27 +216,44 @@ def _resolve_grid_3d(cfg, alpha=None):
 def _auto_max_workers(cfg):
     """Decide worker count from cfg['dim'], grid size, mem budget.
 
+    Workers are OS processes — each has its own Python interpreter, numba
+    cache and SIMPLE fields, so contention between them is minimal. Cap is
+    set by available cores and per-worker memory footprint, not by cell
+    count alone.
+
     Rules:
-      dim=2                     → 3
-      dim=3, Nx·Ny·Nz ≤ 3e5     → 2
-      dim=3, > 3e5              → 1
-      estimated memory > budget → 1 with warn
+      explicit cfg['max_workers']       → use it
+      THERMONAS_WORKERS env             → override
+      estimated mem > budget            → drop to fit, warn if forced to 1
+      otherwise                         → min(cpu-1, 12, budget/mem_per_worker)
     """
     dim = int(cfg.get('dim', 2))
     if cfg.get('max_workers') is not None:
         return max(1, int(cfg['max_workers']))
+    env = os.environ.get('THERMONAS_WORKERS')
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+
+    budget = float(cfg.get('mem_budget_gb', 12.0))
+    cores_cap = max(1, min(12, (os.cpu_count() or 2) - 1))
     if dim == 2:
-        return 3
+        # 2D worker ~500 MB; 12 GB budget easily holds 12 workers
+        return cores_cap
+
+    # 3D memory estimate: ~1 GB per 500k cells (SIMPLE fields + pyamg + caches)
     Nx, Ny, Nz = _resolve_grid_3d(cfg)
     cells = Nx * Ny * Nz
-    mem_per_worker_gb = cells * 300.0 / (1024 ** 3)  # ≈ 300 B/cell (pyamg + fields)
-    budget = float(cfg.get('mem_budget_gb', 12.0))
-    if mem_per_worker_gb > budget:
+    mem_per_worker_gb = max(0.5, cells * 2000.0 / (1024 ** 3))
+    mem_cap = max(1, int(budget / mem_per_worker_gb))
+    n = min(cores_cap, mem_cap)
+    if n == 1 and cells * 2000.0 / (1024 ** 3) > budget:
         warnings.warn(
             f"3D grid {Nx}×{Ny}×{Nz} ≈ {mem_per_worker_gb:.1f} GB/worker > "
             f"budget {budget} GB — forcing max_workers=1")
-        return 1
-    return 2 if cells <= 300_000 else 1
+    return n
 
 
 def extract_dP_from_simple_3d(s):

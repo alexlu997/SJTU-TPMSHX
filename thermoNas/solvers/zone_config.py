@@ -1,5 +1,5 @@
 """
-zone_config.py — Zone-based domain partitioning for ThermoNAS
+zone_config.py — Zone-based domain partitioning for SJTU-TPMSHX
 
 Defines discrete zones along the y-axis, each with independent TPMS
 parameters (L, t). Computes per-zone properties and builds per-cell

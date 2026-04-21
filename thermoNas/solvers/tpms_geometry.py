@@ -170,6 +170,7 @@ def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
     return {'epsilon': eps, 'A_0': A0}
 
 
+@lru_cache(maxsize=1024)
 def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
                      N: int = 256) -> dict:
     """

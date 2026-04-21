@@ -92,7 +92,7 @@ def launch_interactive(grid, *, off_screen=False, out_dir=None,
 
     pv.set_plot_theme('document')
     pl = pv.Plotter(window_size=(1280, 900), off_screen=off_screen,
-                    title='ThermoNAS 3D Interactive Slice')
+                    title='SJTU-TPMSHX 3D Interactive Slice')
 
     # Pre-compute global clim for every field (for 'global' mode)
     global_clim = {f: (float(grid[f].min()), float(grid[f].max()))

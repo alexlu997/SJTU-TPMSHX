@@ -402,7 +402,7 @@ class Ui_MainWindow(object):
     # setupUi
 
     def retranslateUi(self, MainWindow):
-        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"ThermoNAS", None))
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"SJTU-TPMSHX", None))
         self.pushButton_2.setText(QCoreApplication.translate("MainWindow", u"Compute", None))
         self.label_49.setText(QCoreApplication.translate("MainWindow", u"Setup", None))
         self.label_50.setText(QCoreApplication.translate("MainWindow", u"Results", None))

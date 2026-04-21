@@ -1,4 +1,4 @@
-"""Main calculation pipeline for ThermoNAS (non-polygon case).
+"""Main calculation pipeline for SJTU-TPMSHX (non-polygon case).
 
 Extracted from main.py (Task B.9). Entry: run_calculation_inner.
 Also contains finalize_plots which renders results on canvas widgets.

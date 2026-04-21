@@ -1,4 +1,4 @@
-"""Theme system for ThermoNAS GUI (light-only).
+"""Theme system for SJTU-TPMSHX GUI (light-only).
 
 Originally extracted from main.py (Task B.3) with light + dark themes and a
 runtime toggle. Per D-1 decision, dark theme + apply_theme() were removed —

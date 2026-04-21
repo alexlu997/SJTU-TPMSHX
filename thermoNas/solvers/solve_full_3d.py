@@ -33,7 +33,7 @@ from solvers.solve_full import solve_full_domain as _solve_full_2d
 # SOU limiter — three axes
 # ---------------------------------------------------------------------------
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _sou_corr_x_3d(T, i, j, k, Nx, u_loc, Fx):
     if u_loc >= 0:
         phi_w = 0.0
@@ -69,7 +69,7 @@ def _sou_corr_x_3d(T, i, j, k, Nx, u_loc, Fx):
         return 0.5 * Fx * (phi_e - phi_w)
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _sou_corr_y_3d(T, i, j, k, Ny, v_loc, Fy):
     if v_loc >= 0:
         phi_s = 0.0
@@ -105,7 +105,7 @@ def _sou_corr_y_3d(T, i, j, k, Ny, v_loc, Fy):
         return 0.5 * Fy * (phi_n - phi_s)
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _sou_corr_z_3d(T, i, j, k, Nz, w_loc, Fz):
     if w_loc >= 0:
         phi_b = 0.0
@@ -145,7 +145,7 @@ def _sou_corr_z_3d(T, i, j, k, Nz, w_loc, Fz):
 # inlet helpers
 # ---------------------------------------------------------------------------
 
-@njit(cache=True, inline='always')
+@njit(cache=True, fastmath=True, inline='always')
 def _is_inlet(dir_code, i, j, k, Nx, Ny, Nz):
     if dir_code == 0: return i == 0
     if dir_code == 1: return i == Nx - 1
@@ -155,7 +155,7 @@ def _is_inlet(dir_code, i, j, k, Nx, Ny, Nz):
     return k == Nz - 1
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, fastmath=True, inline='always')
 def _inlet_frac(ifrac2d, dir_code, i, j, k):
     # ifrac2d shape depends on dir: (Ny, Nz) / (Nx, Nz) / (Nx, Ny)
     if dir_code <= 1:
@@ -165,7 +165,7 @@ def _inlet_frac(ifrac2d, dir_code, i, j, k):
     return ifrac2d[i, j]
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, fastmath=True, inline='always')
 def _inlet_val(Tin2d, dir_code, i, j, k):
     if dir_code <= 1:
         return Tin2d[j, k]
@@ -174,7 +174,7 @@ def _inlet_val(Tin2d, dir_code, i, j, k):
     return Tin2d[i, j]
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, fastmath=True, inline='always')
 def _inlet_neighbor(T, dir_code, i, j, k, Nx, Ny, Nz):
     if dir_code == 0: return T[1, j, k]
     if dir_code == 1: return T[Nx-2, j, k]
@@ -188,7 +188,7 @@ def _inlet_neighbor(T, dir_code, i, j, k, Nx, Ny, Nz):
 # Gauss-Seidel chunk — 7-point + SOU + coupled Ta/Ts/Tb
 # ---------------------------------------------------------------------------
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
                       dx_arr, dy_arr, dz_arr,
                       K_ffA_arr, K_ffB_arr, K_ss_arr,
@@ -377,7 +377,7 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
     return max_chg
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _apply_outlet_3d(T, dir_code, Nx, Ny, Nz):
     # Outlet is opposite face; copy from neighbor (zero-gradient)
     if dir_code == 0:   # inlet +x, outlet -x... wait: 0 = flow in +x direction, inlet at i=0, outlet at i=Nx-1
@@ -642,7 +642,12 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     if freeze_Tb == 0:
         _apply_inlet_3d(Tb, dir_B, T_inB_arr, ifrac_B, Nx, Ny, Nz)
 
-    # Chunk iterate, Q-based convergence
+    # Chunk iterate, Q-based convergence.
+    # Chunk=500 kept as conservative default — tiny-grid smokes (14×8×3)
+    # can false-exit at chunk=200 because first Q-delta check fires at
+    # `done>=chunk` and Q_prev starts at 0, so two full chunks are needed
+    # to register meaningful stall. Larger grids (>30k cells) converge in
+    # 1-3 chunks regardless, so chunk=500 overshoots ≤ chunk=200 there.
     chunk = 500; done = 0
     cell_vol = dx_arr[:, None, None] * dy_arr[None, :, None] * dz_arr[None, None, :]
     Q_prev = 0.0
