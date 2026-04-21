@@ -1,0 +1,405 @@
+"""
+validate_shanghai_3d_real.py — Shanghai Electric 16-case 3D validation
+
+Port of 2D `validate_shanghai.py` to 3D. Air (Fluid A, +x, full-width) solved
+via SIMPLESolver3D + LTNE solve_full_domain_3d with outer non-iso coupling.
+Water (Fluid B, -y) is frozen via Tb_prescribed 3D (1D linear broadcast along y).
+
+Uniform Shanghai geometry (no zoning): Gyroid L=7.0, t=0.6, k_s=16.
+
+P1b-b (2026-04-20): establishes Shanghai 3D baseline before Phase 2 multi-channel.
+"""
+
+from __future__ import annotations
+import os, sys, warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+warnings.filterwarnings('ignore')
+
+from solvers.tpms_calc import (
+    geometry as tpms_geometry, compute as tpms_compute,
+    air_density, air_viscosity, air_conductivity, air_cp,
+    P_atm, Sa_mm, Pr,
+)
+from solvers.simple_solver_3d import SIMPLESolver3D
+from solvers.solve_full_3d import (solve_full_domain_3d,
+                                     energy_balance_3d, mass_balance_3d)
+from df_fit.predict import predict_K_cF
+
+R_AIR = 287.05
+
+# ── Shanghai geometry (mirrors 2D validate_shanghai.py) ──
+TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
+g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
+EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
+L_DOM = 0.231; H_DOM = 0.042
+LZ = 0.02  # arbitrary 3D depth (water uniform along z)
+
+N_UNITS = 36
+A_FLOW_PER_UNIT = 18.0565e-6
+A_FLOW = N_UNITS * A_FLOW_PER_UNIT
+
+# Outer coupling parameters (mirror 2D)
+MAX_OUTER = 4          # fewer than 2D's 8 for 3D speed; P1b exit OK
+OUTER_TOL = 0.5        # K
+ALPHA_T = 0.6
+
+# Water properties (mirror 2D)
+def water_rho(T_K):
+    T_C = T_K - 273.15
+    return 999.84 - 0.05 * T_C - 0.004 * T_C**2
+
+def water_mu(T_K):
+    T_C = T_K - 273.15
+    return 1.79e-3 * np.exp(-0.035 * T_C)
+
+def water_cp(T_K):
+    return 4182.0
+
+
+def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, eps=EPS, d_h=D_H,
+                            L_cell=L_CELL):
+    """Local Gyroid Nu → h_vA field (mirror 2D _compute_h_vA_field).
+
+    Ta_field, ucA_field : (Nx, Ny, Nz) real-coord cell-centre
+    sA: SIMPLESolver3D for fluid A (internal dims (Ny, Nx, Nz))
+    Returns h_vA shape (Nx, Ny, Nz).
+    """
+    # SIMPLE A: internal (Ny, Nx, Nz); P in SIMPLE coords. Transpose to real.
+    P_abs_sf = (sA.P_ref_abs + sA.P).transpose(1, 0, 2)  # (Nx, Ny, Nz)
+    rho_loc = P_abs_sf / (R_AIR * Ta_field)
+    mu_loc = air_viscosity(Ta_field)
+    k_loc = air_conductivity(Ta_field)
+    Re_loc = rho_loc * np.abs(ucA_field) * d_h / mu_loc
+    Re_loc = np.clip(Re_loc, 1.0, None)
+    n_field = 0.177 * Re_loc**0.1 * eps**(-2.0 / 3.0)
+    Nu_field = (0.17 * Pr**(1.0 / 3.0) * Re_loc**n_field
+                * eps**2.25 * (L_cell / (1000.0 * Sa_mm))**(-2.01))
+    H_sf = Nu_field * k_loc / d_h
+    return A0 * H_sf
+
+
+def _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=False):
+    """Build (dx, dy, dz, Nx, Ny, Nz). Optional six-wall refinement."""
+    if wall_refine:
+        from solvers.df_projection import build_master_refined_grid_3d
+        dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
+            L_DOM, H_DOM, LZ, Nx_u, Ny_u, Nz_u,
+            n_refine=8, first_cell=0.02e-3)
+    else:
+        dx = np.full(Nx_u, L_DOM / Nx_u)
+        dy = np.full(Ny_u, H_DOM / Ny_u)
+        dz = np.full(Nz_u, LZ / Nz_u)
+        Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+    return dx, dy, dz, Nx, Ny, Nz
+
+
+def _build_inlet_profile(Nx_simA, Nz_simA, u_mean, kind='uniform', eta=0.0):
+    """Build v_inlet_field (Nx_simA, Nz_simA) with mass-conserving profile.
+
+    kind : 'uniform' → flat u_mean everywhere (baseline)
+           'parabolic' → f(i, k) peaks at centre, normalised to ∫ f = 1
+                         max = 1 + eta, min = 1 - eta*extrema_factor (mass conserved)
+           'edge'     → f(i, k) higher near cross-stream edges (inverted parabola)
+    eta : amplitude of deviation [0, 1]; 0 == uniform (any kind)
+    """
+    if eta <= 0.0 or kind == 'uniform':
+        return np.full((Nx_simA, Nz_simA), u_mean, dtype=np.float64)
+
+    # Normalized cross-stream coords [-0.5, 0.5]
+    ii = (np.arange(Nx_simA) + 0.5) / Nx_simA - 0.5
+    kk = (np.arange(Nz_simA) + 0.5) / Nz_simA - 0.5
+    II, KK = np.meshgrid(ii, kk, indexing='ij')
+    r2 = II ** 2 + KK ** 2   # [0, 0.5]
+
+    if kind == 'parabolic':
+        # f unnormalized: 1 + eta * (1 - 8 * r2); max at centre ≈ 1+eta, corners ≈ 1-eta
+        f_raw = 1.0 + eta * (1.0 - 8.0 * r2)
+    elif kind == 'edge':
+        f_raw = 1.0 + eta * (8.0 * r2 - 1.0)
+    else:
+        raise ValueError(f"unknown profile kind {kind!r}")
+
+    # Normalise so area-mean = 1 (mass conservation)
+    f = f_raw / f_raw.mean()
+    return (u_mean * f).astype(np.float64)
+
+
+def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
+                    profile_kind='uniform', profile_eta=0.0,
+                    max_outer=None):
+    """Run one Shanghai case (index ci 0-15). Returns result dict.
+
+    max_outer : override module-level MAX_OUTER (default None → use MAX_OUTER).
+    """
+    max_outer_local = MAX_OUTER if max_outer is None else int(max_outer)
+    case = ci + 1
+
+    # ── Air (Fluid A) ──
+    m_air = float(df.iloc[ci, 5])
+    T_Ain_C = float(df.iloc[ci, 28]); T_Ain_K = T_Ain_C + 273.15
+    P_Ain_g = float(df.iloc[ci, 30])
+    P_Ain = P_atm + P_Ain_g
+    rho_A = air_density(T_Ain_K, P_Ain)
+    mu_A = air_viscosity(T_Ain_K)
+    cp_A = air_cp(T_Ain_K)
+    u_A = m_air / (rho_A * A_FLOW)
+
+    # ── Water (Fluid B) ──
+    m_water = float(df.iloc[ci, 7])
+    T_Bin_C = float(df.iloc[ci, 24]); T_Bin_K = T_Bin_C + 273.15
+    T_Bout_C = float(df.iloc[ci, 25]); T_Bout_K = T_Bout_C + 273.15
+    rho_B = water_rho(T_Bin_K)
+
+    # ── Experimental ──
+    P_Aout_g = float(df.iloc[ci, 31])
+    dP_A_exp = P_Ain_g - P_Aout_g
+    Q_exp = float(df.iloc[ci, 33])
+
+    # ── Grid (optional six-wall refinement) ──
+    dx, dy, dz, Nx, Ny, Nz = _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=wall_refine)
+
+    eps_arr = np.full((Nx, Ny, Nz), EPS)
+    eps_f = EPS / 2.0
+    K_ffA = np.full((Nx, Ny, Nz), eps_f * air_conductivity(T_Ain_K))
+    K_ffB = np.full((Nx, Ny, Nz), eps_f * 0.6)   # water k ~0.6 W/mK
+    K_ss = np.full((Nx, Ny, Nz), (1.0 - EPS) * K_S)
+
+    # D-F coeffs from surrogate
+    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS / 2.0)
+    K_A_arr = np.full((Nx, Nz), K_pred)         # SIMPLE A: (Ny_sA=Nx, Nz)
+    cF_A_arr = np.full((Nx, Nz), cF_pred)
+
+    # Inlet h_vA (uniform at inlet temperature)
+    r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
+    h_vA0 = A0 * r_A['H_sf']
+    h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
+    h_vB_field = np.full((Nx, Ny, Nz), 1.0e10)  # water perfect sink
+
+    rho_cp_A = rho_A * cp_A
+    rho_cp_B = rho_B * water_cp(T_Bin_K)
+
+    # ── P_ref_abs 1D closed-form seed ──
+    G_A = m_air / A_FLOW
+    C_est = mu_A * G_A / K_pred + cF_pred * G_A * G_A
+    P_out_sq = P_Ain ** 2 - 2.0 * R_AIR * T_Ain_K * C_est * L_DOM
+    P_ref_A = float(np.sqrt(max(P_out_sq, 1.0e4)))
+
+    # ── SIMPLE A (3D) ──
+    # SIMPLE A internal: Nx_sA = Ny (cross-stream real y), Nz_sA = Nz.
+    # v_inlet_field shape (Nx_sA, Nz_sA) = (Ny, Nz)
+    v_inlet_A = _build_inlet_profile(Ny, Nz, u_A,
+                                      kind=profile_kind, eta=profile_eta)
+    sA = SIMPLESolver3D(Lx=H_DOM, Ly=L_DOM, Lz=LZ,
+                        Nx=Ny, Ny=Nx, Nz=Nz,
+                        rho=rho_A, mu=mu_A, T_in=T_Ain_K,
+                        v_inlet=v_inlet_A,
+                        eps=EPS, K_arr=K_A_arr, cF_arr=cF_A_arr,
+                        P_ref_abs=P_ref_A,
+                        fluid_type='ideal_gas')   # compressible air (P1b-d)
+    # Wall-refined grids inject post-init (fluid A axis swap)
+    if wall_refine:
+        sA.dx = np.ascontiguousarray(dy, dtype=np.float64)
+        sA.dy = np.ascontiguousarray(dx, dtype=np.float64)
+        sA.dz = np.ascontiguousarray(dz, dtype=np.float64)
+    # P2-a' + B: enable outlet_frac taper → activates wall_out penalty in
+    # v-momentum kernel near outlet corners. Shanghai full-width air → corner
+    # taper reduces artificial pressure spikes at wall-outlet corners.
+    sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
+    sA.solve(max_iter=400, tol=1e-3, verbose=False)
+
+    # Water side is frozen → no SIMPLE B
+    ucB_real = np.zeros((Nx, Ny, Nz))
+    vcB_real = np.zeros((Nx, Ny, Nz))
+    wcB_real = np.zeros((Nx, Ny, Nz))
+
+    # Tb_prescribed: linear along real y (water flows -y: inlet at j=Ny-1, outlet j=0)
+    y_centres = (np.arange(Ny) + 0.5) * (H_DOM / Ny)
+    Tb_1d = T_Bout_K + (T_Bin_K - T_Bout_K) * (y_centres / H_DOM)
+    Tb_prescribed = np.broadcast_to(Tb_1d[None, :, None], (Nx, Ny, Nz)).copy()
+
+    # ── Outer SIMPLE ↔ LTNE coupling loop ──
+    Ta = Tb = Ts = None
+    Ta_prev = None
+    outer_iters = 0
+
+    for outer in range(max_outer_local):
+        outer_iters = outer + 1
+
+        # Cell-centred air velocity: real (Nx, Ny, Nz)
+        vA_cc = 0.5 * (sA.v[:, :-1, :] + sA.v[:, 1:, :])   # (Ny, Nx, Nz)
+        ucA_real = vA_cc.transpose(1, 0, 2).copy()         # (Nx, Ny, Nz)
+        vcA_real = np.zeros((Nx, Ny, Nz))
+        wcA_real = np.zeros((Nx, Ny, Nz))
+
+        # Update h_vA from local T/v/P after first iter
+        if Ta is not None:
+            h_vA_field = _compute_h_vA_field_3d(Ta, ucA_real, sA)
+
+        Ta, Tb, Ts = solve_full_domain_3d(
+            L_DOM, H_DOM, LZ, Nx, Ny, Nz, T_Ain_K, T_Bin_K,
+            K_ffA, K_ffB, K_ss,
+            h_vA_field, h_vB_field,
+            rho_cp_A, rho_cp_B, eps_arr,
+            ucA_real, vcA_real, wcA_real,
+            ucB_real, vcB_real, wcB_real,
+            dir_A=0, dir_B=3,
+            dx_arr=dx, dy_arr=dy, dz_arr=dz,
+            Tb_prescribed=Tb_prescribed,
+            max_iter=50000, tol=1e-6,
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            alpha_T=0.7)
+
+        if Ta_prev is not None:
+            dT_max = float(np.max(np.abs(Ta - Ta_prev)))
+            if dT_max < OUTER_TOL:
+                break
+        Ta_prev = Ta.copy()
+
+        # Update SIMPLE A rho/mu/mu_eff from new Ta
+        Ta_sA = Ta.transpose(1, 0, 2).copy()
+        P_abs_sA = sA.P_ref_abs + sA.P
+        rho_A_new = P_abs_sA / (R_AIR * Ta_sA)
+        mu_A_new = air_viscosity(Ta_sA)
+        if outer > 0:
+            sA.rho_field = np.ascontiguousarray(
+                ALPHA_T * rho_A_new + (1.0 - ALPHA_T) * sA.rho_field, dtype=np.float64)
+            sA.mu_field = np.ascontiguousarray(
+                ALPHA_T * mu_A_new + (1.0 - ALPHA_T) * sA.mu_field, dtype=np.float64)
+        else:
+            sA.rho_field = np.ascontiguousarray(rho_A_new, dtype=np.float64)
+            sA.mu_field = np.ascontiguousarray(mu_A_new, dtype=np.float64)
+        sA._mu_eff_field = np.ascontiguousarray(
+            sA.mu_field / sA.eps, dtype=np.float64)
+
+        # Refresh P_ref_abs from updated mean T
+        T_avg = float(Ta_sA.mean())
+        mu_avg = float(air_viscosity(T_avg))
+        C_avg = mu_avg * G_A / K_pred + cF_pred * G_A * G_A
+        P_out_sq_new = P_Ain ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_DOM
+        sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
+
+        # Re-solve SIMPLE A
+        sA.solve(max_iter=400, tol=1e-3, verbose=False)
+
+    # ── Extract Q and dP ──
+    #   Q from air side temperature rise (2D convention)
+    T_A_out_sim = float(np.mean(Ta[-1, :, :]))  # j=Nx-1 = real x outlet
+    Q_sim = m_air * cp_A * (T_Ain_K - T_A_out_sim)
+
+    #   dP from SIMPLE A's converged P field; P2-a' uses pipe-weighted mean
+    #   with outlet_frac taper to down-weight corner cells (mirror 2D).
+    dP_A_sim = SIMPLESolver3D.extract_dP_weighted(sA)
+
+    err_dP = (dP_A_sim - dP_A_exp) / dP_A_exp * 100 if dP_A_exp != 0 else float('nan')
+    err_Q = (Q_sim - Q_exp) / Q_exp * 100 if Q_exp != 0 else float('nan')
+
+    # ── Conservation diagnostics (短期 #4) ──
+    # Energy balance on solid: Q_sA + Q_sB should → 0 in steady state.
+    # Shanghai water side frozen (Tb_prescribed), h_vB=1e10 → solid balance may be
+    # dominated by Q_sA (air → solid). Q_sA should ≈ -Q_sim (heat air gives to solid).
+    ebal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
+    e_rel = abs(ebal['Q_net']) / (abs(ebal['Q_sA']) + abs(ebal['Q_sB']) + 1e-30)
+
+    # Mass balance on fluid A (SIMPLE A): inlet v[:, 0, :] to outlet v[:, -1, :].
+    # SIMPLE A streamwise axis = SIMPLE internal y → dir_code=2 (+y).
+    # Note: mass_balance_3d expects (dy, dx, dz) ordering — pass SIMPLE A's own grid
+    mbal_A = mass_balance_3d(sA.u, sA.v, sA.w, sA.rho_field,
+                              sA.dy, sA.dx, sA.dz, dir_code=2)
+
+    return {
+        'case': case, 'u_air': u_A, 'u_water': m_water / (rho_B * A_FLOW),
+        'T_Ain_C': T_Ain_C, 'T_Bin_C': T_Bin_C,
+        'dP_exp': dP_A_exp, 'dP_sim': dP_A_sim, 'err_dP%': err_dP,
+        'Q_exp': Q_exp, 'Q_sim': Q_sim, 'err_Q%': err_Q,
+        'outer_iters': outer_iters,
+        'Qs_A': ebal['Q_sA'], 'Qs_B': ebal['Q_sB'],
+        'Q_net_rel': e_rel,
+        'mass_rel_A': mbal_A['rel'],
+    }
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--wall-refine', action='store_true', help='Enable 6-wall refinement')
+    ap.add_argument('--nx', type=int, default=20)
+    ap.add_argument('--ny', type=int, default=10)
+    ap.add_argument('--nz', type=int, default=3)
+    ap.add_argument('--cases', type=int, default=16, help='Run first N cases (default 16)')
+    ap.add_argument('--suffix', type=str, default='', help='CSV output suffix')
+    ap.add_argument('--profile', choices=['uniform', 'parabolic', 'edge'],
+                    default='uniform', help='Inlet profile shape (P2 attribution)')
+    ap.add_argument('--eta', type=float, default=0.0,
+                    help='Profile amplitude [0,1]; 0=uniform baseline')
+    ap.add_argument('--max-outer', type=int, default=MAX_OUTER,
+                    help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
+    args = ap.parse_args()
+
+    data_path = r'D:\Postgraduate\均质化\ThermoNAS\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+    df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
+                       header=None, skiprows=2)
+
+    print(f"Shanghai 3D validation (Gyroid L={L_CELL} t={T_WALL} eps={EPS:.4f})")
+    print(f"Domain: {L_DOM*1000:.0f}x{H_DOM*1000:.0f}x{LZ*1000:.0f} mm")
+    Nx_u, Ny_u, Nz_u = args.nx, args.ny, args.nz
+    _dx, _dy, _dz, Nx, Ny, Nz = _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=args.wall_refine)
+    print(f"Grid: user {Nx_u} x {Ny_u} x {Nz_u} -> actual {Nx} x {Ny} x {Nz}  "
+          f"(wall_refine={args.wall_refine})")
+    print(f"Outer coupling: max_outer={args.max_outer}, alpha_T={ALPHA_T}, tol={OUTER_TOL}K\n")
+
+    print(f"Inlet profile: kind={args.profile}, eta={args.eta:.2f}\n")
+    results = []
+    for ci in range(args.cases):
+        r = _run_one_case(ci, df, Nx_u, Ny_u, Nz_u,
+                          wall_refine=args.wall_refine,
+                          profile_kind=args.profile,
+                          profile_eta=args.eta,
+                          max_outer=args.max_outer)
+        results.append(r)
+        print(f"Case {r['case']:2d}: dP {r['dP_exp']:.0f}/{r['dP_sim']:.0f} "
+              f"({r['err_dP%']:+.1f}%)  Q {r['Q_exp']:.0f}/{r['Q_sim']:.0f} "
+              f"({r['err_Q%']:+.1f}%)  outer={r['outer_iters']}  "
+              f"[Qnet_rel={r['Q_net_rel']:.2e} mA_rel={r['mass_rel_A']:.2e}]")
+
+    # Summary statistics
+    err_dP = np.array([r['err_dP%'] for r in results])
+    err_Q = np.array([r['err_Q%'] for r in results])
+    # Re>600 filter via u_air (matches 2D convention)
+    u_arr = np.array([r['u_air'] for r in results])
+
+    rmsre_dP = float(np.sqrt(np.mean(err_dP ** 2)))
+    rmsre_Q = float(np.sqrt(np.mean(err_Q ** 2)))
+    max_err_Q = float(np.max(np.abs(err_Q)))
+    max_err_dP = float(np.max(np.abs(err_dP)))
+
+    print()
+    print("=" * 70)
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 32.34%)")
+    print(f"  max|err_dP|   : {max_err_dP:.2f}%")
+    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%")
+    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.70%)")
+    print("=" * 70)
+
+    # Save CSV
+    csv_name = f"shanghai_3d_baseline{args.suffix}.csv"
+    out_path = Path(__file__).parent / csv_name
+    pd.DataFrame(results).to_csv(out_path, index=False, encoding='utf-8-sig')
+    print(f"\nSaved: {out_path}")
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

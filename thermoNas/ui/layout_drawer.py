@@ -9,7 +9,7 @@ from .theme import _THEMES
 
 
 def draw_layout(window):
-    """Ex-Main_Menu._draw_layout(self)."""
+    """Draw geometry. 2D (rect/hex/oct) or 3D cuboid wireframe based on mode."""
     try:
         L = float(window.le_L.text()); H = float(window.le_H.text())
     except ValueError:
@@ -17,30 +17,232 @@ def draw_layout(window):
                             "Fill Domain fields first."); return
 
     window.canvas_layout.fig.clear()
-    ax = window.canvas_layout.fig.add_subplot(111)
-    window.canvas_layout.axes = [[ax]]
     Lmm, Hmm = L * 1000, H * 1000
-    shape_idx = window.combo_shape.currentIndex()
-
-    import main as _main_mod
     _t = _THEMES['light']
 
-    if shape_idx == 0:
-        draw_layout_rect(window, ax, L, H, Lmm, Hmm)
+    # 3D mode → 3D cuboid wireframe + inlet/outlet shading
+    is_3d = (hasattr(window, 'combo_dim')
+             and window.combo_dim.currentIndex() == 1)
+    if is_3d:
+        try:
+            Lz = float(window.le_Lz.text())
+        except ValueError:
+            QMessageBox.warning(window, "Input Error",
+                                "Fill Lz field first."); return
+        ax = window.canvas_layout.fig.add_subplot(111, projection='3d')
+        window.canvas_layout.axes = [[ax]]
+        draw_layout_rect_3d(window, ax, L, H, Lz)
+        ax.set_facecolor(_t['ax_bg'])
     else:
-        draw_layout_polygon(window, ax, L, H, Lmm, Hmm)
+        ax = window.canvas_layout.fig.add_subplot(111)
+        window.canvas_layout.axes = [[ax]]
+        shape_idx = window.combo_shape.currentIndex()
+        if shape_idx == 0:
+            draw_layout_rect(window, ax, L, H, Lmm, Hmm)
+        else:
+            draw_layout_polygon(window, ax, L, H, Lmm, Hmm)
+        ax.set_xlabel('x [mm]', color=_t['ax_text'])
+        ax.set_ylabel('y [mm]', color=_t['ax_text'])
+        ax.set_aspect('equal')
+        ax.set_facecolor(_t['ax_bg'])
+        ax.tick_params(colors=_t['ax_text'])
+        for sp in ax.spines.values():
+            sp.set_edgecolor(_t['ax_spine'])
 
-    ax.set_xlabel('x [mm]', color=_t['ax_text']); ax.set_ylabel('y [mm]', color=_t['ax_text'])
-    ax.set_aspect('equal'); ax.set_facecolor(_t['ax_bg'])
-    ax.tick_params(colors=_t['ax_text'])
-    for sp in ax.spines.values(): sp.set_edgecolor(_t['ax_spine'])
     window.canvas_layout.fig.set_facecolor(_t['fig_bg'])
     window.canvas_layout.draw()
-    # Mark as drawn so _switch_tab shows it
     if not hasattr(window, '_drawn_tabs'):
         window._drawn_tabs = set()
     window._drawn_tabs.add('layout')
     window._switch_tab('layout')
+
+
+def draw_layout_rect_3d(window, ax, L, H, Lz):
+    """Draw 3D cuboid wireframe + inlet/outlet face shading for fluid A + B.
+
+    Engineering convention: external double arrows (inlet: pointing IN,
+    outlet: pointing OUT). Inline "Inlet_A/Outlet_A/Inlet_B/Outlet_B"
+    labels replace title legend. Small origin triad at (0,0,0).
+    """
+    import main as _main_mod
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    Lmm, Hmm, Lzmm = L * 1000, H * 1000, Lz * 1000
+
+    # Cuboid edges
+    pts = np.array([
+        [0, 0, 0], [Lmm, 0, 0], [Lmm, Hmm, 0], [0, Hmm, 0],
+        [0, 0, Lzmm], [Lmm, 0, Lzmm], [Lmm, Hmm, Lzmm], [0, Hmm, Lzmm],
+    ])
+    edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
+             (0,4),(1,5),(2,6),(3,7)]
+    for i, j in edges:
+        ax.plot(*zip(pts[i], pts[j]), color='#3c4758', lw=1.4)
+
+    def _face_patch(verts, color, alpha):
+        poly = Poly3DCollection([verts], alpha=alpha, facecolor=color,
+                                 edgecolor='#1a1f24', linewidths=1.2)
+        ax.add_collection3d(poly)
+
+    def _rect_face(axis, val, ctr, w, low, high):
+        lo = max(ctr - w / 2, low); hi = min(ctr + w / 2, high)
+        if axis == 'x':
+            return [(val, lo, 0), (val, hi, 0), (val, hi, Lzmm), (val, lo, Lzmm)]
+        return [(lo, val, 0), (hi, val, 0), (hi, val, Lzmm), (lo, val, Lzmm)]
+
+    INLET_COL = '#e8751a'
+    OUTLET_COL = '#1e5a9e'
+    ARROW_COL_A = '#8B1A1A'   # deep crimson — fluid A arrows
+    ARROW_COL_B = '#1f3a5f'   # deep navy — fluid B arrows (distinct from A)
+    face_alpha = 0.68
+
+    # External-arrow helper: arrow sits OUTSIDE the face, points INTO (inlet)
+    # or OUT (outlet). `face_axis` is 'x'|'y'; `face_val` is the face coord;
+    # `sign_in` is the direction the flow moves through the face
+    # (+1 means increasing coord). Inlet arrow starts outside, ends at face.
+    # Outlet arrow starts at face, ends outside.
+    def _draw_ext_arrows(face_axis, in_val, out_val, in_ctr, out_ctr,
+                          sign_in, arrow_col, off_scale):
+        # offset proportional to domain for visual clarity
+        off = off_scale
+        if face_axis == 'x':
+            inlet_start = (in_val - sign_in * off, in_ctr, Lzmm / 2)
+            inlet_vec   = (sign_in * off, 0, 0)
+            outlet_start = (out_val, out_ctr, Lzmm / 2)
+            outlet_vec   = (sign_in * off, 0, 0)
+        else:
+            inlet_start = (in_ctr, in_val - sign_in * off, Lzmm / 2)
+            inlet_vec   = (0, sign_in * off, 0)
+            outlet_start = (out_ctr, out_val, Lzmm / 2)
+            outlet_vec   = (0, sign_in * off, 0)
+        ax.quiver(*inlet_start, *inlet_vec, color=arrow_col,
+                   arrow_length_ratio=0.25, linewidth=3.0, zorder=10)
+        ax.quiver(*outlet_start, *outlet_vec, color=arrow_col,
+                   arrow_length_ratio=0.25, linewidth=3.0, zorder=10)
+
+    def _draw_fluid(cfg, arrow_col, label_tag, off_scale):
+        d = cfg['dir']
+        in_ctr_mm = cfg['in_ctr'] * 1000; in_w_mm = cfg['in_w'] * 1000
+        out_ctr_mm = cfg['out_ctr'] * 1000; out_w_mm = cfg['out_w'] * 1000
+
+        if d in (0, 1):
+            in_face_val = 0.0 if d == 0 else Lmm
+            out_face_val = Lmm if d == 0 else 0.0
+            _face_patch(_rect_face('x', in_face_val, in_ctr_mm, in_w_mm, 0, Hmm),
+                        INLET_COL, face_alpha)
+            _face_patch(_rect_face('x', out_face_val, out_ctr_mm, out_w_mm, 0, Hmm),
+                        OUTLET_COL, face_alpha)
+            sign_in = 1 if d == 0 else -1
+            _draw_ext_arrows('x', in_face_val, out_face_val,
+                              in_ctr_mm, out_ctr_mm, sign_in, arrow_col, off_scale)
+            # Inline labels
+            ax.text(in_face_val - sign_in * off_scale * 0.7, in_ctr_mm, Lzmm + 3,
+                    f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
+                    fontweight='bold', ha='center')
+            ax.text(out_face_val + sign_in * off_scale * 0.3, out_ctr_mm, Lzmm + 3,
+                    f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
+                    fontweight='bold', ha='center')
+        else:
+            in_face_val = 0.0 if d == 2 else Hmm
+            out_face_val = Hmm if d == 2 else 0.0
+            _face_patch(_rect_face('y', in_face_val, in_ctr_mm, in_w_mm, 0, Lmm),
+                        INLET_COL, face_alpha)
+            _face_patch(_rect_face('y', out_face_val, out_ctr_mm, out_w_mm, 0, Lmm),
+                        OUTLET_COL, face_alpha)
+            sign_in = 1 if d == 2 else -1
+            _draw_ext_arrows('y', in_face_val, out_face_val,
+                              in_ctr_mm, out_ctr_mm, sign_in, arrow_col, off_scale)
+            ax.text(in_ctr_mm, in_face_val - sign_in * off_scale * 0.7, Lzmm + 3,
+                    f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
+                    fontweight='bold', ha='center')
+            ax.text(out_ctr_mm, out_face_val + sign_in * off_scale * 0.3, Lzmm + 3,
+                    f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
+                    fontweight='bold', ha='center')
+
+    # Fluid A
+    try:
+        fA = window._fluid_config('A')
+    except Exception:
+        fA = dict(dir=0, in_ctr=H / 2, in_w=H, out_ctr=H / 2, out_w=H)
+    # Arrow length: ~15% of the axis the arrow lives on
+    off_A = Lmm * 0.15 if fA['dir'] <= 1 else Hmm * 0.15
+    _draw_fluid(fA, ARROW_COL_A, 'A', off_A)
+
+    # Fluid B
+    try:
+        fB = window._fluid_config('B')
+        off_B = Lmm * 0.15 if fB['dir'] <= 1 else Hmm * 0.15
+        _draw_fluid(fB, ARROW_COL_B, 'B', off_B)
+    except Exception:
+        pass
+
+    # Origin triad
+    triad_len = max(Lmm, Hmm, Lzmm) * 0.06
+    ax.quiver(0, 0, 0, triad_len, 0, 0, color='#d13b3b', arrow_length_ratio=0.3,
+               linewidth=1.8)
+    ax.quiver(0, 0, 0, 0, triad_len, 0, color='#3bbd3b', arrow_length_ratio=0.3,
+               linewidth=1.8)
+    ax.quiver(0, 0, 0, 0, 0, triad_len, color='#3b68d1', arrow_length_ratio=0.3,
+               linewidth=1.8)
+
+    # Axis labels — bold
+    ax.set_xlabel('x [mm]', color='#1a1f24', fontsize=11,
+                  fontweight='bold', labelpad=10)
+    ax.set_ylabel('y [mm]', color='#1a1f24', fontsize=11,
+                  fontweight='bold', labelpad=10)
+    ax.set_zlabel('z [mm]', color='#1a1f24', fontsize=11,
+                  fontweight='bold', labelpad=10)
+
+    # Ticks: only endpoints (clean up "115.5" midpoint artefact)
+    # For long axes (>= 100 mm) also include a round midpoint.
+    def _endpoint_ticks(L_mm):
+        if L_mm >= 100:
+            mid = round(L_mm / 100) * 50   # nearest 50 mm
+            if 0 < mid < L_mm:
+                return [0, mid, L_mm]
+        return [0, L_mm]
+    ax.set_xticks(_endpoint_ticks(Lmm))
+    ax.set_yticks(_endpoint_ticks(Hmm))
+    ax.set_zticks(_endpoint_ticks(Lzmm))
+    ax.tick_params(colors='#1a1f24', labelsize=9)
+
+    # Background panes: soft grey
+    try:
+        for pane_axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            pane_axis.pane.fill = False
+            pane_axis.pane.set_edgecolor('#e0e0e0')
+            pane_axis._axinfo['grid'].update({
+                'color': '#cfd4d9', 'linestyle': ':', 'linewidth': 0.7,
+            })
+    except Exception:
+        pass
+
+    # Clean title — legend now inline
+    ax.set_title('3D Computational Domain',
+                 color='#1a1f24', fontsize=12, fontweight='bold', pad=14)
+
+    # Aspect ratio (soft-stretch thin axes for visibility)
+    max_dim = max(Lmm, Hmm, Lzmm)
+    min_dim = min(Lmm, Hmm, Lzmm)
+    if max_dim / min_dim > 3.0:
+        try:
+            ax.set_box_aspect((
+                1.0,
+                (Hmm / max_dim) ** 0.5,
+                (Lzmm / max_dim) ** 0.5))
+        except Exception:
+            pass
+    else:
+        try:
+            ax.set_box_aspect((Lmm, Hmm, Lzmm))
+        except Exception:
+            pass
+
+    ax.view_init(elev=22, azim=-52)
+    try:
+        ax.figure.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.02)
+    except Exception:
+        pass
 
 
 def draw_layout_rect(window, ax, L, H, Lmm, Hmm):

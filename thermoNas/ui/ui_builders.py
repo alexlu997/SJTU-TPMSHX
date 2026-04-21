@@ -29,6 +29,16 @@ def _m():
     return _main
 
 
+def _on_dim_changed(window):
+    """Toggle visibility of 3D-only inputs based on Dimensionality combo."""
+    is_3d = window.combo_dim.currentIndex() == 1
+    widgets = [window.le_Lz, window._lbl_Lz, window.le_Nz, window._lbl_Nz]
+    if hasattr(window, 'chk_wall_refine_3d'):
+        widgets.append(window.chk_wall_refine_3d)
+    for w in widgets:
+        w.setVisible(is_3d)
+
+
 def build_ui(window):
     """Ex-Main_Menu._build_ui(self).
     Constructs the entire main window. Widgets are stored as attributes on
@@ -105,9 +115,9 @@ def build_param_tabs(window):
                         "border-bottom:2px solid white;}")
     window._PTAB_OFF = (f"QPushButton{{background:{_ts['tab_off_bg']}; color:{_ts['tab_off_fg']};"
                         f"border:1px solid {_ts['tab_off_border']}; border-radius:6px;"
-                        f"font-size:9pt; padding:5px 14px;}}"
+                        f"font-size:9pt; font-weight:bold; padding:5px 14px;}}"
                         f"QPushButton:hover{{background:{_ts['tab_off_hover']};"
-                        f"border-bottom:2px solid {_ts['tab_on_bg']};}}")
+                        f"border-bottom:2px solid {_ts['tab_on_bg']}; color:#0a0a0a;}}")
 
     tab_row = QWidget()
     tab_lay = QHBoxLayout(tab_row)
@@ -162,7 +172,9 @@ def build_page_domain(window):
     g, _ = section(window, lay, "  \u25c8  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
     window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.231")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
-    window.le_T_init_s = row(window, g, 2, "Solid init. temp <i>T</i><sub>0</sub> [K]", "325.0")
+    window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.020")
+    window._lbl_Lz     = g.itemAtPosition(2, 0).widget()
+    window.le_T_init_s = row(window, g, 3, "Solid init. temp <i>T</i><sub>0</sub> [K]", "325.0")
 
     # Update edge labels when L or H changes
     window.le_L.editingFinished.connect(window._update_edge_combos)
@@ -173,7 +185,15 @@ def build_page_domain(window):
     window.combo_shape.addItems(["Rectangle", "Hexagon", "Octagon"])
     window.combo_shape.setStyleSheet(_COMBO)
     window.combo_shape.currentIndexChanged.connect(window._on_shape_changed)
-    add_row(window, g, 3, "Domain shape", window.combo_shape)
+    add_row(window, g, 4, "Domain shape", window.combo_shape)
+
+    # Dimensionality (2D / 3D MVP) — dispatch in run_calculation
+    window.combo_dim = QComboBox()
+    window.combo_dim.addItems(["2D", "3D (uniform)"])
+    window.combo_dim.setStyleSheet(_COMBO)
+    window.combo_dim.currentIndexChanged.connect(
+        lambda *_: _on_dim_changed(window))
+    add_row(window, g, 5, "Dimensionality", window.combo_dim)
 
     # ── TPMS Structure ──
     g0, _ = section(window, lay, "  \u25c8  TPMS Structure", _T_NEUTRAL, _F_NEUTRAL)
@@ -206,6 +226,21 @@ def build_page_domain(window):
     window._rect_only_widgets.append(sec_solver_rect)
     window.le_Nx = row(window, g4, 0, "Grid <i>N<sub>x</sub></i>", "100")
     window.le_Ny = row(window, g4, 1, "Grid <i>N<sub>y</sub></i>", "50")
+    window.le_Nz = row(window, g4, 2, "Grid <i>N<sub>z</sub></i> (3D only)", "5")
+    window._lbl_Nz = g4.itemAtPosition(2, 0).widget()
+
+    # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces)
+    window.chk_wall_refine_3d = QCheckBox("6-wall BL refine (3D)")
+    window.chk_wall_refine_3d.setChecked(True)
+    window.chk_wall_refine_3d.setToolTip(
+        "Enable six-wall boundary-layer refinement for 3D solves. "
+        "Adds 8 cells per wall (first_cell=0.02 mm, growth 1.8). "
+        "Turn off for pure uniform grid.")
+    g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
+    window._chk_wall_refine_3d = window.chk_wall_refine_3d  # alias
+
+    # Hide 3D-only inputs by default (2D mode)
+    _on_dim_changed(window)
 
     # ── Solver Settings (polygon mode) ──
     gp, sec_solver_poly = section(window, lay, "  \u25c8  Mesh Settings", _T_NEUTRAL, _F_NEUTRAL)
@@ -276,8 +311,7 @@ def build_page_fluids(window):
     window._v_rhoA = res_row(window, g1, 4, "<i>&rho;</i> [kg/m\u00b3]")
     window._v_ReA  = res_row(window, g1, 5, "Re")
     window._v_NuA  = res_row(window, g1, 6, "Nu")
-    window._v_fA   = res_row(window, g1, 7, "<i>f</i>")
-    window._v_dPLA = res_row(window, g1, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
+    window._v_dPLA = res_row(window, g1, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_a = QPushButton("Auto-fill")
     btn_a.setFixedHeight(22); btn_a.setStyleSheet(_BTN_HOT)
     btn_a.clicked.connect(window.auto_fill_fluid_a)
@@ -295,8 +329,7 @@ def build_page_fluids(window):
     window._v_rhoB = res_row(window, g2b, 4, "<i>&rho;</i> [kg/m\u00b3]")
     window._v_ReB  = res_row(window, g2b, 5, "Re")
     window._v_NuB  = res_row(window, g2b, 6, "Nu")
-    window._v_fB   = res_row(window, g2b, 7, "<i>f</i>")
-    window._v_dPLB = res_row(window, g2b, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
+    window._v_dPLB = res_row(window, g2b, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_b = QPushButton("Auto-fill")
     btn_b.setFixedHeight(22); btn_b.setStyleSheet(_BTN_COLD)
     btn_b.clicked.connect(window.auto_fill_fluid_b)
@@ -497,22 +530,26 @@ def build_canvas_area(window):
     window.btn_tab_vel  = QPushButton("Velocity")
     window.btn_tab_layout = QPushButton("Geometry")
     window.btn_tab_pareto = QPushButton("Pareto")
+    window.btn_tab_3d     = QPushButton("3D View")
     for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
-              window.btn_tab_layout, window.btn_tab_pareto):
+              window.btn_tab_layout, window.btn_tab_pareto, window.btn_tab_3d):
         b.setFixedHeight(28)
     window.btn_tab_layout.setStyleSheet(window._PTAB_ON)
-    for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel, window.btn_tab_pareto):
+    for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
+              window.btn_tab_pareto, window.btn_tab_3d):
         b.setStyleSheet(window._PTAB_OFF)
     window.btn_tab_layout.clicked.connect(lambda: window._switch_tab('layout'))
     window.btn_tab_temp.clicked.connect(lambda: window._switch_tab('temp'))
     window.btn_tab_pres.clicked.connect(lambda: window._switch_tab('pres'))
     window.btn_tab_vel.clicked.connect(lambda: window._switch_tab('vel'))
     window.btn_tab_pareto.clicked.connect(lambda: window._switch_tab('pareto'))
+    window.btn_tab_3d.clicked.connect(lambda: window._switch_tab('3d'))
     toolbar.addWidget(window.btn_tab_layout)
     toolbar.addWidget(window.btn_tab_temp)
     toolbar.addWidget(window.btn_tab_pres)
     toolbar.addWidget(window.btn_tab_vel)
     toolbar.addWidget(window.btn_tab_pareto)
+    toolbar.addWidget(window.btn_tab_3d)
     toolbar.addStretch()
 
     btn_zoom_in = QPushButton("+")
@@ -573,12 +610,24 @@ def build_canvas_area(window):
         window.canvas_vel    = _reuse['vel']
         window.canvas_layout = _reuse['layout']
         window.canvas_pareto = _reuse['pareto']
+        window.canvas_3d     = _reuse.get('3d')
     else:
         window.canvas_temp   = MatplotlibCanvas(3, 1, figsize=(14, 24))
         window.canvas_pres   = MatplotlibCanvas(1, 1, figsize=(14, 18))
         window.canvas_vel    = MatplotlibCanvas(2, 1, figsize=(14, 16))
         window.canvas_layout = MatplotlibCanvas(1, 1, figsize=(14, 8))
         window.canvas_pareto = MatplotlibCanvas(1, 1, figsize=(14, 8))
+
+    # PyVistaQt init is heavy (~1-2s VTK/OpenGL context setup).
+    # Defer until user actually switches to the 3D tab → faster cold start
+    # and no impact on 2D Compute Geometry / Auto-fill / Run responsiveness.
+    window.canvas_3d = None
+    window._vis3d_import_error = None
+    import os as _os
+    if (_os.environ.get('QT_QPA_PLATFORM', '').lower() == 'offscreen'
+            or _os.environ.get(
+                'THERMONAS_DISABLE_3D_PANEL', '').lower() in ('1', 'true', 'yes')):
+        window._vis3d_import_error = 'headless/offscreen — 3D panel skipped'
 
     # Accent colors per canvas tab
     _accents = {
@@ -587,17 +636,23 @@ def build_canvas_area(window):
         'vel':    '#c55a11',  # orange
         'layout': '#888888',  # gray
         'pareto': '#7b4daa',  # purple
+        '3d':     '#2c5282',  # industrial navy
     }
 
     window._canvas_default_h = {}
     window._canvas_cards = {}
-    for c, key, h in [
+    _card_specs = [
         (window.canvas_temp,   'temp',   1500),
         (window.canvas_pres,   'pres',   1200),
         (window.canvas_vel,    'vel',    1100),
         (window.canvas_layout, 'layout', 550),
         (window.canvas_pareto, 'pareto', 600),
-    ]:
+    ]
+    # 3D card inserted lazily (card reserved here as placeholder QWidget)
+    from PySide6.QtWidgets import QWidget as _QW
+    window._canvas_3d_placeholder = _QW()
+    _card_specs.append((window._canvas_3d_placeholder, '3d', 820))
+    for c, key, h in _card_specs:
         # Card frame
         card = QFrame()
         accent = _accents.get(key, '#4472c4')
@@ -634,17 +689,22 @@ def build_canvas_area(window):
         canvas_lay.addWidget(card)
         window._canvas_default_h[key] = h + 44
         window._canvas_cards[key] = card
-        c.wheelEvent = lambda evt, cv=c, k=key: canvas_wheel_zoom(window, evt, cv, k)
+        # Matplotlib canvases get custom wheel-zoom; 3D PyVistaQt keeps its own
+        if key != '3d':
+            c.wheelEvent = lambda evt, cv=c, k=key: canvas_wheel_zoom(window, evt, cv, k)
 
     # Initial state: hide all cards (shown after Compute/Preview)
     if not _reuse:
-        # First launch: clear empty axes
+        # First launch: clear empty axes (matplotlib only)
         for key in ('temp', 'pres', 'vel', 'layout', 'pareto'):
             c = getattr(window, f'canvas_{key}')
             c.fig.clear()
             c.fig.patch.set_facecolor(_t['fig_bg'])
             c.draw()
-    for key in ('temp', 'pres', 'vel', 'layout', 'pareto'):
+    _hide_keys = ['temp', 'pres', 'vel', 'layout', 'pareto']
+    if '3d' in window._canvas_cards:
+        _hide_keys.append('3d')
+    for key in _hide_keys:
         window._canvas_cards[key].hide()
     window._active_tab = 'layout'
     if not _reuse:

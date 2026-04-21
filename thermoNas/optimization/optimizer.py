@@ -34,7 +34,9 @@ from solvers.df_projection import (override_simple_K_cF as _override_simple_K_cF
                                     extract_dP_from_simple as _extract_dP_from_simple,
                                     project_cells_to_streamwise_K_cF as _project_cells_to_streamwise_K_cF,
                                     project_fields_to_streamwise_K_cF as _project_fields_to_streamwise_K_cF,
-                                    build_master_refined_grid as _build_master_refined_grid)
+                                    build_master_refined_grid as _build_master_refined_grid,
+                                    project_fields_to_streamwise_K_cF_3d as _project_fields_to_streamwise_K_cF_3d,
+                                    build_master_refined_grid_3d as _build_master_refined_grid_3d)
 
 
 def _resolve_refined_grid(cfg):
@@ -69,28 +71,53 @@ def _resolve_refined_grid(cfg):
 # or when running inside a child process that already holds GIL-heavy resources).
 
 def _parallel_workers():
-    """Return number of parallel workers; 1 means serial (no subprocess overhead)."""
+    """Return number of parallel workers; 1 means serial (no subprocess overhead).
+
+    Each worker may allocate up to ~300 MB (256³ phi voxel grid + SIMPLE
+    fields + numba caches), so the default caps at 4 workers to stay under
+    ~2 GB RAM for typical optimizer sweeps. Override via THERMONAS_WORKERS.
+    """
     if os.environ.get('THERMONAS_SERIAL') == '1':
         return 1
-    return max(1, (os.cpu_count() or 2) - 1)
+    override = os.environ.get('THERMONAS_WORKERS')
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return max(1, min(4, (os.cpu_count() or 2) - 1))
 
 
 # ── Top-level worker functions (must be module-level for pickle on Windows) ──
 
 def _eval_worker(args):
-    """Worker: evaluate one design vector. Returns (Q_neg, dP, mass)."""
+    """Worker: evaluate one design vector. Returns (Q_neg, dP, mass).
+
+    Dispatches by cfg['dim']: 3 → evaluate_3d (no Richardson); 2 → Richardson
+    or plain evaluate.
+    """
     x, cfg, use_richardson = args
     warnings.filterwarnings('ignore')
+    if int(cfg.get('dim', 2)) == 3:
+        return evaluate_3d(x, cfg)
     if use_richardson:
         return evaluate_richardson(x, cfg)
     return evaluate(x, cfg)
 
 
 def _solve_single_point_worker(args):
-    """Worker: _solve_single_point for one design vector. Returns (Q, dP, mass)."""
-    x, cfg, Nx, Ny = args
+    """Worker: _solve_single_point for one design vector. Returns (Q, dP, mass).
+
+    Dispatches by dim: 2-tuple grid (Nx, Ny) → 2D; 3-tuple → 3D.
+    """
     warnings.filterwarnings('ignore')
-    return _solve_single_point(x, cfg, Nx, Ny)
+    if len(args) == 4:
+        x, cfg, Nx, Ny = args
+        return _solve_single_point(x, cfg, Nx, Ny)
+    elif len(args) == 5:
+        x, cfg, Nx, Ny, Nz = args
+        return _solve_single_point_3d(x, cfg, Nx, Ny, Nz)
+    raise ValueError(f"unexpected worker args len {len(args)}")
 
 
 # ── Default configuration ────────────────────────────────────
@@ -112,15 +139,114 @@ DEFAULT_CONFIG = {
     'dir_A': 0, 'dir_B': 3, # flow directions (+x, -y)
     'pipe_frac_A': 1.0,     # inlet width fraction for A
     'pipe_frac_B': 1.0,     # inlet width fraction for B
+    # Per-eval accuracy knobs (overridable for fast-mode NSGA-II search).
+    # Default values match the full-accuracy baseline used prior to 2026-04-20.
+    'fast_mode':        False,
+    'max_iter_simple':  5000,
+    'tol_simple':       1e-5,
+    'max_iter_energy':  5000,
+    'n_rho_loops':      3,
+    'grid_alpha':       0.8,
+    # ─── 3D Phase 1 knobs ───
+    'dim':           2,      # 2 or 3; 3 routes to evaluate_3d / _resolve_grid_3d
+    'Lz':            0.02,   # 3D depth [m] (ignored for dim=2)
+    'Nz':            None,   # 3D depth cells; None → auto from D_h / Lz ratio
+    'alpha_T':       0.7,    # LTNE three-temp under-relaxation (3D)
+    'max_workers':   None,   # None → _auto_max_workers decides by dim+grid
+    'mem_budget_gb': 12.0,   # Per-worker memory ceiling estimate
+    'use_gpu':       False,  # Phase 4 trigger; raises NotImplementedError for now
 }
 
 
-def _resolve_grid(cfg, alpha=0.8):
-    """Return (Nx, Ny) from config, computing adaptively if not specified."""
-    if 'Nx' in cfg and 'Ny' in cfg:
+def _apply_fast_preset(cfg):
+    """When cfg['fast_mode'] is truthy, tighten per-eval knobs toward the
+    published ``default`` fast-mode preset.
+
+    Uses min/max so an explicit user override (e.g. ``tol_simple=5e-4``) takes
+    precedence over the preset; preset is only a ceiling on cost, never a
+    floor. Safe to call multiple times.
+    """
+    if not cfg.get('fast_mode', False):
+        return cfg
+    cfg['max_iter_simple'] = min(cfg.get('max_iter_simple', 5000), 800)
+    cfg['tol_simple']      = max(cfg.get('tol_simple', 1e-5), 1e-3)
+    cfg['max_iter_energy'] = min(cfg.get('max_iter_energy', 5000), 1500)
+    cfg['n_rho_loops']     = min(cfg.get('n_rho_loops', 3), 1)
+    cfg['grid_alpha']      = max(cfg.get('grid_alpha', 0.8), 1.5)
+    return cfg
+
+
+def _resolve_grid(cfg, alpha=None):
+    """Return (Nx, Ny) from config, computing adaptively if not specified.
+
+    ``alpha`` default reads ``cfg['grid_alpha']`` (0.8 = full-accuracy baseline).
+    Callers can pass an explicit value to override (e.g.
+    ``reevaluate_pareto`` uses ``alpha=0.4`` for fine-grid re-scoring).
+
+    For cfg['dim']=3 this returns the first two axes only; use
+    ``_resolve_grid_3d`` to get (Nx, Ny, Nz).
+    """
+    if cfg.get('Nx') is not None and cfg.get('Ny') is not None:
         return int(cfg['Nx']), int(cfg['Ny'])
+    a = alpha if alpha is not None else cfg.get('grid_alpha', 0.8)
     g = tpms_geometry(cfg['tpms_type'], cfg['L0'], cfg['t0'], cfg['k_s'])
-    return adaptive_grid(cfg['L_domain'], cfg['H_domain'], g['D_h'], alpha)
+    return adaptive_grid(cfg['L_domain'], cfg['H_domain'], g['D_h'], a)
+
+
+def _resolve_grid_3d(cfg, alpha=None):
+    """Return (Nx, Ny, Nz) from config for dim=3 runs.
+
+    Nz default scales from D_h and cfg['Lz'] via adaptive_grid; caps at Nx/2 for
+    memory sanity on the first 3D pass (Phase 1 coarse). Override via cfg['Nz'].
+    """
+    Nx, Ny = _resolve_grid(cfg, alpha=alpha)
+    if cfg.get('Nz') is not None:
+        return Nx, Ny, int(cfg['Nz'])
+    g = tpms_geometry(cfg['tpms_type'], cfg['L0'], cfg['t0'], cfg['k_s'])
+    Lz = float(cfg.get('Lz', 0.02))
+    a = alpha if alpha is not None else cfg.get('grid_alpha', 0.8)
+    # Reuse 1D dimension from adaptive_grid in z via a square surrogate
+    Nz_a, _ = adaptive_grid(Lz, Lz, g['D_h'], a)
+    Nz = max(3, min(Nz_a, max(3, Nx // 2)))
+    return Nx, Ny, Nz
+
+
+def _auto_max_workers(cfg):
+    """Decide worker count from cfg['dim'], grid size, mem budget.
+
+    Rules:
+      dim=2                     → 3
+      dim=3, Nx·Ny·Nz ≤ 3e5     → 2
+      dim=3, > 3e5              → 1
+      estimated memory > budget → 1 with warn
+    """
+    dim = int(cfg.get('dim', 2))
+    if cfg.get('max_workers') is not None:
+        return max(1, int(cfg['max_workers']))
+    if dim == 2:
+        return 3
+    Nx, Ny, Nz = _resolve_grid_3d(cfg)
+    cells = Nx * Ny * Nz
+    mem_per_worker_gb = cells * 300.0 / (1024 ** 3)  # ≈ 300 B/cell (pyamg + fields)
+    budget = float(cfg.get('mem_budget_gb', 12.0))
+    if mem_per_worker_gb > budget:
+        warnings.warn(
+            f"3D grid {Nx}×{Ny}×{Nz} ≈ {mem_per_worker_gb:.1f} GB/worker > "
+            f"budget {budget} GB — forcing max_workers=1")
+        return 1
+    return 2 if cells <= 300_000 else 1
+
+
+def extract_dP_from_simple_3d(s):
+    """SIMPLE 3D inlet-outlet pressure drop (pipe-weighted if outlet_frac set).
+
+    P2-a' (2026-04-20): Uses SIMPLESolver3D.extract_dP_weighted when available,
+    which down-weights corner cells via outlet_frac taper (mirror 2D pattern).
+    Fallback to plain mean for backward compatibility.
+    """
+    if hasattr(s, 'extract_dP_weighted') and hasattr(s, 'outlet_frac'):
+        return s.extract_dP_weighted(s)
+    return float(s.P[:, 0, :].mean() - s.P[:, -1, :].mean())
 
 
 # ── Grid cell builder ────────────────────────────────────────
@@ -254,7 +380,8 @@ def _simple_var_density(cfg, rho_A_field, rho_B_field,
     sA.dx_arr = dy_refined.copy()
     sA.dy_arr = dx_refined.copy()
     _override_simple_K_cF(sA, cfg['tpms_type'], cfg['k_s'], Nx, grid_cells, L_field, t_field, 'A')
-    sA.solve(max_iter=5000, tol=1e-5, verbose=False)
+    sA.solve(max_iter=cfg.get('max_iter_simple', 5000),
+             tol=cfg.get('tol_simple', 1e-5), verbose=False)
     _, v_mA = sA.get_wall_masked_velocity()
     ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T  # (Nx, Ny)
     vcA = np.zeros((Nx, Ny))
@@ -270,7 +397,8 @@ def _simple_var_density(cfg, rho_A_field, rho_B_field,
     sB.dx_arr = dx_refined.copy()
     sB.dy_arr = dy_refined.copy()
     _override_simple_K_cF(sB, cfg['tpms_type'], cfg['k_s'], Ny, grid_cells, L_field, t_field, 'B')
-    sB.solve(max_iter=5000, tol=1e-5, verbose=False)
+    sB.solve(max_iter=cfg.get('max_iter_simple', 5000),
+             tol=cfg.get('tol_simple', 1e-5), verbose=False)
     _, v_mB = sB.get_wall_masked_velocity()
     vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]  # un-flip
     ucB = np.zeros((Nx, Ny))
@@ -339,7 +467,8 @@ def _compute_simple(cfg, grid_cells=None, L_field=None, t_field=None,
     sA.dx_arr = dy_refined.copy()
     sA.dy_arr = dx_refined.copy()
     _override_simple_K_cF(sA, cfg['tpms_type'], cfg['k_s'], Nx, grid_cells, L_field, t_field, 'A')
-    sA.solve(max_iter=5000, tol=1e-5, verbose=False)
+    sA.solve(max_iter=cfg.get('max_iter_simple', 5000),
+             tol=cfg.get('tol_simple', 1e-5), verbose=False)
     _, v_mA = sA.get_wall_masked_velocity()
     ucA = (0.5 * (v_mA[:, :-1] + v_mA[:, 1:])).T  # (Nx, Ny)
     vcA = np.zeros((Nx, Ny))
@@ -357,7 +486,8 @@ def _compute_simple(cfg, grid_cells=None, L_field=None, t_field=None,
     sB.dx_arr = dx_refined.copy()
     sB.dy_arr = dy_refined.copy()
     _override_simple_K_cF(sB, cfg['tpms_type'], cfg['k_s'], Ny, grid_cells, L_field, t_field, 'B')
-    sB.solve(max_iter=5000, tol=1e-5, verbose=False)
+    sB.solve(max_iter=cfg.get('max_iter_simple', 5000),
+             tol=cfg.get('tol_simple', 1e-5), verbose=False)
     _, v_mB = sB.get_wall_masked_velocity()
     vcB = -(0.5 * (v_mB[:, :-1] + v_mB[:, 1:]))[:, ::-1]  # (Nx, Ny)
     ucB = np.zeros((Nx, Ny))
@@ -392,6 +522,7 @@ def evaluate(x, config=None):
     mass  : float — total solid mass per unit depth [kg/m]
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
+    _apply_fast_preset(cfg)
 
     L = cfg['L_domain']; H = cfg['H_domain']
     # Master refined grid (4-wall BL resolution). Nx, Ny below are the refined
@@ -454,7 +585,9 @@ def evaluate(x, config=None):
     Ta = Tb = Ts = None
     rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_in))
     rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_in))
-    for _ci in range(3):
+    n_rho = max(1, int(cfg.get('n_rho_loops', 3)))
+    max_iter_e = int(cfg.get('max_iter_energy', 5000))
+    for _ci in range(n_rho):
         Ta, Tb, Ts = solve_full_domain(
             L, H, Nx, Ny, T_inA, T_inB,
             za['K_ffA_arr'], za['K_ffB_arr'], za['K_ss_arr'],
@@ -462,7 +595,7 @@ def evaluate(x, config=None):
             rcp_A, rcp_B,
             za['eps_arr'], ucA, vcA, ucB, vcB,
             cfg['dir_A'], cfg['dir_B'],
-            tol=0.5, max_iter=5000,
+            tol=0.5, max_iter=max_iter_e,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_refined, dy_arr=dy_refined)
         # Update rho fields from temperature
@@ -499,6 +632,236 @@ def evaluate(x, config=None):
 
     # Mass: sum of (1-eps) * rho_s * cell_volume over all cells
     mass = np.sum((1.0 - za['eps_arr']) * cfg['rho_s'] * _cell_area)
+
+    return -Q_total, dP_total, mass
+
+
+def evaluate_3d(x, config=None):
+    """Evaluate one 108-dim 3D design point.
+
+    Pipeline: sigmoid_field_3d → project K/cF → SIMPLE 3D × 2 → LTNE solve_full_3d
+    → (non-iso outer loop + var-rho iteration) → integrate Q, dP, mass.
+
+    P1b additions (2026-04-20):
+      * P_ref_abs seeded from 1D compressible D-F closed form (fluid A)
+      * Outer SIMPLE ↔ LTNE coupling: cfg['max_outer_3d'] iterations
+        (default 4), with ALPHA_T under-relax on SIMPLE's T_field feedback
+      * Variable-density: between outer iters, rebuild sA.rho_field /
+        mu_field / _mu_eff_field from updated Ta; sB stays incompressible
+
+    cfg flags (all optional, defaults preserve P1 MVP behaviour):
+      * 'couple_3d'      : bool, default True — enable outer coupling
+      * 'max_outer_3d'   : int,  default 4    — outer iterations cap
+      * 'outer_tol_K_3d' : float, default 0.5 K
+      * 'alpha_outer_3d' : float, default 0.6 — T_field under-relax
+
+    Returns (Q_neg, dP, mass).
+    """
+    cfg = {**DEFAULT_CONFIG, **(config or {})}
+    _apply_fast_preset(cfg)
+
+    if cfg.get('use_gpu', False):
+        raise NotImplementedError("GPU path is a Phase 4 trigger stub")
+
+    x = np.asarray(x, dtype=np.float64)
+    if x.shape != (108,):
+        raise ValueError(f"dim=3 decision vector must be shape (108,), got {x.shape}")
+
+    L = float(cfg['L_domain']); H = float(cfg['H_domain']); D = float(cfg['Lz'])
+    Nx_u, Ny_u, Nz_u = _resolve_grid_3d(cfg)
+
+    u_A = cfg['u_A']; u_B = cfg['u_B']
+    T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
+    R_AIR = 287.05
+    P_atm_local = 101325.0
+
+    # 0. Optional six-wall refinement (3D Brinkman BL resolution)
+    refine_3d = bool(cfg.get('wall_refine_3d', False))
+    if refine_3d:
+        n_refine = int(cfg.get('n_wall_refine', 8))
+        first_cell = float(cfg.get('wall_first_cell', 0.02e-3))
+        try:
+            dx_arr, dy_arr, dz_arr, Nx, Ny, Nz = _build_master_refined_grid_3d(
+                L, H, D, Nx_u, Ny_u, Nz_u,
+                n_refine=n_refine, first_cell=first_cell)
+        except ValueError:
+            refine_3d = False
+            dx_arr = np.full(Nx_u, L / Nx_u); dy_arr = np.full(Ny_u, H / Ny_u)
+            dz_arr = np.full(Nz_u, D / Nz_u); Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+    else:
+        dx_arr = np.full(Nx_u, L / Nx_u); dy_arr = np.full(Ny_u, H / Ny_u)
+        dz_arr = np.full(Nz_u, D / Nz_u); Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+
+    cfg['Nx'] = Nx; cfg['Ny'] = Ny; cfg['Nz'] = Nz
+
+    # 1. Sigmoid 3D continuous fields (all shape (Nx, Ny, Nz))
+    from solvers.sigmoid_field import get_geometry_lut
+    from solvers.sigmoid_field_3d import build_continuous_arrays_3d
+    from solvers.simple_solver_3d import SIMPLESolver3D
+    from solvers.solve_full_3d import solve_full_domain_3d
+    from solvers.tpms_calc import air_cp
+
+    lut = get_geometry_lut(cfg['tpms_type'])
+    za = build_continuous_arrays_3d(
+        x, cfg['L0'], cfg['t0'],
+        cfg.get('y_trans_inlet', cfg.get('y_trans', 0.2)),
+        cfg.get('y_trans_outlet', cfg.get('y_trans', 0.2)),
+        Nx, Ny, Nz, L, H, D,
+        cfg['tpms_type'], cfg['k_s'],
+        u_A, u_B, T_inA, T_inB, lut,
+        fix_L=cfg.get('fix_L', False), fix_t=cfg.get('fix_t', False),
+        dx_arr=dx_arr, dy_arr=dy_arr, dz_arr=dz_arr)
+
+    # 2. Project to SIMPLE 3D K / cF arrays
+    # Fluid A: SIMPLE Ny = real Nx (streamwise dx_arr); SIMPLE Nz = Nz (dz_arr)
+    # Fluid B: SIMPLE Ny = real Ny (streamwise dy_arr); SIMPLE Nz = Nz (dz_arr)
+    K_A, cF_A = _project_fields_to_streamwise_K_cF_3d(
+        za['L_field'], za['t_field'], za['eps_f_arr'],
+        cfg['tpms_type'], Ny_sim=Nx, Nz_sim=Nz, fluid='A',
+        streamwise_dx=dx_arr, z_dx=dz_arr)
+    K_B, cF_B = _project_fields_to_streamwise_K_cF_3d(
+        za['L_field'], za['t_field'], za['eps_f_arr'],
+        cfg['tpms_type'], Ny_sim=Ny, Nz_sim=Nz, fluid='B',
+        streamwise_dx=dy_arr, z_dx=dz_arr)
+
+    # 3. SIMPLE instances with P_ref_abs seeding (fluid A compressible)
+    rho_A0 = air_density(T_inA, P_atm_local); mu_A0 = air_viscosity(T_inA)
+    rho_B0 = air_density(T_inB, P_atm_local); mu_B0 = air_viscosity(T_inB)
+    eps_mean = float(np.mean(za['eps_arr']))
+
+    # 1D compressible D-F closed form seed for both fluids:
+    #   P_out² = P_in² − 2·R·T·(μG/K + c_F·G²)·L_flow
+    K_mean_A = float(np.mean(K_A))
+    cF_mean_A = float(np.mean(cF_A))
+    G_A = rho_A0 * u_A
+    C_A = mu_A0 * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
+    P_out_sq_A = P_atm_local ** 2 - 2.0 * R_AIR * T_inA * C_A * L
+    P_ref_A = float(np.sqrt(max(P_out_sq_A, 1.0e4)))
+
+    K_mean_B = float(np.mean(K_B))
+    cF_mean_B = float(np.mean(cF_B))
+    G_B = rho_B0 * u_B
+    C_B = mu_B0 * G_B / max(K_mean_B, 1e-16) + cF_mean_B * G_B * G_B
+    P_out_sq_B = P_atm_local ** 2 - 2.0 * R_AIR * T_inB * C_B * H
+    P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
+
+    sA = SIMPLESolver3D(Lx=H, Ly=L, Lz=D, Nx=Ny, Ny=Nx, Nz=Nz,
+                         rho=rho_A0, mu=mu_A0, T_in=T_inA, v_inlet=u_A,
+                         eps=eps_mean, K_arr=K_A, cF_arr=cF_A,
+                         P_ref_abs=P_ref_A)
+    # Axis swap for fluid A: SIMPLE dx → real dy (cross-stream); dy → real dx (stream)
+    sA.dx = np.ascontiguousarray(dy_arr, dtype=np.float64)
+    sA.dy = np.ascontiguousarray(dx_arr, dtype=np.float64)
+    sA.dz = np.ascontiguousarray(dz_arr, dtype=np.float64)
+
+    sB = SIMPLESolver3D(Lx=L, Ly=H, Lz=D, Nx=Nx, Ny=Ny, Nz=Nz,
+                         rho=rho_B0, mu=mu_B0, T_in=T_inB, v_inlet=u_B,
+                         eps=eps_mean, K_arr=K_B, cF_arr=cF_B,
+                         P_ref_abs=P_ref_B)
+    # Fluid B: SIMPLE dx = real dx; dy = real dy; dz = real dz
+    sB.dx = np.ascontiguousarray(dx_arr, dtype=np.float64)
+    sB.dy = np.ascontiguousarray(dy_arr, dtype=np.float64)
+    sB.dz = np.ascontiguousarray(dz_arr, dtype=np.float64)
+
+    max_iter_simple = int(cfg.get('max_iter_simple', 800))
+    tol_simple = float(cfg.get('tol_simple', 1e-3))
+
+    sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+    sB.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+
+    # 4. Outer SIMPLE ↔ LTNE coupling loop (non-iso + var-ρ)
+    couple = bool(cfg.get('couple_3d', True))
+    max_outer = int(cfg.get('max_outer_3d', 4))
+    outer_tol = float(cfg.get('outer_tol_K_3d', 0.5))
+    alpha_outer = float(cfg.get('alpha_outer_3d', 0.6))
+    max_iter_energy = int(cfg.get('max_iter_energy', 5000))
+
+    rcp_A_field = np.full((Nx, Ny, Nz), rho_A0 * air_cp(T_inA))
+    rcp_B_field = np.full((Nx, Ny, Nz), rho_B0 * air_cp(T_inB))
+
+    Ta = Tb = Ts = None
+    Ta_prev = None
+    outer_iters = 1 if not couple else max_outer
+
+    for outer_it in range(outer_iters):
+        # Cell-centred velocities in real coords (Nx, Ny, Nz)
+        vA_cc = 0.5 * (sA.v[:, :-1, :] + sA.v[:, 1:, :])     # (Ny, Nx, Nz)
+        ucA_real = vA_cc.transpose(1, 0, 2).copy()            # (Nx, Ny, Nz)
+        vcA_real = np.zeros((Nx, Ny, Nz))
+        wcA_real = np.zeros((Nx, Ny, Nz))
+        vB_cc = 0.5 * (sB.v[:, :-1, :] + sB.v[:, 1:, :])     # (Nx, Ny, Nz)
+        vcB_real = -vB_cc[:, ::-1, :].copy()
+        ucB_real = np.zeros((Nx, Ny, Nz))
+        wcB_real = np.zeros((Nx, Ny, Nz))
+
+        Ta, Tb, Ts = solve_full_domain_3d(
+            L, H, D, Nx, Ny, Nz, T_inA, T_inB,
+            za['K_ffA_arr'], za['K_ffB_arr'], za['K_ss_arr'],
+            za['h_vA_arr'], za['h_vB_arr'],
+            rcp_A_field, rcp_B_field, za['eps_arr'],
+            ucA_real, vcA_real, wcA_real,
+            ucB_real, vcB_real, wcB_real,
+            cfg.get('dir_A', 0), cfg.get('dir_B', 3),
+            dx_arr=dx_arr, dy_arr=dy_arr, dz_arr=dz_arr,
+            max_iter=max_iter_energy, tol=0.5,
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            alpha_T=float(cfg.get('alpha_T', 0.7)),
+            alpha_T_s=cfg.get('alpha_T_s'),
+            alpha_T_fA=cfg.get('alpha_T_fA'),
+            alpha_T_fB=cfg.get('alpha_T_fB'))
+
+        if not couple:
+            break
+
+        # Convergence on fluid A T-field (biggest driver of ρ, μ)
+        if Ta_prev is not None:
+            dT_max = float(np.max(np.abs(Ta - Ta_prev)))
+            if dT_max < outer_tol:
+                break
+        Ta_prev = Ta.copy()
+
+        # Rebuild SIMPLE A's rho/mu/mu_eff fields from updated Ta
+        #   Ta real (Nx, Ny, Nz) -> SIMPLE A internal (Ny, Nx, Nz)
+        Ta_sA = Ta.transpose(1, 0, 2).copy()
+        P_abs_sA = sA.P_ref_abs + sA.P
+        rho_A_new = P_abs_sA / (R_AIR * Ta_sA)
+        mu_A_new = air_viscosity(Ta_sA)
+
+        if outer_it > 0:
+            rho_A_mix = alpha_outer * rho_A_new + (1.0 - alpha_outer) * sA.rho_field
+            mu_A_mix = alpha_outer * mu_A_new + (1.0 - alpha_outer) * sA.mu_field
+        else:
+            rho_A_mix = rho_A_new; mu_A_mix = mu_A_new
+
+        sA.rho_field = np.ascontiguousarray(rho_A_mix, dtype=np.float64)
+        sA.mu_field = np.ascontiguousarray(mu_A_mix, dtype=np.float64)
+        sA._mu_eff_field = np.ascontiguousarray(mu_A_mix / sA.eps, dtype=np.float64)
+
+        # Refresh P_ref_abs from the updated mean T
+        T_avg = float(Ta_sA.mean())
+        mu_avg = float(air_viscosity(T_avg))
+        C_avg = mu_avg * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
+        P_out_sq_new = P_atm_local ** 2 - 2.0 * R_AIR * T_avg * C_avg * L
+        sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
+
+        # Re-solve SIMPLE A under new ρ, μ, P_ref_abs
+        sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+
+        # Update LTNE heat capacity fields for next outer iter
+        rcp_A_field = np.ascontiguousarray(
+            alpha_outer * air_density(Ta, P_atm_local) * air_cp(Ta)
+            + (1.0 - alpha_outer) * rcp_A_field, dtype=np.float64)
+        rcp_B_field = np.ascontiguousarray(
+            alpha_outer * air_density(Tb, P_atm_local) * air_cp(Tb)
+            + (1.0 - alpha_outer) * rcp_B_field, dtype=np.float64)
+
+    # 5. Integrals on the actual grid (refined or uniform)
+    cell_vol = dx_arr[:, None, None] * dy_arr[None, :, None] * dz_arr[None, None, :]
+    Q_total = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * cell_vol))
+    dP_A = extract_dP_from_simple_3d(sA)
+    dP_B = extract_dP_from_simple_3d(sB)
+    dP_total = dP_A + dP_B
+    mass = float(np.sum((1.0 - za['eps_arr']) * cfg['rho_s'] * cell_vol))
 
     return -Q_total, dP_total, mass
 
@@ -651,14 +1014,20 @@ def _make_problem(config=None):
     from pymoo.core.problem import Problem
 
     cfg = {**DEFAULT_CONFIG, **(config or {})}
-    n_var = 36
+    dim = int(cfg.get('dim', 2))
     n_obj = 2  # -Q, dP
 
-    # Bounds: L ∈ [4,8], t ∈ [0.3,0.5], alternating
-    xl = np.array([4.0, 0.3] * 18)
-    xu = np.array([8.0, 0.5] * 18)
+    # Bounds: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm alternating per zone
+    if dim == 3:
+        n_var = 108   # 3×3×3 inlet + 3×3×3 outlet, × (L, t)
+        xl = np.array([4.0, 0.3] * 54)
+        xu = np.array([8.0, 0.5] * 54)
+    else:
+        n_var = 36
+        xl = np.array([4.0, 0.3] * 18)
+        xu = np.array([8.0, 0.5] * 18)
 
-    use_richardson = cfg.get('use_richardson', True)
+    use_richardson = cfg.get('use_richardson', True) and dim == 2
 
     class TPMSProblem(Problem):
         def __init__(self):
@@ -666,7 +1035,7 @@ def _make_problem(config=None):
 
         def _evaluate(self, X, out, *args, **kwargs):
             F = np.empty((len(X), n_obj))
-            n_workers = _parallel_workers()
+            n_workers = _auto_max_workers(cfg) if dim == 3 else _parallel_workers()
 
             if n_workers > 1 and len(X) > 1:
                 # Parallel path: each design vector is evaluated in a separate
@@ -683,7 +1052,12 @@ def _make_problem(config=None):
                             _progress['best_Q'] = -Q_neg
             else:
                 # Serial path (THERMONAS_SERIAL=1 or single candidate)
-                eval_fn = evaluate_richardson if use_richardson else evaluate
+                if dim == 3:
+                    eval_fn = evaluate_3d
+                elif use_richardson:
+                    eval_fn = evaluate_richardson
+                else:
+                    eval_fn = evaluate
                 for i, x in enumerate(X):
                     Q_neg, dP, mass = eval_fn(x, cfg)
                     F[i] = [Q_neg, dP]
@@ -793,30 +1167,46 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
     return Q, dP_A + dP_B, 0.0
 
 
+def _solve_single_point_3d(x, cfg, Nx_user, Ny_user, Nz_user):
+    """3D single-point physical solve at forced grid. Wraps evaluate_3d.
+
+    Returns (Q_positive, dP_total, mass) — matches 2D `_solve_single_point`.
+    """
+    cfg_local = {**cfg, 'Nx': int(Nx_user), 'Ny': int(Ny_user), 'Nz': int(Nz_user)}
+    Qneg, dP, mass = evaluate_3d(x, cfg_local)
+    return float(-Qneg), float(dP), float(mass)
+
+
 def reevaluate_pareto(X, config=None, Nx_fine=None, Ny_fine=None,
                       progress_cb=None):
     """Re-evaluate Pareto front with Richardson extrapolation.
 
-    Two grid levels (Nx_fine × Ny_fine and 2× that) for grid-independent Q.
-    ΔP uses f-Re integration (grid-independent).
+    Two grid levels (coarse and ×2 fine) for grid-independent Q.
+    ΔP uses D-F SIMPLE (grid-independent).
+
+    cfg['dim']=3 → route to `_solve_single_point_3d` with (Nx, Ny, Nz).
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
-    if Nx_fine is None or Ny_fine is None:
-        Nx_fine, Ny_fine = _resolve_grid(cfg, alpha=0.4)
-    Nx_c, Ny_c = Nx_fine, Ny_fine
-    Nx_f, Ny_f = Nx_fine * 2, Ny_fine * 2
+    dim = int(cfg.get('dim', 2))
 
     N = len(X)
     F_fine = np.empty((N, 2))
-    n_workers = _parallel_workers()
+    n_workers = _auto_max_workers(cfg) if dim == 3 else _parallel_workers()
 
-    if n_workers > 1 and N > 1:
-        # Parallel path: evaluate all Pareto points at both grid levels using
-        # _solve_single_point_worker (module-level, picklable on Windows spawn).
-        # Coarse and fine passes run as two separate pool.map calls so that each
-        # task dict is a plain tuple with no closure state.
+    if dim == 3:
+        Nx_c, Ny_c, Nz_c = _resolve_grid_3d(cfg, alpha=0.4)
+        Nx_f, Ny_f, Nz_f = Nx_c * 2, Ny_c * 2, Nz_c * 2
+        coarse_args = [(x, cfg, Nx_c, Ny_c, Nz_c) for x in X]
+        fine_args   = [(x, cfg, Nx_f, Ny_f, Nz_f) for x in X]
+    else:
+        if Nx_fine is None or Ny_fine is None:
+            Nx_fine, Ny_fine = _resolve_grid(cfg, alpha=0.4)
+        Nx_c, Ny_c = Nx_fine, Ny_fine
+        Nx_f, Ny_f = Nx_fine * 2, Ny_fine * 2
         coarse_args = [(x, cfg, Nx_c, Ny_c) for x in X]
         fine_args   = [(x, cfg, Nx_f, Ny_f) for x in X]
+
+    if n_workers > 1 and N > 1:
         with concurrent.futures.ProcessPoolExecutor(
                 max_workers=min(n_workers, N)) as pool:
             coarse_results = list(pool.map(_solve_single_point_worker, coarse_args))
@@ -828,10 +1218,9 @@ def reevaluate_pareto(X, config=None, Nx_fine=None, Ny_fine=None,
             if progress_cb:
                 progress_cb(idx + 1, N)
     else:
-        # Serial path
         for idx, x in enumerate(X):
-            Q_c, dP_c, _ = _solve_single_point(x, cfg, Nx_c, Ny_c)
-            Q_f, dP_f, _ = _solve_single_point(x, cfg, Nx_f, Ny_f)
+            Q_c, dP_c, _ = _solve_single_point_worker(coarse_args[idx])
+            Q_f, dP_f, _ = _solve_single_point_worker(fine_args[idx])
             F_fine[idx] = [-(2.0 * Q_f - Q_c), dP_f]
             if progress_cb:
                 progress_cb(idx + 1, N)
@@ -840,13 +1229,24 @@ def reevaluate_pareto(X, config=None, Nx_fine=None, Ny_fine=None,
 
 
 def _save_pareto_csv(path, X, F):
-    """Save current Pareto front to CSV."""
+    """Save Pareto front to CSV. Auto-detects 2D (36-dim) vs 3D (108-dim) schema."""
+    n_var = X.shape[1] if hasattr(X, 'shape') else len(X[0])
     with open(path, 'w') as f:
-        cols = ['Q_total_W_m', 'dP_total_Pa']
-        for i in range(18):
-            zone = 'inlet' if i < 9 else 'outlet'
-            idx = i if i < 9 else i - 9
-            cols += [f'{zone}_{idx}_L_mm', f'{zone}_{idx}_t_mm']
+        cols = ['Q_total', 'dP_total_Pa']
+        if n_var == 108:
+            # 3D: inlet 3×3×3 + outlet 3×3×3, × (L, t)
+            for side in ('inlet', 'outlet'):
+                for iy in range(3):
+                    for ix in range(3):
+                        for iz in range(3):
+                            zi = f"{side}_iy{iy}_ix{ix}_iz{iz}"
+                            cols += [f'{zi}_L_mm', f'{zi}_t_mm']
+        else:
+            # 2D default 36-dim
+            for i in range(18):
+                zone = 'inlet' if i < 9 else 'outlet'
+                idx = i if i < 9 else i - 9
+                cols += [f'{zone}_{idx}_L_mm', f'{zone}_{idx}_t_mm']
         f.write(','.join(cols) + '\n')
         for i in range(len(X)):
             row = [f"{-F[i,0]:.2f}", f"{F[i,1]:.2f}"]
@@ -988,13 +1388,21 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
 
     # Post-optimization Pareto re-evaluation at fine grid
     if cfg_final.get('reeval_pareto', True):
+        dim_final = int(cfg_final.get('dim', 2))
         if 'reeval_Nx' in cfg_final and 'reeval_Ny' in cfg_final:
             Nx_re, Ny_re = cfg_final['reeval_Nx'], cfg_final['reeval_Ny']
+            Nz_re = cfg_final.get('reeval_Nz')
+        elif dim_final == 3:
+            Nx_re, Ny_re, Nz_re = _resolve_grid_3d(cfg_final, alpha=0.4)
         else:
             Nx_re, Ny_re = _resolve_grid(cfg_final, alpha=0.4)
+            Nz_re = None
         n_pareto = len(res.X)
         if verbose:
-            print(f"[Optimizer] Re-evaluating {n_pareto} Pareto solutions at {Nx_re}×{Ny_re}...")
+            if dim_final == 3:
+                print(f"[Optimizer] Re-evaluating {n_pareto} Pareto at 3D {Nx_re}×{Ny_re}×{Nz_re}...")
+            else:
+                print(f"[Optimizer] Re-evaluating {n_pareto} Pareto at {Nx_re}×{Ny_re}...")
 
         _progress['phase'] = 'reeval'
         _progress['reeval_total'] = n_pareto
@@ -1009,8 +1417,9 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
         result['F'] = F_fine
 
         if verbose:
-            print(f"  Fine Q range:  [{-F_fine[:,0].max():.0f}, {-F_fine[:,0].min():.0f}] W/m")
-            print(f"  Fine dP range: [{F_fine[:,1].min():.0f}, {F_fine[:,1].max():.0f}] Pa")
+            q_unit = 'W' if dim_final == 3 else 'W/m'
+            print(f"  Fine Q range:  [{-F_fine[:,0].max():.2f}, {-F_fine[:,0].min():.2f}] {q_unit}")
+            print(f"  Fine dP range: [{F_fine[:,1].min():.2f}, {F_fine[:,1].max():.2f}] Pa")
 
     if verbose:
         print(f"  Results in: {save_dir}")
@@ -1020,8 +1429,17 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
 
 # ── Visualization ────────────────────────────────────────────
 
-def plot_pareto(result, save_path=None):
-    """Plot Pareto front from optimization result."""
+def plot_pareto(result, save_path=None, baselines=None, title=None):
+    """Plot Pareto front from optimization result.
+
+    Parameters
+    ----------
+    result : dict — output of run_optimization, must contain 'F' (N, 2)
+    save_path : str, optional — if given, saves PNG at this path
+    baselines : dict, optional — {label: {'Q': float, 'dP': float}, ...}
+        Plots each baseline as a labeled marker for reference.
+    title : str, optional — plot title; defaults to "Pareto Front: Q vs ΔP"
+    """
     import matplotlib.pyplot as plt
 
     F = result['F']
@@ -1029,17 +1447,91 @@ def plot_pareto(result, save_path=None):
     dP = F[:, 1]
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    sc = ax.scatter(dP, Q, c=Q/dP, cmap='viridis', s=40, edgecolors='#333', linewidths=0.5)
+    sc = ax.scatter(dP, Q, c=Q/dP, cmap='viridis', s=40,
+                    edgecolors='#333', linewidths=0.5, label='Pareto front')
     ax.set_xlabel('Total Pressure Drop ΔP [Pa]', fontsize=12)
     ax.set_ylabel('Total Heat Transfer Q [W/m]', fontsize=12)
-    ax.set_title('Pareto Front: Q vs ΔP', fontsize=14, fontweight='bold')
+    ax.set_title(title or 'Pareto Front: Q vs ΔP',
+                 fontsize=14, fontweight='bold')
     cb = fig.colorbar(sc, ax=ax, shrink=0.8)
     cb.set_label('Q/ΔP efficiency [W/m/Pa]', fontsize=10)
+
+    if baselines:
+        markers = ['s', '^', 'D', 'v', 'P', 'X']
+        colors = ['tab:orange', 'tab:green', 'tab:red',
+                  'tab:purple', 'tab:brown', 'tab:pink']
+        for i, (label, b) in enumerate(baselines.items()):
+            ax.scatter(b['dP'], b['Q'],
+                       marker=markers[i % len(markers)],
+                       c=colors[i % len(colors)],
+                       s=140, edgecolor='k', linewidths=1.0,
+                       label=label, zorder=5)
+        ax.legend(loc='best', fontsize=10)
+
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
 
     if save_path:
         fig.savefig(save_path, dpi=200, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    return fig
+
+
+def plot_design_field(x, config=None, title=None, save_path=None):
+    """Plot L(x,y) and t(x,y) sigmoid-continuous fields for a decision vector.
+
+    Parameters
+    ----------
+    x : array-like (36,) — decision variable from evaluate() / Pareto front
+    config : dict — same as passed to evaluate() / run_optimization
+    title : str, optional — figure suptitle
+    save_path : str, optional — if given, saves PNG at this path
+    """
+    import matplotlib.pyplot as plt
+    from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
+
+    cfg = {**DEFAULT_CONFIG, **(config or {})}
+    Nx, Ny = _resolve_grid(cfg)
+    lut = get_geometry_lut(cfg['tpms_type'])
+    dx = np.full(Nx, cfg['L_domain'] / Nx, dtype=np.float64)
+    dy = np.full(Ny, cfg['H_domain'] / Ny, dtype=np.float64)
+    za = build_continuous_arrays(
+        x, cfg['L0'], cfg['t0'],
+        cfg.get('y_trans_inlet', cfg.get('y_trans', 0.2)),
+        cfg.get('y_trans_outlet', cfg.get('y_trans', 0.2)),
+        Nx, Ny, cfg['L_domain'], cfg['H_domain'],
+        cfg['tpms_type'], cfg['k_s'],
+        cfg['u_A'], cfg['u_B'], cfg['T_inA'], cfg['T_inB'],
+        lut,
+        sigmoid_width_y=cfg.get('sigmoid_width_y', 0.02),
+        sigmoid_width_x=cfg.get('sigmoid_width_x', 0.05),
+        fix_L=cfg.get('fix_L', False),
+        fix_t=cfg.get('fix_t', False),
+        opt_axis=cfg.get('opt_axis', 'y'),
+        dx_arr=dx, dy_arr=dy)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+    extent = [0, cfg['L_domain'] * 1000, 0, cfg['H_domain'] * 1000]
+
+    im1 = ax1.imshow(za['L_field'].T, origin='lower', aspect='auto',
+                     cmap='viridis', extent=extent)
+    ax1.set_title(f"L [mm]  (range {za['L_field'].min():.2f}–{za['L_field'].max():.2f})")
+    ax1.set_xlabel('x [mm]'); ax1.set_ylabel('y [mm]')
+    plt.colorbar(im1, ax=ax1)
+
+    im2 = ax2.imshow(za['t_field'].T, origin='lower', aspect='auto',
+                     cmap='plasma', extent=extent)
+    ax2.set_title(f"t [mm]  (range {za['t_field'].min():.3f}–{za['t_field'].max():.3f})")
+    ax2.set_xlabel('x [mm]'); ax2.set_ylabel('y [mm]')
+    plt.colorbar(im2, ax=ax2)
+
+    if title:
+        fig.suptitle(title)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"Saved: {save_path}")
 
     return fig

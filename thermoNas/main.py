@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.mainui import Ui_MainWindow
-from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, compute_pressure_field, adaptive_grid
+from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
 from solvers.simple_solver import SIMPLESolver
 from solvers.solve_full import solve_full_domain
 from ui.matplotlib_canvas import MatplotlibCanvas, _label_axes
@@ -145,6 +145,9 @@ class Main_Menu(QMainWindow):
         return canvas_wheel_zoom(self, event, canvas, key)
 
     def _switch_tab(self, tab: str):
+        # Lazy instantiate PyVistaQt panel on first 3D tab click
+        if tab == '3d' and self.canvas_3d is None:
+            self._lazy_init_3d_panel()
         self._active_tab = tab
         tabs = [
             ('temp',   self.btn_tab_temp),
@@ -152,13 +155,17 @@ class Main_Menu(QMainWindow):
             ('vel',    self.btn_tab_vel),
             ('layout', self.btn_tab_layout),
             ('pareto', self.btn_tab_pareto),
+            ('3d',     self.btn_tab_3d),
         ]
         for key, btn in tabs:
             card = self._canvas_cards.get(key)
             if key == tab:
-                # Show if: has compute results, or this canvas was drawn individually
+                # 3D tab is self-populating (has its own Load button) — always visible
+                # when selected, regardless of compute state.
                 drawn = getattr(self, '_drawn_tabs', set())
-                if card and (getattr(self, '_has_results', False) or key in drawn):
+                if card and (key == '3d'
+                             or getattr(self, '_has_results', False)
+                             or key in drawn):
                     card.show()
                 btn.setStyleSheet(self._PTAB_ON)
             else:
@@ -392,14 +399,13 @@ class Main_Menu(QMainWindow):
             re_style = _VAL_WARN
             re_tag = "  (> 30000!)"
 
-        self.statusBar().showMessage(f"Fluid {fluid} filled.  Re={Re:.0f}{re_tag}  Nu={r['Nu']:.2f}  f={r['f']:.4f}", 5000)
+        self.statusBar().showMessage(f"Fluid {fluid} filled.  Re={Re:.0f}{re_tag}  Nu={r['Nu']:.2f}  dP/L={r['dP_per_L']:.1f} Pa/m", 5000)
         if fluid == 'A':
             self._mu_A, self._h_vA, self._K_ffA, self._rho_A = r['mu'], h_v_vol, r['K_ff'], r['rho']
             self._v_rhoA.setText(f"{r['rho']:.4f}")
             self._v_ReA.setText(f"{Re:.1f}{re_tag}")
             self._v_ReA.setStyleSheet(re_style)
             self._v_NuA.setText(f"{r['Nu']:.4f}")
-            self._v_fA.setText(f"{r['f']:.4f}")
             self._v_dPLA.setText(f"{r['dP_per_L']:.1f}")
         else:
             self._mu_B, self._h_vB, self._K_ffB, self._rho_B = r['mu'], h_v_vol, r['K_ff'], r['rho']
@@ -407,7 +413,6 @@ class Main_Menu(QMainWindow):
             self._v_ReB.setText(f"{Re:.1f}{re_tag}")
             self._v_ReB.setStyleSheet(re_style)
             self._v_NuB.setText(f"{r['Nu']:.4f}")
-            self._v_fB.setText(f"{r['f']:.4f}")
             self._v_dPLB.setText(f"{r['dP_per_L']:.1f}")
 
     def auto_fill_fluid_a(self): self._auto_fill_fluid('A')
@@ -644,6 +649,11 @@ class Main_Menu(QMainWindow):
             self._run_polygon_calculation()
             return
 
+        # 3D dispatch: uniform MVP path (no zoning, Shanghai-style uniform TPMS)
+        if hasattr(self, 'combo_dim') and self.combo_dim.currentIndex() == 1:
+            self._run_calculation_3d()
+            return
+
         # Validate inputs BEFORE launching thread (Qt-safe on main thread)
         if self._K_ffA is None:
             QMessageBox.warning(self, "Missing Input",
@@ -707,6 +717,130 @@ class Main_Menu(QMainWindow):
         return finalize_plots(self)
 
     # ─────────────────────────────────────────────────────────
+    #  3D compute pipeline (uniform MVP)
+    # ─────────────────────────────────────────────────────────
+    def closeEvent(self, event):
+        """Tear down PyVistaQt GL context before Qt destroys the widgets."""
+        panel = getattr(self, 'canvas_3d', None)
+        if panel is not None:
+            try:
+                panel.cleanup()
+            except Exception:
+                pass
+        super().closeEvent(event)
+
+    def _lazy_init_3d_panel(self):
+        """Create PyVistaQt panel on first 3D tab click. ~1-2 s hit amortised."""
+        if getattr(self, '_vis3d_import_error', None):
+            return      # Offscreen / disabled — leave placeholder
+        try:
+            from ui.panel_vis_3d import ThreeDVisPanel
+            panel = ThreeDVisPanel()
+        except Exception as e:
+            self._vis3d_import_error = str(e)
+            return
+        # Swap placeholder → real panel in the card layout
+        card = self._canvas_cards.get('3d')
+        if card is None:
+            return
+        placeholder = getattr(self, '_canvas_3d_placeholder', None)
+        lay = card.layout()
+        if placeholder is not None and lay is not None:
+            lay.replaceWidget(placeholder, panel)
+            placeholder.deleteLater()
+        self._canvas_3d_placeholder = None
+        self.canvas_3d = panel
+        self.statusBar().showMessage("3D view initialised.", 2000)
+
+    def _run_calculation_3d(self):
+        """Threaded 3D solve → auto-switch to 3D View tab on success."""
+        # Lazy-init 3D panel if user never clicked 3D tab before
+        if self.canvas_3d is None:
+            self._lazy_init_3d_panel()
+        if self.canvas_3d is None:
+            err = getattr(self, '_vis3d_import_error',
+                          'PyVistaQt unavailable (headless or missing pyvistaqt)')
+            QMessageBox.warning(
+                self, "3D View Unavailable",
+                f"The embedded 3D viewer is not available:\n\n{err}\n\n"
+                "Run `pip install pyvistaqt` or use the standalone script\n"
+                "`python -u ui/demo_vis_3d_interactive.py` instead.")
+            return
+
+        # Large-grid warning (wall-refine expands cells ~6-9x)
+        try:
+            Nx_u = int(self.le_Nx.text()); Ny_u = int(self.le_Ny.text())
+            Nz_u = int(self.le_Nz.text())
+            est_cells = (Nx_u + 16) * (Ny_u + 16) * (Nz_u + 16)
+        except Exception:
+            est_cells = 0
+        if est_cells > 100_000:
+            reply = QMessageBox.question(
+                self, "Large 3D Grid",
+                f"Estimated refined cells: ~{est_cells:,}\n\n"
+                f"With user grid {Nx_u}x{Ny_u}x{Nz_u}, wall-refine expands to "
+                f"~{Nx_u+16}x{Ny_u+16}x{Nz_u+16}. This can take many minutes.\n\n"
+                "Suggested 3D defaults: Nx=30, Ny=20, Nz=5 (~30 s).\n\n"
+                "Proceed anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+        self.progress.show()
+        self.progress.setValue(10)
+        self.statusBar().showMessage("Computing 3D (uniform)...")
+        QApplication.processEvents()
+
+        import threading
+        from PySide6.QtCore import QTimer
+
+        self._compute_progress = 10
+
+        def _worker():
+            try:
+                from runs.run_calculation_3d import run_calculation_3d_inner
+                run_calculation_3d_inner(self)
+                self._compute_error = None
+            except Exception as e:
+                self._compute_error = str(e)
+                import traceback; traceback.print_exc()
+
+        self._compute_error = None
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+        timer = QTimer()
+        def _check():
+            if t.is_alive():
+                self.progress.setValue(min(90, self._compute_progress))
+                return
+            timer.stop()
+            if self._compute_error:
+                self.progress.hide()
+                QMessageBox.critical(self, "3D Compute Error", self._compute_error)
+            else:
+                from runs.run_calculation_3d import finalize_plots_3d
+                finalize_plots_3d(self)
+                self.progress.setValue(100)
+                from PySide6.QtCore import QTimer as QT
+                QT.singleShot(500, self.progress.hide)
+                self._has_results = True
+                drawn = getattr(self, '_drawn_tabs', set())
+                # All 2D canvases also populated via mid-z slice — mark drawn
+                for k in ('3d', 'temp', 'pres', 'vel'):
+                    drawn.add(k)
+                self._drawn_tabs = drawn
+                self._switch_tab('3d')
+                res = getattr(self, '_result_3d', {})
+                self.statusBar().showMessage(
+                    f"3D done — Q={res.get('Q', 0):.1f} W  dP={res.get('dP', 0):.0f} Pa",
+                    6000,
+                )
+        timer.timeout.connect(_check)
+        timer.start(200)
+
+    # ─────────────────────────────────────────────────────────
     #  Polygon domain solver
     # ─────────────────────────────────────────────────────────
     def _run_polygon_calculation(self):
@@ -763,8 +897,35 @@ class Main_Menu(QMainWindow):
 
 
 # ── Entry point ───────────────────────────────────────────────
+def _apply_app_font(app):
+    """Pick JetBrainsMono Nerd Font if available; fall back gracefully.
+
+    Uses only `QApplication.setFont` — avoids global `* { font-family }` QSS
+    rule which triggers a `polish()` cascade across every child widget
+    and causes noticeable lag on compute-geometry / auto-fill / run buttons.
+    Widgets without explicit `font-family` in their QSS inherit this default.
+    """
+    from PySide6.QtGui import QFont, QFontDatabase
+    candidates = [
+        "JetBrainsMono Nerd Font",
+        "JetBrainsMono NF",
+        "JetBrainsMono Nerd Font Mono",
+        "JetBrains Mono",
+        "Consolas",
+    ]
+    families = set(QFontDatabase.families())
+    chosen = next((n for n in candidates if n in families), None)
+    if chosen is None:
+        print(f"[font] none of {candidates} found; system default")
+        return None
+    app.setFont(QFont(chosen, 10))
+    print(f"[font] using {chosen!r}")
+    return chosen
+
+
 if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
+    _apply_app_font(app)
     window = Main_Menu()
     window.show()
     sys.exit(app.exec())
