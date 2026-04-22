@@ -25,7 +25,6 @@ from ui.matplotlib_canvas import MatplotlibCanvas, _label_axes
 from ui.theme import _THEMES, _build_styles
 
 # Theme dict and _build_styles moved to theme.py (Task B.3).
-# Light-only as of D-1 (dark mode + toggle removed).
 
 _S = _build_styles()
 _BG = _S['BG']; _LBL = _S['LBL']; _VAL = _S['VAL']; _VAL_WARN = _S['VAL_WARN']
@@ -63,7 +62,7 @@ class Main_Menu(QMainWindow):
         # App icon
         import os
         from PySide6.QtGui import QIcon
-        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings_options_preferences_gears_icon_124617.ico')
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sjtulogosilver.png')
         if os.path.exists(_icon_path):
             self.setWindowIcon(QIcon(_icon_path))
 
@@ -92,10 +91,80 @@ class Main_Menu(QMainWindow):
         self._user_edited_grid = False
         for le in (self.le_Nx, self.le_Ny, self.le_Nz):
             le.textEdited.connect(self._mark_grid_edited)
+        self._setup_shortcuts()
         self._schedule_3d_preinit()
 
     def _mark_grid_edited(self, _txt=None):
         self._user_edited_grid = True
+
+    def _reset_defaults(self):
+        """Reset all parameters to Shanghai Electric preset."""
+        self._user_edited_grid = False
+        self._apply_shanghai_defaults()
+        self.statusBar().showMessage("Parameters reset to Shanghai Electric preset.", 5000)
+
+    def _setup_shortcuts(self):
+        from PySide6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.run_calculation)
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self._reset_defaults)
+        QShortcut(QKeySequence("Ctrl+1"), self).activated.connect(lambda: self._switch_tab('layout'))
+        QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(lambda: self._switch_tab('temp'))
+        QShortcut(QKeySequence("Ctrl+3"), self).activated.connect(lambda: self._switch_tab('pres'))
+        QShortcut(QKeySequence("Ctrl+4"), self).activated.connect(lambda: self._switch_tab('vel'))
+        QShortcut(QKeySequence("Ctrl+5"), self).activated.connect(lambda: self._switch_tab('3d'))
+
+    def _export_results(self):
+        """Export last compute results to CSV + optional NPZ."""
+        import os, csv
+        res_3d = getattr(self, '_result_3d', None)
+        has_2d = getattr(self, '_has_results_2d', False)
+        has_3d = getattr(self, '_has_results_3d', False)
+        if not has_2d and not has_3d:
+            QMessageBox.information(self, "No Results",
+                "Run Compute first to generate exportable results.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Results", "results.csv",
+            "CSV (*.csv);;All Files (*)")
+        if not path:
+            return
+        try:
+            rows = []
+            if res_3d is not None:
+                rows.append(["Q [W]", f"{res_3d.get('Q', 0):.4f}"])
+                rows.append(["dP_A [Pa]", f"{res_3d.get('dP', 0):.2f}"])
+                rows.append(["dP_B [Pa]", f"{res_3d.get('dP_B', 0):.2f}"])
+                rows.append(["T_inA [K]", f"{res_3d.get('T_in', 0):.2f}"])
+                rows.append(["u_A [m/s]", f"{res_3d.get('u_A', 0):.4f}"])
+                Ta = res_3d.get('Ta')
+                if Ta is not None:
+                    rows.append(["Ta_min [K]", f"{float(Ta.min()):.2f}"])
+                    rows.append(["Ta_max [K]", f"{float(Ta.max()):.2f}"])
+                    rows.append(["Grid Nx", str(Ta.shape[0])])
+                    rows.append(["Grid Ny", str(Ta.shape[1])])
+                    rows.append(["Grid Nz", str(Ta.shape[2])])
+                rows.append(["Lx [m]", f"{res_3d.get('Lx', 0):.6f}"])
+                rows.append(["Ly [m]", f"{res_3d.get('Ly', 0):.6f}"])
+                rows.append(["Lz [m]", f"{res_3d.get('Lz', 0):.6f}"])
+            with open(path, 'w', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(["Parameter", "Value"])
+                w.writerows(rows)
+            # Optional: save 3D fields as NPZ alongside
+            npz_path = os.path.splitext(path)[0] + '_fields.npz'
+            if res_3d is not None:
+                save_dict = {}
+                for k in ('Ta', 'Tb', 'Ts', 'vmag', 'P_kPa', 'L_mm',
+                          'dx', 'dy', 'dz'):
+                    v = res_3d.get(k)
+                    if v is not None:
+                        save_dict[k] = v
+                if save_dict:
+                    import numpy as _np_exp
+                    _np_exp.savez_compressed(npz_path, **save_dict)
+            self.statusBar().showMessage(f"Exported: {path}", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
 
     # ─────────────────────────────────────────────────────────
     #  Shanghai presets + deferred 3D init

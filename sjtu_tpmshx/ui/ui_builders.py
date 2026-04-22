@@ -77,13 +77,39 @@ def build_ui(window):
     header_row = QHBoxLayout(header_widget)
     header_row.setContentsMargins(8, 4, 8, 4)
     header_row.setSpacing(8)
+    # SJTU banner (横版校徽+校名) — left side of header
+    import os as _os_hdr
+    from PySide6.QtGui import QPixmap
+    _banner_path = _os_hdr.path.join(
+        _os_hdr.path.dirname(_os_hdr.path.dirname(_os_hdr.path.abspath(__file__))),
+        'sjtubannerred.png')
+    if _os_hdr.path.exists(_banner_path):
+        banner_lbl = QLabel()
+        banner_lbl.setStyleSheet("background:transparent; border:none; padding:0;")
+        _px = QPixmap(_banner_path).scaledToHeight(
+            32, Qt.TransformationMode.SmoothTransformation)
+        banner_lbl.setPixmap(_px)
+        banner_lbl.setFixedSize(_px.width(), _px.height())
+        header_row.addWidget(banner_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_row.addSpacing(12)
     hdr = QLabel("SJTU-TPMSHX")
     hdr.setStyleSheet(
         "background:transparent; color:white; font-size:11pt;"
         "font-weight:bold; border:none; padding:0;")
-    hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    hdr.setAlignment(Qt.AlignmentFlag.AlignVCenter)
     header_row.addWidget(hdr, 0)
     header_row.addStretch(1)
+    btn_reset = QPushButton("\u21ba  Reset")
+    btn_reset.setFixedHeight(32)
+    btn_reset.setFixedWidth(100)
+    btn_reset.setStyleSheet(
+        "QPushButton{background:rgba(120,130,140,200); border:1px solid rgba(160,165,170,200);"
+        "border-radius:5px; color:white; font-weight:bold; font-size:10pt;}"
+        "QPushButton:hover{background:rgba(140,150,160,220);}")
+    btn_reset.setToolTip("Reset all parameters to Shanghai Electric preset (Ctrl+Shift+R)")
+    btn_reset.clicked.connect(window._reset_defaults)
+    header_row.addWidget(btn_reset, 0)
+    header_row.addSpacing(6)
     btn_run = QPushButton("\u25b6  Compute")
     btn_run.setFixedHeight(32)
     btn_run.setFixedWidth(160)
@@ -93,6 +119,17 @@ def build_ui(window):
         "QPushButton:hover{background:rgba(104,150,73,240);}")
     btn_run.clicked.connect(window.run_calculation)
     header_row.addWidget(btn_run, 0)
+    header_row.addSpacing(6)
+    btn_export = QPushButton("Export")
+    btn_export.setFixedHeight(32)
+    btn_export.setFixedWidth(80)
+    btn_export.setStyleSheet(
+        "QPushButton{background:rgba(68,114,196,200); border:1px solid rgba(100,150,220,200);"
+        "border-radius:5px; color:white; font-weight:bold; font-size:10pt;}"
+        "QPushButton:hover{background:rgba(88,134,216,220);}")
+    btn_export.setToolTip("Export results (CSV + NPZ) to file")
+    btn_export.clicked.connect(window._export_results)
+    header_row.addWidget(btn_export, 0)
     root.addWidget(header_widget, 0)
 
     # Splitter: param_tabs 35% / canvas_area 65%
@@ -510,6 +547,14 @@ def build_page_zones(window):
     window.chk_zones = QCheckBox("Enable zone partitioning")
     window.chk_zones.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:9pt; background:transparent;")
     window.chk_zones.setChecked(False)
+    # Hide zone table + controls when unchecked (saves vertical space on small screens)
+    def _toggle_zone_table(checked):
+        for w_z in (window.zone_table, nz_row, window.combo_zone_axis):
+            try:
+                w_z.setVisible(checked)
+            except Exception:
+                pass
+    window.chk_zones.toggled.connect(_toggle_zone_table)
     window.combo_zone_axis = QComboBox()
     window.combo_zone_axis.addItems(["Along Y", "Along X", "Grid Y\u00d7X"])
     window.combo_zone_axis.setFixedHeight(22)
@@ -560,6 +605,11 @@ def build_page_zones(window):
     window.zone_table.setItemDelegate(_main_mod._SelectAllDelegate(window.zone_table))
     window._zone_init_1d(3)
     g_zone.addWidget(window.zone_table, 2, 0, 1, 2)
+
+    # Initially hide zone table (checkbox unchecked)
+    window.zone_table.setVisible(False)
+    nz_row.setVisible(False)
+    window.combo_zone_axis.setVisible(False)
 
     # Edit triggers: always allow editing (checkbox only controls whether zones are used in solver)
     window.zone_table.setEditTriggers(

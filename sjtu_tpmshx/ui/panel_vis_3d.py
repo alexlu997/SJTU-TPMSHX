@@ -708,7 +708,7 @@ class ThreeDVisPanel(QWidget):
                 if abs(hi - lo) < 1e-12:
                     hi = lo + 1.0
                 pw = vtkPiecewiseFunction()
-                pw.AddPoint(lo, 0.0)
+                pw.AddPoint(lo, min(0.05, self._opacity))
                 pw.AddPoint(hi, self._opacity)
                 self._volume_actor.GetProperty().SetScalarOpacity(pw)
                 self.plotter.render()
@@ -850,31 +850,77 @@ class ThreeDVisPanel(QWidget):
                 pass
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
-        # Opacity: PyVista `add_volume` accepts a flat list of opacity values
-        # in [0, 1], interpreted as a piecewise-linear transfer function
-        # sampled uniformly across `clim`. Ramp 0 → self._opacity so low
-        # values stay transparent (see-through) and high values peak at the
-        # slider setting. (Previous tuple-list form silently rendered zero
-        # opacity and made the cube invisible.)
-        opacity_list = [0.0, self._opacity]
+        # Opacity ramp: minimum 0.05 (not 0) so the lowest-value voxels still
+        # carry faint color instead of becoming fully transparent = white.
+        # This keeps the volume colorbar consistent with the 2D matplotlib
+        # colorbar where every cmap level is solid.
+        op_lo = min(0.05, self._opacity)   # 0% slider → truly invisible
+        opacity_list = [op_lo, self._opacity]
         try:
             self._volume_actor = pl.add_volume(
                 self._grid, scalars=self._field,
                 cmap=meta['cmap'], clim=clim,
                 opacity=opacity_list, shade=False,
                 name='main_volume',
-                scalar_bar_args={
-                    'title': meta['title'],
-                    'n_labels': 5, 'vertical': True,
-                    'position_x': 0.905, 'position_y': 0.12,
-                    'width': 0.045, 'height': 0.76,
-                    'fmt': meta['fmt'],
-                    'title_font_size': 12, 'label_font_size': 11,
-                    'color': '#1a1f24', 'font_family': 'courier',
-                    'bold': False, 'italic': False,
-                    'shadow': False, 'outline': False,
-                },
+                show_scalar_bar=False,     # suppress volume's built-in bar
             )
+            # Refine ray-cast sampling for smoother colour transitions.
+            # Default VTK sample distance = ~1 cell diagonal → visible
+            # colour banding. Sub-cell sampling (0.25× min cell) gives
+            # trilinear-interpolated smooth gradients matching 2D contourf.
+            try:
+                vol_mapper = self._volume_actor.GetMapper()
+                min_cell = min(float(self._dx_mm.min()),
+                               float(self._dy_mm.min()),
+                               float(self._dz_mm.min()))
+                vol_mapper.SetAutoAdjustSampleDistances(False)
+                vol_mapper.SetSampleDistance(max(0.01, min_cell * 0.25))
+            except Exception:
+                pass
+            # Add a separate opaque scalar bar so the colorbar doesn't
+            # inherit the volume's opacity ramp (which washes out low values).
+            # Build the LUT from PyVista/VTK (not matplotlib — VTK has
+            # 'rainbow' but matplotlib does not).
+            n_lut = 256
+            lo, hi = clim
+            try:
+                import vtk as _vtk
+                _lut = _vtk.vtkLookupTable()
+                _lut.SetNumberOfTableValues(n_lut)
+                _lut.SetRange(lo, hi)
+                _lut.SetHueRange(0.667, 0.0)   # VTK rainbow: blue→red
+                _lut.Build()
+                # Force alpha=1 on every entry
+                for _i in range(n_lut):
+                    r, g, b, _a = _lut.GetTableValue(_i)
+                    _lut.SetTableValue(_i, r, g, b, 1.0)
+                _lut.Build()
+                pl.add_scalar_bar(
+                    title=meta['title'],
+                    n_labels=5, vertical=True,
+                    position_x=0.905, position_y=0.12,
+                    width=0.045, height=0.76,
+                    fmt=meta['fmt'],
+                    title_font_size=12, label_font_size=11,
+                    color='#1a1f24', font_family='courier',
+                    bold=False, italic=False,
+                    shadow=False, outline=False,
+                )
+                # Overwrite the plotter's active scalar bar LUT
+                if pl.mapper is not None:
+                    pl.mapper.SetLookupTable(_lut)
+            except Exception:
+                # Fallback: let PyVista default render the bar
+                pl.add_scalar_bar(
+                    title=meta['title'],
+                    n_labels=5, vertical=True,
+                    position_x=0.905, position_y=0.12,
+                    width=0.045, height=0.76,
+                    fmt=meta['fmt'],
+                    title_font_size=12, label_font_size=11,
+                    color='#1a1f24', font_family='courier',
+                )
+
         except Exception as e:
             # GPU/VTK volume rendering may fail on some driver combos; fall
             # back to an outlined bounding box + user slice (if any).

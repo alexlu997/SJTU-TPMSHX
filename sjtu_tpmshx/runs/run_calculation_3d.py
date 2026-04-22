@@ -1,7 +1,7 @@
 """run_calculation_3d.py — 3D compute pipeline for SJTU-TPMSHX UI.
 
 Mirrors `runs.run_calculation` (2D) but dispatches the 3D stack:
-    SIMPLESolver3D (fluid A, compressible) + Tb-prescribed (water frozen)
+    SIMPLESolver3D (fluid A + B, both air, compressible) + LTNE 3-temp coupling
     + solve_full_domain_3d (3D LTNE) + outer non-iso coupling.
 
 MVP (2026-04-20): uniform geometry only (no zoning from UI). Mirrors
@@ -79,6 +79,9 @@ _ALPHA_T = 0.6
 def run_calculation_3d_inner(window):
     """Phase 1: parse inputs → build fields → solve → store."""
     cfg = _parse_inputs(window)
+    def _prog(pct):
+        window._compute_progress = pct
+    cfg['_progress_cb'] = _prog
     result = _run_3d_stack(cfg)
     window._result_3d = result
     # Fill legacy result labels (best-effort; 2D UI still reads these)
@@ -675,19 +678,24 @@ def _run_3d_stack(cfg):
         wcB = np.zeros((Nx, Ny, Nz))
         Tb_presc = np.full((Nx, Ny, Nz), T_inB, dtype=np.float64)
 
-    # LTNE inputs
+    # LTNE inputs — both fluids are air (same property functions).
+    # Future: when water / sCO2 Nu correlations are added, switch B
+    # properties here based on a `fluid_type_B` config key.
+    cp_B = air_cp(T_inB)
+    k_B = air_conductivity(T_inB)
+    rho_B_ltne = air_density(T_inB, P_inA)
     eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
                else np.full((Nx, Ny, Nz), eps))
     eps_f = eps / 2.0
     K_ffA = np.full((Nx, Ny, Nz), eps_f * k_A)
-    K_ffB = np.full((Nx, Ny, Nz), eps_f * 0.6)    # water-equivalent k
+    K_ffB = np.full((Nx, Ny, Nz), eps_f * k_B)
     K_ss = np.full((Nx, Ny, Nz), (1.0 - eps) * k_s)
 
-    h_vA0 = 1.0e5   # Shanghai-ish nominal h_v (overridden after first outer step)
+    h_vA0 = 1.0e5   # nominal h_v, refined during outer-loop coupling
     h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
-    h_vB_field = np.full((Nx, Ny, Nz), 1.0e10)    # perfect water sink
+    h_vB_field = np.full((Nx, Ny, Nz), h_vA0)     # same Nu/h_v as A (both air)
     rho_cp_A = rho_A * cp_A
-    rho_cp_B = 998.0 * 4182.0
+    rho_cp_B = rho_B_ltne * cp_B                   # air, not water
 
     # Helper: solver streamwise velocity → correct real component (uc/vc/wc).
     # Transposes solver (Nx_sol, Ny_sol, Nz_sol) → real (Nx, Ny, Nz) via
@@ -708,7 +716,10 @@ def _run_3d_stack(cfg):
     # ── Outer SIMPLE ↔ LTNE coupling ──
     Ta = Tb = Ts = None
     Ta_prev = None
+    _progress_cb = cfg.get('_progress_cb')
     for outer in range(_MAX_OUTER):
+        if _progress_cb is not None:
+            _progress_cb(10 + int(80 * outer / _MAX_OUTER))
         ucA, vcA, wcA = _assemble_real_velocity()
 
         Ta, Tb, Ts = solve_full_domain_3d(
@@ -756,6 +767,58 @@ def _run_3d_stack(cfg):
         # for the residual to re-sink to 1e-3. Saves ~50% of SIMPLE work in
         # outer iters 1-2.
         sA.solve(max_iter=150, tol=1e-3, verbose=False)
+
+        # Non-iso coupling for fluid B (mirror of A above). Update ρ, μ,
+        # P_ref_abs, rho_cp_B from current Tb field so B's SIMPLE + LTNE
+        # stay consistent when B heats/cools appreciably (both fluids air).
+        if sB is not None and Tb is not None:
+            Tb_sB = np.ascontiguousarray(Tb.transpose(perm_B))
+            P_abs_B = sB.P_ref_abs + sB.P
+            rho_new_B = P_abs_B / (R_AIR * Tb_sB)
+            if outer > 0:
+                sB.rho_field = np.ascontiguousarray(
+                    _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
+                    dtype=np.float64)
+                sB.mu_field = np.ascontiguousarray(
+                    _ALPHA_T * air_viscosity(Tb_sB)
+                    + (1.0 - _ALPHA_T) * sB.mu_field, dtype=np.float64)
+            else:
+                sB.rho_field = np.ascontiguousarray(rho_new_B, dtype=np.float64)
+                sB.mu_field = np.ascontiguousarray(
+                    air_viscosity(Tb_sB), dtype=np.float64)
+            sB._mu_eff_field = np.ascontiguousarray(
+                sB.mu_field / sB.eps, dtype=np.float64)
+
+            Tb_avg = float(Tb_sB.mean())
+            mu_avg_B = float(air_viscosity(Tb_avg))
+            C_avg_B = (mu_avg_B * G_B / max(K_pred, 1e-16)
+                       + cF_pred * G_B * G_B)
+            P_out_sq_B_new = (P_inA ** 2
+                              - 2.0 * R_AIR * Tb_avg * C_avg_B * L_stream_B)
+            sB.P_ref_abs = float(np.sqrt(max(P_out_sq_B_new, 1.0e4)))
+
+            # Refresh T_field so _update_density inside sB.solve() uses
+            # current Tb (not stale inlet T). Without this, the ρ/μ updates
+            # above get overwritten by _update_density(T_field=old).
+            sB.update_T_field(Tb_sB)
+
+            sB.solve(max_iter=150, tol=1e-3, verbose=False)
+
+            # Refresh LTNE B properties from updated Tb
+            rho_cp_B = float(air_density(Tb_avg, P_inA) * air_cp(Tb_avg))
+
+            # Re-extract B velocity for next LTNE pass
+            v_cc_B2 = 0.5 * (sB.v[:, :-1, :] + sB.v[:, 1:, :])
+            streamB2 = v_cc_B2.transpose(perm_B)
+            if is_reverse_B:
+                streamB2 = -streamB2
+            ucB[:] = 0; vcB[:] = 0; wcB[:] = 0
+            if is_x_stream_B:
+                ucB[:] = streamB2
+            elif is_y_stream_B:
+                vcB[:] = streamB2
+            else:
+                wcB[:] = streamB2
 
     # ── Extract metrics + fields ──
     # Q: mass flow uses void cross-section (eps * L_cross * Lz)

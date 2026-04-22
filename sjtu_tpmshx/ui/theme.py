@@ -1,10 +1,17 @@
-"""Theme system for SJTU-TPMSHX GUI (light-only).
+"""Theme system for SJTU-TPMSHX GUI (light-only)."""
 
-Originally extracted from main.py (Task B.3) with light + dark themes and a
-runtime toggle. Per D-1 decision, dark theme + apply_theme() were removed —
-the GUI is light-only. `_THEMES` is kept as a single-entry dict so existing
-call sites that index `_THEMES['light']` keep working unchanged.
-"""
+# ── Shared sizing constants ─────────────────────────────────
+FONT_HEADER = 11       # pt — header bar title
+FONT_LABEL = 10        # pt — section labels, input labels
+FONT_INPUT = 11        # pt — text input fields, combos
+FONT_TAB = 9           # pt — tab buttons
+FONT_BTN = 9           # pt — action buttons (TPMS, Auto-fill)
+FONT_BTN_RUN = 12      # pt — primary Compute button
+FONT_STATUS = 9        # pt — status bar text
+
+BTN_H_PRIMARY = 32     # px — header buttons (Compute, Reset)
+BTN_H_SECONDARY = 28   # px — tab buttons, toolbar actions
+BTN_H_SMALL = 26       # px — TPMS compute, Auto-fill, Preview
 
 # ── Theme colour definitions ──────────────────────────────────
 _THEMES = {
@@ -41,22 +48,22 @@ def _build_styles():
     t = _THEMES['light']
     s = {}
     s['BG'] = t['bg']
-    s['LBL'] = (f"color:{t['fg']}; font-size:10pt; font-weight:bold;"
+    s['LBL'] = (f"color:{t['fg']}; font-size:{FONT_LABEL}pt; font-weight:bold;"
                 "border:none; background:transparent;")
-    s['VAL'] = (f"color:{t['val']}; font-size:11pt; font-weight:bold;"
+    s['VAL'] = (f"color:{t['val']}; font-size:{FONT_INPUT}pt; font-weight:bold;"
                 "border:none; background:transparent;")
-    s['VAL_WARN'] = (f"color:{t['warn']}; font-size:11pt; font-weight:bold;"
+    s['VAL_WARN'] = (f"color:{t['warn']}; font-size:{FONT_INPUT}pt; font-weight:bold;"
                      "border:none; background:transparent;")
     s['INP'] = (f"background:{t['inp_bg']}; color:{t['inp_fg']};"
                 f"border:1px solid {t['inp_border']}; border-radius:4px;"
-                "font-size:11pt; font-weight:bold; padding:4px 8px; min-width:60px;"
+                f"font-size:{FONT_INPUT}pt; font-weight:bold; padding:4px 8px; min-width:60px;"
                 f"selection-background-color:rgba(68,114,196,80);")
     s['INP_FOCUS'] = (f"border:2px solid rgba(68,114,196,180);")
     def _title(rgb, border):
         return (f"QLabel{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                 f"stop:0 rgba({rgb},200), stop:1 rgba({rgb},160));"
                 f"border:1px solid rgba({border},180);"
-                "border-radius:6px; color:white; font-weight:bold; font-size:10pt;"
+                f"border-radius:6px; color:white; font-weight:bold; font-size:{FONT_LABEL}pt;"
                 "padding:5px 0; letter-spacing:0.5px;}")
     def _frame(rgba):
         return (f"QFrame{{background:rgba({rgba}); border:1px solid {t['frame_border']};"
@@ -67,7 +74,7 @@ def _build_styles():
     s['F_NEUTRAL'] = _frame(t['frame_neutral'])
     s['F_HOT']     = _frame(t['frame_hot'])
     s['F_COLD']    = _frame(t['frame_cold'])
-    _btn = ("border-radius:6px; color:white; font-weight:bold; font-size:9pt;"
+    _btn = (f"border-radius:6px; color:white; font-weight:bold; font-size:{FONT_BTN}pt;"
             "padding:4px 10px;")
     def _btn_style(rgb, brd):
         return (f"QPushButton{{{_btn}"
@@ -82,14 +89,14 @@ def _build_styles():
     s['BTN_COLD'] = _btn_style(*t['t_cold'])
     s['BTN_TPMS'] = _btn_style(*t['btn_tpms'])
     r, b = t['btn_run']
-    s['BTN_RUN']  = (f"QPushButton{{{_btn} font-size:12pt; padding:6px 16px;"
+    s['BTN_RUN']  = (f"QPushButton{{{_btn} font-size:{FONT_BTN_RUN}pt; padding:6px 16px;"
                      f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
                      f"stop:0 rgba({r},220), stop:1 rgba({r},185));"
                      f"border:1px solid rgba({b},180); border-radius:8px;}}"
                      f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
                      f"stop:0 rgba({r},245), stop:1 rgba({r},210));}}"
                      f"QPushButton:pressed{{background:rgba({r},255);}}")
-    _ac = "80,80,80" if t is _THEMES['light'] else "200,200,200"
+    _ac = "80,80,80"
     s['COMBO'] = (
         f"QComboBox{{color:{t['inp_fg']}; background:{t['inp_bg']};"
         f"border:1px solid {t['inp_border']}; border-radius:4px;"
@@ -105,7 +112,7 @@ def _build_styles():
         "width:0; height:0;}"
         f"QComboBox QAbstractItemView{{"
         f"background:{t['combo_list_bg']}; color:{t['combo_list_fg']};"
-        "font-size:11pt; font-weight:bold;"
+        f"font-size:{FONT_INPUT}pt; font-weight:bold;"
         f"selection-background-color:{t['combo_sel']};"
         f"border:1px solid {t['combo_border']};"
         "border-radius:4px; padding:2px; outline:none;}")
