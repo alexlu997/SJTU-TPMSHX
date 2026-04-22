@@ -270,7 +270,7 @@ def build_page_domain(window):
 
     # Domain Geometry
     g, _ = section(window, lay, "  \u25c8  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
-    window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.231")
+    window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.182")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
     window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.020")
     window._lbl_Lz     = g.itemAtPosition(2, 0).widget()

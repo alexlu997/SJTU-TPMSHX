@@ -432,7 +432,7 @@ class ThreeDVisPanel(QWidget):
     # ─────────────────────────── public API ───────────────────────────
 
     def set_fields(self, Ta=None, vmag=None, P_kPa=None, L_mm=None,
-                   dx=None, dy=None, dz=None, real_dims=(0.231, 0.042, 0.02),
+                   dx=None, dy=None, dz=None, real_dims=(0.182, 0.042, 0.042),
                    *, Tb=None, Ts=None, vmag_B=None, P_B_kPa=None):
         """Attach 3D fields to the panel. Shape of every field: (Nx, Ny, Nz).
 
@@ -800,7 +800,7 @@ class ThreeDVisPanel(QWidget):
             color='#1a1f24',
         )
         pl.view_isometric()
-        # Auto-fit zoom: 231×42×20 mm aspect is very flat → camera framed
+        # Auto-fit zoom: 182×42×42 mm aspect is very flat → camera framed
         # too loose at 1.35 default. 1.55 packs the bounding box into ~85%
         # of viewport without clipping edges.
         pl.camera.zoom(1.55)

@@ -48,7 +48,7 @@ R_AIR = 287.05
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
 EPS = g['epsilon']; D_H = g['D_h']; A0 = g['A_0']
-L_DOM = 0.231; H_DOM = 0.042; LZ = 0.02
+L_DOM = 0.182; H_DOM = 0.042; LZ = 0.042
 
 N_UNITS = 36
 A_FLOW = N_UNITS * 18.0565e-6

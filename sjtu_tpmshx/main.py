@@ -178,9 +178,9 @@ class Main_Menu(QMainWindow):
             #   col 30 air_P     = 91037.40 Pa (gauge) → 192362.40 abs
             #   col 10 air_SLM   = 1057  → u_A ~20 m/s interstitial (Gyroid L7/t0.6)
             #   col 11 water_flow= 5193 ml/min → u_B ~0.114 m/s (Re=400, D_h~3 mm)
-            'le_L':     '0.231',  # L domain [m]
+            'le_L':     '0.182',  # L domain [m]
             'le_H':     '0.042',
-            'le_Lz':    '0.020',
+            'le_Lz':    '0.042',
             'le_Lcell': '7.0',
             'le_t':     '0.6',
             'le_ks':    '16.0',   # Shanghai SS solid k_s
@@ -225,7 +225,7 @@ class Main_Menu(QMainWindow):
         except Exception:
             pass
         self.statusBar().showMessage(
-            "Loaded Shanghai Electric preset (3D, Gyroid L=7 t=0.6, 231×42×20 mm).",
+            "Loaded Shanghai Electric preset (3D, Gyroid L=7 t=0.6, 182×42×42 mm).",
             5000)
 
     def _schedule_3d_preinit(self):

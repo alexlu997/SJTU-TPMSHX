@@ -34,7 +34,7 @@ ALPHA_T   = 0.6       # under-relaxation factor for T_field update
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
 EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
-L_DOM = 0.231; H_DOM = 0.042
+L_DOM = 0.182; H_DOM = 0.042
 # C-1: Shanghai Electric 样机 has N_UNITS parallel unit cells (Excel ratio
 # c5/c3 = 36.00 exactly across all 16 cases; also (H_DOM/L_cell)² = 36 from
 # geometry). We scale A_FLOW to prototype and read prototype-scale mass flows
