@@ -306,6 +306,7 @@ def _parse_inputs(window):
     T_inA = _f(window.le_TinA, "Inlet T_A")
     T_inB = _f(window.le_TinB, "Inlet T_B")
     P_inA = _f(window.le_PinA, "Inlet P_A") if hasattr(window, 'le_PinA') else P_atm + 1e5
+    P_inB = _f(window.le_PinB, "Inlet P_B") if hasattr(window, 'le_PinB') else P_atm
     Lcell = _f(window.le_Lcell, "TPMS L_cell")
     t_wall = _f(window.le_t, "TPMS t")
     k_s = _f(window.le_ks, "TPMS k_s")
@@ -347,7 +348,7 @@ def _parse_inputs(window):
 
     return dict(
         L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
-        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB, P_inA=P_inA,
+        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB, P_inA=P_inA, P_inB=P_inB,
         Lcell=Lcell, t_wall=t_wall, k_s=k_s, tpms_type=tpms_type,
         eps=eps, D_h=D_h,
         fluid_A_cfg=fluid_A_cfg,
@@ -505,6 +506,7 @@ def _run_3d_stack(cfg):
     u_A = cfg['u_A']
     T_inA, T_inB = cfg['T_inA'], cfg['T_inB']
     P_inA = cfg['P_inA']
+    P_inB = cfg.get('P_inB', P_inA)
     tpms_type = cfg['tpms_type']
     Lcell, t_wall, k_s = cfg['Lcell'], cfg['t_wall'], cfg['k_s']
     eps = cfg['eps']
@@ -587,6 +589,8 @@ def _run_3d_stack(cfg):
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream)
     G_A = rho_A * u_A
+    # P² compressible seed: C = μG/K + cF·G² where G = ρu (mass flux, constant
+    # along pipe by continuity). NOT the local dp/dx = μu/K + ρcFu².
     C_est = mu_A * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
     P_out_sq = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_est * L_stream
     P_ref_A = float(np.sqrt(max(P_out_sq, 1.0e4)))
@@ -615,7 +619,7 @@ def _run_3d_stack(cfg):
     sB_info = None
     if fB is not None:
         u_B = cfg.get('u_B', u_A)
-        rho_B = air_density(T_inB, P_inA)
+        rho_B = air_density(T_inB, P_inB)
         mu_B = air_viscosity(T_inB)
         axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
         is_x_stream_B = axis_map_B['is_x_stream']
@@ -631,7 +635,7 @@ def _run_3d_stack(cfg):
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred)
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
-        P_out_sq_B = P_inA ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
+        P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
         P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
         in_mask_B, out_mask_B = _build_partial_masks(
             fB, dcross1_B, dcross2_B,
@@ -683,7 +687,7 @@ def _run_3d_stack(cfg):
     # properties here based on a `fluid_type_B` config key.
     cp_B = air_cp(T_inB)
     k_B = air_conductivity(T_inB)
-    rho_B_ltne = air_density(T_inB, P_inA)
+    rho_B_ltne = air_density(T_inB, P_inB)
     eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
                else np.full((Nx, Ny, Nz), eps))
     eps_f = eps / 2.0
@@ -691,11 +695,20 @@ def _run_3d_stack(cfg):
     K_ffB = np.full((Nx, Ny, Nz), eps_f * k_B)
     K_ss = np.full((Nx, Ny, Nz), (1.0 - eps) * k_s)
 
-    h_vA0 = 1.0e5   # nominal h_v, refined during outer-loop coupling
-    h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
-    h_vB_field = np.full((Nx, Ny, Nz), h_vA0)     # same Nu/h_v as A (both air)
-    rho_cp_A = rho_A * cp_A
-    rho_cp_B = rho_B_ltne * cp_B                   # air, not water
+    # h_v from Nu correlation (P0 fix: was hardcoded 1e5, now physics-based).
+    # h_v = A_0 × H_sf_face, where H_sf = Nu × k_f / D_h.
+    # A (hot air) and B (cold air) have different Re → different Nu → different h_v.
+    from solvers.tpms_calc import compute as tpms_compute
+    _geom_A = tpms_compute(tpms_type, Lcell, t_wall, u_A, T_inA, P_inA, k_s)
+    h_vA0 = _geom_A['A_0'] * _geom_A['H_sf']
+    u_B_val = cfg.get('u_B', u_A)
+    _geom_B = tpms_compute(tpms_type, Lcell, t_wall, u_B_val, T_inB, P_inB, k_s)
+    h_vB0 = _geom_B['A_0'] * _geom_B['H_sf']
+    h_vA_field = np.full((Nx, Ny, Nz), h_vA0, dtype=np.float64)
+    h_vB_field = np.full((Nx, Ny, Nz), h_vB0, dtype=np.float64)
+    # P2: rho_cp as 3D field (not scalar) for per-cell accuracy
+    rho_cp_fA = np.full((Nx, Ny, Nz), rho_A * cp_A, dtype=np.float64)
+    rho_cp_fB = np.full((Nx, Ny, Nz), rho_B_ltne * cp_B, dtype=np.float64)
 
     # Helper: solver streamwise velocity → correct real component (uc/vc/wc).
     # Transposes solver (Nx_sol, Ny_sol, Nz_sol) → real (Nx, Ny, Nz) via
@@ -725,7 +738,7 @@ def _run_3d_stack(cfg):
         Ta, Tb, Ts = solve_full_domain_3d(
             L, H, Lz, Nx, Ny, Nz, T_inA, T_inB,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
-            rho_cp_A, rho_cp_B, eps_arr,
+            rho_cp_fA, rho_cp_fB, eps_arr,
             ucA, vcA, wcA, ucB, vcB, wcB,
             dir_A=fA['dir'],
             dir_B=(fB['dir'] if fB is not None else 3),
@@ -768,6 +781,22 @@ def _run_3d_stack(cfg):
         # outer iters 1-2.
         sA.solve(max_iter=150, tol=1e-3, verbose=False)
 
+        # P0/P1: Refresh h_v from Nu(Re_local, T_local) for both fluids.
+        # P10: Refresh K_ff from k_air(T) for both fluids.
+        # P2: Refresh rho_cp as 3D fields.
+        T_avgA = float(Ta.mean())
+        _gA = tpms_compute(tpms_type, Lcell, t_wall, u_A, T_avgA, P_inA, k_s)
+        h_vA_field[:] = _gA['A_0'] * _gA['H_sf']
+        K_ffA[:] = eps_f * air_conductivity(T_avgA)
+        rho_cp_fA[:] = air_density(T_avgA, P_inA) * air_cp(T_avgA)
+
+        if Tb is not None:
+            T_avgB = float(Tb.mean())
+            _gB = tpms_compute(tpms_type, Lcell, t_wall, u_B_val, T_avgB, P_inB, k_s)
+            h_vB_field[:] = _gB['A_0'] * _gB['H_sf']
+            K_ffB[:] = eps_f * air_conductivity(T_avgB)
+            rho_cp_fB[:] = air_density(T_avgB, P_inB) * air_cp(T_avgB)
+
         # Non-iso coupling for fluid B (mirror of A above). Update ρ, μ,
         # P_ref_abs, rho_cp_B from current Tb field so B's SIMPLE + LTNE
         # stay consistent when B heats/cools appreciably (both fluids air).
@@ -793,7 +822,7 @@ def _run_3d_stack(cfg):
             mu_avg_B = float(air_viscosity(Tb_avg))
             C_avg_B = (mu_avg_B * G_B / max(K_pred, 1e-16)
                        + cF_pred * G_B * G_B)
-            P_out_sq_B_new = (P_inA ** 2
+            P_out_sq_B_new = (P_inB ** 2
                               - 2.0 * R_AIR * Tb_avg * C_avg_B * L_stream_B)
             sB.P_ref_abs = float(np.sqrt(max(P_out_sq_B_new, 1.0e4)))
 
@@ -804,8 +833,7 @@ def _run_3d_stack(cfg):
 
             sB.solve(max_iter=150, tol=1e-3, verbose=False)
 
-            # Refresh LTNE B properties from updated Tb
-            rho_cp_B = float(air_density(Tb_avg, P_inA) * air_cp(Tb_avg))
+            # rho_cp_fB already refreshed above (P0/P1/P2 block)
 
             # Re-extract B velocity for next LTNE pass
             v_cc_B2 = 0.5 * (sB.v[:, :-1, :] + sB.v[:, 1:, :])
@@ -821,12 +849,13 @@ def _run_3d_stack(cfg):
                 wcB[:] = streamB2
 
     # ── Extract metrics + fields ──
-    # Q: mass flow uses void cross-section (eps * L_cross * Lz)
-    # Void cross-section = eps × (cross1 × cross2)
-    m_dot = rho_A * u_A * (eps * L_cross1 * L_cross2)
-    # Outlet real index depends on streamwise axis + reverse
+    # Q: single-channel void area = (eps/2) × cross1 × cross2.
+    # Use bulk-mean ρ (inlet+outlet average) for mass flow accuracy.
     out_idx = 0 if is_reverse else -1
     T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
+    # Fixed velocity inlet BC → m_dot = ρ_in × u_in × A_void (inlet face).
+    # NOT average ρ: solver enforces u_in at inlet with inlet density.
+    m_dot = rho_A * u_A * (eps / 2.0 * L_cross1 * L_cross2)
     Q = abs(m_dot * cp_A * (T_inA - T_A_out))
 
     dP = float(SIMPLESolver3D.extract_dP_weighted(sA))

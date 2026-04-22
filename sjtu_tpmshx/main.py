@@ -187,7 +187,7 @@ class Main_Menu(QMainWindow):
             'le_uA':    '20.0',   # Fluid A (air) interstitial, back-calc Re=5000
             'le_TinA':  '422.0',  # Fluid A inlet (Excel col 28: 148.908 °C)
             'le_PinA':  '192362', # Fluid A inlet absolute (Excel 91037 Pa gauge + atm)
-            'le_uB':    '0.114',  # Fluid B (water) back-calc Re=400; B is frozen symbolically
+            'le_uB':    '10.0',   # Fluid B (air) — symmetric cross-flow
             'le_TinB':  '300.0',  # Fluid B inlet (Excel col 24: 26.89 °C)
             'le_PinB':  '101973', # Fluid B inlet absolute (Excel 647.6 Pa gauge + atm)
             # 3D grid: wall-refine expands +16 per axis, so 30/20/5 →

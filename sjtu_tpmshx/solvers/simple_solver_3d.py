@@ -156,17 +156,18 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                     mu_e = 0.5 * (mu_eff_field[il_r, j, k]
                                   + mu_eff_field[ir_r, j, k])
 
-                    # Diffusion coefficients (6 faces)
+                    # Diffusion coefficients (6 faces). 2× at domain walls
+                    # (half-cell distance to wall, no-slip image point).
                     De = mu_e * dyj * dzk / dxi
                     Dw = De
-                    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
-                    Ds = mu_e * dxi * dzk / dyj if j > 0 else 0.0
+                    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
+                    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
                     Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
                     Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
 
                     # Neighbour values (with wall-BC zero outside domain)
                     uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
-                    uW = u[i - 1, j, k] if i > 1 else 0.0
+                    uW = u[i - 1, j, k] if i > 0 else 0.0
                     uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
                     uS = u[i, j - 1, k] if j > 0 else 0.0
                     uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
@@ -266,12 +267,12 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                       + mu_eff_field[ir_r, j, k])
                         De = mu_e * dyj * dzk / dxi
                         Dw = De
-                        Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
-                        Ds = mu_e * dxi * dzk / dyj if j > 0 else 0.0
+                        Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
+                        Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
                         Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
                         Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
                         uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
-                        uW = u[i - 1, j, k] if i > 1 else 0.0
+                        uW = u[i - 1, j, k] if i > 0 else 0.0
                         uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
                         uS = u[i, j - 1, k] if j > 0 else 0.0
                         uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]

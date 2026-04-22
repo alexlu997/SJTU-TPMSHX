@@ -270,7 +270,6 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
     # 4. Query LUT for epsilon and A_0
     eps_arr, A0_arr = lut.query(L_field, t_field)
     D_h_arr = 2.0 * eps_arr / (A0_arr + 1e-30)  # [m]
-    r_h_arr = D_h_arr / 2.0
 
     # 5. Compute fluid properties (vectorized)
     k_fA = air_conductivity(T_inA)
@@ -280,9 +279,9 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
     mu_B = air_viscosity(T_inB)
     rho_ref_B = air_density(T_inB, P_atm)
 
-    # Reynolds, Nusselt, heat transfer coefficient
-    Re_A = np.maximum(rho_ref_A * u_A * r_h_arr / mu_A, 10.0)
-    Re_B = np.maximum(rho_ref_B * u_B * r_h_arr / mu_B, 10.0)
+    # Reynolds (D_h convention, confirmed 2026-04-22)
+    Re_A = np.maximum(rho_ref_A * u_A * D_h_arr / mu_A, 10.0)
+    Re_B = np.maximum(rho_ref_B * u_B * D_h_arr / mu_B, 10.0)
 
     D_h_mm = D_h_arr * 1000.0
     Nu_A = _nu_vec(tpms_type, Re_A, eps_arr, L_field, D_h_mm)
@@ -306,7 +305,7 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
         'K_ss_arr': K_ss_arr,
         'h_vA_arr': h_vA_arr,
         'h_vB_arr': h_vB_arr,
-        'r_h_arr': r_h_arr,
+        'r_h_arr': D_h_arr / 2.0,
         'A_0_arr': A0_arr,
         'L_field': L_field,
         't_field': t_field,

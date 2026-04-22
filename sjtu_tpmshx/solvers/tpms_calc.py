@@ -15,31 +15,22 @@ Supported TPMS types: 'Diamond', 'Gyroid'
 Fluid: air (Pr = 0.72, properties from T_in and P_in)
 
 ──────────────────────────────────────────────────────────────────────
-REYNOLDS NUMBER CONVENTION (project-wide, verified 2026-04-15)
+REYNOLDS NUMBER CONVENTION (project-wide, confirmed 2026-04-22)
 ──────────────────────────────────────────────────────────────────────
 
-All Re computations in this project use hydraulic radius r_h = D_h/2:
+All Re computations use hydraulic diameter D_h:
 
-    Re = ρ · u · r_h / μ    (r_h convention)
+    Re = ρ · u · D_h / μ    (single-channel interstitial u)
 
-This is equivalent to the "D_h with single-stream correction":
+Training Excel (试验记录表_整理版.xlsx) mass flow back-calculation:
+    m_total = Re × μ / D_h × A_cross × 2   (×2 = two TPMS channels)
 
-    Re = ρ · u · D_h / (2μ) = ρ · (u/2) · D_h / μ
-
-where the /2 factor reflects the single-stream treatment for two-fluid
-TPMS HX (each fluid occupies one of two interpenetrating channels).
-Numerically r_h-convention Re is HALF of engineering-convention D_h Re.
-
-The training Excel (试验记录表_整理版.xlsx) Re column uses this r_h
-convention (empirically verified on L=6 and L=8 geometries). The Nu
-(_nu_diamond / _nu_gyroid) correlations are fitted on r_h-convention Re.
-Pressure drop is no longer a correlation here — the Darcy-Forchheimer
-closure lives in df_fit/predict.py (ConstDF-v1 MLP surrogate), queried
-directly by the solvers. See commit of 2026-04-19 f-Re removal.
+The ×2 is for converting single-channel to total mass flow, NOT for
+the Re definition. Nu correlations fitted on D_h Re.
 
 Nu OUTPUT convention: Nu = h · D_h / k_f   (standard D_h definition).
 
-Mixed convention note: Nu correlations take r_h-convention Re as input
+Nu correlations take D_h-convention Re as input
 but output D_h-convention Nu. All solver callers use the correct
 convention on both sides, so downstream Q calculations are consistent.
 ──────────────────────────────────────────────────────────────────────
@@ -90,13 +81,8 @@ def air_cp(T_K):
 def _nu_diamond(Re: float, eps: float, D_h_mm: float) -> float:
     """Diamond TPMS Nu correlation.
 
-    INPUT  convention: Re = ρ·u·r_h / μ    (hydraulic radius, r_h = D_h/2)
-    OUTPUT convention: Nu = h·D_h / k_f    (hydraulic diameter, standard)
-
-    D_h_mm is in mm. This is a mixed convention — Re uses r_h but Nu
-    uses D_h — because the fit was trained on the project's training
-    Excel where the Re column uses r_h convention and the Nu column
-    uses the standard D_h definition (empirically verified).
+    INPUT  convention: Re = ρ·u·D_h / μ
+    OUTPUT convention: Nu = h·D_h / k_f
     """
     n = 0.618 - 0.800 * np.log(eps)
     return 0.008 * Pr ** (1 / 3) * Re ** n * eps ** 7.41 * (D_h_mm / (1000 * Sa_mm)) ** (-1.92)
@@ -113,12 +99,10 @@ def nu_from_Re(tpms_type: str, Re: float, eps: float,
 def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
     """Gyroid TPMS Nu correlation.
 
-    INPUT  convention: Re = ρ·u·r_h / μ    (hydraulic radius, r_h = D_h/2)
-    OUTPUT convention: Nu = h·D_h / k_f    (hydraulic diameter, standard)
+    INPUT  convention: Re = ρ·u·D_h / μ
+    OUTPUT convention: Nu = h·D_h / k_f
 
-    L_cell_mm is in mm (Gyroid uses unit cell size as its length scale
-    rather than D_h in the correlation).
-    Mixed convention rationale: same as _nu_diamond above.
+    L_cell_mm is in mm (Gyroid uses unit cell size as length scale).
     """
     n = 0.177 * Re ** 0.1 * eps ** (-2 / 3)
     return 0.17 * Pr ** (1 / 3) * Re ** n * eps ** 2.25 * (L_cell_mm / (1000 * Sa_mm)) ** (-2.01)
@@ -242,13 +226,9 @@ def compute(tpms_type: str,
     # Nu depends on true Re, not on a canonical atmospheric Re (previous
     # bug was rho_ref=P_atm, which under-predicted high-Re Q by ~22%).
     #
-    # Convention: u here is the single-stream (per-channel) velocity for
-    # the fluid being computed. For validate_shanghai.py, u_A is computed
-    # from m_air / (rho * A_single_channel_total) and is already single-
-    # stream, so no /2 factor is needed. The training Excel Re column
-    # also uses a single-stream × D_h convention (the /2 applied to the
-    # CFD total mass flow during data processing is absorbed into how
-    # col 13 u relates to its Re).
+    # D_h convention: Re = ρ·u·D_h / μ (single-channel interstitial u).
+    # Training Excel: m_total = Re × μ / D_h × A × 2 (×2 for two channels).
+    # Nu correlations fitted on D_h-convention Re.
     Re = rho * u * D_h_m / mu
 
     # Warn if outside correlation valid range

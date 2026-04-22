@@ -245,7 +245,7 @@ def _build_fields(window, cfg):
     # It is returned in fields and called by Phase 3.
     simple_warnings = {}
 
-    def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label):
+    def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0):
         d = cfg_fluid['dir']
         is_x = window._is_x_dir(d)
         pipe_lo = cfg_fluid['in_ctr'] - cfg_fluid['in_w'] / 2
@@ -284,7 +284,8 @@ def _build_fields(window, cfg):
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
-                             wall_refine=False)
+                             wall_refine=False,
+                             P_ref_abs=P_in_abs)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = _aligned_grid(N_x, L, list(_x_breaks))
@@ -295,7 +296,8 @@ def _build_fields(window, cfg):
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_config=zc_simple,
                              zone_arrays=z_arr if zc_simple is None else None,
-                             wall_refine=False)
+                             wall_refine=False,
+                             P_ref_abs=P_in_abs)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
@@ -409,8 +411,8 @@ def _run_solvers(window, cfg, fields):
         # Step 1: SIMPLE velocity with current rho field
         with _warn.catch_warnings(record=True) as _caught:
             _warn.simplefilter("always")
-            ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A, 'Fluid A')
-            ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B, 'Fluid B')
+            ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A, 'Fluid A', P_inA_val)
+            ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B, 'Fluid B', P_inB_val)
         if _coup_it == 0:
             for w in _caught:
                 warnings_list.append(str(w.message))
