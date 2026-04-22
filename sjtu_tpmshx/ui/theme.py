@@ -1,32 +1,39 @@
-"""Theme system for SJTU-TPMSHX GUI (light-only)."""
+"""Theme system for SJTU-TPMSHX GUI (light-only).
 
-# ── Shared sizing constants ─────────────────────────────────
-FONT_HEADER = 11       # pt — header bar title
-FONT_LABEL = 10        # pt — section labels, input labels
-FONT_INPUT = 11        # pt — text input fields, combos
-FONT_TAB = 9           # pt — tab buttons
-FONT_BTN = 9           # pt — action buttons (TPMS, Auto-fill)
+Design tokens follow an 8dp spacing rhythm (UI/UX Pro Max §5).
+Typography uses a modular scale: 9 / 10 / 11 / 12 / 14 pt.
+Color palette: neutral grays + primary navy #2c5282 + accent green/orange.
+"""
+
+# ── Typography scale (modular, §6 weight-hierarchy) ─────────
+FONT_HEADER = 12       # pt — header bar title (was 11, bumped for hierarchy)
+FONT_LABEL = 10        # pt — section labels, input labels (weight 600)
+FONT_INPUT = 10        # pt — text input fields, combos (weight 500)
+FONT_TAB = 9           # pt — tab buttons (weight 500/700 on/off)
+FONT_BTN = 9           # pt — action buttons
 FONT_BTN_RUN = 12      # pt — primary Compute button
 FONT_STATUS = 9        # pt — status bar text
 
+# ── Sizing (8dp rhythm, §5 spacing-scale) ────────────────────
 BTN_H_PRIMARY = 32     # px — header buttons (Compute, Reset)
 BTN_H_SECONDARY = 28   # px — tab buttons, toolbar actions
 BTN_H_SMALL = 26       # px — TPMS compute, Auto-fill, Preview
 
 RADIUS_BTN = 6         # px — buttons
-RADIUS_CARD = 8        # px — canvas cards
+RADIUS_CARD = 10       # px — canvas cards (was 8, rounder = softer)
 RADIUS_INPUT = 6       # px — text inputs, combos
 RADIUS_TAB = 14        # px — tab capsule buttons
-RADIUS_HEADER = 8      # px — header bar
+RADIUS_HEADER = 10     # px — header bar (matches card)
 
 # ── Theme colour definitions ──────────────────────────────────
 _THEMES = {
     'light': dict(
-        bg="#f5f6f8", fg="#333333", val="#0066aa", warn="#cc4400",
-        card_bg="#ffffff", card_border="#e8eaed", card_shadow="rgba(0,0,0,15)",
-        scroll_bg="#f0f1f3",
-        inp_bg="#ffffff", inp_fg="#1a1a2e", inp_border="#d1d5db",
-        frame_border="rgba(0,0,0,0.04)", frame_neutral="255,255,255,60",
+        # §6 semantic color tokens: surface / on-surface / primary / accent
+        bg="#f7f8fa", fg="#1f2937", val="#1e40af", warn="#b45309",
+        card_bg="#ffffff", card_border="#e5e7eb", card_shadow="rgba(0,0,0,18)",
+        scroll_bg="#f3f4f6",
+        inp_bg="#ffffff", inp_fg="#111827", inp_border="#d1d5db",
+        frame_border="rgba(0,0,0,0.05)", frame_neutral="255,255,255,60",
         frame_hot="197,90,17,12", frame_cold="46,117,182,12",
         t_neutral=("68,114,196","100,150,220"),
         t_hot=("197,90,17","230,130,60"),
@@ -54,7 +61,7 @@ def _build_styles():
     t = _THEMES['light']
     s = {}
     s['BG'] = t['bg']
-    s['LBL'] = (f"color:{t['fg']}; font-size:{FONT_LABEL}pt; font-weight:bold;"
+    s['LBL'] = (f"color:{t['fg']}; font-size:{FONT_LABEL}pt; font-weight:600;"
                 "border:none; background:transparent;")
     s['VAL'] = (f"color:{t['val']}; font-size:{FONT_INPUT}pt; font-weight:bold;"
                 "border:none; background:transparent;")
@@ -62,9 +69,9 @@ def _build_styles():
                      "border:none; background:transparent;")
     s['INP'] = (f"background:{t['inp_bg']}; color:{t['inp_fg']};"
                 f"border:1px solid {t['inp_border']}; border-radius:{RADIUS_INPUT}px;"
-                f"font-size:{FONT_INPUT}pt; font-weight:bold; padding:4px 8px; min-width:60px;"
-                f"selection-background-color:rgba(68,114,196,80);")
-    s['INP_FOCUS'] = (f"border:2px solid rgba(68,114,196,180);")
+                f"font-size:{FONT_INPUT}pt; font-weight:500; padding:5px 10px; min-width:60px;"
+                f"selection-background-color:rgba(44,82,130,0.15);")
+    s['INP_FOCUS'] = (f"border:2px solid #2c5282;")
     def _title(rgb, border):
         return (f"QLabel{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                 f"stop:0 rgba({rgb},200), stop:1 rgba({rgb},160));"

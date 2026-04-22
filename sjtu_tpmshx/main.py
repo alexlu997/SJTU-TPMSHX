@@ -200,10 +200,12 @@ class Main_Menu(QMainWindow):
             # Shanghai pipe inlet/outlet: A full-width (42 mm strip), B
             # staggered cross-flow (water enters top-right +x end, exits
             # bottom-left -x end; inlet/outlet 42 mm strips along real x).
+            # Full-width inlet/outlet for both fluids (air-air symmetric).
+            # A flows +x (full H=42mm face), B flows -y (full L=182mm face).
             'le_pipeA_in_ctr':  '0.021', 'le_pipeA_in_w':  '0.042',
             'le_pipeA_out_ctr': '0.021', 'le_pipeA_out_w': '0.042',
-            'le_pipeB_in_ctr':  '0.203', 'le_pipeB_in_w':  '0.042',
-            'le_pipeB_out_ctr': '0.028', 'le_pipeB_out_w': '0.042',
+            'le_pipeB_in_ctr':  '0.091', 'le_pipeB_in_w':  '0.182',
+            'le_pipeB_out_ctr': '0.091', 'le_pipeB_out_w': '0.182',
         }
         for attr, val in presets.items():
             w = getattr(self, attr, None)

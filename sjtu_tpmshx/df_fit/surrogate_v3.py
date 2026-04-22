@@ -54,7 +54,7 @@ R_AIR = 287.05
 K_S_CELLS = 10
 P_ATM = P_atm
 _KS = 16.0
-K_MIN = 1e-7  # Darcy fraction ≤ 15% at Re ≈ 500
+K_MIN = 1e-8  # TEMPORARY: lowered from 1e-7 to let L>=5 use real K. Revisit later.
 
 XLSX = _PROJECT / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 

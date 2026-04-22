@@ -72,7 +72,7 @@ def build_ui(window):
     header_widget = QWidget()
     header_widget.setStyleSheet(
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "stop:0 #1a2a44, stop:1 #2a4060); border-radius:8px;")
+        "stop:0 #1a2a44, stop:1 #2a4060); border-radius:10px;")
     header_widget.setFixedHeight(44)
     header_row = QHBoxLayout(header_widget)
     header_row.setContentsMargins(8, 4, 8, 4)
@@ -189,25 +189,25 @@ def build_param_tabs(window):
 
     _GRP_QSS = (
         "QGroupBox {"
-        "  font-size:10pt; font-weight:bold; color:#374151;"
-        "  background:transparent; border:1px solid #d1d5db;"
-        "  border-radius:8px; margin-top:10px; padding:10px 4px 4px 4px;"
+        "  font-size:10pt; font-weight:600; color:#1f2937;"
+        "  background:#ffffff; border:1px solid #e5e7eb;"
+        "  border-radius:10px; margin-top:12px; padding:12px 8px 8px 8px;"
         "}"
         "QGroupBox::title {"
-        "  subcontrol-origin:margin; left:10px; padding:0 8px;"
-        "  background:#f5f6f8;"
+        "  subcontrol-origin:margin; left:12px; padding:2px 10px;"
+        "  background:#f7f8fa; border-radius:4px;"
         "}"
         "QGroupBox::indicator {"
-        "  width:14px; height:14px; margin-right:4px;"
+        "  width:16px; height:16px; margin-right:6px;"
         "}"
         "QGroupBox::indicator:checked {"
         "  image: none;"
-        "  border:2px solid #2c5282; border-radius:3px;"
+        "  border:2px solid #2c5282; border-radius:4px;"
         "  background:#2c5282;"
         "}"
         "QGroupBox::indicator:unchecked {"
         "  image: none;"
-        "  border:2px solid #9ca3af; border-radius:3px;"
+        "  border:2px solid #9ca3af; border-radius:4px;"
         "  background:transparent;"
         "}"
     )
