@@ -34,10 +34,10 @@ _THEMES = {
         scroll_bg="#f3f4f6",
         inp_bg="#ffffff", inp_fg="#111827", inp_border="#d1d5db",
         frame_border="rgba(0,0,0,0.05)", frame_neutral="255,255,255,60",
-        frame_hot="197,90,17,12", frame_cold="46,117,182,12",
+        frame_a="79,70,229,12", frame_b="13,148,136,12",
         t_neutral=("68,114,196","100,150,220"),
-        t_hot=("197,90,17","230,130,60"),
-        t_cold=("46,117,182","80,150,220"),
+        t_a=("79,70,229","120,110,245"),
+        t_b=("13,148,136","40,180,170"),
         btn_tpms=("68,114,196","100,150,220"),
         btn_run=("84,130,53","120,170,80"),
         combo_list_bg="#ffffff", combo_list_fg="#333333",
@@ -61,7 +61,7 @@ def _build_styles():
     t = _THEMES['light']
     s = {}
     s['BG'] = t['bg']
-    s['LBL'] = (f"color:{t['fg']}; font-size:{FONT_LABEL}pt; font-weight:600;"
+    s['LBL'] = (f"color:{t['fg']}; font-size:{FONT_LABEL}pt; font-weight:bold;"
                 "border:none; background:transparent;")
     s['VAL'] = (f"color:{t['val']}; font-size:{FONT_INPUT}pt; font-weight:bold;"
                 "border:none; background:transparent;")
@@ -69,7 +69,7 @@ def _build_styles():
                      "border:none; background:transparent;")
     s['INP'] = (f"background:{t['inp_bg']}; color:{t['inp_fg']};"
                 f"border:1px solid {t['inp_border']}; border-radius:{RADIUS_INPUT}px;"
-                f"font-size:{FONT_INPUT}pt; font-weight:500; padding:5px 10px; min-width:60px;"
+                f"font-size:{FONT_INPUT}pt; font-weight:bold; padding:5px 10px; min-width:60px;"
                 f"selection-background-color:rgba(44,82,130,0.15);")
     s['INP_FOCUS'] = (f"border:2px solid #2c5282;")
     def _title(rgb, border):
@@ -82,11 +82,11 @@ def _build_styles():
         return (f"QFrame{{background:rgba({rgba}); border:1px solid {t['frame_border']};"
                 f"border-radius:8px; padding:3px;}}")
     s['T_NEUTRAL'] = _title(*t['t_neutral'])
-    s['T_HOT']     = _title(*t['t_hot'])
-    s['T_COLD']    = _title(*t['t_cold'])
+    s['T_A']     = _title(*t['t_a'])
+    s['T_B']    = _title(*t['t_b'])
     s['F_NEUTRAL'] = _frame(t['frame_neutral'])
-    s['F_HOT']     = _frame(t['frame_hot'])
-    s['F_COLD']    = _frame(t['frame_cold'])
+    s['F_A']     = _frame(t['frame_a'])
+    s['F_B']    = _frame(t['frame_b'])
     _btn = (f"border-radius:{RADIUS_BTN}px; color:white; font-weight:bold; font-size:{FONT_BTN}pt;"
             "padding:4px 10px;")
     def _btn_style(rgb, brd):
@@ -98,8 +98,8 @@ def _build_styles():
                 f"stop:0 rgba({rgb},235), stop:1 rgba({rgb},205));}}"
                 f"QPushButton:pressed{{background:rgba({rgb},250);"
                 f"border:1px solid rgba({brd},220);}}")
-    s['BTN_HOT']  = _btn_style(*t['t_hot'])
-    s['BTN_COLD'] = _btn_style(*t['t_cold'])
+    s['BTN_A']  = _btn_style(*t['t_a'])
+    s['BTN_B'] = _btn_style(*t['t_b'])
     s['BTN_TPMS'] = _btn_style(*t['btn_tpms'])
     r, b = t['btn_run']
     s['BTN_RUN']  = (f"QPushButton{{{_btn} font-size:{FONT_BTN_RUN}pt; padding:6px 16px;"
@@ -113,7 +113,7 @@ def _build_styles():
     s['COMBO'] = (
         f"QComboBox{{color:{t['inp_fg']}; background:{t['inp_bg']};"
         f"border:1px solid {t['inp_border']}; border-radius:{RADIUS_INPUT}px;"
-        "font-size:11pt; font-weight:bold; padding:3px 24px 3px 6px;}"
+        "font-size:10pt; font-weight:bold; padding:3px 24px 3px 6px;}"
         f"QComboBox:hover{{border:2px solid rgba(68,114,196,180);}}"
         f"QComboBox::drop-down{{subcontrol-origin:padding; subcontrol-position:top right;"
         f"width:22px; border-left:1px solid {t['inp_border']};"

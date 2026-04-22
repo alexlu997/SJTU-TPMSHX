@@ -24,10 +24,10 @@ from ui.theme import _THEMES, _build_styles
 _S = _build_styles()
 _BG = _S['BG']; _LBL = _S['LBL']; _VAL = _S['VAL']; _VAL_WARN = _S['VAL_WARN']
 _INP = _S['INP']; _COMBO = _S['COMBO']
-_T_NEUTRAL = _S['T_NEUTRAL']; _T_HOT = _S['T_HOT']; _T_COLD = _S['T_COLD']
-_F_NEUTRAL = _S['F_NEUTRAL']; _F_HOT = _S['F_HOT']; _F_COLD = _S['F_COLD']
+_T_NEUTRAL = _S['T_NEUTRAL']; _T_A = _S['T_A']; _T_B = _S['T_B']
+_F_NEUTRAL = _S['F_NEUTRAL']; _F_A = _S['F_A']; _F_B = _S['F_B']
 _BTN_BASE = "border-radius:5px; color:white; font-weight:bold; font-size:9pt;"
-_BTN_HOT = _S['BTN_HOT']; _BTN_COLD = _S['BTN_COLD']
+_BTN_A = _S['BTN_A']; _BTN_B = _S['BTN_B']
 _BTN_TPMS = _S['BTN_TPMS']; _BTN_RUN = _S['BTN_RUN']
 
 
@@ -187,7 +187,7 @@ class Main_Menu(QMainWindow):
             'le_uA':    '20.0',   # Fluid A (air) interstitial, back-calc Re=5000
             'le_TinA':  '422.0',  # Fluid A inlet (Excel col 28: 148.908 °C)
             'le_PinA':  '192362', # Fluid A inlet absolute (Excel 91037 Pa gauge + atm)
-            'le_uB':    '10.0',   # Fluid B (air) — symmetric cross-flow
+            'le_uB':    '0.133',  # Fluid B (water) — Shanghai case 8 Re_water=400
             'le_TinB':  '300.0',  # Fluid B inlet (Excel col 24: 26.89 °C)
             'le_PinB':  '101973', # Fluid B inlet absolute (Excel 647.6 Pa gauge + atm)
             # 3D grid: wall-refine expands +16 per axis, so 30/20/5 →
@@ -200,12 +200,13 @@ class Main_Menu(QMainWindow):
             # Shanghai pipe inlet/outlet: A full-width (42 mm strip), B
             # staggered cross-flow (water enters top-right +x end, exits
             # bottom-left -x end; inlet/outlet 42 mm strips along real x).
-            # Full-width inlet/outlet for both fluids (air-air symmetric).
-            # A flows +x (full H=42mm face), B flows -y (full L=182mm face).
+            # A flows +x: full H=42mm face inlet/outlet.
+            # B flows -y: staggered cross-flow, inlet at x=133mm (w=42mm),
+            # outlet at x=7mm (w=42mm).
             'le_pipeA_in_ctr':  '0.021', 'le_pipeA_in_w':  '0.042',
             'le_pipeA_out_ctr': '0.021', 'le_pipeA_out_w': '0.042',
-            'le_pipeB_in_ctr':  '0.091', 'le_pipeB_in_w':  '0.182',
-            'le_pipeB_out_ctr': '0.091', 'le_pipeB_out_w': '0.182',
+            'le_pipeB_in_ctr':  '0.154', 'le_pipeB_in_w':  '0.042',
+            'le_pipeB_out_ctr': '0.028', 'le_pipeB_out_w': '0.042',
         }
         for attr, val in presets.items():
             w = getattr(self, attr, None)
@@ -340,12 +341,15 @@ class Main_Menu(QMainWindow):
             '3d':     self.btn_tab_3d,
             'pareto': self.btn_tab_pareto,
         }
-        for key, visible in rules.items():
-            btn_map[key].setVisible(visible)
+        for key, enabled in rules.items():
+            btn = btn_map[key]
+            btn.setEnabled(enabled)
+            if not enabled and key != 'layout':
+                btn.setStyleSheet(self._PTAB_DISABLED)
             card = self._canvas_cards.get(key)
-            if card is not None and not visible:
+            if card is not None and not enabled:
                 card.hide()
-        # Fall back to Layout if active tab just vanished
+        # Fall back to Layout if active tab just became disabled
         if not rules.get(getattr(self, '_active_tab', 'layout'), True):
             self._switch_tab('layout')
 
@@ -360,7 +364,7 @@ class Main_Menu(QMainWindow):
             'pareto': getattr(self, 'btn_tab_pareto', None),
         }
         target_btn = btn_lookup.get(tab)
-        if target_btn is not None and target_btn.isHidden() and tab != 'layout':
+        if target_btn is not None and not target_btn.isEnabled() and tab != 'layout':
             tab = 'layout'
 
         self._active_tab = tab
@@ -388,11 +392,14 @@ class Main_Menu(QMainWindow):
                         card.hide()
                     self.statusBar().showMessage(
                         "3D view is empty — switch to 3D mode in Domain panel "
-                        "and click Run Calculation to populate.", 6000)
+                        "and click Compute to populate.", 6000)
                 btn.setStyleSheet(self._PTAB_ON)
             else:
                 if card: card.hide()
-                btn.setStyleSheet(self._PTAB_OFF)
+                if btn.isEnabled():
+                    btn.setStyleSheet(self._PTAB_OFF)
+                else:
+                    btn.setStyleSheet(self._PTAB_DISABLED)
         self._hover_label.setText("")
 
     def _on_hover(self, event):
@@ -1006,6 +1013,9 @@ class Main_Menu(QMainWindow):
                 self._has_results = True
                 self._has_results_2d = True
                 self._update_tab_visibility()
+                for _bname in ('btn_export_results', 'btn_export_figure'):
+                    if hasattr(self, _bname):
+                        getattr(self, _bname).setEnabled(True)
                 self._switch_tab('temp')
                 self.statusBar().showMessage("Done.", 5000)
         timer.timeout.connect(_check)
@@ -1141,6 +1151,9 @@ class Main_Menu(QMainWindow):
                 QT.singleShot(500, self.progress.hide)
                 self._has_results = True
                 self._has_results_3d = True
+                for _bname in ('btn_export_results', 'btn_export_figure'):
+                    if hasattr(self, _bname):
+                        getattr(self, _bname).setEnabled(True)
                 drawn = getattr(self, '_drawn_tabs', set())
                 # All 2D canvases also populated via mid-z slice — mark drawn
                 for k in ('3d', 'temp', 'pres', 'vel'):
@@ -1191,10 +1204,16 @@ class Main_Menu(QMainWindow):
 
     def _export_figure(self):
         """Export a chosen figure to PNG/SVG/PDF."""
-        items = ["Temperature", "Pressure", "Velocity", "Geometry"]
-        tab_keys = ['temp', 'pres', 'vel', 'layout']
+        all_items = [("Temperature", 'temp'), ("Pressure", 'pres'),
+                     ("Velocity", 'vel'), ("Geometry", 'layout')]
         tab_canvas = {'temp': self.canvas_temp, 'pres': self.canvas_pres,
                       'vel': self.canvas_vel, 'layout': self.canvas_layout}
+        drawn = getattr(self, '_drawn_tabs', set())
+        items = [name for name, key in all_items if key in drawn]
+        tab_keys = [key for name, key in all_items if key in drawn]
+        if not items:
+            self.statusBar().showMessage("No figures to export yet.", 3000)
+            return
         choice, ok = QInputDialog.getItem(
             self, "Export Figure", "Select figure to export:",
             items, 0, False)

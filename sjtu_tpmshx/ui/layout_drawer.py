@@ -58,6 +58,8 @@ def draw_layout(window):
     if not hasattr(window, '_drawn_tabs'):
         window._drawn_tabs = set()
     window._drawn_tabs.add('layout')
+    if hasattr(window, 'btn_export_figure'):
+        window.btn_export_figure.setEnabled(True)
     window._switch_tab('layout')
 
 

@@ -120,15 +120,18 @@ def build_ui(window):
     btn_run.clicked.connect(window.run_calculation)
     header_row.addWidget(btn_run, 0)
     header_row.addSpacing(6)
-    btn_export = QPushButton("Export")
+    btn_export = QPushButton("Export Results")
     btn_export.setFixedHeight(32)
-    btn_export.setFixedWidth(80)
+    btn_export.setFixedWidth(120)
     btn_export.setStyleSheet(
         "QPushButton{background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25);"
         "border-radius:6px; color:rgba(255,255,255,0.85); font-weight:bold; font-size:10pt;}"
-        "QPushButton:hover{background:rgba(255,255,255,0.20); color:white;}")
+        "QPushButton:hover{background:rgba(255,255,255,0.20); color:white;}"
+        "QPushButton:disabled{color:rgba(255,255,255,0.35);}")
     btn_export.setToolTip("Export results (CSV + NPZ) to file")
+    btn_export.setEnabled(False)
     btn_export.clicked.connect(window._export_results)
+    window.btn_export_results = btn_export
     header_row.addWidget(btn_export, 0)
     root.addWidget(header_widget, 0)
 
@@ -170,6 +173,10 @@ def build_param_tabs(window):
                         f"font-size:9pt; font-weight:500; padding:5px 16px;}}"
                         f"QPushButton:hover{{background:{_ts['tab_off_hover']};"
                         f"color:#1a1f24;}}")
+    window._PTAB_DISABLED = (f"QPushButton{{background:transparent; color:#c0c4cc;"
+                             f"border:1px solid #e5e7eb;"
+                             f"border-radius:{RADIUS_TAB}px;"
+                             f"font-size:9pt; font-weight:500; padding:5px 16px;}}")
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -189,7 +196,7 @@ def build_param_tabs(window):
 
     _GRP_QSS = (
         "QGroupBox {"
-        "  font-size:10pt; font-weight:600; color:#1f2937;"
+        "  font-size:10pt; font-weight:bold; color:#1f2937;"
         "  background:#ffffff; border:1px solid #e5e7eb;"
         "  border-radius:10px; margin-top:12px; padding:12px 8px 8px 8px;"
         "}"
@@ -198,17 +205,7 @@ def build_param_tabs(window):
         "  background:#f7f8fa; border-radius:4px;"
         "}"
         "QGroupBox::indicator {"
-        "  width:16px; height:16px; margin-right:6px;"
-        "}"
-        "QGroupBox::indicator:checked {"
-        "  image: none;"
-        "  border:2px solid #2c5282; border-radius:4px;"
-        "  background:#2c5282;"
-        "}"
-        "QGroupBox::indicator:unchecked {"
-        "  image: none;"
-        "  border:2px solid #9ca3af; border-radius:4px;"
-        "  background:transparent;"
+        "  width:0px; height:0px; margin:0px;"
         "}"
     )
 
@@ -217,12 +214,16 @@ def build_param_tabs(window):
     page_zones  = build_page_zones(window)
 
     from PySide6.QtWidgets import QGroupBox
+    def _chevron_title(title, expanded):
+        return f"▾  {title}" if expanded else f"▸  {title}"
+
+    window._accordion_groups = {}
     for title, page, default_open in [
         ("Domain", page_domain, True),
         ("Fluids", page_fluids, True),
         ("Zones",  page_zones,  False),
     ]:
-        grp = QGroupBox(title)
+        grp = QGroupBox(_chevron_title(title, default_open))
         grp.setCheckable(True)
         grp.setChecked(default_open)
         grp.setStyleSheet(_GRP_QSS)
@@ -231,8 +232,12 @@ def build_param_tabs(window):
         grp_lay.setSpacing(0)
         grp_lay.addWidget(page)
         page.setVisible(default_open)
-        grp.toggled.connect(lambda checked, p=page: p.setVisible(checked))
+        grp.toggled.connect(lambda checked, p=page, t=title, g=grp: (
+            p.setVisible(checked),
+            g.setTitle(_chevron_title(t, checked)),
+        ))
         vlay.addWidget(grp)
+        window._accordion_groups[title] = grp
 
     vlay.addStretch(1)
     scroll.setWidget(container)
@@ -245,8 +250,20 @@ def build_param_tabs(window):
 
 
 def switch_param_tab(window, index):
-    """Legacy no-op — left panel is now collapsible, not tab-switched."""
-    pass
+    """Expand accordion group by index (0=Domain, 1=Fluids, 2=Zones)."""
+    names = ["Domain", "Fluids", "Zones"]
+    groups = getattr(window, '_accordion_groups', {})
+    if 0 <= index < len(names):
+        grp = groups.get(names[index])
+        if grp is not None:
+            grp.setChecked(True)
+            from PySide6.QtWidgets import QScrollArea
+            from PySide6.QtCore import QTimer
+            w = grp.parent()
+            while w and not isinstance(w, QScrollArea):
+                w = w.parent()
+            if w:
+                QTimer.singleShot(50, lambda: w.ensureWidgetVisible(grp))
 
 
 def build_page_domain(window):
@@ -272,7 +289,7 @@ def build_page_domain(window):
     g, _ = section(window, lay, "  \u25c8  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
     window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.182")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
-    window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.020")
+    window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.042")
     window._lbl_Lz     = g.itemAtPosition(2, 0).widget()
     window.le_T_init_s = row(window, g, 3, "Solid init. temp <i>T</i><sub>0</sub> [K]", "325.0")
 
@@ -289,7 +306,7 @@ def build_page_domain(window):
 
     # Dimensionality (2D / 3D MVP) — dispatch in run_calculation
     window.combo_dim = QComboBox()
-    window.combo_dim.addItems(["2D", "3D (uniform)"])
+    window.combo_dim.addItems(["2D", "3D"])
     window.combo_dim.setStyleSheet(_COMBO)
     window.combo_dim.currentIndexChanged.connect(
         lambda *_: _on_dim_changed(window))
@@ -304,7 +321,7 @@ def build_page_domain(window):
     add_row(window, g0, 0, "Type", window.combo_tpms)
     window.le_Lcell = row(window, g0, 1, "<i>L</i><sub>cell</sub> [mm]", "7.0")
     window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.6")
-    window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m\u00b7K)]", "17.0")
+    window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m\u00b7K)]", "16.0")
     btn_tpms = QPushButton("Compute TPMS Geometry")
     btn_tpms.setFixedHeight(26); btn_tpms.setStyleSheet(_BTN_TPMS)
     btn_tpms.clicked.connect(window.compute_tpms)
@@ -324,8 +341,8 @@ def build_page_domain(window):
     # ── Grid Settings (rect mode) ──
     g4, sec_solver_rect = section(window, lay, "  \u25c8  Grid Settings", _T_NEUTRAL, _F_NEUTRAL)
     window._rect_only_widgets.append(sec_solver_rect)
-    window.le_Nx = row(window, g4, 0, "Grid <i>N<sub>x</sub></i>", "100")
-    window.le_Ny = row(window, g4, 1, "Grid <i>N<sub>y</sub></i>", "50")
+    window.le_Nx = row(window, g4, 0, "Grid <i>N<sub>x</sub></i>", "30")
+    window.le_Ny = row(window, g4, 1, "Grid <i>N<sub>y</sub></i>", "20")
     window.le_Nz = row(window, g4, 2, "Grid <i>N<sub>z</sub></i> (3D only)", "5")
     window._lbl_Nz = g4.itemAtPosition(2, 0).widget()
 
@@ -340,7 +357,7 @@ def build_page_domain(window):
         QCheckBox {
             color: #1a1f24;
             font-size: 10pt;
-            font-weight: 600;
+            font-weight: bold;
             background: #ffffff;
             border: 1px solid #aeb4ba;
             border-radius: 6px;
@@ -404,15 +421,15 @@ def build_page_fluids(window):
     m = _m()
     _BG = m._BG
     _THEMES_local = m._THEMES
-    _T_HOT = m._T_HOT
-    _F_HOT = m._F_HOT
-    _T_COLD = m._T_COLD
-    _F_COLD = m._F_COLD
+    _T_A = m._T_A
+    _F_A = m._F_A
+    _T_B = m._T_B
+    _F_B = m._F_B
     _T_NEUTRAL = m._T_NEUTRAL
     _F_NEUTRAL = m._F_NEUTRAL
     _COMBO = m._COMBO
-    _BTN_HOT = m._BTN_HOT
-    _BTN_COLD = m._BTN_COLD
+    _BTN_A = m._BTN_A
+    _BTN_B = m._BTN_B
     _BTN_TPMS = m._BTN_TPMS
 
     scroll = QScrollArea()
@@ -424,48 +441,59 @@ def build_page_fluids(window):
     lay.setSpacing(6); lay.setContentsMargins(6, 4, 4, 4)
 
     # ── Fluid A (input + computed) ────────────────────────
-    g1, _ = section(window, lay, "  \u25b6  Fluid A  (hot)", _T_HOT, _F_HOT)
-    window.le_uA   = row(window, g1, 0, "<i>u</i><sub>A</sub> [m/s]",  "10.0")
-    window.le_TinA = row(window, g1, 1, "<i>T</i><sub>in</sub> [K]",   "350.0")
-    window.le_PinA = row(window, g1, 2, "<i>P</i><sub>in</sub> [Pa]",  "101325")
+    g1, _ = section(window, lay, "  \u25b6  Fluid A", _T_A, _F_A)
+    _FLUID_TYPES = ["Air", "Water", "sCO₂"]
+    window.combo_fluidA = QComboBox()
+    window.combo_fluidA.addItems(_FLUID_TYPES)
+    window.combo_fluidA.setCurrentIndex(0)
+    window.combo_fluidA.setStyleSheet(_COMBO)
+    add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
+    window.le_uA   = row(window, g1, 1, "<i>u</i><sub>A</sub> [m/s]",  "20.0")
+    window.le_TinA = row(window, g1, 2, "<i>T</i><sub>in</sub> [K]",   "422.0")
+    window.le_PinA = row(window, g1, 3, "<i>P</i><sub>in</sub> [Pa]",  "192362")
     # ── separator ──
     _sep_a = QLabel("\u2500\u2500 computed \u2500\u2500")
-    _sep_a.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:9pt; border:none; background:transparent;")
+    _sep_a.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:10pt; border:none; background:transparent;")
     _sep_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    g1.addWidget(_sep_a, 3, 0, 1, 2)
-    window._v_rhoA = res_row(window, g1, 4, "<i>&rho;</i> [kg/m\u00b3]")
-    window._v_ReA  = res_row(window, g1, 5, "Re")
-    window._v_NuA  = res_row(window, g1, 6, "Nu")
-    window._v_dPLA = res_row(window, g1, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
+    g1.addWidget(_sep_a, 4, 0, 1, 2)
+    window._v_rhoA = res_row(window, g1, 5, "<i>&rho;</i> [kg/m\u00b3]")
+    window._v_ReA  = res_row(window, g1, 6, "Re")
+    window._v_NuA  = res_row(window, g1, 7, "Nu")
+    window._v_dPLA = res_row(window, g1, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_a = QPushButton("Auto-fill")
-    btn_a.setFixedHeight(26); btn_a.setStyleSheet(_BTN_HOT)
+    btn_a.setFixedHeight(26); btn_a.setStyleSheet(_BTN_A)
     btn_a.clicked.connect(window.auto_fill_fluid_a)
-    g1.addWidget(btn_a, 9, 0, 1, 2)
+    g1.addWidget(btn_a, 10, 0, 1, 2)
 
     # ── Fluid B (input + computed) ────────────────────────
-    g2b, _ = section(window, lay, "  \u25c0  Fluid B  (cold)", _T_COLD, _F_COLD)
-    window.le_uB   = row(window, g2b, 0, "<i>u</i><sub>B</sub> [m/s]",  "10.0")
-    window.le_TinB = row(window, g2b, 1, "<i>T</i><sub>in</sub> [K]",   "300.0")
-    window.le_PinB = row(window, g2b, 2, "<i>P</i><sub>in</sub> [Pa]",  "101325")
+    g2b, _ = section(window, lay, "  \u25c0  Fluid B", _T_B, _F_B)
+    window.combo_fluidB = QComboBox()
+    window.combo_fluidB.addItems(_FLUID_TYPES)
+    window.combo_fluidB.setCurrentIndex(1)
+    window.combo_fluidB.setStyleSheet(_COMBO)
+    add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)
+    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "0.133")
+    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "300.0")
+    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101973")
     _sep_b = QLabel("\u2500\u2500 computed \u2500\u2500")
-    _sep_b.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:9pt; border:none; background:transparent;")
+    _sep_b.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:10pt; border:none; background:transparent;")
     _sep_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    g2b.addWidget(_sep_b, 3, 0, 1, 2)
-    window._v_rhoB = res_row(window, g2b, 4, "<i>&rho;</i> [kg/m\u00b3]")
-    window._v_ReB  = res_row(window, g2b, 5, "Re")
-    window._v_NuB  = res_row(window, g2b, 6, "Nu")
-    window._v_dPLB = res_row(window, g2b, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
+    g2b.addWidget(_sep_b, 4, 0, 1, 2)
+    window._v_rhoB = res_row(window, g2b, 5, "<i>&rho;</i> [kg/m\u00b3]")
+    window._v_ReB  = res_row(window, g2b, 6, "Re")
+    window._v_NuB  = res_row(window, g2b, 7, "Nu")
+    window._v_dPLB = res_row(window, g2b, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_b = QPushButton("Auto-fill")
-    btn_b.setFixedHeight(26); btn_b.setStyleSheet(_BTN_COLD)
+    btn_b.setFixedHeight(26); btn_b.setStyleSheet(_BTN_B)
     btn_b.clicked.connect(window.auto_fill_fluid_b)
-    g2b.addWidget(btn_b, 9, 0, 1, 2)
+    g2b.addWidget(btn_b, 10, 0, 1, 2)
 
     # ── Inlet / Outlet configuration (unified) ─────────────
     _DIR_ITEMS = ["+x  (left \u2192 right)", "-x  (right \u2192 left)",
                   "+y  (bottom \u2192 top)", "-y  (top \u2192 bottom)",
                   "+z  (front \u2192 back, 3D)", "-z  (back \u2192 front, 3D)"]
 
-    gio, sec_pipeA = section(window, lay, "  \u25c8  Fluid A  Inlet / Outlet", _T_HOT, _F_HOT)
+    gio, sec_pipeA = section(window, lay, "  \u25c8  Fluid A  Inlet / Outlet", _T_A, _F_A)
     window._rect_only_widgets.append(sec_pipeA)
     window.combo_dirA = QComboBox(); window.combo_dirA.addItems(_DIR_ITEMS)
     window.combo_dirA.setCurrentIndex(0)  # default +x
@@ -482,26 +510,26 @@ def build_page_fluids(window):
     window._lbl_pipeA_out_w   = gio.itemAtPosition(4, 0).widget()
     # 3D-only z-partial BC (hidden in 2D — default full-depth)
     window.le_pipeA_in_z_ctr  = row(window, gio, 5,
-                                     "Inlet z-centre [m] (3D)",  "0.010")
+                                     "Inlet z-centre [m] (3D)",  "0.021")
     window._lbl_pipeA_in_z_ctr  = gio.itemAtPosition(5, 0).widget()
     window.le_pipeA_in_z_w    = row(window, gio, 6,
-                                     "Inlet z-width [m] (3D)",   "0.020")
+                                     "Inlet z-width [m] (3D)",   "0.042")
     window._lbl_pipeA_in_z_w    = gio.itemAtPosition(6, 0).widget()
     window.le_pipeA_out_z_ctr = row(window, gio, 7,
-                                     "Outlet z-centre [m] (3D)", "0.010")
+                                     "Outlet z-centre [m] (3D)", "0.021")
     window._lbl_pipeA_out_z_ctr = gio.itemAtPosition(7, 0).widget()
     window.le_pipeA_out_z_w   = row(window, gio, 8,
-                                     "Outlet z-width [m] (3D)",  "0.020")
+                                     "Outlet z-width [m] (3D)",  "0.042")
     window._lbl_pipeA_out_z_w   = gio.itemAtPosition(8, 0).widget()
 
-    gio2, sec_pipeB = section(window, lay, "  \u25c8  Fluid B  Inlet / Outlet", _T_COLD, _F_COLD)
+    gio2, sec_pipeB = section(window, lay, "  \u25c8  Fluid B  Inlet / Outlet", _T_B, _F_B)
     window._rect_only_widgets.append(sec_pipeB)
     window.combo_dirB = QComboBox(); window.combo_dirB.addItems(_DIR_ITEMS)
     window.combo_dirB.setCurrentIndex(3)  # default -y (crossflow)
     window.combo_dirB.setStyleSheet(_COMBO)
     window.combo_dirB.currentIndexChanged.connect(window._on_dir_changed)
     add_row(window, gio2, 0, "Flow direction", window.combo_dirB)
-    window.le_pipeB_in_ctr  = row(window, gio2, 1, "Inlet centre [m]",   "0.203")
+    window.le_pipeB_in_ctr  = row(window, gio2, 1, "Inlet centre [m]",   "0.154")
     window._lbl_pipeB_in_ctr  = gio2.itemAtPosition(1, 0).widget()
     window.le_pipeB_in_w    = row(window, gio2, 2, "Inlet width [m]",    "0.042")
     window._lbl_pipeB_in_w    = gio2.itemAtPosition(2, 0).widget()
@@ -511,16 +539,16 @@ def build_page_fluids(window):
     window._lbl_pipeB_out_w   = gio2.itemAtPosition(4, 0).widget()
     # 3D-only z-partial BC for fluid B (mirror Fluid A)
     window.le_pipeB_in_z_ctr  = row(window, gio2, 5,
-                                     "Inlet z-centre [m] (3D)",  "0.010")
+                                     "Inlet z-centre [m] (3D)",  "0.021")
     window._lbl_pipeB_in_z_ctr  = gio2.itemAtPosition(5, 0).widget()
     window.le_pipeB_in_z_w    = row(window, gio2, 6,
-                                     "Inlet z-width [m] (3D)",   "0.020")
+                                     "Inlet z-width [m] (3D)",   "0.042")
     window._lbl_pipeB_in_z_w    = gio2.itemAtPosition(6, 0).widget()
     window.le_pipeB_out_z_ctr = row(window, gio2, 7,
-                                     "Outlet z-centre [m] (3D)", "0.010")
+                                     "Outlet z-centre [m] (3D)", "0.021")
     window._lbl_pipeB_out_z_ctr = gio2.itemAtPosition(7, 0).widget()
     window.le_pipeB_out_z_w   = row(window, gio2, 8,
-                                     "Outlet z-width [m] (3D)",  "0.020")
+                                     "Outlet z-width [m] (3D)",  "0.042")
     window._lbl_pipeB_out_z_w   = gio2.itemAtPosition(8, 0).widget()
 
     # ── Polygon pipe edge config (hidden by default) ──────
@@ -588,7 +616,7 @@ def build_page_zones(window):
     window._rect_only_widgets.append(sec_zone)
 
     window.chk_zones = QCheckBox("Enable zone partitioning")
-    window.chk_zones.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:9pt; background:transparent;")
+    window.chk_zones.setStyleSheet(f"color:{_THEMES_local['light']['fg']}; font-size:10pt; font-weight:bold; background:transparent;")
     window.chk_zones.setChecked(False)
     # Hide zone table + controls when unchecked (saves vertical space on small screens)
     def _toggle_zone_table(checked):
@@ -640,7 +668,7 @@ def build_page_zones(window):
     window.zone_table.setMinimumHeight(200)
     window.zone_table.setStyleSheet(
         "QTableWidget { background:rgba(255,255,255,220); color:#1a1a2e; font-size:10pt; }"
-        "QHeaderView::section { background:#4472c4; color:white; font-size:9pt; padding:2px; }"
+        "QHeaderView::section { background:#4472c4; color:white; font-size:10pt; font-weight:bold; padding:2px; }"
         "QTableWidget::item { padding: 2px 4px; }"
         "QTableWidget::item:selected { background:#4488cc; color:white; }")
     # Import _SelectAllDelegate from main to reuse the same class
@@ -717,15 +745,8 @@ def build_canvas_area(window):
     window.btn_tab_layout.setStyleSheet(window._PTAB_ON)
     for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
               window.btn_tab_pareto, window.btn_tab_3d):
-        b.setStyleSheet(window._PTAB_OFF)
-    # Initial visibility: only Geometry (Layout) tab shown until data arrives.
-    # Other tabs revealed lazily by `Main_Menu._update_tab_visibility`:
-    #   - temp/pres/vel ← 2D Run success + dim=2D
-    #   - 3d            ← 3D Run success + dim=3D
-    #   - pareto        ← optimizer finish
-    for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
-              window.btn_tab_pareto, window.btn_tab_3d):
-        b.hide()
+        b.setStyleSheet(window._PTAB_DISABLED)
+        b.setEnabled(False)
     window.btn_tab_layout.clicked.connect(lambda: window._switch_tab('layout'))
     window.btn_tab_temp.clicked.connect(lambda: window._switch_tab('temp'))
     window.btn_tab_pres.clicked.connect(lambda: window._switch_tab('pres'))
@@ -756,11 +777,13 @@ def build_canvas_area(window):
     toolbar.addWidget(btn_zoom_out)
     toolbar.addWidget(btn_reset)
 
-    btn_export = QPushButton("Export")
-    btn_export.setFixedHeight(28)
-    btn_export.setStyleSheet(_BTN_TPMS)
-    btn_export.clicked.connect(window._export_figure)
-    toolbar.addWidget(btn_export)
+    btn_export_fig = QPushButton("Export Figure")
+    btn_export_fig.setFixedHeight(28)
+    btn_export_fig.setStyleSheet(_BTN_TPMS)
+    btn_export_fig.setEnabled(False)
+    btn_export_fig.clicked.connect(window._export_figure)
+    window.btn_export_figure = btn_export_fig
+    toolbar.addWidget(btn_export_fig)
     vlay.addLayout(toolbar)
 
     # ── Thin progress line (2px, auto-hides) ──

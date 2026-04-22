@@ -38,16 +38,18 @@ def main():
     assert '3d' in w._canvas_cards, f"card keys: {list(w._canvas_cards)}"
     assert isinstance(w._canvas_cards['3d'], QFrame)
 
-    # Before compute: 3D tab button is hidden (tab-visibility gating added
-    # 2026-04-21 — tabs reveal only after their data arrives).
-    assert w.btn_tab_3d.isHidden(), \
-        "3D tab button should be hidden until Run Calculation produces 3D results"
-    # _switch_tab('3d') falls back to layout because button is hidden
+    # Before compute: 3D tab button is visible but disabled (tabs always
+    # shown for discoverability, grayed out until their data arrives).
+    assert not w.btn_tab_3d.isHidden(), \
+        "3D tab button should be visible (disabled, not hidden)"
+    assert not w.btn_tab_3d.isEnabled(), \
+        "3D tab button should be disabled until Compute produces 3D results"
+    # _switch_tab('3d') falls back to layout because button is disabled
     w._switch_tab('3d')
     assert w._active_tab == 'layout', \
         f"expected fallback to layout; got {w._active_tab!r}"
     assert w._canvas_cards['3d'].isHidden(), \
-        "3D card should stay hidden until Run Calculation populates it"
+        "3D card should stay hidden until Compute populates it"
 
     # Dimensionality controls
     assert hasattr(w, 'combo_dim'), "combo_dim missing"

@@ -1185,7 +1185,6 @@ class SIMPLESolver3D:
 
         Accepts scalar or (Nx, Ny, Nz) array.
         """
-        from .tpms_calc import air_viscosity
         if np.ndim(T_field) == 0:
             self.T_field = np.full((self.Nx, self.Ny, self.Nz),
                                      float(T_field), dtype=np.float64)
@@ -1196,10 +1195,11 @@ class SIMPLESolver3D:
                     f"T_field shape {arr.shape} != "
                     f"({self.Nx}, {self.Ny}, {self.Nz})")
             self.T_field = np.ascontiguousarray(arr)
-        # Refresh mu / mu_eff from new T
-        mu_new = air_viscosity(self.T_field).astype(np.float64)
-        self.mu_field = np.ascontiguousarray(mu_new)
-        self._mu_eff_field = np.ascontiguousarray(mu_new / self.eps)
+        if self.fluid_type == 'ideal_gas':
+            from .tpms_calc import air_viscosity
+            mu_new = air_viscosity(self.T_field).astype(np.float64)
+            self.mu_field = np.ascontiguousarray(mu_new)
+            self._mu_eff_field = np.ascontiguousarray(mu_new / self.eps)
 
     def solve(self, max_iter=3000, tol=1e-6,
               n_inner=1, verbose=False):

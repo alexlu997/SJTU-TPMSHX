@@ -394,8 +394,8 @@ class ThreeDVisPanel(QWidget):
 
         # ── Status ──
         self.status = QLabel(
-            "No data loaded — set Dimensionality to '3D (uniform)' in "
-            "Domain panel, then click Run Calculation.")
+            "No data loaded — set Dimensionality to '3D' in "
+            "Domain panel, then click Compute.")
         self.status.setStyleSheet(_STATUS_QSS)
         root.addWidget(self.status)
 
@@ -774,7 +774,7 @@ class ThreeDVisPanel(QWidget):
         pl = self.plotter
         pl.clear()
         pl.add_text(
-            "Set Dimensionality = 3D, configure L/H/Lz + inlet/outlet, then Run Calculation.",
+            "Set Dimensionality = 3D, configure L/H/Lz + inlet/outlet, then Compute.",
             font_size=8, color='black', position='upper_edge',
         )
         pl.reset_camera()
