@@ -216,7 +216,7 @@ class ThreeDVisPanel(QWidget):
         # was wide, hiding the view/clear/color/save buttons. Splitting by
         # logical group keeps every control reachable at any window width.
         toolbar_col = QVBoxLayout()
-        toolbar_col.setContentsMargins(4, 2, 4, 2)
+        toolbar_col.setContentsMargins(6, 4, 6, 4)
         toolbar_col.setSpacing(4)
 
         def _divider():

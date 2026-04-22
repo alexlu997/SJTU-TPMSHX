@@ -4,23 +4,18 @@ import warnings
 import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.ticker import FormatStrFormatter
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout,
     QMessageBox, QFrame, QLabel, QLineEdit, QPushButton, QComboBox,
     QScrollArea, QSplitter, QWidget, QSlider, QSizePolicy, QFileDialog,
-    QProgressBar, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QStackedWidget, QInputDialog,
+    QProgressBar, QCheckBox, QTableWidget, QTableWidgetItem,
+    QInputDialog,
 )
 
 from ui.mainui import Ui_MainWindow
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
-from solvers.simple_solver import SIMPLESolver
-from solvers.solve_full import solve_full_domain
 from ui.matplotlib_canvas import MatplotlibCanvas, _label_axes
 from ui.theme import _THEMES, _build_styles
 
@@ -1240,7 +1235,19 @@ def _apply_app_font(app):
 
 
 if __name__ == "__main__":
+    # High-DPI + font smoothing before QApplication instantiation
+    from PySide6.QtCore import Qt as _Qt
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        _Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    import os as _os_main
+    _os_main.environ.setdefault('QT_ENABLE_HIGHDPI_SCALING', '1')
     app = QApplication.instance() or QApplication(sys.argv)
+    # Force grayscale anti-aliasing to eliminate sub-pixel color fringing
+    from PySide6.QtGui import QFont
+    font = app.font()
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    app.setFont(font)
     _apply_app_font(app)
     window = Main_Menu()
     window.show()

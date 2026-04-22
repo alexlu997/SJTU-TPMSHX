@@ -72,7 +72,7 @@ def build_ui(window):
     header_widget = QWidget()
     header_widget.setStyleSheet(
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "stop:0 #1a2a44, stop:1 #2a4060); border-radius:6px;")
+        "stop:0 #1a2a44, stop:1 #2a4060); border-radius:8px;")
     header_widget.setFixedHeight(44)
     header_row = QHBoxLayout(header_widget)
     header_row.setContentsMargins(8, 4, 8, 4)
@@ -103,9 +103,9 @@ def build_ui(window):
     btn_reset.setFixedHeight(32)
     btn_reset.setFixedWidth(100)
     btn_reset.setStyleSheet(
-        "QPushButton{background:rgba(120,130,140,200); border:1px solid rgba(160,165,170,200);"
-        "border-radius:5px; color:white; font-weight:bold; font-size:10pt;}"
-        "QPushButton:hover{background:rgba(140,150,160,220);}")
+        "QPushButton{background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25);"
+        "border-radius:6px; color:rgba(255,255,255,0.85); font-weight:bold; font-size:10pt;}"
+        "QPushButton:hover{background:rgba(255,255,255,0.20); color:white;}")
     btn_reset.setToolTip("Reset all parameters to Shanghai Electric preset (Ctrl+Shift+R)")
     btn_reset.clicked.connect(window._reset_defaults)
     header_row.addWidget(btn_reset, 0)
@@ -115,7 +115,7 @@ def build_ui(window):
     btn_run.setFixedWidth(160)
     btn_run.setStyleSheet(
         "QPushButton{background:rgba(84,130,53,220); border:1px solid rgba(120,170,80,200);"
-        "border-radius:5px; color:white; font-weight:bold; font-size:12pt;}"
+        "border-radius:6px; color:white; font-weight:bold; font-size:12pt;}"
         "QPushButton:hover{background:rgba(104,150,73,240);}")
     btn_run.clicked.connect(window.run_calculation)
     header_row.addWidget(btn_run, 0)
@@ -124,9 +124,9 @@ def build_ui(window):
     btn_export.setFixedHeight(32)
     btn_export.setFixedWidth(80)
     btn_export.setStyleSheet(
-        "QPushButton{background:rgba(68,114,196,200); border:1px solid rgba(100,150,220,200);"
-        "border-radius:5px; color:white; font-weight:bold; font-size:10pt;}"
-        "QPushButton:hover{background:rgba(88,134,216,220);}")
+        "QPushButton{background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25);"
+        "border-radius:6px; color:rgba(255,255,255,0.85); font-weight:bold; font-size:10pt;}"
+        "QPushButton:hover{background:rgba(255,255,255,0.20); color:white;}")
     btn_export.setToolTip("Export results (CSV + NPZ) to file")
     btn_export.clicked.connect(window._export_results)
     header_row.addWidget(btn_export, 0)
@@ -135,8 +135,8 @@ def build_ui(window):
     # Splitter: param_tabs 35% / canvas_area 65%
     splitter = QSplitter(Qt.Orientation.Horizontal)
     splitter.setStyleSheet(
-        "QSplitter::handle{background:rgba(0,0,0,35); width:6px;}"
-        "QSplitter::handle:hover{background:rgba(44,82,130,120);}")
+        "QSplitter::handle{background:#d1d5db; width:5px; border-radius:2px;}"
+        "QSplitter::handle:hover{background:#2c5282;}")
     # Non-opaque resize: only recompute layout on mouse release. The rubber
     # band indicator drags at screen refresh rate, avoiding per-pixel child
     # re-layout which was causing noticeable drag lag on the 3D panel side.
@@ -151,59 +151,102 @@ def build_ui(window):
 
 
 def build_param_tabs(window):
-    """Ex-Main_Menu._build_param_tabs(self) -> QWidget."""
+    """Left-panel parameter groups — collapsible accordion layout."""
     m = _m()
     _BG = m._BG
     _THEMES_local = m._THEMES
 
+    # Tab button styles still needed for canvas-area tab bar (not left panel)
+    _ts = _THEMES_local['light']
+    from ui.theme import RADIUS_TAB
+    window._PTAB_ON  = (f"QPushButton{{color:{_ts['tab_on_fg']};"
+                        f"background:{_ts['tab_on_bg']};"
+                        f"border:1px solid {_ts['tab_on_border']};"
+                        f"border-radius:{RADIUS_TAB}px;"
+                        "font-weight:bold; font-size:9pt; padding:5px 16px;}")
+    window._PTAB_OFF = (f"QPushButton{{background:{_ts['tab_off_bg']}; color:{_ts['tab_off_fg']};"
+                        f"border:1px solid {_ts['tab_off_border']};"
+                        f"border-radius:{RADIUS_TAB}px;"
+                        f"font-size:9pt; font-weight:500; padding:5px 16px;}}"
+                        f"QPushButton:hover{{background:{_ts['tab_off_hover']};"
+                        f"color:#1a1f24;}}")
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setStyleSheet(
+        f"QScrollArea{{background:{_BG}; border:none;}}"
+        f"QScrollBar:vertical{{background:{_BG}; width:10px; border:none; margin:2px;}}"
+        f"QScrollBar::handle:vertical{{background:#9ca3af; border-radius:4px; min-height:30px;}}"
+        f"QScrollBar::handle:vertical:hover{{background:#6b7280;}}"
+        f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical{{height:0;}}")
+    scroll.setMinimumWidth(240)
+
     container = QWidget()
     container.setStyleSheet(f"background:{_BG};")
-    container.setMinimumWidth(240)
     vlay = QVBoxLayout(container)
-    vlay.setContentsMargins(0, 0, 0, 0); vlay.setSpacing(4)
+    vlay.setContentsMargins(4, 4, 4, 4); vlay.setSpacing(6)
+    vlay.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-    # Tab button styles (from theme, with gradient)
-    _ts = _THEMES_local['light']
-    window._PTAB_ON  = (f"QPushButton{{color:{_ts['tab_on_fg']};"
-                        f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                        f"stop:0 {_ts['tab_on_bg']}, stop:1 {_ts['tab_on_border']});"
-                        f"border:1px solid {_ts['tab_on_border']}; border-radius:6px;"
-                        "font-weight:bold; font-size:9pt; padding:5px 14px;"
-                        "border-bottom:2px solid white;}")
-    window._PTAB_OFF = (f"QPushButton{{background:{_ts['tab_off_bg']}; color:{_ts['tab_off_fg']};"
-                        f"border:1px solid {_ts['tab_off_border']}; border-radius:6px;"
-                        f"font-size:9pt; font-weight:bold; padding:5px 14px;}}"
-                        f"QPushButton:hover{{background:{_ts['tab_off_hover']};"
-                        f"border-bottom:2px solid {_ts['tab_on_bg']}; color:#0a0a0a;}}")
+    _GRP_QSS = (
+        "QGroupBox {"
+        "  font-size:10pt; font-weight:bold; color:#374151;"
+        "  background:transparent; border:1px solid #d1d5db;"
+        "  border-radius:8px; margin-top:10px; padding:10px 4px 4px 4px;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin:margin; left:10px; padding:0 8px;"
+        "  background:#f5f6f8;"
+        "}"
+        "QGroupBox::indicator {"
+        "  width:14px; height:14px; margin-right:4px;"
+        "}"
+        "QGroupBox::indicator:checked {"
+        "  image: none;"
+        "  border:2px solid #2c5282; border-radius:3px;"
+        "  background:#2c5282;"
+        "}"
+        "QGroupBox::indicator:unchecked {"
+        "  image: none;"
+        "  border:2px solid #9ca3af; border-radius:3px;"
+        "  background:transparent;"
+        "}"
+    )
 
-    tab_row = QWidget()
-    tab_lay = QHBoxLayout(tab_row)
-    tab_lay.setContentsMargins(0, 0, 0, 0); tab_lay.setSpacing(2)
+    page_domain = build_page_domain(window)
+    page_fluids = build_page_fluids(window)
+    page_zones  = build_page_zones(window)
+
+    from PySide6.QtWidgets import QGroupBox
+    for title, page, default_open in [
+        ("Domain", page_domain, True),
+        ("Fluids", page_fluids, True),
+        ("Zones",  page_zones,  False),
+    ]:
+        grp = QGroupBox(title)
+        grp.setCheckable(True)
+        grp.setChecked(default_open)
+        grp.setStyleSheet(_GRP_QSS)
+        grp_lay = QVBoxLayout(grp)
+        grp_lay.setContentsMargins(0, 0, 0, 0)
+        grp_lay.setSpacing(0)
+        grp_lay.addWidget(page)
+        page.setVisible(default_open)
+        grp.toggled.connect(lambda checked, p=page: p.setVisible(checked))
+        vlay.addWidget(grp)
+
+    vlay.addStretch(1)
+    scroll.setWidget(container)
+
+    # Legacy compat: _param_stack / _param_btns not used but some code may ref
+    window._param_stack = None
     window._param_btns = []
-    for i, label in enumerate(["Domain", "Fluids", "Zones"]):
-        btn = QPushButton(label)
-        btn.setStyleSheet(window._PTAB_ON if i == 0 else window._PTAB_OFF)
-        btn.clicked.connect(lambda checked, idx=i: switch_param_tab(window, idx))
-        tab_lay.addWidget(btn)
-        window._param_btns.append(btn)
-    tab_lay.addStretch()
-    vlay.addWidget(tab_row)
 
-    window._param_stack = QStackedWidget()
-    window._param_stack.addWidget(build_page_domain(window))
-    window._param_stack.addWidget(build_page_fluids(window))
-    window._param_stack.addWidget(build_page_zones(window))
-    window._param_stack.setCurrentIndex(0)
-    vlay.addWidget(window._param_stack, 1)
-
-    return container
+    return scroll
 
 
 def switch_param_tab(window, index):
-    """Ex-Main_Menu._switch_param_tab(self, index)."""
-    window._param_stack.setCurrentIndex(index)
-    for i, btn in enumerate(window._param_btns):
-        btn.setStyleSheet(window._PTAB_ON if i == index else window._PTAB_OFF)
+    """Legacy no-op — left panel is now collapsible, not tab-switched."""
+    pass
 
 
 def build_page_domain(window):
@@ -395,7 +438,7 @@ def build_page_fluids(window):
     window._v_NuA  = res_row(window, g1, 6, "Nu")
     window._v_dPLA = res_row(window, g1, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_a = QPushButton("Auto-fill")
-    btn_a.setFixedHeight(22); btn_a.setStyleSheet(_BTN_HOT)
+    btn_a.setFixedHeight(26); btn_a.setStyleSheet(_BTN_HOT)
     btn_a.clicked.connect(window.auto_fill_fluid_a)
     g1.addWidget(btn_a, 9, 0, 1, 2)
 
@@ -413,7 +456,7 @@ def build_page_fluids(window):
     window._v_NuB  = res_row(window, g2b, 6, "Nu")
     window._v_dPLB = res_row(window, g2b, 7, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_b = QPushButton("Auto-fill")
-    btn_b.setFixedHeight(22); btn_b.setStyleSheet(_BTN_COLD)
+    btn_b.setFixedHeight(26); btn_b.setStyleSheet(_BTN_COLD)
     btn_b.clicked.connect(window.auto_fill_fluid_b)
     g2b.addWidget(btn_b, 9, 0, 1, 2)
 
@@ -506,7 +549,7 @@ def build_page_fluids(window):
 
     # Preview button
     btn_preview = QPushButton("Preview Layout")
-    btn_preview.setFixedHeight(24); btn_preview.setStyleSheet(_BTN_TPMS)
+    btn_preview.setFixedHeight(26); btn_preview.setStyleSheet(_BTN_TPMS)
     btn_preview.clicked.connect(window._draw_layout)
     lay.addWidget(btn_preview)
 
@@ -557,7 +600,7 @@ def build_page_zones(window):
     window.chk_zones.toggled.connect(_toggle_zone_table)
     window.combo_zone_axis = QComboBox()
     window.combo_zone_axis.addItems(["Along Y", "Along X", "Grid Y\u00d7X"])
-    window.combo_zone_axis.setFixedHeight(22)
+    window.combo_zone_axis.setFixedHeight(26)
     window.combo_zone_axis.setStyleSheet(_INP)
     window.combo_zone_axis.currentIndexChanged.connect(window._zone_mode_changed)
     g_zone.addWidget(window.chk_zones, 0, 0)
@@ -569,13 +612,13 @@ def build_page_zones(window):
     nz_lay.setContentsMargins(0, 0, 0, 0); nz_lay.setSpacing(4)
     btn_add = QPushButton("+Row"); btn_rm = QPushButton("-Row")
     for b in (btn_add, btn_rm):
-        b.setFixedHeight(22); b.setStyleSheet(_BTN_TPMS)
+        b.setFixedHeight(26); b.setStyleSheet(_BTN_TPMS)
     btn_add.clicked.connect(window._zone_add_row)
     btn_rm.clicked.connect(window._zone_remove_row)
     window.lbl_nx = QLabel("Col:"); window.lbl_nx.setStyleSheet(m._LBL)
     window.btn_add_x = QPushButton("+Col"); window.btn_rm_x = QPushButton("-Col")
     for b in (window.btn_add_x, window.btn_rm_x):
-        b.setFixedHeight(22); b.setStyleSheet(_BTN_TPMS)
+        b.setFixedHeight(26); b.setStyleSheet(_BTN_TPMS)
     window.btn_add_x.clicked.connect(window._zone_add_col)
     window.btn_rm_x.clicked.connect(window._zone_remove_col)
     window.lbl_nx.hide(); window.btn_add_x.hide(); window.btn_rm_x.hide()
@@ -620,13 +663,13 @@ def build_page_zones(window):
 
     # ── Preview + Optimize buttons ──
     btn_preview_z = QPushButton("Preview Layout")
-    btn_preview_z.setFixedHeight(30)
+    btn_preview_z.setFixedHeight(26)
     btn_preview_z.setStyleSheet(_BTN_TPMS)
     btn_preview_z.clicked.connect(window._draw_layout)
     lay.addWidget(btn_preview_z)
 
     btn_opt = QPushButton("Optimize Zones (NSGA-II)")
-    btn_opt.setFixedHeight(36)
+    btn_opt.setFixedHeight(26)
     btn_opt.setStyleSheet(_BTN_RUN)
     btn_opt.clicked.connect(window._run_optimize)
     lay.addWidget(btn_opt)
@@ -659,6 +702,8 @@ def build_canvas_area(window):
     # ── Tab buttons + Export + Progress ──
     toolbar = QHBoxLayout()
     toolbar.setSpacing(4)
+    toolbar.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+    toolbar.setContentsMargins(12, 4, 4, 4)
 
     window.btn_tab_temp = QPushButton("Temperature")
     window.btn_tab_pres = QPushButton("Pressure")
@@ -802,25 +847,29 @@ def build_canvas_area(window):
         # visually colliding with embedded toolbar labels — user report
         # 2026-04-21). Other cards keep the coloured accent.
         card = QFrame()
+        from ui.theme import RADIUS_CARD
         accent = _accents.get(key, '#4472c4')
         if key == '3d':
             card.setStyleSheet(
                 f"QFrame{{background:{_t['card_bg']};"
                 f"border:1px solid {_t['card_border']};"
-                "border-radius:10px;}")
+                f"border-radius:{RADIUS_CARD}px;}}")
         else:
             card.setStyleSheet(
                 f"QFrame{{background:{_t['card_bg']};"
                 f"border:2px solid {_t['card_border']};"
                 f"border-top:5px solid {accent};"
-                "border-radius:12px;}")
+                f"border-radius:{RADIUS_CARD+4}px;}}")
         card_lay = QVBoxLayout(card)
         card_lay.setContentsMargins(16, 16, 16, 16)
         card_lay.setSpacing(0)
-
-        # Drop shadow removed — `QGraphicsDropShadowEffect` per card triggers
-        # expensive off-screen render on every show/hide, causing tab-switch
-        # lag. 2D/3D cards now use flat border only.
+        # Micro drop shadow
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(8)
+        shadow.setOffset(0, 1)
+        from PySide6.QtGui import QColor
+        shadow.setColor(QColor(0, 0, 0, 15))
+        card.setGraphicsEffect(shadow)
 
         # Canvas inside card
         c.setSizePolicy(QSizePolicy.Policy.Expanding,
