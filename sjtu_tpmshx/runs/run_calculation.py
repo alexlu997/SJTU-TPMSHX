@@ -24,6 +24,15 @@ def _parse_inputs(window):
     """Phase 1: UI input reading + validation + zone config building."""
     warnings_list = []
 
+    # Block unsupported fluids up-front (2D path currently hardcodes air_*
+    # in _run_solvers; running with water/sCO2 would silently give wrong
+    # numbers). Validate at entry for both sides.
+    from solvers.tpms_calc import parse_fluid_type, validate_fluid_type
+    if hasattr(window, 'combo_fluidA'):
+        validate_fluid_type(parse_fluid_type(window.combo_fluidA), 'A')
+    if hasattr(window, 'combo_fluidB'):
+        validate_fluid_type(parse_fluid_type(window.combo_fluidB), 'B')
+
     def _parse(widget, name, typ=float):
         try:
             return typ(widget.text())

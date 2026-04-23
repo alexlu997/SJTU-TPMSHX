@@ -714,6 +714,9 @@ def build_page_fluids(window):
     window.combo_fluidA.addItems(_FLUID_TYPES)
     window.combo_fluidA.setCurrentIndex(0)
     window.combo_fluidA.setStyleSheet(_COMBO)
+    window.combo_fluidA.setToolTip(
+        "Water and sCO₂ correlations are not yet fitted — "
+        "solver blocks these and raises an error at compute time.")
     add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
     window.le_uA   = row(window, g1, 1, "<i>u</i><sub>A</sub> [m/s]",  "20.0")
     window.le_TinA = row(window, g1, 2, "<i>T</i><sub>in</sub> [K]",   "422.0")
@@ -734,8 +737,11 @@ def build_page_fluids(window):
     g2b, _ = section(window, _fluids_row_lay, "Fluid B", _T_B, _F_B)
     window.combo_fluidB = QComboBox()
     window.combo_fluidB.addItems(_FLUID_TYPES)
-    window.combo_fluidB.setCurrentIndex(1)
+    window.combo_fluidB.setCurrentIndex(0)
     window.combo_fluidB.setStyleSheet(_COMBO)
+    window.combo_fluidB.setToolTip(
+        "Water and sCO₂ correlations are not yet fitted — "
+        "solver blocks these and raises an error at compute time.")
     add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)
     window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "0.133")
     window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "300.0")
