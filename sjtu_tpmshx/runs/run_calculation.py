@@ -800,27 +800,38 @@ def _run_solvers(window, cfg, fields):
     except Exception:
         resid_B = None
 
-    # Conservation diagnostics — rho·cp·u·T integrals at inlet/outlet.
-    # Not a full energy-balance (no solid conduction residual in 2D), but
-    # reports Q_A and Q_B as the "enthalpy change seen by each fluid" so
-    # the user can verify Q_A + Q_B ≈ 0 (net zero = conservation).
+    # Conservation diagnostics — STRICT enthalpy flux at inlet / outlet.
+    # The previous implementation averaged T with a normalised mass-flux
+    # weight that divided by a plane-mean ρ·cp (#5 reviewer concern —
+    # not equal to ∑ρ·cp·u·A·T when ρ·cp varied along the face). Now we
+    # compute the integral directly:
+    #   H_in  = ∑_face ρ·cp·|u·n̂|·A · T
+    #   H_out = same on the outlet face
+    #   Q_fluid = H_in − H_out   (positive = heat given up by the fluid)
     def _enthalpy_balance(T_field, uc, vc, rho_cp_field, dir_code, dx_arr, dy_arr):
-        Nx, Ny = T_field.shape
         if dir_code in (0, 1):
             i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
             A_cell = dy_arr
-            m_cp_in  = float(np.sum(rho_cp_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell))
-            m_cp_out = float(np.sum(rho_cp_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell))
-            T_in_avg  = float(np.sum(T_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell) / (m_cp_in  / max(rho_cp_field[i_in, :].mean(), 1e-30) + 1e-30))
-            T_out_avg = float(np.sum(T_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell) / (m_cp_out / max(rho_cp_field[i_out, :].mean(), 1e-30) + 1e-30))
+            H_in  = float(np.sum(rho_cp_field[i_in, :]
+                                  * np.abs(uc[i_in, :])
+                                  * A_cell
+                                  * T_field[i_in, :]))
+            H_out = float(np.sum(rho_cp_field[i_out, :]
+                                  * np.abs(uc[i_out, :])
+                                  * A_cell
+                                  * T_field[i_out, :]))
         else:
             j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
             A_cell = dx_arr
-            m_cp_in  = float(np.sum(rho_cp_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell))
-            m_cp_out = float(np.sum(rho_cp_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell))
-            T_in_avg  = float(np.sum(T_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell) / (m_cp_in  / max(rho_cp_field[:, j_in].mean(), 1e-30) + 1e-30))
-            T_out_avg = float(np.sum(T_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell) / (m_cp_out / max(rho_cp_field[:, j_out].mean(), 1e-30) + 1e-30))
-        return m_cp_in * (T_in_avg - T_out_avg)  # heat given up by the fluid
+            H_in  = float(np.sum(rho_cp_field[:, j_in]
+                                  * np.abs(vc[:, j_in])
+                                  * A_cell
+                                  * T_field[:, j_in]))
+            H_out = float(np.sum(rho_cp_field[:, j_out]
+                                  * np.abs(vc[:, j_out])
+                                  * A_cell
+                                  * T_field[:, j_out]))
+        return H_in - H_out  # heat given up by the fluid (W)
 
     try:
         Q_A = _enthalpy_balance(Ta, ucA, vcA,

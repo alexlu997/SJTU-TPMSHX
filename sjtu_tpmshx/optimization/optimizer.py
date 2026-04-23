@@ -597,14 +597,20 @@ def evaluate(x, config=None):
     sA_final = sc['sA']; sB_final = sc['sB']  # for dP extraction
 
     # 4. Energy solve with per-cell rho(T)*cp(T) coupling
-    #    + variable density SIMPLE re-run after first energy iteration
+    #    + variable density SIMPLE re-run after first energy iteration.
+    # Separate P_inA / P_inB now (v1.0.10 #3). UI Compute lets the user
+    # set different operating pressures for A and B (cross-flow case);
+    # previously the optimizer collapsed them to a single P_in which
+    # made optimizer-vs-UI comparisons drift whenever A/B ran at
+    # different pressures.
     from solvers.tpms_calc import air_cp
-    P_in = cfg.get('P_inA', cfg.get('P_in', 101325.0))
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     Ta = Tb = Ts = None
-    rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_in))
-    rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_in))
+    rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_inA))
+    rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_inB))
     n_rho = max(1, int(cfg.get('n_rho_loops', 3)))
     max_iter_e = int(cfg.get('max_iter_energy', 5000))
     for _ci in range(n_rho):
@@ -618,9 +624,9 @@ def evaluate(x, config=None):
             tol=0.5, max_iter=max_iter_e,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_refined, dy_arr=dy_refined)
-        # Update rho fields from temperature
-        rho_A_new = air_density(Ta, P_in)
-        rho_B_new = air_density(Tb, P_in)
+        # Update rho fields from temperature + side-specific P.
+        rho_A_new = air_density(Ta, P_inA)
+        rho_B_new = air_density(Tb, P_inB)
         drho = max(float(np.max(np.abs(rho_A_new - rho_A_field)) / rho_A_field.mean()),
                    float(np.max(np.abs(rho_B_new - rho_B_field)) / rho_B_field.mean()))
         if drho < 0.01:
@@ -906,7 +912,8 @@ def evaluate_richardson(x, config=None):
     Nx_f_user = Nx_c_user * 2;  Ny_f_user = Ny_c_user * 2
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
-    P_in = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
 
     # Master refined grids for coarse and fine levels
     refined_c = _resolve_refined_grid(cfg)
@@ -955,8 +962,8 @@ def evaluate_richardson(x, config=None):
     sc_c = _compute_simple(cfg, grid_cells=grid_cells_r,
                            L_field=L_field_r, t_field=t_field_r,
                            refined_grid=refined_c)
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     rA_avg, rB_avg = sc_c['rho_A'], sc_c['rho_B']
     Ta_c = Tb_c = Ts_c = None
     for _ci in range(3):
@@ -970,12 +977,12 @@ def evaluate_richardson(x, config=None):
             tol=0.5, max_iter=5000,
             Ta_init=Ta_c, Tb_init=Tb_c, Ts_init=Ts_c,
             dx_arr=dx_c, dy_arr=dy_c)
-        rA_new = air_density(float(Ta_c.mean()), P_in)
-        rB_new = air_density(float(Tb_c.mean()), P_in)
+        rA_new = air_density(float(Ta_c.mean()), P_inA)
+        rB_new = air_density(float(Tb_c.mean()), P_inB)
         if abs(rA_new - rA_avg) / rA_avg < 0.01 and abs(rB_new - rB_avg) / rB_avg < 0.01:
             break
-        rcp_A = 0.7 * air_density(Ta_c, P_in) * air_cp(Ta_c) + 0.3 * rcp_A
-        rcp_B = 0.7 * air_density(Tb_c, P_in) * air_cp(Tb_c) + 0.3 * rcp_B
+        rcp_A = 0.7 * air_density(Ta_c, P_inA) * air_cp(Ta_c) + 0.3 * rcp_A
+        rcp_B = 0.7 * air_density(Tb_c, P_inB) * air_cp(Tb_c) + 0.3 * rcp_B
         rA_avg = 0.7 * rA_new + 0.3 * rA_avg
         rB_avg = 0.7 * rB_new + 0.3 * rB_avg
 
@@ -1226,7 +1233,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     L0 = cfg['L0']; t0 = cfg['t0']
-    P_in = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
 
     # Build master refined grid from user resolution
     cfg_local = {**cfg, 'Nx': Nx_user, 'Ny': Ny_user}
@@ -1247,8 +1255,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
         dx_arr=dx_r, dy_arr=dy_r)
 
     # 2. SIMPLE at refined grid (design-specific K/c_F override + refined dx/dy)
-    rho_A = air_density(T_inA, P_in); mu_A = air_viscosity(T_inA)
-    rho_B = air_density(T_inB, P_in); mu_B = air_viscosity(T_inB)
+    rho_A = air_density(T_inA, P_inA); mu_A = air_viscosity(T_inA)
+    rho_B = air_density(T_inB, P_inB); mu_B = air_viscosity(T_inB)
     L_field_sp = za['L_field']; t_field_sp = za['t_field']
 
     sA = SIMPLESolver(H, L, Ny, Nx, tpms_type, L0, t0,
@@ -1276,8 +1284,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
     ucB = np.zeros((Nx, Ny))
 
     # 3. Energy solve with ρ*cp coupling at refined grid
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     Ta = Tb = Ts = None
     for _ci in range(3):
         Ta, Tb, Ts = solve_full_domain(
@@ -1290,12 +1298,12 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
             tol=0.5, max_iter=5000,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_r, dy_arr=dy_r)
-        rA_new = air_density(float(Ta.mean()), P_in)
-        rB_new = air_density(float(Tb.mean()), P_in)
+        rA_new = air_density(float(Ta.mean()), P_inA)
+        rB_new = air_density(float(Tb.mean()), P_inB)
         if abs(rA_new - float(np.mean(rcp_A / air_cp(Ta) if np.ndim(rcp_A) > 0 else rcp_A / air_cp(T_inA)))) / rA_new < 0.01:
             break
-        rcp_A = 0.7 * air_density(Ta, P_in) * air_cp(Ta) + 0.3 * rcp_A
-        rcp_B = 0.7 * air_density(Tb, P_in) * air_cp(Tb) + 0.3 * rcp_B
+        rcp_A = 0.7 * air_density(Ta, P_inA) * air_cp(Ta) + 0.3 * rcp_A
+        rcp_B = 0.7 * air_density(Tb, P_inB) * air_cp(Tb) + 0.3 * rcp_B
 
     # 4. Q and ΔP using refined cell_area
     _area_sp = dx_r[:, None] * dy_r[None, :]

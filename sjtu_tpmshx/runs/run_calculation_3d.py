@@ -893,25 +893,39 @@ def _run_3d_stack(cfg):
         # outer iters 1-2.
         sA.solve(max_iter=150, tol=1e-3, verbose=False)
 
-        # P0/P1: Refresh h_v from Nu(Re_local, T_local) for both fluids.
-        # P10: Refresh K_ff from k_air(T) for both fluids.
-        # P2: Refresh rho_cp as 3D fields.
+        # Refresh fluid-property fields using the *local* T field, keeping
+        # the spatial structure built by the zoned-geometry pass up-front
+        # (#1). The previous implementation used `eps_f` (undefined in
+        # this scope) and a scalar mean T, which both crashed for zoned
+        # runs and flattened any non-uniform K_ff / h_v / rho_cp back to
+        # a uniform field.
         T_avgA = float(Ta.mean())
-        _gA = tpms_compute(tpms_type, Lcell, t_wall, u_A, T_avgA, P_inA, k_s)
-        h_vA_field[:] = _gA['A_0'] * _gA['H_sf']
-        K_ffA[:] = eps_f * air_conductivity(T_avgA)
-        rho_cp_fA[:] = air_density(T_avgA, P_inA) * air_cp(T_avgA)
+        K_ffA[:] = eps_f_arr * air_conductivity(Ta)
+        rho_cp_fA[:] = air_density(Ta, P_inA) * air_cp(Ta)
+        # h_v uses domain-mean T per side to keep the lru_cache hit rate
+        # high; the zoned geometry variation is already captured through
+        # (L_ij, t_ij) in the per-cell path above.
+        if L_mm_field is not None:
+            h_vA_field[:] = _build_hv_field_3d(
+                L_mm_field, t_field_3d, u_A, T_avgA, P_inA)
+        else:
+            _gA = tpms_compute(tpms_type, Lcell, t_wall, u_A, T_avgA, P_inA, k_s)
+            h_vA_field[:] = _gA['A_0'] * _gA['H_sf']
 
         if Tb is not None:
             T_avgB = float(Tb.mean())
-            _gB = tpms_compute(tpms_type, Lcell, t_wall, u_B_val, T_avgB, P_inB, k_s)
-            h_vB_field[:] = _gB['A_0'] * _gB['H_sf']
             if is_water_B:
-                K_ffB[:] = eps_f * water_conductivity(T_avgB)
-                rho_cp_fB[:] = water_density(T_avgB) * water_cp(T_avgB)
+                K_ffB[:] = eps_f_arr * water_conductivity(Tb)
+                rho_cp_fB[:] = water_density(Tb) * water_cp(Tb)
             else:
-                K_ffB[:] = eps_f * air_conductivity(T_avgB)
-                rho_cp_fB[:] = air_density(T_avgB, P_inB) * air_cp(T_avgB)
+                K_ffB[:] = eps_f_arr * air_conductivity(Tb)
+                rho_cp_fB[:] = air_density(Tb, P_inB) * air_cp(Tb)
+            if L_mm_field is not None:
+                h_vB_field[:] = _build_hv_field_3d(
+                    L_mm_field, t_field_3d, u_B_val, T_avgB, P_inB)
+            else:
+                _gB = tpms_compute(tpms_type, Lcell, t_wall, u_B_val, T_avgB, P_inB, k_s)
+                h_vB_field[:] = _gB['A_0'] * _gB['H_sf']
 
         # Non-iso coupling for fluid B. Water: ρ(T) only, no ideal gas.
         # Air: ρ(P,T) via ideal gas law (mirror of A).
@@ -965,20 +979,39 @@ def _run_3d_stack(cfg):
                 wcB[:] = streamB2
 
     # ── Extract metrics + fields ──
-    # Q_enthalpy_A: Fluid A enthalpy change (m_dot × cp × ΔT), kept for
-    # backwards-compat with 2D/optimizer. Q_solid_B: volume integral of
-    # h_vB·(Ts−Tb) — the "interface heat flux" reading used by optimizer
-    # and 2D solve_full. The reported Q here matches prior 3D convention
-    # (enthalpy-A); Q_solid_B is exposed alongside so comparisons across
-    # 2D, 3D, and optimizer are explicit (#5).
-    out_idx = 0 if is_reverse else -1
-    T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
-    m_dot = rho_A * u_A * (eps / 2.0 * L_cross1 * L_cross2)
-    Q_enthalpy_A = abs(m_dot * cp_A * (T_inA - T_A_out))
-    # Volume integral on B-interface — same formula the optimizer uses.
+    # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
+    # 2D UI path (run_calculation.py:_store_results.Q_total) and the
+    # optimizer (both 2D and 3D). This makes Q comparable across the
+    # three paths without a unit-mismatch penalty. (#5 / v1.0.10 #6)
+    #
+    # Q_enthalpy_A (m_dot × cp × ΔT) is kept as a secondary reading;
+    # it uses inlet-plane ρ from the solver's rho_field (not a stale
+    # cold-seed scalar) and respects the solver's inlet mask via
+    # v_inlet_field. (v1.0.10 #2)
     cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
     Q_solid_B = float(np.sum(h_vB_field * (Ts - Tb) * cell_vol))
-    Q = Q_enthalpy_A  # primary report (unchanged)
+
+    out_idx = 0 if is_reverse else -1
+    T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
+    # Mass flow from the solver's actual inlet face: ρ·v_in × open-area.
+    # sA.v has shape (solver Nx, solver Ny+1, solver Nz); inlet face is
+    # j=0. Use rho_field[:, 0, :] × v[:, 0, :] × (dx × dz) with open-area
+    # fraction `inlet_frac` so partial-inlet geometries are honoured.
+    try:
+        v_in_face = sA.v[:, 0, :]
+        rho_in_face = sA.rho_field[:, 0, :]
+        dx_sol = sA.dx[:, None]; dz_sol = sA.dz[None, :]
+        open_frac = getattr(sA, 'inlet_frac', None)
+        if open_frac is None:
+            open_frac = np.ones_like(v_in_face)
+        m_dot = float(np.sum(
+            rho_in_face * np.abs(v_in_face) * open_frac * dx_sol * dz_sol))
+    except Exception:
+        # Fallback to the scalar seed if the solver fields are not shaped
+        # as expected — matches the previous behaviour.
+        m_dot = rho_A * u_A * (eps / 2.0 * L_cross1 * L_cross2)
+    Q_enthalpy_A = abs(m_dot * cp_A * (T_inA - T_A_out))
+    Q = Q_solid_B  # primary report (was Q_enthalpy_A)
 
     dP = float(SIMPLESolver3D.extract_dP_weighted(sA))
 
