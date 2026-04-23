@@ -766,6 +766,40 @@ def _run_solvers(window, cfg, fields):
     except Exception:
         resid_B = None
 
+    # Conservation diagnostics — rho·cp·u·T integrals at inlet/outlet.
+    # Not a full energy-balance (no solid conduction residual in 2D), but
+    # reports Q_A and Q_B as the "enthalpy change seen by each fluid" so
+    # the user can verify Q_A + Q_B ≈ 0 (net zero = conservation).
+    def _enthalpy_balance(T_field, uc, vc, rho_cp_field, dir_code, dx_arr, dy_arr):
+        Nx, Ny = T_field.shape
+        if dir_code in (0, 1):
+            i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
+            A_cell = dy_arr
+            m_cp_in  = float(np.sum(rho_cp_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell))
+            m_cp_out = float(np.sum(rho_cp_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell))
+            T_in_avg  = float(np.sum(T_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell) / (m_cp_in  / max(rho_cp_field[i_in, :].mean(), 1e-30) + 1e-30))
+            T_out_avg = float(np.sum(T_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell) / (m_cp_out / max(rho_cp_field[i_out, :].mean(), 1e-30) + 1e-30))
+        else:
+            j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
+            A_cell = dx_arr
+            m_cp_in  = float(np.sum(rho_cp_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell))
+            m_cp_out = float(np.sum(rho_cp_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell))
+            T_in_avg  = float(np.sum(T_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell) / (m_cp_in  / max(rho_cp_field[:, j_in].mean(), 1e-30) + 1e-30))
+            T_out_avg = float(np.sum(T_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell) / (m_cp_out / max(rho_cp_field[:, j_out].mean(), 1e-30) + 1e-30))
+        return m_cp_in * (T_in_avg - T_out_avg)  # heat given up by the fluid
+
+    try:
+        Q_A = _enthalpy_balance(Ta, ucA, vcA,
+                                rho_cp_A if np.ndim(rho_cp_A) > 0 else np.full((N_x, N_y), rho_cp_A),
+                                dir_A, energy_dx, energy_dy)
+        Q_B = _enthalpy_balance(Tb, ucB, vcB,
+                                rho_cp_B if np.ndim(rho_cp_B) > 0 else np.full((N_x, N_y), rho_cp_B),
+                                dir_B, energy_dx, energy_dy)
+        Q_net = Q_A + Q_B
+        energy_rel = abs(Q_net) / (abs(Q_A) + abs(Q_B) + 1e-30)
+    except Exception:
+        Q_A = Q_B = Q_net = energy_rel = float('nan')
+
     result = {
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
@@ -775,6 +809,9 @@ def _run_solvers(window, cfg, fields):
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
         'residuals_A': resid_A, 'residuals_B': resid_B,
+        # Conservation diagnostics
+        'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,
+        'energy_imbalance_rel': energy_rel,
     }
     return result
 
@@ -799,6 +836,11 @@ def _store_results(window, cfg, result):
         'dx_arr': result['energy_dx'], 'dy_arr': result['energy_dy'],
         'residuals_A': result.get('residuals_A'),
         'residuals_B': result.get('residuals_B'),
+        # Conservation diagnostics (per-fluid enthalpy change, net, relative)
+        'Q_A': result.get('Q_A', float('nan')),
+        'Q_B': result.get('Q_B', float('nan')),
+        'Q_net': result.get('Q_net', float('nan')),
+        'energy_imbalance_rel': result.get('energy_imbalance_rel', float('nan')),
     }
     window._compute_warnings = result['warnings_list']
     return  # rendering happens in finalize_plots on main thread

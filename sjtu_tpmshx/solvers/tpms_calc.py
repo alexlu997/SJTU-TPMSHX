@@ -169,22 +169,11 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
     return 0.17 * Pr ** (1 / 3) * Re ** n * eps ** 2.25 * (L_cell_mm / (1000 * Sa_mm)) ** (-2.01)
 
 
-# ── Friction factor f–Re correlation ───────────────────────────
-#
-# F1 power-law form (both Diamond and Gyroid):
-#   f = C * Re^n * eps^a * (t/L)^b * (X/(1000*Sa))^c
-#   n = n0 + n1*ln(eps)
-#
-# Length scale X differs by TPMS type (same convention as Nu):
-#   Diamond: X = D_h  (hydraulic diameter, mm)
-#   Gyroid:  X = L    (unit cell size, mm)
-#
-# Re convention (r_h, see module docstring): Re = rho_ref * u * r_h / mu
-#   where r_h = D_h / 2 = eps / A_0 and rho_ref is at atmospheric pressure.
-# Equivalent: Re = rho_ref * u * D_h / (2*mu)   ("D_h with single-stream m/2")
-#
-# f  = 2*(dP/L)*r_h / (rho*u^2)
 # ── Geometry-only interface (no fluid needed) ─────────────────
+# (Legacy f-Re comments removed 2026-04-23 — f-Re was purged from the
+# project on 2026-04-19 in favour of the single-closure ConstDF-v1 D-F
+# surrogate. Historical r_h = D_h/2 convention is obsolete — Re is
+# D_h-based everywhere; see module docstring.)
 
 # Solid-conduction anisotropy / tortuosity correction.
 # The homogenised `K_ss = (1 - eps) * k_s` assumes parallel solid paths
@@ -275,7 +264,10 @@ def compute(tpms_type: str,
     -------
     dict with keys:
         epsilon   – porosity [-]
-        A_0       – specific surface area [m⁻¹]
+        A_0       – single-side specific surface area [m⁻¹] (area seen by one
+                    fluid stream per unit total volume — NOT double-sided;
+                    see tpms_geometry.py for derivation). h_vA = A_0 × H_sf_A
+                    and h_vB = A_0 × H_sf_B therefore do NOT double-count.
         D_h       – hydraulic diameter [m]
         Re        – Reynolds number (based on D_h, interstitial velocity) [-]
         Nu        – Nusselt number [-]
