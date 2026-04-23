@@ -270,23 +270,25 @@ def _build_fields(window, cfg):
 
         zc_simple = zone_config if (not is_x and isinstance(zone_config, ZoneConfig)) else None
 
-        # Transform rho_f to SIMPLE coords if it's a 2D field
-        if np.ndim(rho_f) == 2:
+        # Transform rho_f / mu_f (either or both may be 2D) to SIMPLE coords.
+        def _to_simple_coords(fld):
+            if np.ndim(fld) != 2:
+                return fld
             if is_x:
-                # Real (Nx, Ny) → SIMPLE (Ny, Nx) by transpose
-                rho_simple = rho_f.T.copy()
-                if d == 1:  # -x: flip j (which is real x flipped)
-                    rho_simple = rho_simple[:, ::-1].copy()
+                out = fld.T.copy()
+                if d == 1:
+                    out = out[:, ::-1].copy()
             else:
-                rho_simple = rho_f.copy()
-                if d == 3:  # -y: flip j (real y flipped)
-                    rho_simple = rho_simple[:, ::-1].copy()
-        else:
-            rho_simple = rho_f  # scalar
+                out = fld.copy()
+                if d == 3:
+                    out = out[:, ::-1].copy()
+            return out
+        rho_simple = _to_simple_coords(rho_f)
+        mu_simple = _to_simple_coords(mu_f)
 
         if is_x:
             s = SIMPLESolver(H, L, N_y, N_x, tpms_type, Lcell, t_wall,
-                             eps, r_h, rho_simple, mu_f, T_in_f,
+                             eps, r_h, rho_simple, mu_simple, T_in_f,
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
@@ -297,7 +299,7 @@ def _build_fields(window, cfg):
             s.dy_arr = _aligned_grid(N_x, L, list(_x_breaks))
         else:
             s = SIMPLESolver(L, H, N_x, N_y, tpms_type, Lcell, t_wall,
-                             eps, r_h, rho_simple, mu_f, T_in_f,
+                             eps, r_h, rho_simple, mu_simple, T_in_f,
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_config=zc_simple,
@@ -395,6 +397,7 @@ def _run_solvers(window, cfg, fields):
 
     _MAX_COUPLING = 5
     _COUPLING_TOL = 0.01  # 1% relative change in rho
+    _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
     _ALPHA_COUP = 0.7     # under-relaxation
 
     rho_A, rho_B = window._rho_A, window._rho_B
@@ -407,6 +410,8 @@ def _run_solvers(window, cfg, fields):
 
     coupling_converged = False
     drho_A = drho_B = float('inf')
+    dT_A = dT_B = float('inf')
+    Ta_prev = Tb_prev = None
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
     Ta = Tb = Ts = None
     _has_partial_A = False
@@ -503,9 +508,13 @@ def _run_solvers(window, cfg, fields):
         rho_A_field_new = _tc.air_density(Ta, P_abs_A)
         rho_B_field_new = _tc.air_density(Tb, P_abs_B)
 
+        # Variable mu: build 2D viscosity field from per-cell Ta/Tb via
+        # Sutherland. Previously scalar domain-mean (marked "small effect");
+        # with local-P density now using the full field, local mu keeps the
+        # momentum balance consistent cell-by-cell.
+        mu_A = _tc.air_viscosity(Ta)
+        mu_B = _tc.air_viscosity(Tb)
         T_avg_A = float(Ta.mean()); T_avg_B = float(Tb.mean())
-        mu_A = _tc.air_viscosity(T_avg_A)  # mu still scalar (small effect)
-        mu_B = _tc.air_viscosity(T_avg_B)
 
         # Convergence: mass-flux-weighted relative rho change.
         # Physical reasoning — the coupling is driven by ∇·(ρu) = 0, so only
@@ -520,12 +529,26 @@ def _run_solvers(window, cfg, fields):
         wB = np.sqrt(ucB * ucB + vcB * vcB) + 1e-12
         drho_A = float(np.sum(np.abs(dA / rho_A_field) * wA) / np.sum(wA))
         drho_B = float(np.sum(np.abs(dB / rho_B_field) * wB) / np.sum(wB))
+
+        # Temperature-field convergence: max|ΔT| across outer iterations.
+        # rho-only criterion can flag converged while the T field is still
+        # drifting (rho = P / (R·T) damps temperature swings); requiring
+        # both is a tighter guarantee the coupled state is stationary.
+        if Ta_prev is not None:
+            dT_A = float(np.max(np.abs(Ta - Ta_prev)))
+            dT_B = float(np.max(np.abs(Tb - Tb_prev)))
+        else:
+            dT_A = dT_B = float('inf')  # first iter — always not converged
         print(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
+              f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
               f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
-        if drho_A < _COUPLING_TOL and drho_B < _COUPLING_TOL:
+        if (drho_A < _COUPLING_TOL and drho_B < _COUPLING_TOL
+                and dT_A < _DT_TOL_K and dT_B < _DT_TOL_K):
             coupling_converged = True
             break
+
+        Ta_prev = Ta.copy(); Tb_prev = Tb.copy()
 
         # Under-relax (field-wise)
         rho_A_field = _ALPHA_COUP * rho_A_field_new + (1 - _ALPHA_COUP) * rho_A_field
@@ -536,7 +559,8 @@ def _run_solvers(window, cfg, fields):
     if not coupling_converged:
         warnings_list.append(
             f"Velocity-temperature coupling: not converged after {_MAX_COUPLING} iters "
-            f"(drho_A={drho_A:.4f}, drho_B={drho_B:.4f})")
+            f"(drho_A={drho_A:.4f}, drho_B={drho_B:.4f}, "
+            f"dT_A={dT_A:.2f}K, dT_B={dT_B:.2f}K)")
     warnings_list.extend(simple_warnings.values())
 
     # Zone statistics and boundary lines
