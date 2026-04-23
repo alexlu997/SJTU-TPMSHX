@@ -33,6 +33,30 @@ def _parse_inputs(window):
     if hasattr(window, 'combo_fluidB'):
         validate_fluid_type(parse_fluid_type(window.combo_fluidB), 'B')
 
+    # Surrogate training-domain hard check for the UI Compute path (#10) —
+    # previously only the optimizer did this; now a single out-of-window
+    # (u, T, L, t) on the Compute tab will refuse to run rather than let
+    # the RBF extrapolate silently.
+    try:
+        from optimization.optimizer import check_surrogate_domain_at_point
+        _tpms = window.combo_tpms.currentText()
+        _L = float(window.le_Lcell.text()); _t = float(window.le_t.text())
+        _ks = float(window.le_ks.text())
+        _T_A = (window._temp_to_K(window.le_TinA)
+                if hasattr(window, '_temp_to_K')
+                else float(window.le_TinA.text()))
+        _T_B = (window._temp_to_K(window.le_TinB)
+                if hasattr(window, '_temp_to_K')
+                else float(window.le_TinB.text()))
+        _P_A = float(window.le_PinA.text())
+        _P_B = float(window.le_PinB.text())
+        _uA = float(window.le_uA.text()); _uB = float(window.le_uB.text())
+        check_surrogate_domain_at_point(_tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A')
+        check_surrogate_domain_at_point(_tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B')
+    except (AttributeError, ValueError) as _e:
+        if isinstance(_e, ValueError):
+            raise
+
     def _parse(widget, name, typ=float):
         try:
             return typ(widget.text())
@@ -42,7 +66,8 @@ def _parse_inputs(window):
     _fields = {
         'L': _parse(window.le_L, "Domain Length (L)"),
         'H': _parse(window.le_H, "Domain Height (H)"),
-        'cp_f': _parse(window.le_cp_f, "Specific Heat (cp)", float),
+        # cp_f removed 2026-04-23 — solver uses per-cell air_cp(T) everywhere
+        # (review item #1). UI field is read-only.
         'N_x': _parse(window.le_Nx, "Grid Nx", int),
         'N_y': _parse(window.le_Ny, "Grid Ny", int),
         'u_A': _parse(window.le_uA, "Velocity A (u_A)"),
@@ -59,7 +84,7 @@ def _parse_inputs(window):
     bad = [v for v in _fields.values() if isinstance(v, str)]
     if bad:
         raise ValueError(f"Invalid input in: {', '.join(bad)}")
-    L, H, cp_f = _fields['L'], _fields['H'], _fields['cp_f']
+    L, H = _fields['L'], _fields['H']
     N_x, N_y = _fields['N_x'], _fields['N_y']
     u_A, u_B = _fields['u_A'], _fields['u_B']
     T_inA, T_inB = _fields['T_inA'], _fields['T_inB']
@@ -137,7 +162,7 @@ def _parse_inputs(window):
                 za[_key] = gaussian_filter(za[_key], sigma=_sigma)
 
     cfg = {
-        'L': L, 'H': H, 'cp_f': cp_f,
+        'L': L, 'H': H,
         'N_x': N_x, 'N_y': N_y,
         'dx': dx, 'dy': dy,
         'u_A': u_A, 'u_B': u_B,
