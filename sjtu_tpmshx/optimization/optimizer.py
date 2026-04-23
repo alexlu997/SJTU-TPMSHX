@@ -134,7 +134,9 @@ DEFAULT_CONFIG = {
     'u_B': 10.0,            # Fluid B velocity [m/s]
     'T_inA': 350.0,         # Fluid A inlet temp [K]
     'T_inB': 300.0,         # Fluid B inlet temp [K]
-    'cp_f': 1007.0,         # fluid specific heat [J/(kg K)]
+    'P_inA': 101325.0,      # Fluid A inlet absolute pressure [Pa]
+    'P_inB': 101325.0,      # Fluid B inlet absolute pressure [Pa]
+    # cp_f removed — solver uses air_cp(T) per cell (review item #1)
     'rho_s': 2700.0,        # solid density [kg/m³]
     'L0': 6.0, 't0': 0.3,  # uniform zone params
     'y_trans': 0.2,         # transition zone fraction (each side)
@@ -551,7 +553,6 @@ def evaluate(x, config=None):
     cfg['Nx'] = Nx; cfg['Ny'] = Ny  # downstream sees refined values
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
-    cp_f = cfg['cp_f']
 
     # 1-2. Build property arrays at refined grid (continuous or discrete)
     grid_cells = None
@@ -596,14 +597,20 @@ def evaluate(x, config=None):
     sA_final = sc['sA']; sB_final = sc['sB']  # for dP extraction
 
     # 4. Energy solve with per-cell rho(T)*cp(T) coupling
-    #    + variable density SIMPLE re-run after first energy iteration
+    #    + variable density SIMPLE re-run after first energy iteration.
+    # Separate P_inA / P_inB now (v1.0.10 #3). UI Compute lets the user
+    # set different operating pressures for A and B (cross-flow case);
+    # previously the optimizer collapsed them to a single P_in which
+    # made optimizer-vs-UI comparisons drift whenever A/B ran at
+    # different pressures.
     from solvers.tpms_calc import air_cp
-    P_in = 101325.0
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     Ta = Tb = Ts = None
-    rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_in))
-    rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_in))
+    rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_inA))
+    rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_inB))
     n_rho = max(1, int(cfg.get('n_rho_loops', 3)))
     max_iter_e = int(cfg.get('max_iter_energy', 5000))
     for _ci in range(n_rho):
@@ -617,9 +624,9 @@ def evaluate(x, config=None):
             tol=0.5, max_iter=max_iter_e,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_refined, dy_arr=dy_refined)
-        # Update rho fields from temperature
-        rho_A_new = air_density(Ta, P_in)
-        rho_B_new = air_density(Tb, P_in)
+        # Update rho fields from temperature + side-specific P.
+        rho_A_new = air_density(Ta, P_inA)
+        rho_B_new = air_density(Tb, P_inB)
         drho = max(float(np.max(np.abs(rho_A_new - rho_A_field)) / rho_A_field.mean()),
                    float(np.max(np.abs(rho_B_new - rho_B_field)) / rho_B_field.mean()))
         if drho < 0.01:
@@ -692,7 +699,8 @@ def evaluate_3d(x, config=None):
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     R_AIR = 287.05
-    P_atm_local = 101325.0
+    P_inA = float(cfg.get('P_inA', 101325.0))
+    P_inB = float(cfg.get('P_inB', P_inA))
 
     # 0. Optional six-wall refinement (3D Brinkman BL resolution)
     refine_3d = bool(cfg.get('wall_refine_3d', False))
@@ -743,9 +751,12 @@ def evaluate_3d(x, config=None):
         cfg['tpms_type'], Ny_sim=Ny, Nz_sim=Nz, fluid='B',
         streamwise_dx=dy_arr, z_dx=dz_arr)
 
-    # 3. SIMPLE instances with P_ref_abs seeding (fluid A compressible)
-    rho_A0 = air_density(T_inA, P_atm_local); mu_A0 = air_viscosity(T_inA)
-    rho_B0 = air_density(T_inB, P_atm_local); mu_B0 = air_viscosity(T_inB)
+    # 3. SIMPLE instances with P_ref_abs seeding (fluid A compressible).
+    # Use user-supplied P_inA / P_inB (fall back to 1 atm) so the optimizer
+    # matches the UI's operating point — previously hardcoded 101 325 Pa
+    # silently drifted from high-pressure runs. (#7, #8)
+    rho_A0 = air_density(T_inA, P_inA); mu_A0 = air_viscosity(T_inA)
+    rho_B0 = air_density(T_inB, P_inB); mu_B0 = air_viscosity(T_inB)
     eps_mean = float(np.mean(za['eps_arr']))
 
     # 1D compressible D-F closed form seed for both fluids:
@@ -754,14 +765,14 @@ def evaluate_3d(x, config=None):
     cF_mean_A = float(np.mean(cF_A))
     G_A = rho_A0 * u_A
     C_A = mu_A0 * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-    P_out_sq_A = P_atm_local ** 2 - 2.0 * R_AIR * T_inA * C_A * L
+    P_out_sq_A = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_A * L
     P_ref_A = float(np.sqrt(max(P_out_sq_A, 1.0e4)))
 
     K_mean_B = float(np.mean(K_B))
     cF_mean_B = float(np.mean(cF_B))
     G_B = rho_B0 * u_B
     C_B = mu_B0 * G_B / max(K_mean_B, 1e-16) + cF_mean_B * G_B * G_B
-    P_out_sq_B = P_atm_local ** 2 - 2.0 * R_AIR * T_inB * C_B * H
+    P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * H
     P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
 
     sA = SIMPLESolver3D(Lx=H, Ly=L, Lz=D, Nx=Ny, Ny=Nx, Nz=Nz,
@@ -860,7 +871,7 @@ def evaluate_3d(x, config=None):
         T_avg = float(Ta_sA.mean())
         mu_avg = float(air_viscosity(T_avg))
         C_avg = mu_avg * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-        P_out_sq_new = P_atm_local ** 2 - 2.0 * R_AIR * T_avg * C_avg * L
+        P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L
         sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
 
         # Re-solve SIMPLE A under new ρ, μ, P_ref_abs
@@ -868,10 +879,10 @@ def evaluate_3d(x, config=None):
 
         # Update LTNE heat capacity fields for next outer iter
         rcp_A_field = np.ascontiguousarray(
-            alpha_outer * air_density(Ta, P_atm_local) * air_cp(Ta)
+            alpha_outer * air_density(Ta, P_inA) * air_cp(Ta)
             + (1.0 - alpha_outer) * rcp_A_field, dtype=np.float64)
         rcp_B_field = np.ascontiguousarray(
-            alpha_outer * air_density(Tb, P_atm_local) * air_cp(Tb)
+            alpha_outer * air_density(Tb, P_inB) * air_cp(Tb)
             + (1.0 - alpha_outer) * rcp_B_field, dtype=np.float64)
 
     # 5. Integrals on the actual grid (refined or uniform)
@@ -890,7 +901,8 @@ def evaluate_richardson(x, config=None):
 
     Coarse grid (Nx, Ny): full rho*cp coupling → Q_coarse + converged rA, rB.
     Fine grid (2Nx, 2Ny): single energy solve with coarse-grid rA, rB → Q_fine.
-    Result: Q_extrap = 2*Q_fine - Q_coarse (first-order, ratio=2).
+    Result: Q_extrap = (4*Q_fine − Q_coarse) / 3 (second-order Richardson
+    with r=2, p=2 — matches the UI 2D path and the SOU scheme's formal order).
     dP and mass are grid-independent (from f-Re and volume integral).
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
@@ -900,8 +912,8 @@ def evaluate_richardson(x, config=None):
     Nx_f_user = Nx_c_user * 2;  Ny_f_user = Ny_c_user * 2
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
-    cp_f = cfg['cp_f']
-    P_in = 101325.0
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
 
     # Master refined grids for coarse and fine levels
     refined_c = _resolve_refined_grid(cfg)
@@ -950,8 +962,8 @@ def evaluate_richardson(x, config=None):
     sc_c = _compute_simple(cfg, grid_cells=grid_cells_r,
                            L_field=L_field_r, t_field=t_field_r,
                            refined_grid=refined_c)
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     rA_avg, rB_avg = sc_c['rho_A'], sc_c['rho_B']
     Ta_c = Tb_c = Ts_c = None
     for _ci in range(3):
@@ -965,12 +977,12 @@ def evaluate_richardson(x, config=None):
             tol=0.5, max_iter=5000,
             Ta_init=Ta_c, Tb_init=Tb_c, Ts_init=Ts_c,
             dx_arr=dx_c, dy_arr=dy_c)
-        rA_new = air_density(float(Ta_c.mean()), P_in)
-        rB_new = air_density(float(Tb_c.mean()), P_in)
+        rA_new = air_density(float(Ta_c.mean()), P_inA)
+        rB_new = air_density(float(Tb_c.mean()), P_inB)
         if abs(rA_new - rA_avg) / rA_avg < 0.01 and abs(rB_new - rB_avg) / rB_avg < 0.01:
             break
-        rcp_A = 0.7 * air_density(Ta_c, P_in) * air_cp(Ta_c) + 0.3 * rcp_A
-        rcp_B = 0.7 * air_density(Tb_c, P_in) * air_cp(Tb_c) + 0.3 * rcp_B
+        rcp_A = 0.7 * air_density(Ta_c, P_inA) * air_cp(Ta_c) + 0.3 * rcp_A
+        rcp_B = 0.7 * air_density(Tb_c, P_inB) * air_cp(Tb_c) + 0.3 * rcp_B
         rA_avg = 0.7 * rA_new + 0.3 * rA_avg
         rB_avg = 0.7 * rB_new + 0.3 * rB_avg
 
@@ -1006,8 +1018,9 @@ def evaluate_richardson(x, config=None):
     _area_f = dx_f[:, None] * dy_f[None, :]
     Q_fine = np.sum(za_f['h_vB_arr'] * (Ts_f - Tb_f) * _area_f)
 
-    # ── Richardson extrapolation (first-order, ratio=2) ──
-    Q_extrap = 2.0 * Q_fine - Q_coarse
+    # ── Richardson extrapolation (second-order, ratio=2). Matches the UI
+    # 2D path (run_calculation.py) so optimizer Q is comparable (#11).
+    Q_extrap = (4.0 * Q_fine - Q_coarse) / 3.0
 
     # ── dP (from coarse-grid SIMPLE P field) and mass ──
     # dP comes from SIMPLE's converged pressure field (D-F physics).
@@ -1064,34 +1077,72 @@ _SURROGATE_RE   = (400.0, 16000.0)  # Reynolds number (ρ·u·D_h/μ)
 
 
 def _check_surrogate_domain(cfg):
-    """Raise ValueError if the user's (u, T, L bounds) imply a Reynolds
-    number outside the ConstDF-v1 training window at any corner of the
-    design space. Catches silent extrapolation before it wastes an hour
-    of NSGA-II search on unphysical surrogate output."""
+    """Raise ValueError if either fluid's (u, T, P) + the (L, t) bounds
+    push Re outside the ConstDF-v1 training window at any design corner
+    (#9 — both sides now, was A-only).
+    """
     from solvers.tpms_calc import air_density, air_viscosity, geometry as _geom
     tpms = cfg.get('tpms_type', 'Gyroid')
     k_s  = float(cfg.get('k_s', 15.0))
-    rho_A = air_density(cfg['T_inA'], cfg.get('P_in', 101325.0))
-    mu_A  = air_viscosity(cfg['T_inA'])
-    u_A   = float(cfg['u_A'])
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
+    sides = [
+        ('A', float(cfg['u_A']), float(cfg['T_inA']), P_inA),
+        ('B', float(cfg['u_B']), float(cfg['T_inB']), P_inB),
+    ]
     corners = [
         (_SURROGATE_L_MM[0], _SURROGATE_T_MM[0]),
         (_SURROGATE_L_MM[0], _SURROGATE_T_MM[1]),
         (_SURROGATE_L_MM[1], _SURROGATE_T_MM[0]),
         (_SURROGATE_L_MM[1], _SURROGATE_T_MM[1]),
     ]
-    for L_mm, t_mm in corners:
-        D_h = _geom(tpms, L_mm, t_mm, k_s)['D_h']
-        Re  = rho_A * u_A * D_h / mu_A
-        if Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
-            raise ValueError(
-                f"Flow conditions (u_A={u_A} m/s, T_inA={cfg['T_inA']} K) "
-                f"push Re = {Re:.0f} at corner (L={L_mm}mm, t={t_mm}mm) "
-                f"outside the ConstDF-v1 training window "
-                f"[{_SURROGATE_RE[0]:.0f}, {_SURROGATE_RE[1]:.0f}]. Surrogate "
-                f"extrapolation would give unreliable dP — reduce u_A or "
-                f"narrow the design bounds."
-            )
+    for side, u, T, P in sides:
+        rho = air_density(T, P)
+        mu  = air_viscosity(T)
+        for L_mm, t_mm in corners:
+            D_h = _geom(tpms, L_mm, t_mm, k_s)['D_h']
+            Re  = rho * u * D_h / mu
+            if Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
+                raise ValueError(
+                    f"Fluid {side} (u={u} m/s, T={T} K, P={P:.0f} Pa) "
+                    f"pushes Re = {Re:.0f} at corner (L={L_mm}mm, "
+                    f"t={t_mm}mm) outside ConstDF-v1 training window "
+                    f"[{_SURROGATE_RE[0]:.0f}, {_SURROGATE_RE[1]:.0f}]. "
+                    f"Narrow the design bounds or reduce velocity."
+                )
+
+
+def check_surrogate_domain_at_point(tpms_type, L_mm, t_mm, k_s,
+                                     u, T, P=101325.0, side='A'):
+    """Point-form surrogate-domain check for the UI Compute path (#10).
+
+    The optimizer's corner check protects NSGA-II's sample distribution,
+    but the Compute tab runs a single (u, T, P, L, t) and must reject
+    out-of-window inputs up-front instead of letting the RBF extrapolate
+    silently. Raises ValueError on out-of-window Re or on t_mm outside the
+    surrogate's fitted thickness range.
+    """
+    from solvers.tpms_calc import air_density, air_viscosity, geometry as _geom
+    rho = air_density(T, P)
+    mu  = air_viscosity(T)
+    D_h = _geom(tpms_type, L_mm, t_mm, k_s)['D_h']
+    Re = rho * u * D_h / mu
+    if Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
+        raise ValueError(
+            f"Fluid {side}: Re = {Re:.0f} outside ConstDF-v1 training "
+            f"window [{_SURROGATE_RE[0]:.0f}, {_SURROGATE_RE[1]:.0f}] "
+            f"at u={u} m/s, T={T} K, P={P:.0f} Pa, L={L_mm}mm, t={t_mm}mm."
+        )
+    if not (_SURROGATE_L_MM[0] <= L_mm <= _SURROGATE_L_MM[1]):
+        raise ValueError(
+            f"L_cell = {L_mm} mm outside ConstDF-v1 training range "
+            f"[{_SURROGATE_L_MM[0]}, {_SURROGATE_L_MM[1]}] mm."
+        )
+    if not (_SURROGATE_T_MM[0] <= t_mm <= _SURROGATE_T_MM[1]):
+        raise ValueError(
+            f"Wall thickness t = {t_mm} mm outside ConstDF-v1 training "
+            f"range [{_SURROGATE_T_MM[0]}, {_SURROGATE_T_MM[1]}] mm."
+        )
 
 
 def _make_problem(config=None):
@@ -1182,7 +1233,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
     u_A = cfg['u_A']; u_B = cfg['u_B']
     T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     L0 = cfg['L0']; t0 = cfg['t0']
-    P_in = 101325.0
+    P_inA = cfg.get('P_inA', cfg.get('P_in', 101325.0))
+    P_inB = cfg.get('P_inB', P_inA)
 
     # Build master refined grid from user resolution
     cfg_local = {**cfg, 'Nx': Nx_user, 'Ny': Ny_user}
@@ -1203,8 +1255,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
         dx_arr=dx_r, dy_arr=dy_r)
 
     # 2. SIMPLE at refined grid (design-specific K/c_F override + refined dx/dy)
-    rho_A = air_density(T_inA, P_in); mu_A = air_viscosity(T_inA)
-    rho_B = air_density(T_inB, P_in); mu_B = air_viscosity(T_inB)
+    rho_A = air_density(T_inA, P_inA); mu_A = air_viscosity(T_inA)
+    rho_B = air_density(T_inB, P_inB); mu_B = air_viscosity(T_inB)
     L_field_sp = za['L_field']; t_field_sp = za['t_field']
 
     sA = SIMPLESolver(H, L, Ny, Nx, tpms_type, L0, t0,
@@ -1232,8 +1284,8 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
     ucB = np.zeros((Nx, Ny))
 
     # 3. Energy solve with ρ*cp coupling at refined grid
-    rcp_A = air_density(T_inA, P_in) * air_cp(T_inA)
-    rcp_B = air_density(T_inB, P_in) * air_cp(T_inB)
+    rcp_A = air_density(T_inA, P_inA) * air_cp(T_inA)
+    rcp_B = air_density(T_inB, P_inB) * air_cp(T_inB)
     Ta = Tb = Ts = None
     for _ci in range(3):
         Ta, Tb, Ts = solve_full_domain(
@@ -1246,12 +1298,12 @@ def _solve_single_point(x, cfg, Nx_user, Ny_user):
             tol=0.5, max_iter=5000,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_r, dy_arr=dy_r)
-        rA_new = air_density(float(Ta.mean()), P_in)
-        rB_new = air_density(float(Tb.mean()), P_in)
+        rA_new = air_density(float(Ta.mean()), P_inA)
+        rB_new = air_density(float(Tb.mean()), P_inB)
         if abs(rA_new - float(np.mean(rcp_A / air_cp(Ta) if np.ndim(rcp_A) > 0 else rcp_A / air_cp(T_inA)))) / rA_new < 0.01:
             break
-        rcp_A = 0.7 * air_density(Ta, P_in) * air_cp(Ta) + 0.3 * rcp_A
-        rcp_B = 0.7 * air_density(Tb, P_in) * air_cp(Tb) + 0.3 * rcp_B
+        rcp_A = 0.7 * air_density(Ta, P_inA) * air_cp(Ta) + 0.3 * rcp_A
+        rcp_B = 0.7 * air_density(Tb, P_inB) * air_cp(Tb) + 0.3 * rcp_B
 
     # 4. Q and ΔP using refined cell_area
     _area_sp = dx_r[:, None] * dy_r[None, :]
@@ -1310,14 +1362,14 @@ def reevaluate_pareto(X, config=None, Nx_fine=None, Ny_fine=None,
         for idx in range(N):
             Q_c, dP_c, _ = coarse_results[idx]
             Q_f, dP_f, _ = fine_results[idx]
-            F_fine[idx] = [-(2.0 * Q_f - Q_c), dP_f]
+            F_fine[idx] = [-(4.0 * Q_f - Q_c) / 3.0, dP_f]
             if progress_cb:
                 progress_cb(idx + 1, N)
     else:
         for idx, x in enumerate(X):
             Q_c, dP_c, _ = _solve_single_point_worker(coarse_args[idx])
             Q_f, dP_f, _ = _solve_single_point_worker(fine_args[idx])
-            F_fine[idx] = [-(2.0 * Q_f - Q_c), dP_f]
+            F_fine[idx] = [-(4.0 * Q_f - Q_c) / 3.0, dP_f]
             if progress_cb:
                 progress_cb(idx + 1, N)
 

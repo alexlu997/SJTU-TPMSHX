@@ -585,7 +585,14 @@ def build_page_domain(window):
     g2, _ = section(window, lay, "  Material Properties", _T_NEUTRAL, _F_NEUTRAL)
     window.le_rho_s = row(window, g2, 0, "<i>&rho;</i><sub>s</sub> [kg/m\u00b3]", "7900")
     window.le_cp_s  = row(window, g2, 1, "<i>c</i><sub>p,s</sub> [J/(kg\u00b7K)]", "500")
-    window.le_cp_f  = row(window, g2, 2, "<i>c</i><sub>p,f</sub> [J/(kg\u00b7K)]", "1007")
+    # cp_f removed: fluid cp is computed per-cell from local T via air_cp(T)
+    # inside tpms_calc.py. Keeping a user-editable cp_f field let the number
+    # silently disagree with what the solver actually used. (#1)
+    window.le_cp_f  = row(window, g2, 2, "<i>c</i><sub>p,f</sub> (auto)", "from air_cp(T)")
+    window.le_cp_f.setEnabled(False)
+    window.le_cp_f.setToolTip(
+        "Fluid cp is computed per-cell from local T via air_cp(T). "
+        "This field is read-only \u2014 edit the temperature inputs instead.")
 
     # ── Grid Settings (rect mode) ──
     g4, sec_solver_rect = section(window, lay, "  Grid Settings", _T_NEUTRAL, _F_NEUTRAL)

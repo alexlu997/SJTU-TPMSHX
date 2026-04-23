@@ -94,7 +94,11 @@ def run_optimize(window):
             'T_inB': (window._temp_to_K(window.le_TinB)
                       if hasattr(window, '_temp_to_K')
                       else float(window.le_TinB.text())),
-            'cp_f': float(window.le_cp_f.text()),
+            # Pass UI inlet pressures so the optimizer matches the Compute
+            # tab's operating point — previously hardcoded 1 atm (#7, #8).
+            'P_inA': float(window.le_PinA.text()),
+            'P_inB': float(window.le_PinB.text()),
+            # cp_f removed (#1) — solver uses air_cp(T) per cell.
             'rho_s': float(window.le_rho_s.text()),
             'L0': float(window.le_Lcell.text()),
             't0': float(window.le_t.text()),

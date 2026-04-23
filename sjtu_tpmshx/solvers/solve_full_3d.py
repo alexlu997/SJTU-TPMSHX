@@ -670,11 +670,10 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     chunk = 500; done = 0
     cell_vol = dx_arr[:, None, None] * dy_arr[None, :, None] * dz_arr[None, None, :]
     Q_prev = 0.0
+    Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
     converged = False
-    # q-based convergence: prev formula `min(tol*2e-3, 1e-3)` gave 2e-8 for
-    # tol=1e-5 — far tighter than outer coupling tol (0.5 K), forcing extra
-    # chunks. Loosen to 1e-4 floor (still tighter than outer coupling).
     q_rel_tol = max(tol * 10.0, 1e-4)
+    T_abs_tol = 0.01  # K between chunks — mirror 2D solve_full.py (#4)
     chg = 0.0
 
     while done < max_iter:
@@ -693,13 +692,23 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         if progress_cb:
             progress_cb(done, max_iter)
 
+        # Convergence: AND of (relative ΔQ_B) and (max |ΔT*|). Q-only
+        # could flag converged while Ta/Ts drifted — especially when Tb
+        # is frozen (prescribed validation cases) the B-interface Q is
+        # decoupled from A-side relaxation.
         Q_cur = float(np.sum(h_vB_arr * (Ts - Tb) * cell_vol))
+        dTa_max = float(np.max(np.abs(Ta - Ta_prev)))
+        dTb_max = float(np.max(np.abs(Tb - Tb_prev)))
+        dTs_max = float(np.max(np.abs(Ts - Ts_prev)))
         if done >= chunk and Q_prev != 0.0:
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
-            if rel_chg < q_rel_tol:
+            T_ok = (dTa_max < T_abs_tol and dTb_max < T_abs_tol
+                    and dTs_max < T_abs_tol)
+            if rel_chg < q_rel_tol and T_ok:
                 converged = True
                 break
         Q_prev = Q_cur
+        Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
 
     if return_info:
         return Ta, Tb, Ts, {

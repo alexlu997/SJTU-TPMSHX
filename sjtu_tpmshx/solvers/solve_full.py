@@ -375,10 +375,13 @@ def solve_full_domain(L, H, Nx, Ny,
     rho_cp_fB_arr = _to_2d(rho_cp_fB, Nx, Ny)
 
     # Per-fluid void-fraction split. Default is symmetric 50/50
-    # (eps_fA = eps_fB = epsilon / 2) — matches symmetric TPMS. Asymmetric
-    # splits are exposed as eps_A / eps_B but routed through the njit kernel
-    # as a single eps_f_arr, so for now only the symmetric default is
-    # supported — raise early if the user passes an asymmetric split.
+    # (eps_fA = eps_fB = epsilon / 2) — matches symmetric TPMS.
+    #
+    # **eps_A / eps_B are private hooks, NOT a public API** — they exist
+    # only so a future kernel upgrade can pass distinct eps_fA_arr /
+    # eps_fB_arr without changing the signature. Today the kernel takes
+    # one eps_f_arr, so any caller that supplies asymmetric values gets
+    # NotImplementedError. UI / optimizer never pass them (#13).
     if eps_A is None and eps_B is None:
         if np.ndim(epsilon) == 0:
             eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
@@ -481,14 +484,18 @@ def solve_full_domain(L, H, Nx, Ny,
             for i in range(Nx):
                 if ifrac_B[i] > 0.5: Tb[i, Ny-1] = T_inB_arr[i]
 
-    # Iterate in chunks — converge on heat transfer integral Q,
-    # not max|ΔT| which is grid-dependent and misleading on fine grids.
+    # Iterate in chunks. Convergence uses AND of three criteria (#6):
+    #   (1) relative change in Q_B interface integral  < q_rel_tol
+    #   (2) max|ΔTa|, max|ΔTb|, max|ΔTs| between chunks < T_rel_tol·|T|
+    # Q-only could flag converged while T-fields were still drifting
+    # (rho = P/(R·T) damps T swings at fixed Q). T-only is grid-dependent.
     chunk = 500;  done = 0
     cell_area = dx_arr[:, None] * dy_arr[None, :]
     Q_prev = 0.0
+    Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
     converged = False
-    # Q-based tolerance: tol=0.5 → 0.1% relative Q change between chunks
     q_rel_tol = min(tol * 2e-3, 1e-3)
+    T_abs_tol = 0.01  # K between chunks
 
     while done < max_iter:
         n = min(chunk, max_iter - done)
@@ -505,14 +512,19 @@ def solve_full_domain(L, H, Nx, Ny,
         if progress_cb:
             progress_cb(done, max_iter)
 
-        # Check convergence: relative change in Q between chunks
         Q_cur = float(np.sum(h_vB_arr * (Ts - Tb) * cell_area))
+        dTa_max = float(np.max(np.abs(Ta - Ta_prev)))
+        dTb_max = float(np.max(np.abs(Tb - Tb_prev)))
+        dTs_max = float(np.max(np.abs(Ts - Ts_prev)))
         if done >= chunk and Q_prev != 0.0:
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
-            if rel_chg < q_rel_tol:
+            T_ok = (dTa_max < T_abs_tol and dTb_max < T_abs_tol
+                    and dTs_max < T_abs_tol)
+            if rel_chg < q_rel_tol and T_ok:
                 converged = True
                 break
         Q_prev = Q_cur
+        Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
 
     if return_info:
         return Ta, Tb, Ts, {
