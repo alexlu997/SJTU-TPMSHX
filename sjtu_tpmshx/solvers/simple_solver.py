@@ -1114,7 +1114,7 @@ class SIMPLESolver:
     def solve(self, max_iter=3000, tol=1e-6,
               alpha_u=0.7, alpha_p=0.3,
               n_inner=2,
-              verbose=True):
+              verbose=True, progress_cb=None):
         """
         Run SIMPLE iterations. PP equation solved by sparse direct solver.
 
@@ -1148,6 +1148,14 @@ class SIMPLESolver:
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, self.rho_field)
             self.residuals.append(res)
+
+            # Live progress hook for UI sparklines — throttled to every
+            # 20 iters so a compute with 5000 iters pushes 250 samples max.
+            if progress_cb is not None and (it % 20 == 0 or it == 1):
+                try:
+                    progress_cb(it, float(res))
+                except Exception:
+                    pass
 
             if verbose and it % 200 == 0:
                 print(f"  iter {it:5d}  |R| = {res:.3e}")

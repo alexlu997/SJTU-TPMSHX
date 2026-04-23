@@ -43,3 +43,9 @@ Thumbs.db
 
 # Claude Code superpowers / agent skill files (personal workspace, not project content)
 docs/superpowers/
+
+# Per-machine UI state (auto-generated at runtime, never shared)
+sjtu_tpmshx/.last_session.json
+sjtu_tpmshx/.theme
+sjtu_tpmshx/.first_run_done
+sjtu_tpmshx/.user_presets.json

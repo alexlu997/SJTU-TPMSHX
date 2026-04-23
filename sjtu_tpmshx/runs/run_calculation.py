@@ -38,8 +38,14 @@ def _parse_inputs(window):
         'N_y': _parse(window.le_Ny, "Grid Ny", int),
         'u_A': _parse(window.le_uA, "Velocity A (u_A)"),
         'u_B': _parse(window.le_uB, "Velocity B (u_B)"),
-        'T_inA': _parse(window.le_TinA, "Inlet Temp A (T_inA)"),
-        'T_inB': _parse(window.le_TinB, "Inlet Temp B (T_inB)"),
+        # Honour the K/°C UI toggle: _temp_to_K returns a Kelvin float
+        # regardless of what the user is currently typing.
+        'T_inA': (window._temp_to_K(window.le_TinA)
+                  if hasattr(window, '_temp_to_K')
+                  else _parse(window.le_TinA, "Inlet Temp A (T_inA)")),
+        'T_inB': (window._temp_to_K(window.le_TinB)
+                  if hasattr(window, '_temp_to_K')
+                  else _parse(window.le_TinB, "Inlet Temp B (T_inB)")),
     }
     bad = [v for v in _fields.values() if isinstance(v, str)]
     if bad:
@@ -319,7 +325,17 @@ def _build_fields(window, cfg):
                                      za['grid_cells'], None, None, fluid)
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         _tol = 5e-4 if _has_partial else 1e-5
-        conv, n_it = s.solve(max_iter=5000, tol=_tol, verbose=False)
+        # Live residual hook — push (iter, residual) onto the shared
+        # window buffer so the UI sparkline can render during the solve
+        # instead of only after it returns.
+        _buf = getattr(window, '_live_residuals', None)
+        _side = 'A' if 'A' in label else 'B'
+        def _progress_cb(it, res, _s=_side):
+            if _buf is None:
+                return
+            _buf.setdefault(_s, []).append((int(it), float(res)))
+        conv, n_it = s.solve(max_iter=5000, tol=_tol, verbose=False,
+                               progress_cb=_progress_cb)
         if not conv:
             simple_warnings[label] = (
                 f"SIMPLE ({label}): not converged after {n_it} iters "
@@ -689,6 +705,18 @@ def _run_solvers(window, cfg, fields):
         if _has_partial_B:
             P_fB = gaussian_filter(P_fB, sigma=_sp)
 
+    # Capture SIMPLE residual histories so the Pressure tab can render a
+    # convergence mini-plot alongside the pressure fields. A copy avoids
+    # holding a reference to the live solver past this function.
+    try:
+        resid_A = list(simpA.residuals) if simpA is not None else None
+    except Exception:
+        resid_A = None
+    try:
+        resid_B = list(simpB.residuals) if simpB is not None else None
+    except Exception:
+        resid_B = None
+
     result = {
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
@@ -697,6 +725,7 @@ def _run_solvers(window, cfg, fields):
         'Q_total': Q_total,
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
+        'residuals_A': resid_A, 'residuals_B': resid_B,
     }
     return result
 
@@ -719,17 +748,119 @@ def _store_results(window, cfg, result):
         'dir_A': dir_A, 'dir_B': dir_B,
         'zone_config': zone_config, 'za': za,
         'dx_arr': result['energy_dx'], 'dy_arr': result['energy_dy'],
+        'residuals_A': result.get('residuals_A'),
+        'residuals_B': result.get('residuals_B'),
     }
     window._compute_warnings = result['warnings_list']
     return  # rendering happens in finalize_plots on main thread
 
 
+def plot_temperature_3panel(window, r, _t):
+    """Render the 3-row T_fA / T_fB / T_s contour panel on canvas_temp.
+
+    Honours `window.chk_sync_colorbar_T` — when checked, all three panels
+    share the global vmin/vmax so a colour has the same temperature meaning
+    across fluids and solid. When off, fluids share vmin/vmax and solid
+    auto-scales independently (the pre-toggle behaviour).
+    """
+    Ta, Tb, Ts = r['Ta'], r['Tb'], r['Ts']
+    N_x, N_y, L, H = r['N_x'], r['N_y'], r['L'], r['H']
+
+    window.canvas_temp.fig.clear()
+    axes = window.canvas_temp.fig.subplots(3, 1)
+    window.canvas_temp.axes = [list(axes)]
+    window.canvas_temp.fig.patch.set_facecolor(_t['fig_bg'])
+
+    _dx = r.get('dx_arr', np.full(N_x, L / N_x))
+    _dy = r.get('dy_arr', np.full(N_y, H / N_y))
+    x = (np.cumsum(_dx) - _dx / 2) * 1000
+    y = (np.cumsum(_dy) - _dy / 2) * 1000
+    Y, X = np.meshgrid(y, x)
+
+    _sync = True
+    try:
+        _sync = bool(window.chk_sync_colorbar_T.isChecked())
+    except Exception:
+        pass
+    if _sync:
+        v_all_min = float(min(Ta.min(), Tb.min(), Ts.min()))
+        v_all_max = float(max(Ta.max(), Tb.max(), Ts.max()))
+        vmin_f, vmax_f = v_all_min, v_all_max
+        vmin_s, vmax_s = v_all_min, v_all_max
+    else:
+        vmin_f = min(Ta.min(), Tb.min()); vmax_f = max(Ta.max(), Tb.max())
+        vmin_s, vmax_s = None, None
+
+    plot_items = [
+        (Ta, r"$T_{f,A}$  [K]", "Fluid A"),
+        (Tb, r"$T_{f,B}$  [K]", "Fluid B"),
+        (Ts, r"$T_s$  [K]", "Solid"),
+    ]
+    for ax, (field, main_title, subtitle) in zip(axes, plot_items):
+        ax.set_facecolor(_t['ax_bg'])
+        if 'T_s' in main_title:
+            kw = dict(levels=512, cmap='coolwarm')
+            if vmin_s is not None:
+                kw.update(vmin=vmin_s, vmax=vmax_s)
+        else:
+            kw = dict(levels=512, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
+        cf = ax.contourf(X, Y, field, **kw)
+        cb = window.canvas_temp.fig.colorbar(cf, ax=ax, shrink=0.9,
+                                              aspect=25, format="%.0f")
+        cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
+        cb.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=7))
+        cb.outline.set_edgecolor(_t['ax_spine'])
+        ax.set_title(main_title, fontsize=13, fontweight="bold",
+                     color=_t['ax_text'], loc='left', pad=6)
+        ax.text(0.99, 1.02, subtitle, transform=ax.transAxes,
+                fontsize=9, color=_t['mpl_subtitle'], ha='right', va='bottom',
+                fontstyle='italic')
+        ax.set_xlabel("x [mm]", fontsize=10, color=_t['ax_text'])
+        ax.set_ylabel("y [mm]", fontsize=10, color=_t['ax_text'])
+        ax.tick_params(labelsize=9, colors=_t['ax_text'], length=4, width=0.8)
+        ax.set_aspect('auto')
+        ax.grid(True, alpha=0.12, linewidth=0.4, color=_t['ax_text'])
+        for sp in ax.spines.values():
+            sp.set_edgecolor(_t['ax_spine']); sp.set_linewidth(0.8)
+        if hasattr(window, '_zone_boundaries') and window._zone_boundaries:
+            z_dir = getattr(window, '_zone_axis_dir', 'y')
+            for b in window._zone_boundaries:
+                if z_dir == 'y':
+                    ax.axhline(y=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
+                else:
+                    ax.axvline(x=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
+        for b in (getattr(window, '_zone_boundaries_x', None) or []):
+            ax.axvline(x=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
+        for b in (getattr(window, '_zone_boundaries_y', None) or []):
+            ax.axhline(y=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
+
+    window.canvas_temp.fig.subplots_adjust(left=0.08, right=0.93,
+                                            top=0.96, bottom=0.06, hspace=0.34)
+    window.canvas_temp.draw()
+    window.canvas_temp._hover_data = {
+        'fields': [Ta, Tb, Ts],
+        'names': ['T_fA', 'T_fB', 'T_s'],
+        'unit': 'K',
+        'L': L, 'H': H, 'Nx': N_x, 'Ny': N_y,
+    }
+
+
+def redraw_temperature_panel(window):
+    """Re-render the temperature tab using the last stored compute result.
+    No-op if nothing has been computed yet."""
+    r = getattr(window, '_compute_results', None)
+    if r is None:
+        return
+    from ui.theme import get_theme
+    plot_temperature_3panel(window, r, get_theme())
+
+
 def finalize_plots(window):
     """Ex-Main_Menu._finalize_plots(self). Render plots from stored results.
     MUST run on main thread."""
-    from ui.theme import _THEMES
+    from ui.theme import get_theme
     import main as _main_mod
-    _t = _THEMES['light']
+    _t = get_theme()
 
     if getattr(window, '_compute_warnings', None):
         from PySide6.QtWidgets import QMessageBox
@@ -755,78 +886,27 @@ def finalize_plots(window):
 
     mode_label = f"A:{dir_flow_A} B:{dir_flow_B}"
 
-    # Temperature: vertical 3×1 plot (Fluid A, Fluid B, Solid)
-    window.canvas_temp.fig.clear()
-    axes = window.canvas_temp.fig.subplots(3, 1)
-    window.canvas_temp.axes = [list(axes)]
-    window.canvas_temp.fig.patch.set_facecolor(_t['fig_bg'])
-
+    # Temperature: vertical 3×1 plot (Fluid A, Fluid B, Solid) — delegated
+    # to a module-level helper so the K/°C sync toggle can redraw without
+    # re-running the full finalize pipeline.
+    plot_temperature_3panel(window, r, _t)
+    # Hover data cached by helper; the rest of this function handles
+    # pressure, velocity, and layout panels. Preserve original variable
+    # bindings for code below.
     _dx = r.get('dx_arr', np.full(N_x, L / N_x))
     _dy = r.get('dy_arr', np.full(N_y, H / N_y))
     x = (np.cumsum(_dx) - _dx / 2) * 1000
     y = (np.cumsum(_dy) - _dy / 2) * 1000
     Y, X = np.meshgrid(y, x)
-    vmin_f = min(Ta.min(), Tb.min()); vmax_f = max(Ta.max(), Tb.max())
-    _sub = '#888888'
-    plot_items = [
-        (Ta, r"$T_{f,A}$  [K]", "Fluid A"),
-        (Tb, r"$T_{f,B}$  [K]", "Fluid B"),
-        (Ts, r"$T_s$  [K]", "Solid"),
-    ]
-    for ax, (field, main_title, subtitle) in zip(axes, plot_items):
-        ax.set_facecolor(_t['ax_bg'])
-        if 'T_s' in main_title:
-            kw = dict(levels=512, cmap='coolwarm')
-        else:
-            kw = dict(levels=512, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
-        cf = ax.contourf(X, Y, field, **kw)
-        cb = window.canvas_temp.fig.colorbar(cf, ax=ax, shrink=0.9,
-                                              aspect=25, format="%.0f")
-        cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
-        cb.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=7))
-        cb.outline.set_edgecolor(_t['ax_spine'])
-        # Inline title: main left, subtitle right
-        ax.set_title(main_title, fontsize=13, fontweight="bold",
-                     color=_t['ax_text'], loc='left', pad=6)
-        ax.text(0.99, 1.02, subtitle, transform=ax.transAxes,
-                fontsize=9, color='#888888', ha='right', va='bottom',
-                fontstyle='italic')
-        ax.set_xlabel("x [mm]", fontsize=10, color=_t['ax_text'])
-        ax.set_ylabel("y [mm]", fontsize=10, color=_t['ax_text'])
-        ax.tick_params(labelsize=9, colors=_t['ax_text'], length=4, width=0.8)
-        ax.set_aspect('auto')
-        ax.grid(True, alpha=0.12, linewidth=0.4, color=_t['ax_text'])
-        for sp in ax.spines.values():
-            sp.set_edgecolor(_t['ax_spine']); sp.set_linewidth(0.8)
-        # Zone boundaries
-        if hasattr(window, '_zone_boundaries') and window._zone_boundaries:
-            z_dir = getattr(window, '_zone_axis_dir', 'y')
-            for b in window._zone_boundaries:
-                if z_dir == 'y':
-                    ax.axhline(y=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
-                else:
-                    ax.axvline(x=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
-        for b in (getattr(window, '_zone_boundaries_x', None) or []):
-            ax.axvline(x=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
-        for b in (getattr(window, '_zone_boundaries_y', None) or []):
-            ax.axhline(y=b*1000, color=_t['zone_line'], ls='--', lw=0.8, alpha=0.6)
+    _sub = _t['mpl_subtitle']
 
-    # Spacing: tight within group, loose between groups
-    window.canvas_temp.fig.subplots_adjust(left=0.08, right=0.93,
-                                            top=0.96, bottom=0.06, hspace=0.34)
-    window.canvas_temp.draw()
-    # Store data for hover
-    window.canvas_temp._hover_data = {
-        'fields': [Ta, Tb, Ts],
-        'names': ['T_fA', 'T_fB', 'T_s'],
-        'unit': 'K',
-        'L': L, 'H': H, 'Nx': N_x, 'Ny': N_y,
-    }
-
-    # Pressure plot (pass correct dP values)
+    # Pressure plot (pass correct dP values + residual history for the
+    # convergence mini-plot at the bottom of the tab)
     window.canvas_pres.plot_pressure(P_fA, P_fB, N_x, N_y, L, H, mode_label,
                                      dP_A=dP_A, dP_B=dP_B,
-                                     dx_arr=r.get('dx_arr'), dy_arr=r.get('dy_arr'))
+                                     dx_arr=r.get('dx_arr'), dy_arr=r.get('dy_arr'),
+                                     residuals_A=r.get('residuals_A'),
+                                     residuals_B=r.get('residuals_B'))
     window.canvas_pres._hover_data = {
         'fields': [P_fA, P_fB],
         'names': ['P_A', 'P_B'],
@@ -871,7 +951,7 @@ def finalize_plots(window):
         ax.set_title(main_title, fontsize=13, fontweight="bold",
                      color=_t['ax_text'], loc='left', pad=6)
         ax.text(0.99, 1.02, subtitle, transform=ax.transAxes,
-                fontsize=9, color='#888888', ha='right', va='bottom',
+                fontsize=9, color=_t['mpl_subtitle'], ha='right', va='bottom',
                 fontstyle='italic')
         ax.set_xlabel("x [mm]", fontsize=10, color=_t['ax_text'])
         ax.set_ylabel("y [mm]", fontsize=10, color=_t['ax_text'])

@@ -4,17 +4,15 @@ Extracted from main.py (Task B.7). All functions take `window` (Main_Menu
 instance) as first argument.
 """
 import numpy as np
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QComboBox, QTableWidgetItem
-import matplotlib.gridspec as gridspec
+from PySide6.QtWidgets import QMessageBox, QComboBox, QTableWidgetItem
 
-from .theme import _THEMES
+from .theme import get_theme
 
 
 def run_optimize(window):
     """Ex-Main_Menu._run_optimize(self)."""
-    from PySide6.QtCore import QThread, Signal
     from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
-                                    QSpinBox, QDoubleSpinBox, QCheckBox)
+                                    QSpinBox, QDoubleSpinBox)
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
@@ -89,8 +87,13 @@ def run_optimize(window):
             'k_s': float(window.le_ks.text()),
             'u_A': float(window.le_uA.text()),
             'u_B': float(window.le_uB.text()),
-            'T_inA': float(window.le_TinA.text()),
-            'T_inB': float(window.le_TinB.text()),
+            # K/°C display toggle → always pass K to the optimizer
+            'T_inA': (window._temp_to_K(window.le_TinA)
+                      if hasattr(window, '_temp_to_K')
+                      else float(window.le_TinA.text())),
+            'T_inB': (window._temp_to_K(window.le_TinB)
+                      if hasattr(window, '_temp_to_K')
+                      else float(window.le_TinB.text())),
             'cp_f': float(window.le_cp_f.text()),
             'rho_s': float(window.le_rho_s.text()),
             'L0': float(window.le_Lcell.text()),
@@ -115,11 +118,22 @@ def run_optimize(window):
         QMessageBox.warning(window, "Error", "Check input fields."); return
 
     window._opt_cfg = cfg  # store for _load_pareto_solution
-    window._opt_status.setText(f"Optimizing... 0/{total}")
+    window._opt_status.setText(f"Optimizing… 0/{total}")
     window._opt_total = total
+    window._opt_total_gen = int(n_gen)
+    import time as _t_run_opt
+    window._opt_wall_t0 = _t_run_opt.time()
+    # Reset hero stats + clear sparkline from any previous run.
+    if hasattr(window, '_opt_reset_panel'):
+        window._opt_reset_panel()
+    if hasattr(window, '_opt_set_stage'):
+        window._opt_set_stage('running')
+    _set_optimize_running(window, True)
     QApplication.processEvents()
 
     import threading
+    from optimization.optimizer import clear_cancel
+    clear_cancel()
 
     def _opt_thread():
         try:
@@ -157,6 +171,9 @@ def run_optimize(window):
             cnt = _progress['count']
             tot = _progress['total']
             best = _progress['best_Q']
+            best_dp = _progress.get('best_dP', float('inf'))
+            if best_dp == float('inf'):
+                best_dp = None
             pct = int(cnt / max(tot, 1) * 100)
             elapsed = window._opt_tick[0] * 0.5  # seconds
             if cnt > 0:
@@ -165,23 +182,54 @@ def run_optimize(window):
             else:
                 eta_str = "..."
             window._opt_status.setText(
-                f"Optimizing: {cnt}/{tot} ({pct}%)  |  "
-                f"Best Q: {best:.0f} W/m  |  ETA: {eta_str}")
+                f"{cnt}/{tot} evaluations  ·  {pct}% complete")
+            # Pump the progress bar next to the Optimize tab header.
+            bar = getattr(window, '_opt_progress', None)
+            if bar is not None:
+                bar.setValue(pct)
+            # Pump hero KPIs + sparkline.
+            if hasattr(window, '_opt_update_kpis'):
+                total_gen = getattr(window, '_opt_total_gen', 0) or 1
+                # Derive pop_size from the eval total when the optimizer
+                # doesn't surface it directly.
+                pop_sz = max(1, int(round(tot / total_gen)))
+                gen_idx = min(int(total_gen), cnt // pop_sz + 1) if cnt else 0
+                window._opt_update_kpis(
+                    gen=gen_idx, gen_total=int(total_gen),
+                    best_q=float(best),
+                    best_dp=(float(best_dp) if best_dp is not None else None),
+                    eta=eta_str)
             return
         # Thread finished
         window._opt_timer.stop()
+        _set_optimize_running(window, False)
         if window._opt_error:
             window._opt_status.setText(f"Error: {window._opt_error}")
+            if hasattr(window, '_opt_set_stage'):
+                window._opt_set_stage('config')
             QMessageBox.critical(window, "Optimization Error", window._opt_error)
         elif window._opt_result:
             res = window._opt_result
             n_sol = len(res['X'])
             Q_lo = -res['F'][:, 0].max()
             Q_hi = -res['F'][:, 0].min()
-            tag = " (fine grid)" if 'F_coarse' in res else ""
+            tag_bits = []
+            if res.get('cancelled'):
+                tag_bits.append("cancelled")
+            if 'F_coarse' in res:
+                tag_bits.append("fine grid")
+            tag = f" ({', '.join(tag_bits)})" if tag_bits else ""
             window._opt_status.setText(
-                f"Done! {n_sol} Pareto solutions{tag}. "
-                f"Q: [{Q_lo:.0f}, {Q_hi:.0f}] W/m")
+                f"Done  ·  {n_sol} Pareto solutions{tag}  ·  "
+                f"Q [{Q_lo:.0f}, {Q_hi:.0f}] W/m")
+            if hasattr(window, '_opt_set_stage'):
+                window._opt_set_stage('result')
+            if hasattr(window, '_opt_show_summary'):
+                import time as _t_done
+                elapsed = _t_done.time() - getattr(
+                    window, '_opt_wall_t0', _t_done.time())
+                extra = ", ".join(tag_bits) if tag_bits else ""
+                window._opt_show_summary(n_sol, Q_lo, Q_hi, elapsed, extra)
 
             # Results already saved by optimizer per-generation
             sd = res.get('save_dir', '')
@@ -190,6 +238,42 @@ def run_optimize(window):
 
     window._opt_timer.timeout.connect(_check)
     window._opt_timer.start(500)  # check every 0.5s
+
+
+def _set_optimize_running(window, running):
+    """Toggle the Optimize tab header between idle and running states.
+
+    New D-plan layout: a dedicated Cancel button sits beside Launch, so we
+    just disable Launch + enable Cancel + surface the progress bar rather
+    than swapping the button's role (previous behaviour).
+    """
+    btn = getattr(window, '_opt_btn', None)
+    cancel = getattr(window, '_opt_cancel_btn', None)
+    bar = getattr(window, '_opt_progress', None)
+    if btn is not None:
+        btn.setEnabled(not running)
+        btn.setToolTip(
+            "Search already running — use Cancel to stop." if running
+            else "Launch NSGA-II Pareto search (minutes to hours). "
+                 "Progress + live Pareto render in this tab.")
+    if cancel is not None:
+        cancel.setEnabled(bool(running))
+    if bar is not None:
+        if running:
+            bar.setValue(0)
+            bar.show()
+        else:
+            bar.hide()
+
+
+def cancel_optimize(window):
+    """Request cancellation of the running optimization (hooked from the
+    button swap in `_set_optimize_running`). Flips the button back to its
+    idle style on the next poll tick in `run_optimize._check`."""
+    from optimization.optimizer import request_cancel
+    request_cancel()
+    window._opt_status.setText(
+        "Cancelling — waiting for current evaluation to finish…")
 
 
 def reshow_pareto(window):
@@ -203,13 +287,18 @@ def reshow_pareto(window):
 
 def show_pareto(window, res):
     """Ex-Main_Menu._show_pareto(self, res)."""
-    from .theme import _THEMES
+    from .theme import get_theme
     import main as _main_mod
     # Reveal Pareto tab — visibility is gated on _has_pareto
     window._has_pareto = True
+    # Skeleton placeholder retires once real data lands.
+    sk = getattr(window, '_pareto_skeleton', None)
+    if sk is not None:
+        try: sk.stop()
+        except Exception: pass
     if hasattr(window, '_update_tab_visibility'):
         window._update_tab_visibility()
-    _t = _THEMES['light']
+    _t = get_theme()
     F = res['F']; X = res['X']
     Q = -F[:, 0]; dP = F[:, 1]
 
@@ -229,7 +318,7 @@ def show_pareto(window, res):
     # Coarse-grid values as small faded markers
     if F_coarse is not None:
         Q_c = -F_coarse[:, 0]; dP_c = F_coarse[:, 1]
-        ax.scatter(dP_c, Q_c, c='#888888', s=12, alpha=0.25,
+        ax.scatter(dP_c, Q_c, c=_t['mpl_subtitle'], s=12, alpha=0.25,
                    marker='x', zorder=1, label='Optimizer grid')
 
     # Main scatter (fine-grid)
@@ -252,13 +341,13 @@ def show_pareto(window, res):
     theta = np.linspace(0, np.pi/2, 100)
     circle_Q = (1.0 - best_radius * np.sin(theta)) * Q_range + Q_min
     circle_dP = dP_max - (1.0 - best_radius * np.cos(theta)) * dP_range
-    ax.plot(circle_dP, circle_Q, '--', color='#cc4444', linewidth=1.5,
+    ax.plot(circle_dP, circle_Q, '--', color=_t['pareto_accent'], linewidth=1.5,
             alpha=0.7, zorder=2, label='Equal-preference arc')
 
     ax.scatter([dP[best_idx]], [Q[best_idx]], s=200, facecolors='none',
-               edgecolors='#cc4444', linewidths=2.5, zorder=4,
+               edgecolors=_t['pareto_accent'], linewidths=2.5, zorder=4,
                label='Best compromise')
-    ax.scatter([dP_min], [Q_max], s=100, marker='*', c='#cc4444',
+    ax.scatter([dP_min], [Q_max], s=100, marker='*', c=_t['pareto_accent'],
                zorder=5, label='Utopia point')
 
     # ── Axis ranges: tight with 5% margin ──
@@ -276,7 +365,7 @@ def show_pareto(window, res):
                  color=_t['ax_text'], loc='left')
     if F_coarse is not None:
         ax.text(1.0, 1.01, 're-evaluated (fine grid)',
-                transform=ax.transAxes, fontsize=9, color='#888888',
+                transform=ax.transAxes, fontsize=9, color=_t['mpl_subtitle'],
                 ha='right', va='bottom', style='italic')
 
     # ── Colorbar in dedicated axis ──
@@ -300,7 +389,7 @@ def show_pareto(window, res):
 
     # ── Bottom hint ──
     ax.text(0.5, -0.08, 'Click a point to load parameters',
-            transform=ax.transAxes, fontsize=8, color='#888888',
+            transform=ax.transAxes, fontsize=8, color=_t['mpl_subtitle'],
             ha='center', va='top', style='italic')
 
     ax.tick_params(labelsize=9, colors=_t['ax_text'])
@@ -319,6 +408,58 @@ def show_pareto(window, res):
         window.canvas_pareto.mpl_disconnect(window._pareto_cid)
     window._pareto_cid = window.canvas_pareto.mpl_connect(
         'pick_event', lambda ev: on_pareto_pick(window, ev))
+
+    # Hover annotation — shows Q / ΔP / design-index for the scatter point
+    # under the cursor. Stored on the axes so we can update its text in
+    # place instead of recreating on every motion event.
+    annot = ax.annotate(
+        "", xy=(0, 0), xytext=(12, 12), textcoords="offset points",
+        bbox=dict(boxstyle="round,pad=0.35", fc=_t['ax_bg'],
+                  ec=_t['ax_spine'], lw=0.7, alpha=0.95),
+        fontsize=8, color=_t['ax_text'],
+        arrowprops=dict(arrowstyle="->", color=_t['ax_spine'], lw=0.6))
+    annot.set_visible(False)
+    window._pareto_hover_annot = annot
+    window._pareto_hover_sc = sc
+
+    def _on_motion(event, window=window, sc=sc, Q=Q, dP=dP, X=X, annot=annot):
+        if event.inaxes is None or event.inaxes is not sc.axes:
+            if annot.get_visible():
+                annot.set_visible(False)
+                window.canvas_pareto.draw_idle()
+            return
+        cont, info = sc.contains(event)
+        if not cont:
+            if annot.get_visible():
+                annot.set_visible(False)
+                window.canvas_pareto.draw_idle()
+            return
+        i = int(info['ind'][0])
+        annot.xy = (dP[i], Q[i])
+        ratio = Q[i] / dP[i] if dP[i] > 1e-10 else 0.0
+        lines = [
+            f"#{i}",
+            f"Q  = {Q[i]:.1f} W/m",
+            f"ΔP = {dP[i]:.0f} Pa",
+            f"Q/ΔP = {ratio:.4g}",
+        ]
+        try:
+            xi = np.asarray(X[i]).ravel()
+            if xi.size <= 6:
+                lines.append("x = [" + ", ".join(f"{v:.3g}" for v in xi) + "]")
+            else:
+                lines.append(f"x ({xi.size}-d): "
+                              f"min {xi.min():.3g} / max {xi.max():.3g}")
+        except Exception:
+            pass
+        annot.set_text("\n".join(lines))
+        annot.set_visible(True)
+        window.canvas_pareto.draw_idle()
+
+    if hasattr(window, '_pareto_hover_cid'):
+        window.canvas_pareto.mpl_disconnect(window._pareto_hover_cid)
+    window._pareto_hover_cid = window.canvas_pareto.mpl_connect(
+        'motion_notify_event', _on_motion)
 
     window.canvas_pareto.draw()
     if not hasattr(window, '_drawn_tabs'):
@@ -409,6 +550,6 @@ def load_pareto_solution(window, x):
         for c, v in enumerate(vals):
             window.zone_table.setItem(r, c, QTableWidgetItem(v))
 
-    window._switch_param_tab(2)  # Switch to Zones tab
+    window._switch_param_tab(2)  # Switch to Zone Layout tab
     window.statusBar().showMessage(
         "Pareto solution loaded. Click Compute to see contour plots.", 5000)

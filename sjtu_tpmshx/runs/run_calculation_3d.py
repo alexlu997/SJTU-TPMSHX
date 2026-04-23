@@ -98,6 +98,11 @@ def finalize_plots_3d(window):
     res = getattr(window, '_result_3d', None)
     if res is None:
         return
+    # Skeleton placeholder retires once real 3D data lands.
+    sk = getattr(window, '_3d_skeleton', None)
+    if sk is not None:
+        try: sk.stop()
+        except Exception: pass
 
     # ── 1. PyVistaQt 3D panel ──
     panel = getattr(window, 'canvas_3d', None)
@@ -183,14 +188,14 @@ def _render_2d_slices_from_3d(window, res):
             print(f"[3D->2D {attr}] {e}")
 
 
-# Cached theme (loaded once)
-from ui.theme import _THEMES as _THEMES_CACHE
-_T = _THEMES_CACHE['light']
+# Theme — resolved at call time via get_theme()
+from ui.theme import get_theme as _get_theme
 
 
 def _begin_canvas_plot(canvas, nrows=1, ncols=1):
     """Clear canvas + create axes + style spines. Returns (axes_iterable, (X, Y))
     placeholder None — caller provides xc/yc via a follow-up meshgrid."""
+    _T = _get_theme()
     canvas.fig.clear()
     canvas.fig.patch.set_facecolor(_T['fig_bg'])
     axes = canvas.fig.subplots(nrows, ncols)
@@ -200,6 +205,7 @@ def _begin_canvas_plot(canvas, nrows=1, ncols=1):
 
 def _style_axis(ax, xlabel='x [mm]', ylabel='y [mm]', title='',
                 title_size=12, label_size=10, tick_size=9):
+    _T = _get_theme()
     ax.set_facecolor(_T['ax_bg'])
     if title:
         ax.set_title(title, fontsize=title_size, fontweight='bold',
@@ -213,6 +219,7 @@ def _style_axis(ax, xlabel='x [mm]', ylabel='y [mm]', title='',
 
 def _plot_3d_temperature(canvas, Ta_slice, Tb_slice, Ts_slice, xc, yc, z_info):
     """3-panel temperature (Ta / Tb / Ts) on mid-z slice."""
+    _T = _get_theme()
     axes = _begin_canvas_plot(canvas, 1, 3)
     Y, X = np.meshgrid(yc, xc)
     vmin_f = min(Ta_slice.min(), Tb_slice.min())
@@ -236,6 +243,7 @@ def _plot_3d_temperature(canvas, Ta_slice, Tb_slice, Ts_slice, xc, yc, z_info):
 
 def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
     """Pressure panels. If P_slice_B is None → single panel (A only, B frozen)."""
+    _T = _get_theme()
     if P_slice_B is None:
         axes = [_begin_canvas_plot(canvas)]
         P_data = [(P_slice_A, 'A', dP_A)]
@@ -256,6 +264,7 @@ def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
 
 def _plot_3d_velocity_slice(canvas, uA, vA, uB, vB, xc, yc, z_info):
     """Velocity magnitude panels. If uB is None → single panel (A only)."""
+    _T = _get_theme()
     if uB is None:
         axes = [_begin_canvas_plot(canvas)]
         V_data = [(uA, vA, 'A')]
@@ -304,8 +313,13 @@ def _parse_inputs(window):
         if val < 1:
             raise ValueError(f"Grid count {name!r} must be >= 1 (got {val})")
     u_A = _f(window.le_uA, "Velocity u_A")
-    T_inA = _f(window.le_TinA, "Inlet T_A")
-    T_inB = _f(window.le_TinB, "Inlet T_B")
+    # Honour UI K/°C toggle — _temp_to_K returns Kelvin regardless of display
+    if hasattr(window, '_temp_to_K'):
+        T_inA = window._temp_to_K(window.le_TinA)
+        T_inB = window._temp_to_K(window.le_TinB)
+    else:
+        T_inA = _f(window.le_TinA, "Inlet T_A")
+        T_inB = _f(window.le_TinB, "Inlet T_B")
     P_inA = _f(window.le_PinA, "Inlet P_A") if hasattr(window, 'le_PinA') else P_atm + 1e5
     P_inB = _f(window.le_PinB, "Inlet P_B") if hasattr(window, 'le_PinB') else P_atm
     Lcell = _f(window.le_Lcell, "TPMS L_cell")

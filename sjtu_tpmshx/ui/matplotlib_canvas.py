@@ -8,12 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.ticker import FormatStrFormatter
-from .theme import _THEMES
+from .theme import _THEMES, get_theme
 
 
 # ── Axis label helper ─────────────────────────────────────────
 def _label_axes(axes, L, H, mode=""):
-    _t = _THEMES['light']
+    _t = get_theme()
     # Determine arrow directions from mode string like "A:+x B:-y"
     dir_arrows = {'+x': r'\rightarrow', '-x': r'\leftarrow',
                   '+y': r'\uparrow',    '-y': r'\downarrow'}
@@ -43,7 +43,7 @@ def _label_axes(axes, L, H, mode=""):
 class MatplotlibCanvas(FigureCanvas):
     def __init__(self, nrows=1, ncols=3, figsize=(15, 4.5)):
         self.fig, axes_raw = plt.subplots(nrows, ncols, figsize=figsize)
-        _t = _THEMES['light']
+        _t = get_theme()
         self.fig.patch.set_facecolor(_t['fig_bg'])
         # Normalise to 2-D list [[ax, ...], ...]
         if nrows == 1 and ncols == 1:
@@ -71,7 +71,7 @@ class MatplotlibCanvas(FigureCanvas):
         zones : dict with keys like 'TfA_in', 'TfA_uni', 'TfA_out', etc.
                 Each value is a 2D array or None.
         """
-        _t = _THEMES['light']
+        _t = get_theme()
         self.fig.clear()
         axes = self.fig.subplots(3, 3)
         self.axes = [list(r) for r in axes]
@@ -143,7 +143,7 @@ class MatplotlibCanvas(FigureCanvas):
 
     def plot_temperature(self, T_fA, T_fB, T_s,
                          dx, dy, N_t, N_x, N_y, L, H, dt, mode="Counterflow"):
-        _t = _THEMES['light']
+        _t = get_theme()
         self.fig.clear()
         self.axes = [self.fig.subplots(1, 3)]
         self.fig.patch.set_facecolor(_t['fig_bg'])
@@ -183,16 +183,27 @@ class MatplotlibCanvas(FigureCanvas):
         self.draw()
 
     def plot_pressure(self, P_fA, P_fB, N_x, N_y, L, H, mode="",
-                       dP_A=None, dP_B=None, dx_arr=None, dy_arr=None):
-        _t = _THEMES['light']
+                       dP_A=None, dP_B=None, dx_arr=None, dy_arr=None,
+                       residuals_A=None, residuals_B=None):
+        _t = get_theme()
         from matplotlib.gridspec import GridSpec
 
         self.fig.clear()
         self.fig.patch.set_facecolor(_t['fig_bg'])
 
-        # 2 cloud plots + 1 summary panel (smaller)
-        gs = GridSpec(5, 1, figure=self.fig, height_ratios=[3, 3, 0.3, 2, 0.2],
-                      hspace=0.28, left=0.08, right=0.93, top=0.96, bottom=0.04)
+        # 2 cloud plots + summary panel + convergence mini-plot.
+        has_resid = (residuals_A is not None and len(residuals_A) > 0) or \
+                    (residuals_B is not None and len(residuals_B) > 0)
+        if has_resid:
+            gs = GridSpec(7, 1, figure=self.fig,
+                          height_ratios=[3, 3, 0.3, 2, 0.25, 1.3, 0.15],
+                          hspace=0.30, left=0.08, right=0.93, top=0.96,
+                          bottom=0.04)
+        else:
+            gs = GridSpec(5, 1, figure=self.fig,
+                          height_ratios=[3, 3, 0.3, 2, 0.2],
+                          hspace=0.28, left=0.08, right=0.93, top=0.96,
+                          bottom=0.04)
 
         _dx = dx_arr if dx_arr is not None else np.full(N_x, L / N_x)
         _dy = dy_arr if dy_arr is not None else np.full(N_y, H / N_y)
@@ -218,7 +229,7 @@ class MatplotlibCanvas(FigureCanvas):
             ax.set_title(main_title, fontsize=13, fontweight="bold",
                          color=_t['ax_text'], loc='left', pad=6)
             ax.text(0.99, 1.02, subtitle, transform=ax.transAxes,
-                    fontsize=9, color='#888888', ha='right', va='bottom',
+                    fontsize=9, color=_t['mpl_subtitle'], ha='right', va='bottom',
                     fontstyle='italic')
             ax.set_xlabel("x [mm]", fontsize=10, color=_t['ax_text'])
             ax.set_ylabel("y [mm]", fontsize=10, color=_t['ax_text'])
@@ -237,7 +248,7 @@ class MatplotlibCanvas(FigureCanvas):
 
         # Card background (frosted glass effect via rounded rect)
         from matplotlib.patches import FancyBboxPatch
-        _card_bg = '#F0F2F5'; _card_border = '#D8DBE0'
+        _card_bg = _t['dp_card_bg']; _card_border = _t['dp_card_border']
         card_rect = FancyBboxPatch((0.03, 0.02), 0.94, 0.92,
                                    boxstyle="round,pad=0.02",
                                    facecolor=_card_bg, edgecolor=_card_border,
@@ -251,7 +262,7 @@ class MatplotlibCanvas(FigureCanvas):
                  ha='center', va='top', transform=ax3.transAxes, zorder=1)
 
         # Two metric cards side by side
-        _dp_colors = ['#2e75b6', '#548235']
+        _dp_colors = [_t['dp_color_a'], _t['dp_color_b']]
         _labels = ['Fluid A', 'Fluid B']
         _p_in = [P_fA.max(), P_fB.max()]  # approximate inlet pressure
         _p_out = [P_fA.max() - dPA, P_fB.max() - dPB]
@@ -271,4 +282,32 @@ class MatplotlibCanvas(FigureCanvas):
         # Divider line between two cards
         ax3.plot([0.5, 0.5], [0.15, 0.78], color=_card_border, lw=1,
                  transform=ax3.transAxes, zorder=1)
+
+        # Convergence (SIMPLE residual) mini-plot — semilogy so the long
+        # asymptote is readable. Hidden when no residual history was
+        # supplied (e.g., 3D pipeline hasn't been wired to residuals yet).
+        if has_resid:
+            axR = self.fig.add_subplot(gs[5])
+            axR.set_facecolor(_t['ax_bg'])
+            for label, color, hist in (
+                    ('Fluid A', _t['dp_color_a'], residuals_A),
+                    ('Fluid B', _t['dp_color_b'], residuals_B)):
+                if hist is None or len(hist) == 0:
+                    continue
+                axR.semilogy(range(1, len(hist) + 1), hist,
+                             color=color, lw=1.2, label=label)
+            axR.set_xlabel("SIMPLE iteration", fontsize=9,
+                           color=_t['ax_text'])
+            axR.set_ylabel("Residual", fontsize=9, color=_t['ax_text'])
+            axR.set_title("Convergence", fontsize=10, fontweight='bold',
+                          color=_t['ax_text'], loc='left', pad=4)
+            axR.grid(True, which='both', alpha=0.2, linewidth=0.5)
+            axR.tick_params(labelsize=8, colors=_t['ax_text'])
+            leg = axR.legend(fontsize=8, loc='upper right', framealpha=0.85,
+                             edgecolor=_t['ax_spine'], fancybox=False)
+            if leg is not None:
+                leg.get_frame().set_linewidth(0.5)
+            for spine in axR.spines.values():
+                spine.set_edgecolor(_t['ax_spine']); spine.set_linewidth(0.8)
+
         self.draw()

@@ -1,0 +1,98 @@
+"""Tiny inline sparkline widget — big-stat companion for the Optimize tab.
+
+Draws a filled-area line chart of arbitrary numeric history. Theme-aware
+so it fits both glassmorphism dark and crisp light palettes. Deliberately
+lightweight — no matplotlib — to stay < 1 ms per repaint while NSGA-II
+polls at 2 Hz.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
+from PySide6.QtWidgets import QWidget
+
+from .theme import get_theme
+
+
+class Sparkline(QWidget):
+    def __init__(self, parent=None, height=44):
+        super().__init__(parent)
+        self._data: list[float] = []
+        self.setMinimumHeight(height)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def push(self, value):
+        """Append one sample and trigger a repaint."""
+        self._data.append(float(value))
+        if len(self._data) > 500:  # cap memory
+            self._data = self._data[-500:]
+        self.update()
+
+    def clear_data(self):
+        self._data = []
+        self.update()
+
+    def paintEvent(self, event):
+        t = get_theme()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        pad = 4
+
+        # Empty-state baseline — dashed rule at bottom suggests "live chart
+        # will fill here" without the noise of an empty box.
+        if len(self._data) < 2:
+            pen = QPen(QColor(t.get('border_subtle', '#888')))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidthF(1.2)
+            p.setPen(pen)
+            p.drawLine(pad, h - pad - 1, w - pad, h - pad - 1)
+            p.end()
+            return
+
+        vals = self._data
+        vmin = min(vals); vmax = max(vals)
+        rng = (vmax - vmin) or max(1.0, abs(vmax))
+
+        xs = [(pad + (i / (len(vals) - 1)) * (w - 2 * pad))
+              for i in range(len(vals))]
+        ys = [(h - pad - ((v - vmin) / rng) * (h - 2 * pad)) for v in vals]
+
+        col = QColor(t.get('accent_primary', '#3B82F6'))
+
+        # Gradient-like fill under curve (single alpha fill is enough at
+        # this size; QLinearGradient would be over-engineered here).
+        path_fill = QPainterPath()
+        path_fill.moveTo(xs[0], h - pad)
+        for xx, yy in zip(xs, ys):
+            path_fill.lineTo(xx, yy)
+        path_fill.lineTo(xs[-1], h - pad)
+        path_fill.closeSubpath()
+        col_fill = QColor(col); col_fill.setAlpha(55)
+        p.fillPath(path_fill, col_fill)
+
+        # Line stroke
+        pen = QPen(col)
+        pen.setWidthF(2.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        path = QPainterPath()
+        path.moveTo(xs[0], ys[0])
+        for xx, yy in zip(xs[1:], ys[1:]):
+            path.lineTo(xx, yy)
+        p.drawPath(path)
+
+        # Current value marker — filled dot at the tail
+        p.setBrush(col)
+        p.setPen(Qt.PenStyle.NoPen)
+        dot_r = 3
+        p.drawEllipse(int(xs[-1]) - dot_r, int(ys[-1]) - dot_r,
+                       dot_r * 2, dot_r * 2)
+        # Outer ring for emphasis
+        ring = QColor(col); ring.setAlpha(70)
+        p.setBrush(ring)
+        p.drawEllipse(int(xs[-1]) - dot_r - 3, int(ys[-1]) - dot_r - 3,
+                       (dot_r + 3) * 2, (dot_r + 3) * 2)
+
+        p.end()

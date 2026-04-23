@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from .tpms_calc import geometry as tpms_geometry
 from .fvm_solver import solve_polygon_domain
 from .unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
-from ui.theme import _THEMES
+from ui.theme import get_theme
 
 
 def run_polygon_calculation(window):
@@ -55,8 +55,13 @@ def _parse_inputs(window, _log):
     cp_f = float(window.le_cp_f.text())
     u_A = float(window.le_uA.text())
     u_B = float(window.le_uB.text())
-    T_inA = float(window.le_TinA.text())
-    T_inB = float(window.le_TinB.text())
+    # Honour UI K/°C toggle — compute path always receives Kelvin
+    if hasattr(window, '_temp_to_K'):
+        T_inA = window._temp_to_K(window.le_TinA)
+        T_inB = window._temp_to_K(window.le_TinB)
+    else:
+        T_inA = float(window.le_TinA.text())
+        T_inB = float(window.le_TinB.text())
 
     shape = window.combo_shape.currentText()
     verts = um.hexagon(L, H) if shape == 'Hexagon' else um.octagon(L, H)
@@ -187,7 +192,7 @@ def _store_results(window, cfg, fields, result, _log):
         np.add.at(wt, mesh.cells.ravel(), 1)
         return nv / np.maximum(wt, 1)
 
-    _t = _THEMES['light']
+    _t = get_theme()
 
     def _pub_axes(ax):
         ax.set_facecolor(_t['ax_bg'])

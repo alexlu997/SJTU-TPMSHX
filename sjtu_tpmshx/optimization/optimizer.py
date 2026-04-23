@@ -1024,9 +1024,34 @@ def evaluate_richardson(x, config=None):
 
 # ── pymoo Problem ────────────────────────────────────────────
 
-# Shared progress counter (thread-safe via GIL for simple int)
+# Shared progress counter (thread-safe via GIL for simple int). The
+# `cancel_requested` flag is polled by _evaluate and the SaveCallback; when
+# set mid-run we raise _OptCancelled which propagates out of pymoo's
+# minimize() and is caught by run_optimization to return a partial result.
 _progress = {'count': 0, 'total': 0, 'best_Q': 0.0,
-             'phase': 'optimize', 'reeval_count': 0, 'reeval_total': 0}
+             'best_dP': float('inf'),
+             'phase': 'optimize', 'reeval_count': 0, 'reeval_total': 0,
+             'cancel_requested': False, 'current_gen': 0, 'n_gen': 0}
+
+
+class _OptCancelled(Exception):
+    """Raised from inside pymoo's minimize() when the UI requests abort."""
+    pass
+
+
+def request_cancel():
+    """Signal the running optimizer to stop at the next evaluation boundary.
+
+    The actual abort is raised inside `_evaluate` / `SaveCallback.notify`,
+    so there is an O(1 eval) latency between click and stop. That's
+    acceptable — the alternative (killing the worker thread) would leave
+    SIMPLE caches and save-files in half-written states.
+    """
+    _progress['cancel_requested'] = True
+
+
+def clear_cancel():
+    _progress['cancel_requested'] = False
 
 
 def _make_problem(config=None):
@@ -1053,6 +1078,10 @@ def _make_problem(config=None):
             super().__init__(n_var=n_var, n_obj=n_obj, xl=xl, xu=xu)
 
         def _evaluate(self, X, out, *args, **kwargs):
+            # Early-abort: raise before spending another generation's worth
+            # of CPU once the UI has requested a cancel.
+            if _progress.get('cancel_requested'):
+                raise _OptCancelled()
             F = np.empty((len(X), n_obj))
             n_workers = _auto_max_workers(cfg) if dim == 3 else _parallel_workers()
 
@@ -1069,6 +1098,8 @@ def _make_problem(config=None):
                         _progress['count'] += 1
                         if -Q_neg > _progress['best_Q']:
                             _progress['best_Q'] = -Q_neg
+                        if dP < _progress['best_dP']:
+                            _progress['best_dP'] = dP
             else:
                 # Serial path (TPMSHX_SERIAL=1 or single candidate)
                 if dim == 3:
@@ -1078,11 +1109,15 @@ def _make_problem(config=None):
                 else:
                     eval_fn = evaluate
                 for i, x in enumerate(X):
+                    if _progress.get('cancel_requested'):
+                        raise _OptCancelled()
                     Q_neg, dP, mass = eval_fn(x, cfg)
                     F[i] = [Q_neg, dP]
                     _progress['count'] += 1
                     if -Q_neg > _progress['best_Q']:
                         _progress['best_Q'] = -Q_neg
+                    if dP < _progress['best_dP']:
+                        _progress['best_dP'] = dP
 
             out["F"] = F
 
@@ -1304,9 +1339,13 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
     _progress['count'] = 0
     _progress['total'] = n_gen * pop_size
     _progress['best_Q'] = 0.0
+    _progress['best_dP'] = float('inf')
     _progress['phase'] = 'optimize'
     _progress['reeval_count'] = 0
     _progress['reeval_total'] = 0
+    _progress['current_gen'] = 0
+    _progress['n_gen'] = n_gen
+    _progress['cancel_requested'] = False
 
     # Create save directory with descriptive name
     if save_dir is None:
@@ -1330,7 +1369,7 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
     with open(os.path.join(save_dir, "config.json"), 'w') as f:
         json.dump(cfg_save, f, indent=2)
 
-    # Callback: save Pareto front after each generation
+    # Callback: save Pareto front after each generation + honour cancel
     class SaveCallback(Callback):
         def __init__(self):
             super().__init__()
@@ -1338,6 +1377,7 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
 
         def notify(self, algorithm):
             gen = algorithm.n_gen
+            _progress['current_gen'] = gen
             opt = algorithm.opt
             if opt is not None and len(opt) > 0:
                 X = opt.get("X")
@@ -1346,6 +1386,10 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
                 _save_pareto_csv(path, X, F)
                 # Also save as "latest"
                 _save_pareto_csv(os.path.join(self._save_dir, "pareto_latest.csv"), X, F)
+            # Second cancel check — catches the gap between the last _evaluate
+            # and the next generation kickoff.
+            if _progress.get('cancel_requested'):
+                raise _OptCancelled()
 
     cfg_final = {**DEFAULT_CONFIG, **(config or {})}
     # Resolve adaptive grid and store in config for downstream use
@@ -1387,8 +1431,38 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
         print(f"[Optimizer] Starting {algo_name}: {n_gen} gen × {pop_size} pop = {total} evals [{mode}]")
         print(f"[Optimizer] Saving to: {save_dir}")
 
-    res = minimize(problem, algo, termination, seed=seed,
-                   verbose=verbose, callback=SaveCallback())
+    try:
+        res = minimize(problem, algo, termination, seed=seed,
+                       verbose=verbose, callback=SaveCallback())
+    except _OptCancelled:
+        # User clicked Cancel. Return the best partial Pareto recovered from
+        # `pareto_latest.csv` (written at the end of the most recent full
+        # generation). If no generation finished, surface an informative
+        # error instead of a silent empty result.
+        latest = os.path.join(save_dir, 'pareto_latest.csv')
+        if os.path.exists(latest):
+            import numpy as _np
+            import csv as _csv
+            X_rows, F_rows = [], []
+            with open(latest, 'r') as _f:
+                reader = _csv.reader(_f)
+                header = next(reader, None)
+                for row in reader:
+                    vals = [float(v) for v in row]
+                    # header pattern: x0..xN, -Q, dP
+                    X_rows.append(vals[:-2]); F_rows.append(vals[-2:])
+            if X_rows:
+                if verbose:
+                    print(f"[Optimizer] Cancelled at gen {_progress['current_gen']}. "
+                          f"Returning partial Pareto ({len(X_rows)} solutions).")
+                return {
+                    'X': _np.array(X_rows),
+                    'F': _np.array(F_rows),
+                    'n_evals': _progress['count'],
+                    'save_dir': save_dir,
+                    'cancelled': True,
+                }
+        raise RuntimeError("Optimization cancelled before any generation completed.")
 
     # Final save (optimizer-grid values)
     _save_pareto_csv(os.path.join(save_dir, "pareto_final.csv"), res.X, res.F)
@@ -1428,12 +1502,23 @@ def run_optimization(config=None, n_gen=100, pop_size=40, seed=42,
 
         def _reeval_cb(i, n):
             _progress['reeval_count'] = i
+            if _progress.get('cancel_requested'):
+                raise _OptCancelled()
 
-        F_fine = reevaluate_pareto(res.X, config, Nx_re, Ny_re, _reeval_cb)
-        _save_pareto_csv(os.path.join(save_dir, "pareto_final_fine.csv"), res.X, F_fine)
-
-        result['F_coarse'] = res.F.copy()
-        result['F'] = F_fine
+        try:
+            F_fine = reevaluate_pareto(res.X, config, Nx_re, Ny_re, _reeval_cb)
+            _save_pareto_csv(os.path.join(save_dir, "pareto_final_fine.csv"),
+                             res.X, F_fine)
+            result['F_coarse'] = res.F.copy()
+            result['F'] = F_fine
+        except _OptCancelled:
+            # User cancelled during re-eval — keep the optimizer-grid results
+            # we already have, so the partial Pareto still renders.
+            if verbose:
+                print("[Optimizer] Re-evaluation cancelled; returning coarse "
+                      "Pareto.")
+            result['cancelled'] = True
+            return result
 
         if verbose:
             q_unit = 'W' if dim_final == 3 else 'W/m'

@@ -15,9 +15,9 @@ display-only scaling). Axis labels show normalised position; annotation
 provides the real-world dimensions.
 
 Usage:
-    python -u ui/demo_vis_3d_interactive.py            # interactive window
-    python -u ui/demo_vis_3d_interactive.py --test     # off-screen smoke test
-    python -u ui/demo_vis_3d_interactive.py --real-aspect  # keep real box
+    python -u examples/demo_vis_3d_interactive.py            # interactive window
+    python -u examples/demo_vis_3d_interactive.py --test     # off-screen smoke test
+    python -u examples/demo_vis_3d_interactive.py --real-aspect  # keep real box
 """
 
 from __future__ import annotations

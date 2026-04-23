@@ -27,8 +27,6 @@ The caller can hand real 3D SIMPLE+LTNE results in via `set_fields`.
 """
 
 from __future__ import annotations
-import math
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -42,148 +40,136 @@ from PySide6.QtWidgets import (
 )
 
 
-from ui.vis3d_constants import FIELD_ORDER, FIELD_META, tone_down_plane_widget
+from ui.vis3d_constants import FIELD_ORDER, FIELD_META
 
-# ── Button / label styles (explicit dark-on-light for WCAG contrast) ──
-_CTRL_HEIGHT = 32   # unified control height (px)
+# ── Theme-aware QSS generators for 3D panel controls ──
+from ui.theme import get_theme, get_theme_name
 
-_BTN_QSS = """
-QPushButton {
-    color: #1a1f24;
-    background: #ffffff;
-    border: 1px solid #aeb4ba;
-    border-radius: 6px;
-    padding: 4px 14px;
-    font-size: 10pt;
-    font-weight: 500;
-}
-QPushButton:hover { background: #eef2f6; border-color: #2c5282; color: #0a0a0a; }
-QPushButton:pressed { background: #dbe4ed; border-color: #1e3a5f; }
-QPushButton:checked { background: #2c5282; color: white; border-color: #1e3a5f; }
-QPushButton:disabled { color: #b4b9c0; background: #f8f9fa; border: 1px dashed #d5d8dc; }
+_CTRL_HEIGHT = 32
+
+
+def _btn_qss():
+    t = get_theme()
+    return f"""
+QPushButton {{
+    color: {t['fg']}; background: {t['card_bg']};
+    border: 1px solid {t['inp_border']}; border-radius: 6px;
+    padding: 4px 14px; font-size: 10pt; font-weight: 500;
+}}
+QPushButton:hover {{ background: {t['tab_off_hover']}; border-color: {t['accent_primary']}; }}
+QPushButton:pressed {{ background: {t['inp_border']}; }}
+QPushButton:checked {{ background: {t['accent_primary']}; color: white; }}
+QPushButton:disabled {{ color: {t['tab_disabled_fg']}; background: {t['bg']}; border: 1px dashed {t['inp_border']}; }}
 """
 
-# Primary action button — solid accent fill, meant for the one key action in
-# the toolbar (Apply). Disabled state keeps a muted outline so it still reads
-# as "the primary" when inactive but doesn't scream.
-_BTN_PRIMARY_QSS = """
-QPushButton {
-    color: #ffffff;
-    background: #2c5282;
-    border: 1px solid #1e3a5f;
-    border-radius: 6px;
-    padding: 4px 16px;
-    font-size: 10pt;
-    font-weight: 700;
-}
-QPushButton:hover { background: #34618f; border-color: #1a3557; }
-QPushButton:pressed { background: #1e3a5f; }
-QPushButton:disabled { color: #ffffff; background: #94a8c2; border-color: #94a8c2; }
+
+def _btn_primary_qss():
+    t = get_theme()
+    return f"""
+QPushButton {{
+    color: white; background: {t['accent_primary']};
+    border: 1px solid {t['chk_checked_border']}; border-radius: 6px;
+    padding: 4px 16px; font-size: 10pt; font-weight: 700;
+}}
+QPushButton:hover {{ background: {t['splitter_hover']}; }}
+QPushButton:pressed {{ background: {t['chk_checked_border']}; }}
+QPushButton:disabled {{ color: white; background: {t['tab_disabled_fg']}; }}
 """
 
-_LABEL_QSS = (
-    "QLabel { "
-    "color: #1a1f24; font-size: 10pt; font-weight: 500; "
-    "background: transparent; border: none; border-radius: 0; "
-    "padding: 0 4px 0 0; margin: 0; "
-    "}"
-)
 
-_STATUS_QSS = (
-    "color: #3a3f45; font-size: 9pt; font-weight: 500; "
-    "background: #f6f7f9; border-top: 1px solid #e1e4e8; "
-    "padding: 6px 12px 6px 12px;"
-)
+def _label_qss():
+    t = get_theme()
+    return (f"QLabel {{ color: {t['fg']}; font-size: 10pt; font-weight: 500; "
+            "background: transparent; border: none; padding: 0 4px 0 0; margin: 0; }")
 
-_COMBO_QSS = """
-QComboBox {
-    color: #1a1f24; background: #ffffff;
-    border: 1px solid #aeb4ba; border-radius: 6px;
-    padding: 4px 24px 4px 10px;
-    font-size: 10pt; font-weight: 500;
-    min-width: 140px;
-}
-QComboBox:hover { border-color: #2c5282; }
-QComboBox::drop-down {
+
+def _status_qss():
+    t = get_theme()
+    return (f"color: {t['mpl_subtitle']}; font-size: 9pt; font-weight: 500; "
+            f"background: {t['scroll_bg']}; border-top: 1px solid {t['card_border']}; "
+            "padding: 6px 12px;")
+
+
+def _combo_qss():
+    t = get_theme()
+    return f"""
+QComboBox {{
+    color: {t['fg']}; background: {t['inp_bg']};
+    border: 1px solid {t['inp_border']}; border-radius: 6px;
+    padding: 4px 24px 4px 10px; font-size: 10pt; font-weight: 500; min-width: 140px;
+}}
+QComboBox:hover {{ border-color: {t['accent_primary']}; }}
+QComboBox::drop-down {{
     subcontrol-origin: padding; subcontrol-position: top right;
-    width: 22px; border-left: 1px solid #aeb4ba;
-}
-QComboBox QAbstractItemView {
-    background: #ffffff; color: #1a1f24;
-    selection-background-color: #2c5282; selection-color: white;
-    border: 1px solid #aeb4ba; padding: 2px;
-}
+    width: 22px; border-left: 1px solid {t['inp_border']};
+}}
+QComboBox QAbstractItemView {{
+    background: {t['combo_list_bg']}; color: {t['combo_list_fg']};
+    selection-background-color: {t['accent_primary']}; selection-color: white;
+    border: 1px solid {t['inp_border']}; padding: 2px;
+}}
 """
 
-_LINEEDIT_QSS = """
-QLineEdit {
-    color: #1a1f24; background: #ffffff;
-    border: 1px solid #aeb4ba; border-radius: 6px;
-    padding: 4px 8px;
-    font-size: 10pt; font-weight: 500;
-}
-QLineEdit:focus { border-color: #2c5282; }
-QLineEdit:disabled { color: #8a9199; background: #f3f4f5; }
-QLineEdit[error="true"] { border: 1px solid #c53030; background: #fff5f5; }
-QLineEdit[error="true"]:focus { border-color: #c53030; }
+
+def _lineedit_qss():
+    t = get_theme()
+    return f"""
+QLineEdit {{
+    color: {t['fg']}; background: {t['inp_bg']};
+    border: 1px solid {t['inp_border']}; border-radius: 6px;
+    padding: 4px 8px; font-size: 10pt; font-weight: 500;
+}}
+QLineEdit:focus {{ border-color: {t['inp_focus']}; }}
+QLineEdit:disabled {{ color: {t['tab_disabled_fg']}; background: {t['scroll_bg']}; }}
+QLineEdit[error="true"] {{ border: 1px solid {t['warn']}; background: {t['scroll_bg']}; }}
+QLineEdit[error="true"]:focus {{ border-color: {t['warn']}; }}
 """
 
-# Vertical rule between logical groups in the toolbar
-_DIVIDER_QSS = (
-    "QFrame { color: #d0d4d9; background: #d0d4d9; "
-    "max-width: 1px; min-width: 1px; margin: 6px 4px; }"
-)
 
-_SEG_LEFT_QSS = """
-QPushButton {
-    color: #1a1f24; background: #ffffff; border: 1px solid #aeb4ba;
-    border-top-left-radius: 6px; border-bottom-left-radius: 6px;
-    border-top-right-radius: 0; border-bottom-right-radius: 0;
+def _divider_qss():
+    t = get_theme()
+    return (f"QFrame {{ color: {t['card_border']}; background: {t['card_border']}; "
+            "max-width: 1px; min-width: 1px; margin: 6px 4px; }")
+
+
+def _seg_qss(corners):
+    t = get_theme()
+    if corners == 'left':
+        radius = ("border-top-left-radius:6px; border-bottom-left-radius:6px; "
+                  "border-top-right-radius:0; border-bottom-right-radius:0;")
+    elif corners == 'right':
+        radius = ("border-top-right-radius:6px; border-bottom-right-radius:6px; "
+                  "border-top-left-radius:0; border-bottom-left-radius:0;")
+    else:
+        radius = "border-radius:0;"
+    bl = "border-left:none; " if corners != 'left' else ""
+    return f"""
+QPushButton {{
+    color: {t['fg']}; background: {t['card_bg']};
+    border: 1px solid {t['inp_border']}; {bl}{radius}
     padding: 4px 10px; font-size: 9pt; font-weight: 500;
-}
-QPushButton:hover { background: #eef2f6; color: #0a0a0a; }
-QPushButton:pressed { background: #dbe4ed; border-color: #1e3a5f; }
-"""
-_SEG_MID_QSS = """
-QPushButton {
-    color: #1a1f24; background: #ffffff;
-    border: 1px solid #aeb4ba; border-left: none;
-    border-radius: 0;
-    padding: 4px 10px; font-size: 9pt; font-weight: 500;
-}
-QPushButton:hover { background: #eef2f6; color: #0a0a0a; }
-QPushButton:pressed { background: #dbe4ed; border-color: #1e3a5f; }
-"""
-_SEG_RIGHT_QSS = """
-QPushButton {
-    color: #1a1f24; background: #ffffff;
-    border: 1px solid #aeb4ba; border-left: none;
-    border-top-right-radius: 6px; border-bottom-right-radius: 6px;
-    border-top-left-radius: 0; border-bottom-left-radius: 0;
-    padding: 4px 10px; font-size: 9pt; font-weight: 500;
-}
-QPushButton:hover { background: #eef2f6; color: #0a0a0a; }
-QPushButton:pressed { background: #dbe4ed; border-color: #1e3a5f; }
+}}
+QPushButton:hover {{ background: {t['tab_off_hover']}; }}
+QPushButton:pressed {{ background: {t['inp_border']}; }}
 """
 
-_SLIDER_QSS = """
-QSlider::groove:horizontal {
-    border: 1px solid #aeb4ba;
-    height: 4px; background: #ffffff;
-    margin: 0px; border-radius: 2px;
-}
-QSlider::handle:horizontal {
-    background: #2c5282;
-    border: 1px solid #1e3a5f;
-    width: 14px; height: 14px;
-    margin: -6px 0; border-radius: 7px;
-}
-QSlider::handle:horizontal:hover { background: #34618f; }
-QSlider::sub-page:horizontal {
-    background: #94a8c2; border-radius: 2px;
-}
-"""
 
+def _slider_qss():
+    t = get_theme()
+    return f"""
+QSlider::groove:horizontal {{
+    border: 1px solid {t['inp_border']}; height: 4px;
+    background: {t['card_bg']}; margin: 0px; border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
+    background: {t['accent_primary']}; border: 1px solid {t['chk_checked_border']};
+    width: 14px; height: 14px; margin: -6px 0; border-radius: 7px;
+}}
+QSlider::handle:horizontal:hover {{ background: {t['splitter_hover']}; }}
+QSlider::sub-page:horizontal {{
+    background: {t['slider_sub']}; border-radius: 2px;
+}}
+"""
 
 # Plane-selection: user picks a plane parallel to XY/YZ/XZ; the slicing normal
 # is perpendicular to that plane. `coord_axis` names the axis along which the
@@ -222,7 +208,7 @@ class ThreeDVisPanel(QWidget):
         def _divider():
             d = QFrame()
             d.setFrameShape(QFrame.Shape.VLine)
-            d.setStyleSheet(_DIVIDER_QSS)
+            d.setStyleSheet(_divider_qss())
             d.setFixedHeight(_CTRL_HEIGHT)
             return d
 
@@ -231,10 +217,10 @@ class ThreeDVisPanel(QWidget):
         params.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Field combo
-        lbl_f = QLabel("Field:"); lbl_f.setStyleSheet(_LABEL_QSS)
+        lbl_f = QLabel("Field:"); lbl_f.setStyleSheet(_label_qss())
         params.addWidget(lbl_f)
         self.combo_field = QComboBox()
-        self.combo_field.setStyleSheet(_COMBO_QSS)
+        self.combo_field.setStyleSheet(_combo_qss())
         self.combo_field.setFixedHeight(_CTRL_HEIGHT)
         self.combo_field.currentIndexChanged.connect(self._on_field_changed)
         self.combo_field.setEnabled(False)
@@ -243,12 +229,12 @@ class ThreeDVisPanel(QWidget):
         params.addSpacing(6)
 
         # Plane combo
-        lbl_p = QLabel("Plane:"); lbl_p.setStyleSheet(_LABEL_QSS)
+        lbl_p = QLabel("Plane:"); lbl_p.setStyleSheet(_label_qss())
         params.addWidget(lbl_p)
         self.combo_plane = QComboBox()
         for _pid, label, _axis in _PLANE_OPTIONS:
             self.combo_plane.addItem(label, userData=_pid)
-        self.combo_plane.setStyleSheet(_COMBO_QSS)
+        self.combo_plane.setStyleSheet(_combo_qss())
         self.combo_plane.setFixedHeight(_CTRL_HEIGHT)
         self.combo_plane.setMinimumWidth(110)
         self.combo_plane.setEnabled(False)
@@ -259,7 +245,7 @@ class ThreeDVisPanel(QWidget):
 
         # Coord input (mm) with live range-validation
         self.lbl_coord = QLabel("Coord:")
-        self.lbl_coord.setStyleSheet(_LABEL_QSS)
+        self.lbl_coord.setStyleSheet(_label_qss())
         params.addWidget(self.lbl_coord)
         self.le_coord = QLineEdit("10.0")
         # Range updated dynamically in `_update_coord_label`; placeholder
@@ -268,7 +254,7 @@ class ThreeDVisPanel(QWidget):
         self.le_coord.setValidator(self._coord_validator)
         self.le_coord.setFixedWidth(76)
         self.le_coord.setFixedHeight(_CTRL_HEIGHT)
-        self.le_coord.setStyleSheet(_LINEEDIT_QSS)
+        self.le_coord.setStyleSheet(_lineedit_qss())
         self.le_coord.setEnabled(False)
         self.le_coord.setToolTip("Slice coordinate in mm (must be inside domain)")
         self.le_coord.returnPressed.connect(self._on_apply_slice)
@@ -278,21 +264,21 @@ class ThreeDVisPanel(QWidget):
         params.addSpacing(10)
 
         # Opacity slider — controls volume transparency (0 = invisible, 100 = opaque)
-        lbl_op = QLabel("Opacity:"); lbl_op.setStyleSheet(_LABEL_QSS)
+        lbl_op = QLabel("Opacity:"); lbl_op.setStyleSheet(_label_qss())
         params.addWidget(lbl_op)
         self.slider_opacity = QSlider(Qt.Orientation.Horizontal)
         self.slider_opacity.setRange(0, 100)
         self.slider_opacity.setValue(60)          # default 60% — softly cloud-like
         self.slider_opacity.setFixedWidth(110)
         self.slider_opacity.setFixedHeight(_CTRL_HEIGHT)
-        self.slider_opacity.setStyleSheet(_SLIDER_QSS)
+        self.slider_opacity.setStyleSheet(_slider_qss())
         self.slider_opacity.setEnabled(False)
         self.slider_opacity.setToolTip(
             "Volume transparency — 0% fully transparent, 100% solid")
         self.slider_opacity.valueChanged.connect(self._on_opacity_changed)
         params.addWidget(self.slider_opacity)
         self.lbl_opacity_val = QLabel("60%")
-        self.lbl_opacity_val.setStyleSheet(_LABEL_QSS)
+        self.lbl_opacity_val.setStyleSheet(_label_qss())
         self.lbl_opacity_val.setFixedWidth(36)
         params.addWidget(self.lbl_opacity_val)
         params.addStretch(1)
@@ -304,7 +290,7 @@ class ThreeDVisPanel(QWidget):
 
         # Primary action: Apply
         self.btn_apply = QPushButton("Apply")
-        self.btn_apply.setStyleSheet(_BTN_PRIMARY_QSS)
+        self.btn_apply.setStyleSheet(_btn_primary_qss())
         self.btn_apply.setFixedHeight(_CTRL_HEIGHT)
         self.btn_apply.setMinimumWidth(78)
         self.btn_apply.setEnabled(False)
@@ -318,7 +304,7 @@ class ThreeDVisPanel(QWidget):
         actions.addWidget(_divider())
 
         self.btn_clear = QPushButton("Clear")
-        self.btn_clear.setStyleSheet(_BTN_QSS)
+        self.btn_clear.setStyleSheet(_btn_qss())
         self.btn_clear.setFixedHeight(_CTRL_HEIGHT)
         self.btn_clear.setEnabled(False)
         self.btn_clear.setToolTip("Remove the current slice actor from the 3D view.")
@@ -328,7 +314,7 @@ class ThreeDVisPanel(QWidget):
         self.btn_clim = QPushButton("Range: Full")
         self.btn_clim.setCheckable(True)
         self.btn_clim.setEnabled(False)
-        self.btn_clim.setStyleSheet(_BTN_QSS)
+        self.btn_clim.setStyleSheet(_btn_qss())
         self.btn_clim.setFixedHeight(_CTRL_HEIGHT)
         self.btn_clim.setToolTip(
             "Color-bar range.\n"
@@ -342,7 +328,7 @@ class ThreeDVisPanel(QWidget):
         # View preset segmented buttons: Top / Front / Iso
         view_seg = QHBoxLayout(); view_seg.setSpacing(0); view_seg.setContentsMargins(0, 0, 0, 0)
         self.btn_view_top = QPushButton("Top")
-        self.btn_view_top.setStyleSheet(_SEG_LEFT_QSS)
+        self.btn_view_top.setStyleSheet(_seg_qss('left'))
         self.btn_view_top.setFixedHeight(_CTRL_HEIGHT); self.btn_view_top.setFixedWidth(46)
         self.btn_view_top.setToolTip("Camera → XY plane looking down -Z")
         self.btn_view_top.setEnabled(False)
@@ -350,15 +336,23 @@ class ThreeDVisPanel(QWidget):
         view_seg.addWidget(self.btn_view_top)
 
         self.btn_view_front = QPushButton("Front")
-        self.btn_view_front.setStyleSheet(_SEG_MID_QSS)
+        self.btn_view_front.setStyleSheet(_seg_qss('mid'))
         self.btn_view_front.setFixedHeight(_CTRL_HEIGHT); self.btn_view_front.setFixedWidth(52)
         self.btn_view_front.setToolTip("Camera → XZ plane (looking at -Y face)")
         self.btn_view_front.setEnabled(False)
         self.btn_view_front.clicked.connect(lambda: self._set_view('front'))
         view_seg.addWidget(self.btn_view_front)
 
+        self.btn_view_side = QPushButton("Side")
+        self.btn_view_side.setStyleSheet(_seg_qss('mid'))
+        self.btn_view_side.setFixedHeight(_CTRL_HEIGHT); self.btn_view_side.setFixedWidth(46)
+        self.btn_view_side.setToolTip("Camera → YZ plane (looking at -X face)")
+        self.btn_view_side.setEnabled(False)
+        self.btn_view_side.clicked.connect(lambda: self._set_view('side'))
+        view_seg.addWidget(self.btn_view_side)
+
         self.btn_view_iso = QPushButton("Iso")
-        self.btn_view_iso.setStyleSheet(_SEG_RIGHT_QSS)
+        self.btn_view_iso.setStyleSheet(_seg_qss('right'))
         self.btn_view_iso.setFixedHeight(_CTRL_HEIGHT); self.btn_view_iso.setFixedWidth(44)
         self.btn_view_iso.setToolTip("Camera → isometric (default)")
         self.btn_view_iso.setEnabled(False)
@@ -370,7 +364,7 @@ class ThreeDVisPanel(QWidget):
 
         self.btn_shot = QPushButton("Save PNG")
         self.btn_shot.setEnabled(False)
-        self.btn_shot.setStyleSheet(_BTN_QSS)
+        self.btn_shot.setStyleSheet(_btn_qss())
         self.btn_shot.setFixedHeight(_CTRL_HEIGHT)
         self.btn_shot.setToolTip("Screenshot of the 3D viewport.")
         self.btn_shot.clicked.connect(self._on_screenshot)
@@ -390,13 +384,13 @@ class ThreeDVisPanel(QWidget):
         self.plotter = QtInteractor(self)
         root.addWidget(self.plotter.interactor, stretch=1)
 
-        pv.set_plot_theme('document')
+        pv.set_plot_theme('dark' if get_theme_name() == 'dark' else 'document')
 
         # ── Status ──
         self.status = QLabel(
             "No data loaded — set Dimensionality to '3D' in "
             "Domain panel, then click Compute.")
-        self.status.setStyleSheet(_STATUS_QSS)
+        self.status.setStyleSheet(_status_qss())
         root.addWidget(self.status)
 
         # ── State ──
@@ -503,7 +497,8 @@ class ThreeDVisPanel(QWidget):
         for w in (self.combo_field, self.combo_plane, self.le_coord,
                   self.btn_apply, self.btn_clim, self.btn_shot,
                   self.slider_opacity,
-                  self.btn_view_top, self.btn_view_front, self.btn_view_iso):
+                  self.btn_view_top, self.btn_view_front, self.btn_view_side,
+                  self.btn_view_iso):
             w.setEnabled(True)
         # btn_clear enabled only once a slice exists
         self.btn_clear.setEnabled(False)
@@ -656,6 +651,8 @@ class ThreeDVisPanel(QWidget):
             pl.view_xy()
         elif preset == 'front':
             pl.view_xz()
+        elif preset == 'side':
+            pl.view_yz()
         else:
             pl.view_isometric()
         pl.camera.zoom(1.35)
@@ -775,14 +772,14 @@ class ThreeDVisPanel(QWidget):
         pl.clear()
         pl.add_text(
             "Set Dimensionality = 3D, configure L/H/Lz + inlet/outlet, then Compute.",
-            font_size=8, color='black', position='upper_edge',
+            font_size=8, color=get_theme()['ax_text'], position='upper_edge',
         )
         pl.reset_camera()
 
     def _render_initial_scene(self):
         pl = self.plotter
         pl.clear()
-        pl.add_mesh(self._grid.outline(), color='#3c4758', line_width=2)
+        pl.add_mesh(self._grid.outline(), color=get_theme()['wireframe'], line_width=2)
         # Minimal bounds: only endpoint ticks (2 per axis) + smaller font
         # so numbers don't collide with the bounding-box edges. The full 3-tick
         # grid was overlapping the wireframe on narrow geometries like 42 mm.
@@ -791,13 +788,13 @@ class ThreeDVisPanel(QWidget):
             xtitle='x (mm)', ytitle='y (mm)', ztitle='z (mm)',
             n_xlabels=2, n_ylabels=2, n_zlabels=2,
             all_edges=False, minor_ticks=False, use_2d=False,
-            font_size=9, color='#1a1f24', padding=0.02,
+            font_size=9, color=get_theme()['ax_text'], padding=0.02,
         )
         # Corner XYZ triad (rotates with camera view) — orientation ref
         pl.add_axes(
             interactive=False, line_width=2,
             xlabel='X', ylabel='Y', zlabel='Z',
-            color='#1a1f24',
+            color=get_theme()['ax_text'],
         )
         pl.view_isometric()
         # Auto-fit zoom: 182×42×42 mm aspect is very flat → camera framed
@@ -902,7 +899,7 @@ class ThreeDVisPanel(QWidget):
                     width=0.045, height=0.76,
                     fmt=meta['fmt'],
                     title_font_size=12, label_font_size=11,
-                    color='#1a1f24', font_family='courier',
+                    color=get_theme()['ax_text'], font_family='courier',
                     bold=False, italic=False,
                     shadow=False, outline=False,
                 )
@@ -918,7 +915,7 @@ class ThreeDVisPanel(QWidget):
                     width=0.045, height=0.76,
                     fmt=meta['fmt'],
                     title_font_size=12, label_font_size=11,
-                    color='#1a1f24', font_family='courier',
+                    color=get_theme()['ax_text'], font_family='courier',
                 )
 
         except Exception as e:
@@ -1014,11 +1011,11 @@ class ThreeDVisPanel(QWidget):
         lay.addWidget(canvas, stretch=1)
         btn_row = QHBoxLayout()
         btn_save = QPushButton("Save PNG")
-        btn_save.setStyleSheet(_BTN_QSS); btn_save.setFixedHeight(_CTRL_HEIGHT)
+        btn_save.setStyleSheet(_btn_qss()); btn_save.setFixedHeight(_CTRL_HEIGHT)
         btn_save.clicked.connect(
             lambda: self._save_figure(fig, axis, coord_mm, key))
         btn_close = QPushButton("Close")
-        btn_close.setStyleSheet(_BTN_QSS); btn_close.setFixedHeight(_CTRL_HEIGHT)
+        btn_close.setStyleSheet(_btn_qss()); btn_close.setFixedHeight(_CTRL_HEIGHT)
         btn_close.clicked.connect(dlg.close)
         btn_row.addStretch(1)
         btn_row.addWidget(btn_save)

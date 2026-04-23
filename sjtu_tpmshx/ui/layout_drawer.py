@@ -5,7 +5,7 @@ instance) as first argument. `self.` in original bodies -> `window.`.
 """
 import numpy as np
 from PySide6.QtWidgets import QMessageBox
-from .theme import _THEMES
+from .theme import get_theme
 
 
 def draw_layout(window):
@@ -18,7 +18,7 @@ def draw_layout(window):
 
     window.canvas_layout.fig.clear()
     Lmm, Hmm = L * 1000, H * 1000
-    _t = _THEMES['light']
+    _t = get_theme()
 
     # 3D mode → 3D cuboid wireframe + inlet/outlet shading
     is_3d = (hasattr(window, 'combo_dim')
@@ -32,7 +32,7 @@ def draw_layout(window):
         ax = window.canvas_layout.fig.add_subplot(111, projection='3d')
         window.canvas_layout.axes = [[ax]]
         draw_layout_rect_3d(window, ax, L, H, Lz)
-        ax.set_facecolor(_t['ax_bg'])
+        ax.set_facecolor(_t['fig_bg'])
     else:
         # Restore canvas_wheel_zoom behaviour if a prior 3D draw overrode it
         _canvas = window.canvas_layout
@@ -70,7 +70,7 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     outlet: pointing OUT). Inline "Inlet_A/Outlet_A/Inlet_B/Outlet_B"
     labels replace title legend. Small origin triad at (0,0,0).
     """
-    import main as _main_mod
+    _t = get_theme()
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     Lmm, Hmm, Lzmm = L * 1000, H * 1000, Lz * 1000
@@ -83,12 +83,15 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
              (0,4),(1,5),(2,6),(3,7)]
     for i, j in edges:
-        ax.plot(*zip(pts[i], pts[j]), color='#3c4758', lw=1.4)
+        ax.plot(*zip(pts[i], pts[j]), color=_t['wireframe'], lw=1.4)
+
+    face_patches = []
 
     def _face_patch(verts, color, alpha):
         poly = Poly3DCollection([verts], alpha=alpha, facecolor=color,
-                                 edgecolor='#1a1f24', linewidths=1.2)
+                                 edgecolor=_t['ax_text'], linewidths=1.2)
         ax.add_collection3d(poly)
+        face_patches.append(poly)
 
     def _rect_face(axis, val, ctr, w, low, high):
         lo = max(ctr - w / 2, low); hi = min(ctr + w / 2, high)
@@ -96,9 +99,9 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
             return [(val, lo, 0), (val, hi, 0), (val, hi, Lzmm), (val, lo, Lzmm)]
         return [(lo, val, 0), (hi, val, 0), (hi, val, Lzmm), (lo, val, Lzmm)]
 
-    INLET_COL = '#e8751a'
-    OUTLET_COL = '#1e5a9e'
-    face_alpha = 0.68
+    INLET_COL = _t['inlet_color']
+    OUTLET_COL = _t['outlet_color']
+    face_alpha = 0.35
 
     def _draw_fluid(cfg, label_tag, label_offset):
         """Shade inlet (orange) + outlet (blue) faces and place inline labels."""
@@ -141,24 +144,31 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     try:
         fB = window._fluid_config('B')
         _draw_fluid(fB, 'B', Lzmm * 0.30)
-    except Exception:
-        pass
+    except Exception as _fb_err:
+        # Non-fatal: Fluid B may be deliberately unset (e.g., single-stream
+        # runs). Log to the status bar so the omission is visible but
+        # doesn't interrupt the rest of the layout render.
+        try:
+            window.statusBar().showMessage(
+                f"Layout: Fluid B skipped — {_fb_err}", 4000)
+        except Exception:
+            pass
 
     # Origin triad
     triad_len = max(Lmm, Hmm, Lzmm) * 0.06
-    ax.quiver(0, 0, 0, triad_len, 0, 0, color='#d13b3b', arrow_length_ratio=0.3,
+    ax.quiver(0, 0, 0, triad_len, 0, 0, color=_t['triad_x'], arrow_length_ratio=0.3,
                linewidth=1.8)
-    ax.quiver(0, 0, 0, 0, triad_len, 0, color='#3bbd3b', arrow_length_ratio=0.3,
+    ax.quiver(0, 0, 0, 0, triad_len, 0, color=_t['triad_y'], arrow_length_ratio=0.3,
                linewidth=1.8)
-    ax.quiver(0, 0, 0, 0, 0, triad_len, color='#3b68d1', arrow_length_ratio=0.3,
+    ax.quiver(0, 0, 0, 0, 0, triad_len, color=_t['triad_z'], arrow_length_ratio=0.3,
                linewidth=1.8)
 
     # Axis labels — bold
-    ax.set_xlabel('x [mm]', color='#1a1f24', fontsize=11,
+    ax.set_xlabel('x [mm]', color=_t['ax_text'], fontsize=11,
                   fontweight='bold', labelpad=10)
-    ax.set_ylabel('y [mm]', color='#1a1f24', fontsize=11,
+    ax.set_ylabel('y [mm]', color=_t['ax_text'], fontsize=11,
                   fontweight='bold', labelpad=10)
-    ax.set_zlabel('z [mm]', color='#1a1f24', fontsize=11,
+    ax.set_zlabel('z [mm]', color=_t['ax_text'], fontsize=11,
                   fontweight='bold', labelpad=10)
 
     # Ticks: only endpoints (clean up "115.5" midpoint artefact)
@@ -172,28 +182,64 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     ax.set_xticks(_endpoint_ticks(Lmm))
     ax.set_yticks(_endpoint_ticks(Hmm))
     ax.set_zticks(_endpoint_ticks(Lzmm))
-    ax.tick_params(colors='#1a1f24', labelsize=9)
+    ax.tick_params(colors=_t['ax_text'], labelsize=9)
 
     # Background panes: soft grey
     try:
         for pane_axis in (ax.xaxis, ax.yaxis, ax.zaxis):
             pane_axis.pane.fill = False
-            pane_axis.pane.set_edgecolor('#e0e0e0')
+            pane_axis.pane.set_edgecolor(_t['pane_edge'])
             pane_axis._axinfo['grid'].update({
-                'color': '#cfd4d9', 'linestyle': ':', 'linewidth': 0.7,
+                'color': _t['pane_grid'], 'linestyle': ':', 'linewidth': 0.7,
             })
     except Exception:
         pass
 
     # Clean title — legend now inline
     ax.set_title('3D Computational Domain   (inlet orange · outlet blue)',
-                 color='#1a1f24', fontsize=12, fontweight='bold', pad=14)
+                 color=_t['ax_text'], fontsize=12, fontweight='bold', pad=14)
 
     # ── Mouse-wheel camera zoom (override canvas_wheel_zoom which scrolls) ──
     # Save original wheelEvent once so 2D mode can restore it.
     canvas = ax.figure.canvas
     if not hasattr(canvas, '_orig_wheel_event'):
         canvas._orig_wheel_event = canvas.wheelEvent
+
+    # Matplotlib's mplot3d redraw is slow with semi-transparent polygons on a
+    # large Qt canvas. During camera drag, temporarily hide the inlet/outlet
+    # face fills so interaction stays closer to wireframe speed; restore them
+    # on mouse release.
+    for cid in getattr(canvas, '_tpms_fast_drag_cids', []):
+        try:
+            canvas.mpl_disconnect(cid)
+        except Exception:
+            pass
+    canvas._tpms_fast_drag_cids = []
+
+    def _fast_drag_on(evt):
+        if evt.inaxes is not ax:
+            return
+        changed = False
+        for p in face_patches:
+            if p.get_visible():
+                p.set_visible(False)
+                changed = True
+        if changed:
+            canvas.draw_idle()
+
+    def _fast_drag_off(evt):
+        changed = False
+        for p in face_patches:
+            if not p.get_visible():
+                p.set_visible(True)
+                changed = True
+        if changed:
+            canvas.draw_idle()
+
+    canvas._tpms_fast_drag_cids.append(
+        canvas.mpl_connect('button_press_event', _fast_drag_on))
+    canvas._tpms_fast_drag_cids.append(
+        canvas.mpl_connect('button_release_event', _fast_drag_off))
 
     def _qt_wheel_zoom_3d(evt):
         delta = evt.angleDelta().y()
@@ -225,15 +271,15 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
 
     ax.view_init(elev=22, azim=-52)
     try:
-        ax.figure.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.02)
+        ax.figure.subplots_adjust(left=0.0, right=1.0, top=0.94, bottom=0.0)
+        ax.set_position([0.02, 0.02, 0.96, 0.86])
     except Exception:
         pass
 
 
 def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
     """Ex-Main_Menu._draw_layout_rect(self, ax, L, H, Lmm, Hmm)."""
-    import main as _main_mod
-    _t = _THEMES['light']
+    _t = get_theme()
     from matplotlib.patches import Rectangle
     try:
         cfgA = window._fluid_config('A')
@@ -268,10 +314,10 @@ def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
             ax.annotate(tag, xy=(ctr, Hmm+3.5), fontsize=7, color=color,
                         ha='center', va='bottom', fontweight='bold')
 
-    _draw_pipe(cfgA, 'A', '#ff4422', True)
-    _draw_pipe(cfgA, 'A', '#ff4422', False)
-    _draw_pipe(cfgB, 'B', '#2266ff', True)
-    _draw_pipe(cfgB, 'B', '#2266ff', False)
+    _draw_pipe(cfgA, 'A', _t['inlet_color'], True)
+    _draw_pipe(cfgA, 'A', _t['inlet_color'], False)
+    _draw_pipe(cfgB, 'B', _t['outlet_color'], True)
+    _draw_pipe(cfgB, 'B', _t['outlet_color'], False)
 
     # Flow arrows
     cx, cy = Lmm / 2, Hmm / 2
@@ -282,8 +328,8 @@ def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
         x0, y0, x1, y1 = arrows[d]
         ax.annotate('', xy=(x1, y1), xytext=(x0, y0),
                     arrowprops=dict(arrowstyle='->', color=color, lw=1.5))
-    _arrow(cfgA['dir'], '#ff6644')
-    _arrow(cfgB['dir'], '#4488ff')
+    _arrow(cfgA['dir'], _t['inlet_color'])
+    _arrow(cfgB['dir'], _t['outlet_color'])
 
     # Zone boundaries and labels
     if window.chk_zones.isChecked():
@@ -337,6 +383,16 @@ def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
 
     ax.text(cx, cy, 'TPMS\nDomain', color=_t['ax_text'], ha='center', va='center',
             fontsize=10, fontweight='bold', alpha=0.3)
+
+    # Paint draggable zone-boundary handles so users can re-partition the
+    # domain directly on the canvas. Falls back silently if the handle
+    # manager is not wired (e.g., first-boot before install).
+    zmgr = getattr(window, '_zone_handle_mgr', None)
+    if zmgr is not None:
+        try:
+            zmgr.draw_handles(ax, Lmm, Hmm)
+        except Exception:
+            pass
     ax.set_xlim(-8, Lmm + 8); ax.set_ylim(-8, Hmm + 8)
     dA = window._DIR_MAP[cfgA['dir']]; dB = window._DIR_MAP[cfgB['dir']]
     ax.set_title(f'Geometry: {Lmm:.0f}x{Hmm:.0f}mm | A:{dA} B:{dB}',
@@ -345,8 +401,7 @@ def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
 
 def draw_layout_polygon(window, ax, L, H, Lmm, Hmm):
     """Ex-Main_Menu._draw_layout_polygon(self, ax, L, H, Lmm, Hmm)."""
-    import main as _main_mod
-    _t = _THEMES['light']
+    _t = get_theme()
     from solvers import unstructured_mesh as um
     from matplotlib.patches import Polygon as MplPolygon
 
@@ -365,10 +420,10 @@ def draw_layout_polygon(window, ax, L, H, Lmm, Hmm):
     edge_inB  = window.combo_edge_inB.currentIndex()
     edge_outB = window.combo_edge_outB.currentIndex()
 
-    pipe_edges = {edge_inA: ('A in', '#ff4422'),
-                  edge_outA: ('A out', '#ff6644'),
-                  edge_inB: ('B in', '#2266ff'),
-                  edge_outB: ('B out', '#4488ff')}
+    pipe_edges = {edge_inA: ('A in', _t['inlet_color']),
+                  edge_outA: ('A out', _t['inlet_color']),
+                  edge_inB: ('B in', _t['outlet_color']),
+                  edge_outB: ('B out', _t['outlet_color'])}
 
     for ei in range(n_v):
         p0 = verts_mm[ei]
