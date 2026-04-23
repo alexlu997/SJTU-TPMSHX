@@ -145,18 +145,24 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 # ── Update Fluid A ──
                 is_inlet_A = ((bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or
                               (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1))
-                # Continuous inlet BC: blend T_in with computed T using inlet_frac
+                # Numerical regularisation at partial-width inlet cells.
+                # Not a physical face-flux BC — for cells that are partly open
+                # and partly covered by a wall (0.01 < inlet_frac < 0.99), T is
+                # set by a linear blend between T_in and the first interior
+                # neighbour. Fully open (frac > 0.99) pins T exactly to T_in.
+                # Side-effect: T near partial-width edges inherits a small
+                # bias from the interior neighbour. To replace with a rigorous
+                # face-flux BC, rewrite as source term inside the non-inlet
+                # branch below and drop this special-case.
                 if is_inlet_A:
                     fidx = j if bc_A <= 1 else i
                     frac = ifrac_A[fidx]
                     if frac > 0.99:
-                        # Fully open: force T_in
                         if bc_A <= 1:
                             Ta[i, j] = T_inA_arr[j]
                         else:
                             Ta[i, j] = T_inA_arr[i]
                     elif frac > 0.01:
-                        # Transition zone: blend T_in with downstream neighbor
                         T_in_val = T_inA_arr[j] if bc_A <= 1 else T_inA_arr[i]
                         if bc_A == 0:   T_nbr = Ta[1, j]
                         elif bc_A == 1: T_nbr = Ta[Nx-2, j]

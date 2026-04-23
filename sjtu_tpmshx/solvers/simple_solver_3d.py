@@ -1060,16 +1060,39 @@ class SIMPLESolver3D:
 
     @staticmethod
     def extract_dP_weighted(s):
-        """Pipe-weighted inlet-outlet dP (mirror 2D `_extract_dP_from_simple`).
+        """Pipe-weighted inlet-outlet dP — geometric open-area weights.
 
-        Uses `s.inlet_frac` and `s.outlet_frac` as per-cell weights. Default full-
-        width with corner taper → weighted mean down-weights wall corners where
-        Forchheimer source is zero and pressure is artificially high.
+        Uses `s.inlet_frac` / `s.outlet_frac` only (per-cell open-area
+        fractions). Fine when density and velocity are nearly uniform across
+        the inlet face; under-represents high-speed regions on non-uniform
+        profiles. For physically-rigorous reduction use
+        `extract_dP_mass_flux_weighted`.
         """
         wI = s.inlet_frac; wO = s.outlet_frac
         mI = wI > 0.01; mO = wO > 0.5
         if not (mI.any() and mO.any()):
             return 0.0
+        return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
+                     - np.average(s.P[:, -1, :][mO], weights=wO[mO]))
+
+    @staticmethod
+    def extract_dP_mass_flux_weighted(s):
+        """Pipe-weighted inlet-outlet dP using ρ·|v| mass-flux weights.
+
+        Matches the physical inlet/outlet energy reduction more closely than
+        geometric open-area weights when the velocity profile is skewed (e.g.
+        partial-width inlets or stratified flow). Uses y-face streamwise
+        velocity v at the first and last y-layers, density from rho_field.
+        """
+        v_inlet_face = s.v[:, 0, :]
+        v_outlet_face = s.v[:, -1, :]
+        rho_in = s.rho_field[:, 0, :]
+        rho_out = s.rho_field[:, -1, :]
+        wI = rho_in * np.abs(v_inlet_face) * s.inlet_frac
+        wO = rho_out * np.abs(v_outlet_face) * s.outlet_frac
+        mI = wI > 1e-9; mO = wO > 1e-9
+        if not (mI.any() and mO.any()):
+            return SIMPLESolver3D.extract_dP_weighted(s)
         return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
                      - np.average(s.P[:, -1, :][mO], weights=wO[mO]))
 

@@ -186,7 +186,24 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
 # f  = 2*(dP/L)*r_h / (rho*u^2)
 # ── Geometry-only interface (no fluid needed) ─────────────────
 
-def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float) -> dict:
+# Solid-conduction anisotropy / tortuosity correction.
+# The homogenised `K_ss = (1 - eps) * k_s` assumes parallel solid paths
+# aligned with the heat-flow direction. Real TPMS wall networks follow
+# curved wall paths, so the effective solid conductivity is reduced by
+# a chi_s ∈ (0, 1] factor. Default 1.0 preserves the historical value;
+# set via environment variable or direct assignment for calibrated runs.
+# TODO: replace with numerical homogenisation from a unit-cell simulation
+# once the data are fitted (same path as ConstDF-v1 for K_ff).
+CHI_S = 1.0
+
+# Fluid-phase thermal dispersion coefficient. K_ff = ε·k_f + C_DISP·ρcp·|u|·D_h.
+# Zero default = pure molecular conduction (previous behaviour). Calibrate
+# from experimental Nu–Pe data; typical range 0.05-0.3 for TPMS.
+C_DISP = 0.0
+
+
+def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
+             chi_s: float | None = None) -> dict:
     """
     Return TPMS geometric properties without fluid information.
 
@@ -196,17 +213,20 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float) -> dict:
     L_cell_mm : unit cell size [mm]
     t_mm      : wall thickness [mm]
     k_s       : solid thermal conductivity [W/(m·K)]
+    chi_s     : solid tortuosity / anisotropy factor (optional, overrides the
+                module-level `CHI_S`). K_ss = chi_s * (1 - eps) * k_s.
 
     Returns
     -------
     dict with keys: epsilon, A_0, D_h, K_ss
     """
     g = _tpms_geom(tpms_type, L_cell_mm, t_mm)
+    chi = float(CHI_S if chi_s is None else chi_s)
     return {
         'epsilon': g['epsilon'],
         'A_0':     g['A_0'],
         'D_h':     g['D_h'],
-        'K_ss':    (1.0 - g['epsilon']) * k_s,
+        'K_ss':    chi * (1.0 - g['epsilon']) * k_s,
     }
 
 
@@ -320,8 +340,15 @@ def compute(tpms_type: str,
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────
-    K_ff = eps * k_f               # fluid phase [W/(m·K)]
-    K_ss = (1.0 - eps) * k_s      # solid phase [W/(m·K)]
+    # Fluid phase: molecular only by default. Optional thermal dispersion
+    # K_disp = C_DISP * ρ·cp·|u|·D_h captures tortuous-channel mixing at
+    # high Pe. Zero default preserves prior behaviour; calibrate per TPMS
+    # from experimental Nu vs Pe data and expose via compute_ext if needed.
+    K_ff = eps * k_f
+    if C_DISP > 0.0:
+        cp_val = air_cp(T_in_K)
+        K_ff = K_ff + C_DISP * rho * cp_val * abs(u) * D_h_m
+    K_ss = CHI_S * (1.0 - eps) * k_s
 
     return {
         'epsilon':  eps,

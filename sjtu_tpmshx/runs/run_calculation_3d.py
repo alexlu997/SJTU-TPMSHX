@@ -749,6 +749,23 @@ def _run_3d_stack(cfg):
     eps_f = eps / 2.0
     K_ffA = np.full((Nx, Ny, Nz), eps_f * k_A)
     K_ffB = np.full((Nx, Ny, Nz), eps_f * k_B)
+    # Optional thermal dispersion: K_disp = C * ρ·cp·|u|·D_h added to K_ff.
+    # Off by default (disp_C_* = 0). Standard homogenisation has K_ff = ε·k_f
+    # (molecular only); at high Pe the effective fluid conductivity is larger
+    # due to tortuous-channel mixing. Turn on by setting disp_C_A / disp_C_B
+    # in the config (typical values 0.05-0.3 depending on TPMS type). D_h
+    # here uses the uniform cell geometry; once zoned K-field support lands,
+    # promote this to per-cell using local D_h and |u|.
+    disp_C_A = float(cfg.get('disp_C_A', 0.0))
+    disp_C_B = float(cfg.get('disp_C_B', 0.0))
+    if disp_C_A > 0.0:
+        D_h_A = tpms_geometry(tpms_type, Lcell, t_wall, k_s)['D_h']
+        K_disp_A = disp_C_A * rho_A * cp_A * abs(u_A) * D_h_A
+        K_ffA = K_ffA + K_disp_A
+    if disp_C_B > 0.0:
+        D_h_B = tpms_geometry(tpms_type, Lcell, t_wall, k_s)['D_h']
+        K_disp_B = disp_C_B * rho_B_ltne * cp_B * abs(cfg.get('u_B', u_A)) * D_h_B
+        K_ffB = K_ffB + K_disp_B
     K_ss = np.full((Nx, Ny, Nz), (1.0 - eps) * k_s)
 
     # h_v from Nu correlation (P0 fix: was hardcoded 1e5, now physics-based).

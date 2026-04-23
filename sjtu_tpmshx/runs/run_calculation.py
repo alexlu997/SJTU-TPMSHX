@@ -729,7 +729,15 @@ def _run_solvers(window, cfg, fields):
         Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
     else:
         Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
-    Q_total = 2.0 * Q_200 - Q_100  # Richardson extrapolation
+    # Richardson extrapolation — second-order scheme (SOU convection + 2nd-order
+    # diffusion): F_ext = (r^p · F_fine − F_coarse) / (r^p − 1) with r = 2
+    # (grid halving) and p = 2 → (4 · Q_fine − Q_coarse) / 3.
+    # Previously used `2*Q_fine − Q_coarse` which is the p = 1 formula and
+    # under-corrects the discretisation error for a formally 2nd-order solver.
+    # Three-grid verification of the observed order (Roache GCI) is not wired
+    # in yet — the 2-grid extrapolation trusts that p ≈ 2 as designed; a
+    # third grid at 4× would let us measure p in practice.
+    Q_total = (4.0 * Q_200 - Q_100) / 3.0
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
