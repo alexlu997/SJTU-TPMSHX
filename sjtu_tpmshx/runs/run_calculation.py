@@ -480,11 +480,28 @@ def _run_solvers(window, cfg, fields):
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
                 dx_arr=energy_dx, dy_arr=energy_dy)
 
-        # Step 3: Update rho*cp and rho field from per-cell temperature
-        rho_cp_A_new = _tc.air_density(Ta, P_inA_val) * _tc.air_cp(Ta)
-        rho_cp_B_new = _tc.air_density(Tb, P_inB_val) * _tc.air_cp(Tb)
-        rho_A_field_new = _tc.air_density(Ta, P_inA_val)  # 2D field
-        rho_B_field_new = _tc.air_density(Tb, P_inB_val)
+        # Step 3: Update rho*cp and rho field from per-cell temperature AND
+        # per-cell absolute pressure. Using the scalar inlet P here under-
+        # predicts density drop across the domain at high dP and diverges
+        # from the 3D path (which already uses P_ref_abs + P). Transpose /
+        # flip SIMPLE coords → real (Nx, Ny) to match Ta shape.
+        def _simp_P_abs_real(simp, dir_code):
+            P_loc = simp.P_ref_abs + simp.P  # (simp.Nx, simp.Ny) solver coords
+            if window._is_x_dir(dir_code):
+                P_real = P_loc.T
+                if dir_code == 1:
+                    P_real = P_real[::-1, :]
+            else:
+                P_real = P_loc
+                if dir_code == 3:
+                    P_real = P_real[:, ::-1]
+            return np.ascontiguousarray(P_real)
+        P_abs_A = _simp_P_abs_real(simpA, dir_A)
+        P_abs_B = _simp_P_abs_real(simpB, dir_B)
+        rho_cp_A_new = _tc.air_density(Ta, P_abs_A) * _tc.air_cp(Ta)
+        rho_cp_B_new = _tc.air_density(Tb, P_abs_B) * _tc.air_cp(Tb)
+        rho_A_field_new = _tc.air_density(Ta, P_abs_A)
+        rho_B_field_new = _tc.air_density(Tb, P_abs_B)
 
         T_avg_A = float(Ta.mean()); T_avg_B = float(Tb.mean())
         mu_A = _tc.air_viscosity(T_avg_A)  # mu still scalar (small effect)
