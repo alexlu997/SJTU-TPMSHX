@@ -51,14 +51,45 @@ P_atm = 101325.0   # Standard atmospheric pressure [Pa] (for Re reference densit
 
 # ── Air property correlations ─────────────────────────────────
 
+# Validity ranges for the fitted correlations (per docstrings below).
+_AIR_T_RANGE    = (200.0, 1100.0)   # Sutherland + kappa fits
+_AIR_CP_RANGE   = (250.0, 1000.0)   # polynomial cp fit
+_WATER_T_RANGE  = (273.15, 363.15)  # 0 - 90 °C polynomial water fits
+
+_range_warnings_emitted = set()
+
+
+def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
+    """Emit a single UserWarning per (name) key when T goes outside the
+    fitted validity range. Keeps logs readable when coupled solvers
+    call these functions millions of times per run."""
+    T_arr = np.asarray(T, dtype=float)
+    if T_arr.size == 0:
+        return
+    T_min = float(T_arr.min())
+    T_max = float(T_arr.max())
+    if T_min < lo or T_max > hi:
+        key = (name, round(T_min, 1), round(T_max, 1))
+        if key in _range_warnings_emitted:
+            return
+        _range_warnings_emitted.add(key)
+        warnings.warn(
+            f"{name}: T=[{T_min:.1f}, {T_max:.1f}] K outside fitted range "
+            f"[{lo:.1f}, {hi:.1f}] K — extrapolating.",
+            stacklevel=3,
+        )
+
+
 def air_viscosity(T_K: float) -> float:
     """Dynamic viscosity of air via Sutherland's law [Pa·s]."""
+    _warn_range_once('air_viscosity', T_K, *_AIR_T_RANGE)
     T0, mu0, S = 273.15, 1.716e-5, 110.4
     return mu0 * (T_K / T0) ** 1.5 * (T0 + S) / (T_K + S)
 
 
 def air_conductivity(T_K: float) -> float:
     """Thermal conductivity of air [W/(m·K)]."""
+    _warn_range_once('air_conductivity', T_K, *_AIR_T_RANGE)
     return 0.0241 * (T_K / 273.15) ** 0.82
 
 
@@ -72,6 +103,7 @@ def air_cp(T_K):
     Polynomial fit valid 250-1000K, error < 0.5%.
     Supports scalar or numpy array input.
     """
+    _warn_range_once('air_cp', T_K, *_AIR_CP_RANGE)
     dT = T_K - 273.15
     return 1004.5 + 0.172 * dT - 7.56e-5 * dT**2
 
@@ -80,24 +112,28 @@ def air_cp(T_K):
 
 def water_density(T_K):
     """Density of liquid water [kg/m³]. Polynomial valid 0-90 °C."""
+    _warn_range_once('water_density', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 999.84 - 0.05 * T_C - 0.004 * T_C**2
 
 
 def water_viscosity(T_K):
     """Dynamic viscosity of liquid water [Pa·s]. Exponential fit 0-90 °C."""
+    _warn_range_once('water_viscosity', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 1.79e-3 * np.exp(-0.035 * T_C)
 
 
 def water_conductivity(T_K):
     """Thermal conductivity of liquid water [W/(m·K)]. Linear fit 0-90 °C."""
+    _warn_range_once('water_conductivity', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 0.569 + 0.0018 * T_C
 
 
 def water_cp(T_K):
     """Specific heat of liquid water [J/(kg·K)]. ~constant 280-370 K."""
+    _warn_range_once('water_cp', T_K, *_WATER_T_RANGE)
     return 4182.0
 
 
@@ -168,24 +204,30 @@ def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
     return 0.17 * Pr ** (1 / 3) * Re ** n * eps ** 2.25 * (L_cell_mm / (1000 * Sa_mm)) ** (-2.01)
 
 
-# ── Friction factor f–Re correlation ───────────────────────────
-#
-# F1 power-law form (both Diamond and Gyroid):
-#   f = C * Re^n * eps^a * (t/L)^b * (X/(1000*Sa))^c
-#   n = n0 + n1*ln(eps)
-#
-# Length scale X differs by TPMS type (same convention as Nu):
-#   Diamond: X = D_h  (hydraulic diameter, mm)
-#   Gyroid:  X = L    (unit cell size, mm)
-#
-# Re convention (r_h, see module docstring): Re = rho_ref * u * r_h / mu
-#   where r_h = D_h / 2 = eps / A_0 and rho_ref is at atmospheric pressure.
-# Equivalent: Re = rho_ref * u * D_h / (2*mu)   ("D_h with single-stream m/2")
-#
-# f  = 2*(dP/L)*r_h / (rho*u^2)
 # ── Geometry-only interface (no fluid needed) ─────────────────
+# (Legacy f-Re comments removed 2026-04-23 — f-Re was purged from the
+# project on 2026-04-19 in favour of the single-closure ConstDF-v1 D-F
+# surrogate. Historical r_h = D_h/2 convention is obsolete — Re is
+# D_h-based everywhere; see module docstring.)
 
-def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float) -> dict:
+# Solid-conduction anisotropy / tortuosity correction.
+# The homogenised `K_ss = (1 - eps) * k_s` assumes parallel solid paths
+# aligned with the heat-flow direction. Real TPMS wall networks follow
+# curved wall paths, so the effective solid conductivity is reduced by
+# a chi_s ∈ (0, 1] factor. Default 1.0 preserves the historical value;
+# set via environment variable or direct assignment for calibrated runs.
+# TODO: replace with numerical homogenisation from a unit-cell simulation
+# once the data are fitted (same path as ConstDF-v1 for K_ff).
+CHI_S = 1.0
+
+# Fluid-phase thermal dispersion coefficient. K_ff = ε·k_f + C_DISP·ρcp·|u|·D_h.
+# Zero default = pure molecular conduction (previous behaviour). Calibrate
+# from experimental Nu–Pe data; typical range 0.05-0.3 for TPMS.
+C_DISP = 0.0
+
+
+def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
+             chi_s: float | None = None) -> dict:
     """
     Return TPMS geometric properties without fluid information.
 
@@ -195,17 +237,20 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float) -> dict:
     L_cell_mm : unit cell size [mm]
     t_mm      : wall thickness [mm]
     k_s       : solid thermal conductivity [W/(m·K)]
+    chi_s     : solid tortuosity / anisotropy factor (optional, overrides the
+                module-level `CHI_S`). K_ss = chi_s * (1 - eps) * k_s.
 
     Returns
     -------
     dict with keys: epsilon, A_0, D_h, K_ss
     """
     g = _tpms_geom(tpms_type, L_cell_mm, t_mm)
+    chi = float(CHI_S if chi_s is None else chi_s)
     return {
         'epsilon': g['epsilon'],
         'A_0':     g['A_0'],
         'D_h':     g['D_h'],
-        'K_ss':    (1.0 - g['epsilon']) * k_s,
+        'K_ss':    chi * (1.0 - g['epsilon']) * k_s,
     }
 
 
@@ -254,7 +299,10 @@ def compute(tpms_type: str,
     -------
     dict with keys:
         epsilon   – porosity [-]
-        A_0       – specific surface area [m⁻¹]
+        A_0       – single-side specific surface area [m⁻¹] (area seen by one
+                    fluid stream per unit total volume — NOT double-sided;
+                    see tpms_geometry.py for derivation). h_vA = A_0 × H_sf_A
+                    and h_vB = A_0 × H_sf_B therefore do NOT double-count.
         D_h       – hydraulic diameter [m]
         Re        – Reynolds number (based on D_h, interstitial velocity) [-]
         Nu        – Nusselt number [-]
@@ -319,8 +367,15 @@ def compute(tpms_type: str,
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────
-    K_ff = eps * k_f               # fluid phase [W/(m·K)]
-    K_ss = (1.0 - eps) * k_s      # solid phase [W/(m·K)]
+    # Fluid phase: molecular only by default. Optional thermal dispersion
+    # K_disp = C_DISP * ρ·cp·|u|·D_h captures tortuous-channel mixing at
+    # high Pe. Zero default preserves prior behaviour; calibrate per TPMS
+    # from experimental Nu vs Pe data and expose via compute_ext if needed.
+    K_ff = eps * k_f
+    if C_DISP > 0.0:
+        cp_val = air_cp(T_in_K)
+        K_ff = K_ff + C_DISP * rho * cp_val * abs(u) * D_h_m
+    K_ss = CHI_S * (1.0 - eps) * k_s
 
     return {
         'epsilon':  eps,

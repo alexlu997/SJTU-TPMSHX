@@ -278,17 +278,19 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 umag = _umag_u(u, v, i, j, Nx, Ny)
                 Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
 
-                # Brinkman penalty: continuous wall resistance near outlet
+                # Brinkman penalty: grid-invariant via aP_natural (matches 3D
+                # convention in simple_solver_3d.py). Old form `1e8*...*vol`
+                # scaled with cell volume and was grid-dependent.
+                aP_nat = aE + aW + aN + aS
                 il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
                 wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
                 if wall_out > 0.01 and j >= Ny - 8:
                     wall_dist = Ny - j
-                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
-                # Brinkman penalty: continuous wall resistance near inlet
+                    Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
                 wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
                 if wall_in > 0.01 and j < 8:
                     wall_dist = j + 1
-                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+                    Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i - 1, j] - P[i, j]) * dyj
                 sou = (_sou_corr_u_x(u, i, j, Nx, Fe)
@@ -365,14 +367,16 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                 umag = _umag_v(u, v, i, j, Nx, Ny)
                 Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
 
+                # Brinkman penalty — grid-invariant (3D parity, P1b-c)
+                aP_nat = aE + aW + aN + aS
                 wall_out = 1.0 - outlet_frac[i]
                 if wall_out > 0.01 and j >= Ny - 8:
                     wall_dist = Ny - j
-                    Sp += 1e8 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+                    Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
                 wall_in = 1.0 - inlet_frac[i]
                 if wall_in > 0.01 and j < 8:
                     wall_dist = j + 1
-                    Sp += 1e8 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * vol
+                    Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i, j - 1] - P[i, j]) * dxi
                 sou = (_sou_corr_v_x(v, i, j, Nx, Fe)
@@ -916,7 +920,12 @@ class SIMPLESolver:
         else:
             self.rho_field = np.ascontiguousarray(rho, dtype=np.float64)
         self.rho = float(self.rho_field.mean())  # scalar mean for backwards-compat
-        self.mu = mu
+        # mu can be scalar or 2D array (Nx, Ny) — 2D supports non-isothermal
+        # coupling where viscosity tracks the temperature field.
+        if np.ndim(mu) == 0:
+            self.mu = float(mu)
+        else:
+            self.mu = float(np.asarray(mu, dtype=np.float64).mean())
 
         # Compressible flow: pressure-density coupling
         self.fluid_type = fluid_type
@@ -936,8 +945,11 @@ class SIMPLESolver:
         # Non-isothermal coupling: 2D viscosity fields that track T_field.
         # Authoritative arrays consumed by D-F sweeps; update via
         # _refresh_mu_from_T whenever T_field changes.
-        self.mu_field = np.full((Nx, Ny), float(mu), dtype=np.float64)
-        self._mu_eff_field = np.full((Nx, Ny), float(mu) / float(eps), dtype=np.float64)
+        if np.ndim(mu) == 0:
+            self.mu_field = np.full((Nx, Ny), float(mu), dtype=np.float64)
+        else:
+            self.mu_field = np.ascontiguousarray(mu, dtype=np.float64)
+        self._mu_eff_field = self.mu_field / float(eps)
 
         # ── ConstDF-v1 surrogate: precompute (K, c_F) per row ──
         # Broadcast for uniform geometry; per-row predictions for zone_config

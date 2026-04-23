@@ -145,18 +145,24 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 # ── Update Fluid A ──
                 is_inlet_A = ((bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or
                               (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1))
-                # Continuous inlet BC: blend T_in with computed T using inlet_frac
+                # Numerical regularisation at partial-width inlet cells.
+                # Not a physical face-flux BC — for cells that are partly open
+                # and partly covered by a wall (0.01 < inlet_frac < 0.99), T is
+                # set by a linear blend between T_in and the first interior
+                # neighbour. Fully open (frac > 0.99) pins T exactly to T_in.
+                # Side-effect: T near partial-width edges inherits a small
+                # bias from the interior neighbour. To replace with a rigorous
+                # face-flux BC, rewrite as source term inside the non-inlet
+                # branch below and drop this special-case.
                 if is_inlet_A:
                     fidx = j if bc_A <= 1 else i
                     frac = ifrac_A[fidx]
                     if frac > 0.99:
-                        # Fully open: force T_in
                         if bc_A <= 1:
                             Ta[i, j] = T_inA_arr[j]
                         else:
                             Ta[i, j] = T_inA_arr[i]
                     elif frac > 0.01:
-                        # Transition zone: blend T_in with downstream neighbor
                         T_in_val = T_inA_arr[j] if bc_A <= 1 else T_inA_arr[i]
                         if bc_A == 0:   T_nbr = Ta[1, j]
                         elif bc_A == 1: T_nbr = Ta[Nx-2, j]
@@ -318,7 +324,8 @@ def solve_full_domain(L, H, Nx, Ny,
                       Ta_init=None, Tb_init=None, Ts_init=None,
                       dx_arr=None, dy_arr=None,
                       inlet_mask_A=None, inlet_mask_B=None,
-                      Tb_prescribed=None):
+                      Tb_prescribed=None,
+                      eps_A=None, eps_B=None):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     Parameters
@@ -367,11 +374,35 @@ def solve_full_domain(L, H, Nx, Ny,
     rho_cp_fA_arr = _to_2d(rho_cp_fA, Nx, Ny)
     rho_cp_fB_arr = _to_2d(rho_cp_fB, Nx, Ny)
 
-    if np.ndim(epsilon) == 0:
-        eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
+    # Per-fluid void-fraction split. Default is symmetric 50/50
+    # (eps_fA = eps_fB = epsilon / 2) — matches symmetric TPMS. Asymmetric
+    # splits are exposed as eps_A / eps_B but routed through the njit kernel
+    # as a single eps_f_arr, so for now only the symmetric default is
+    # supported — raise early if the user passes an asymmetric split.
+    if eps_A is None and eps_B is None:
+        if np.ndim(epsilon) == 0:
+            eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
+        else:
+            eps_f_arr = np.ascontiguousarray(
+                np.asarray(epsilon, dtype=np.float64) / 2.0)
     else:
-        eps_f_arr = np.ascontiguousarray(
-            np.asarray(epsilon, dtype=np.float64) / 2.0)
+        if eps_A is None or eps_B is None:
+            raise ValueError("eps_A and eps_B must be provided together.")
+        eps_A_arr = _to_2d(eps_A, Nx, Ny)
+        eps_B_arr = _to_2d(eps_B, Nx, Ny)
+        eps_tot_arr = _to_2d(epsilon, Nx, Ny)
+        if np.any(eps_A_arr + eps_B_arr > eps_tot_arr + 1e-9):
+            raise ValueError(
+                "eps_A + eps_B exceeds epsilon at some cells — the two fluid "
+                "channels cannot together occupy more than the total void "
+                "fraction.")
+        if not np.allclose(eps_A_arr, eps_B_arr):
+            raise NotImplementedError(
+                "Asymmetric eps_A / eps_B is not yet routed through the LTNE "
+                "kernel (solve_full currently assumes symmetric eps/2 per "
+                "channel). Extend _gs_full_chunk to accept eps_fA_arr and "
+                "eps_fB_arr before enabling asymmetric splits.")
+        eps_f_arr = eps_A_arr  # equals eps_B_arr by the check above
 
     # Inlet boundary codes
     bc_A = dir_A

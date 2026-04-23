@@ -279,23 +279,25 @@ def _build_fields(window, cfg):
 
         zc_simple = zone_config if (not is_x and isinstance(zone_config, ZoneConfig)) else None
 
-        # Transform rho_f to SIMPLE coords if it's a 2D field
-        if np.ndim(rho_f) == 2:
+        # Transform rho_f / mu_f (either or both may be 2D) to SIMPLE coords.
+        def _to_simple_coords(fld):
+            if np.ndim(fld) != 2:
+                return fld
             if is_x:
-                # Real (Nx, Ny) → SIMPLE (Ny, Nx) by transpose
-                rho_simple = rho_f.T.copy()
-                if d == 1:  # -x: flip j (which is real x flipped)
-                    rho_simple = rho_simple[:, ::-1].copy()
+                out = fld.T.copy()
+                if d == 1:
+                    out = out[:, ::-1].copy()
             else:
-                rho_simple = rho_f.copy()
-                if d == 3:  # -y: flip j (real y flipped)
-                    rho_simple = rho_simple[:, ::-1].copy()
-        else:
-            rho_simple = rho_f  # scalar
+                out = fld.copy()
+                if d == 3:
+                    out = out[:, ::-1].copy()
+            return out
+        rho_simple = _to_simple_coords(rho_f)
+        mu_simple = _to_simple_coords(mu_f)
 
         if is_x:
             s = SIMPLESolver(H, L, N_y, N_x, tpms_type, Lcell, t_wall,
-                             eps, r_h, rho_simple, mu_f, T_in_f,
+                             eps, r_h, rho_simple, mu_simple, T_in_f,
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
@@ -306,7 +308,7 @@ def _build_fields(window, cfg):
             s.dy_arr = _aligned_grid(N_x, L, list(_x_breaks))
         else:
             s = SIMPLESolver(L, H, N_x, N_y, tpms_type, Lcell, t_wall,
-                             eps, r_h, rho_simple, mu_f, T_in_f,
+                             eps, r_h, rho_simple, mu_simple, T_in_f,
                              pipe_lo, pipe_hi, u_f,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_config=zc_simple,
@@ -404,6 +406,7 @@ def _run_solvers(window, cfg, fields):
 
     _MAX_COUPLING = 5
     _COUPLING_TOL = 0.01  # 1% relative change in rho
+    _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
     _ALPHA_COUP = 0.7     # under-relaxation
 
     rho_A, rho_B = window._rho_A, window._rho_B
@@ -416,6 +419,8 @@ def _run_solvers(window, cfg, fields):
 
     coupling_converged = False
     drho_A = drho_B = float('inf')
+    dT_A = dT_B = float('inf')
+    Ta_prev = Tb_prev = None
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
     Ta = Tb = Ts = None
     _has_partial_A = False
@@ -489,15 +494,36 @@ def _run_solvers(window, cfg, fields):
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
                 dx_arr=energy_dx, dy_arr=energy_dy)
 
-        # Step 3: Update rho*cp and rho field from per-cell temperature
-        rho_cp_A_new = _tc.air_density(Ta, P_inA_val) * _tc.air_cp(Ta)
-        rho_cp_B_new = _tc.air_density(Tb, P_inB_val) * _tc.air_cp(Tb)
-        rho_A_field_new = _tc.air_density(Ta, P_inA_val)  # 2D field
-        rho_B_field_new = _tc.air_density(Tb, P_inB_val)
+        # Step 3: Update rho*cp and rho field from per-cell temperature AND
+        # per-cell absolute pressure. Using the scalar inlet P here under-
+        # predicts density drop across the domain at high dP and diverges
+        # from the 3D path (which already uses P_ref_abs + P). Transpose /
+        # flip SIMPLE coords → real (Nx, Ny) to match Ta shape.
+        def _simp_P_abs_real(simp, dir_code):
+            P_loc = simp.P_ref_abs + simp.P  # (simp.Nx, simp.Ny) solver coords
+            if window._is_x_dir(dir_code):
+                P_real = P_loc.T
+                if dir_code == 1:
+                    P_real = P_real[::-1, :]
+            else:
+                P_real = P_loc
+                if dir_code == 3:
+                    P_real = P_real[:, ::-1]
+            return np.ascontiguousarray(P_real)
+        P_abs_A = _simp_P_abs_real(simpA, dir_A)
+        P_abs_B = _simp_P_abs_real(simpB, dir_B)
+        rho_cp_A_new = _tc.air_density(Ta, P_abs_A) * _tc.air_cp(Ta)
+        rho_cp_B_new = _tc.air_density(Tb, P_abs_B) * _tc.air_cp(Tb)
+        rho_A_field_new = _tc.air_density(Ta, P_abs_A)
+        rho_B_field_new = _tc.air_density(Tb, P_abs_B)
 
+        # Variable mu: build 2D viscosity field from per-cell Ta/Tb via
+        # Sutherland. Previously scalar domain-mean (marked "small effect");
+        # with local-P density now using the full field, local mu keeps the
+        # momentum balance consistent cell-by-cell.
+        mu_A = _tc.air_viscosity(Ta)
+        mu_B = _tc.air_viscosity(Tb)
         T_avg_A = float(Ta.mean()); T_avg_B = float(Tb.mean())
-        mu_A = _tc.air_viscosity(T_avg_A)  # mu still scalar (small effect)
-        mu_B = _tc.air_viscosity(T_avg_B)
 
         # Convergence: mass-flux-weighted relative rho change.
         # Physical reasoning — the coupling is driven by ∇·(ρu) = 0, so only
@@ -512,12 +538,26 @@ def _run_solvers(window, cfg, fields):
         wB = np.sqrt(ucB * ucB + vcB * vcB) + 1e-12
         drho_A = float(np.sum(np.abs(dA / rho_A_field) * wA) / np.sum(wA))
         drho_B = float(np.sum(np.abs(dB / rho_B_field) * wB) / np.sum(wB))
+
+        # Temperature-field convergence: max|ΔT| across outer iterations.
+        # rho-only criterion can flag converged while the T field is still
+        # drifting (rho = P / (R·T) damps temperature swings); requiring
+        # both is a tighter guarantee the coupled state is stationary.
+        if Ta_prev is not None:
+            dT_A = float(np.max(np.abs(Ta - Ta_prev)))
+            dT_B = float(np.max(np.abs(Tb - Tb_prev)))
+        else:
+            dT_A = dT_B = float('inf')  # first iter — always not converged
         print(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
+              f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
               f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
-        if drho_A < _COUPLING_TOL and drho_B < _COUPLING_TOL:
+        if (drho_A < _COUPLING_TOL and drho_B < _COUPLING_TOL
+                and dT_A < _DT_TOL_K and dT_B < _DT_TOL_K):
             coupling_converged = True
             break
+
+        Ta_prev = Ta.copy(); Tb_prev = Tb.copy()
 
         # Under-relax (field-wise)
         rho_A_field = _ALPHA_COUP * rho_A_field_new + (1 - _ALPHA_COUP) * rho_A_field
@@ -528,7 +568,8 @@ def _run_solvers(window, cfg, fields):
     if not coupling_converged:
         warnings_list.append(
             f"Velocity-temperature coupling: not converged after {_MAX_COUPLING} iters "
-            f"(drho_A={drho_A:.4f}, drho_B={drho_B:.4f})")
+            f"(drho_A={drho_A:.4f}, drho_B={drho_B:.4f}, "
+            f"dT_A={dT_A:.2f}K, dT_B={dT_B:.2f}K)")
     warnings_list.extend(simple_warnings.values())
 
     # Zone statistics and boundary lines
@@ -697,7 +738,15 @@ def _run_solvers(window, cfg, fields):
         Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
     else:
         Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
-    Q_total = 2.0 * Q_200 - Q_100  # Richardson extrapolation
+    # Richardson extrapolation — second-order scheme (SOU convection + 2nd-order
+    # diffusion): F_ext = (r^p · F_fine − F_coarse) / (r^p − 1) with r = 2
+    # (grid halving) and p = 2 → (4 · Q_fine − Q_coarse) / 3.
+    # Previously used `2*Q_fine − Q_coarse` which is the p = 1 formula and
+    # under-corrects the discretisation error for a formally 2nd-order solver.
+    # Three-grid verification of the observed order (Roache GCI) is not wired
+    # in yet — the 2-grid extrapolation trusts that p ≈ 2 as designed; a
+    # third grid at 4× would let us measure p in practice.
+    Q_total = (4.0 * Q_200 - Q_100) / 3.0
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
@@ -726,6 +775,40 @@ def _run_solvers(window, cfg, fields):
     except Exception:
         resid_B = None
 
+    # Conservation diagnostics — rho·cp·u·T integrals at inlet/outlet.
+    # Not a full energy-balance (no solid conduction residual in 2D), but
+    # reports Q_A and Q_B as the "enthalpy change seen by each fluid" so
+    # the user can verify Q_A + Q_B ≈ 0 (net zero = conservation).
+    def _enthalpy_balance(T_field, uc, vc, rho_cp_field, dir_code, dx_arr, dy_arr):
+        Nx, Ny = T_field.shape
+        if dir_code in (0, 1):
+            i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
+            A_cell = dy_arr
+            m_cp_in  = float(np.sum(rho_cp_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell))
+            m_cp_out = float(np.sum(rho_cp_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell))
+            T_in_avg  = float(np.sum(T_field[i_in, :]  * np.abs(uc[i_in, :])  * A_cell) / (m_cp_in  / max(rho_cp_field[i_in, :].mean(), 1e-30) + 1e-30))
+            T_out_avg = float(np.sum(T_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell) / (m_cp_out / max(rho_cp_field[i_out, :].mean(), 1e-30) + 1e-30))
+        else:
+            j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
+            A_cell = dx_arr
+            m_cp_in  = float(np.sum(rho_cp_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell))
+            m_cp_out = float(np.sum(rho_cp_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell))
+            T_in_avg  = float(np.sum(T_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell) / (m_cp_in  / max(rho_cp_field[:, j_in].mean(), 1e-30) + 1e-30))
+            T_out_avg = float(np.sum(T_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell) / (m_cp_out / max(rho_cp_field[:, j_out].mean(), 1e-30) + 1e-30))
+        return m_cp_in * (T_in_avg - T_out_avg)  # heat given up by the fluid
+
+    try:
+        Q_A = _enthalpy_balance(Ta, ucA, vcA,
+                                rho_cp_A if np.ndim(rho_cp_A) > 0 else np.full((N_x, N_y), rho_cp_A),
+                                dir_A, energy_dx, energy_dy)
+        Q_B = _enthalpy_balance(Tb, ucB, vcB,
+                                rho_cp_B if np.ndim(rho_cp_B) > 0 else np.full((N_x, N_y), rho_cp_B),
+                                dir_B, energy_dx, energy_dy)
+        Q_net = Q_A + Q_B
+        energy_rel = abs(Q_net) / (abs(Q_A) + abs(Q_B) + 1e-30)
+    except Exception:
+        Q_A = Q_B = Q_net = energy_rel = float('nan')
+
     result = {
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
@@ -735,6 +818,9 @@ def _run_solvers(window, cfg, fields):
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
         'residuals_A': resid_A, 'residuals_B': resid_B,
+        # Conservation diagnostics
+        'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,
+        'energy_imbalance_rel': energy_rel,
     }
     return result
 
@@ -759,6 +845,11 @@ def _store_results(window, cfg, result):
         'dx_arr': result['energy_dx'], 'dy_arr': result['energy_dy'],
         'residuals_A': result.get('residuals_A'),
         'residuals_B': result.get('residuals_B'),
+        # Conservation diagnostics (per-fluid enthalpy change, net, relative)
+        'Q_A': result.get('Q_A', float('nan')),
+        'Q_B': result.get('Q_B', float('nan')),
+        'Q_net': result.get('Q_net', float('nan')),
+        'energy_imbalance_rel': result.get('energy_imbalance_rel', float('nan')),
     }
     window._compute_warnings = result['warnings_list']
     return  # rendering happens in finalize_plots on main thread

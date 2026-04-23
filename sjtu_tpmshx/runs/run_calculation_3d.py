@@ -453,6 +453,13 @@ def _build_zone_fields_3d(cells, Nx, Ny, Nz, L, H, tpms_type, k_s,
                            default_L, default_t):
     """Map 2D grid zones to 3D (Nx, Ny, Nz) L/t/eps fields (z-uniform).
 
+    **3D geometry is currently a z-uniform extrusion of the 2D design** —
+    a design change in (x, y) propagates identically through all Nz
+    layers. This matches the "extrude the 2D TPMS pattern along z" MVP
+    assumption. True 3D zoning (design varies along z as well) would
+    require an Nz-dimensional decision vector in the optimiser and a
+    different cell list shape — not wired in yet.
+
     cells: list of dicts {y0, y1, x0, x1, L, t} with 0-1 normalised x/y.
     Returns L_field / t_field / eps_field (mm, mm, 0-1).
     """
@@ -748,6 +755,23 @@ def _run_3d_stack(cfg):
     eps_f = eps / 2.0
     K_ffA = np.full((Nx, Ny, Nz), eps_f * k_A)
     K_ffB = np.full((Nx, Ny, Nz), eps_f * k_B)
+    # Optional thermal dispersion: K_disp = C * ρ·cp·|u|·D_h added to K_ff.
+    # Off by default (disp_C_* = 0). Standard homogenisation has K_ff = ε·k_f
+    # (molecular only); at high Pe the effective fluid conductivity is larger
+    # due to tortuous-channel mixing. Turn on by setting disp_C_A / disp_C_B
+    # in the config (typical values 0.05-0.3 depending on TPMS type). D_h
+    # here uses the uniform cell geometry; once zoned K-field support lands,
+    # promote this to per-cell using local D_h and |u|.
+    disp_C_A = float(cfg.get('disp_C_A', 0.0))
+    disp_C_B = float(cfg.get('disp_C_B', 0.0))
+    if disp_C_A > 0.0:
+        D_h_A = tpms_geometry(tpms_type, Lcell, t_wall, k_s)['D_h']
+        K_disp_A = disp_C_A * rho_A * cp_A * abs(u_A) * D_h_A
+        K_ffA = K_ffA + K_disp_A
+    if disp_C_B > 0.0:
+        D_h_B = tpms_geometry(tpms_type, Lcell, t_wall, k_s)['D_h']
+        K_disp_B = disp_C_B * rho_B_ltne * cp_B * abs(cfg.get('u_B', u_A)) * D_h_B
+        K_ffB = K_ffB + K_disp_B
     K_ss = np.full((Nx, Ny, Nz), (1.0 - eps) * k_s)
 
     # h_v from Nu correlation (P0 fix: was hardcoded 1e5, now physics-based).
@@ -939,6 +963,25 @@ def _run_3d_stack(cfg):
         vmag_B = None
         dP_B = 0.0
 
+    # Conservation diagnostics — always computed now (previously only in tests).
+    # Lets the user spot non-physical regressions (e.g. refined-grid imbalance)
+    # without re-running validation scripts.
+    try:
+        from solvers.solve_full_3d import energy_balance_3d, mass_balance_3d
+        e_bal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
+        Q_sA = e_bal['Q_sA']
+        Q_sB = e_bal['Q_sB']
+        Q_net = e_bal['Q_net']
+        energy_rel = abs(Q_net) / (abs(Q_sA) + abs(Q_sB) + 1e-30)
+        m_bal_A = mass_balance_3d(sA.u, sA.v, sA.w, sA.rho_field, dy, dx, dz, fA['dir'])
+        mass_rel_A = m_bal_A.get('rel', 0.0)
+        mass_rel_B = 0.0
+        if sB is not None:
+            m_bal_B = mass_balance_3d(sB.u, sB.v, sB.w, sB.rho_field, dy, dx, dz, fB['dir'])
+            mass_rel_B = m_bal_B.get('rel', 0.0)
+    except Exception:
+        Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
+
     return dict(
         Ta=Ta, Tb=Tb, Ts=Ts,
         vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
@@ -952,4 +995,9 @@ def _run_3d_stack(cfg):
         Lx=L, Ly=H, Lz=Lz,
         Q=Q, dP=dP, u_A=u_A, T_in=T_inA,
         dir_A=fA['dir'],
+        # Conservation diagnostics
+        Q_sA=Q_sA, Q_sB=Q_sB, Q_net=Q_net,
+        energy_imbalance_rel=energy_rel,
+        mass_imbalance_rel_A=mass_rel_A,
+        mass_imbalance_rel_B=mass_rel_B,
     )
