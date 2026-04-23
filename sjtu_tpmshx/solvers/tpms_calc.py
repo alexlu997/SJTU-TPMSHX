@@ -101,6 +101,41 @@ def water_cp(T_K):
     return 4182.0
 
 
+# ── Fluid type validation ─────────────────────────────────────
+
+_SUPPORTED_FLUIDS = {'air'}
+
+
+def parse_fluid_type(combo):
+    """Normalise a QComboBox current text to an internal fluid_type key.
+
+    Returns one of: 'air', 'water', 'sco2'.
+    """
+    t = combo.currentText().lower().replace('₂', '2')
+    if 'co2' in t or 'sco' in t:
+        return 'sco2'
+    if 'water' in t:
+        return 'water'
+    return 'air'
+
+
+def validate_fluid_type(fluid_type: str, side: str) -> None:
+    """Raise NotImplementedError for fluid types without fitted correlations.
+
+    Water and sCO2 ship as UI options but lack Nu / f-Re / D-F surrogate
+    correlations. Running the solver on them would produce numbers that
+    reuse air's Pr=0.72 and air-fitted closures — physically wrong.
+    Block at entry until correlations are fitted.
+    """
+    if fluid_type not in _SUPPORTED_FLUIDS:
+        label = {'water': 'Water', 'sco2': 'sCO₂'}.get(fluid_type, fluid_type)
+        raise NotImplementedError(
+            f"Fluid {side} = {label} is not supported yet — no fitted "
+            f"correlations (Nu / f-Re / D-F surrogate) for this fluid. "
+            f"Select Air for now."
+        )
+
+
 # ── Nu correlations ───────────────────────────────────────────
 
 def _nu_diamond(Re: float, eps: float, D_h_mm: float) -> float:

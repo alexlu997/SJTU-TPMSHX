@@ -346,19 +346,18 @@ def _parse_inputs(window):
     except Exception:
         u_B = u_A
 
-    def _parse_fluid_type(combo):
-        t = combo.currentText().lower().replace('₂', '2')
-        if 'co2' in t or 'sco' in t:
-            return 'sco2'
-        return t
+    from solvers.tpms_calc import parse_fluid_type, validate_fluid_type
 
     fluid_type_A = 'air'
     if hasattr(window, 'combo_fluidA'):
-        fluid_type_A = _parse_fluid_type(window.combo_fluidA)
+        fluid_type_A = parse_fluid_type(window.combo_fluidA)
 
     fluid_type_B = 'air'
     if hasattr(window, 'combo_fluidB'):
-        fluid_type_B = _parse_fluid_type(window.combo_fluidB)
+        fluid_type_B = parse_fluid_type(window.combo_fluidB)
+
+    validate_fluid_type(fluid_type_A, 'A')
+    validate_fluid_type(fluid_type_B, 'B')
 
     # 3D wall refinement toggle (default ON — adds 8 BL cells near each of
     # the 6 walls with first_cell=0.02 mm + growth ratio 1.8).
