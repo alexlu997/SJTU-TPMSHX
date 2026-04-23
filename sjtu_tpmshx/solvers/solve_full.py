@@ -318,7 +318,8 @@ def solve_full_domain(L, H, Nx, Ny,
                       Ta_init=None, Tb_init=None, Ts_init=None,
                       dx_arr=None, dy_arr=None,
                       inlet_mask_A=None, inlet_mask_B=None,
-                      Tb_prescribed=None):
+                      Tb_prescribed=None,
+                      eps_A=None, eps_B=None):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     Parameters
@@ -367,11 +368,35 @@ def solve_full_domain(L, H, Nx, Ny,
     rho_cp_fA_arr = _to_2d(rho_cp_fA, Nx, Ny)
     rho_cp_fB_arr = _to_2d(rho_cp_fB, Nx, Ny)
 
-    if np.ndim(epsilon) == 0:
-        eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
+    # Per-fluid void-fraction split. Default is symmetric 50/50
+    # (eps_fA = eps_fB = epsilon / 2) — matches symmetric TPMS. Asymmetric
+    # splits are exposed as eps_A / eps_B but routed through the njit kernel
+    # as a single eps_f_arr, so for now only the symmetric default is
+    # supported — raise early if the user passes an asymmetric split.
+    if eps_A is None and eps_B is None:
+        if np.ndim(epsilon) == 0:
+            eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
+        else:
+            eps_f_arr = np.ascontiguousarray(
+                np.asarray(epsilon, dtype=np.float64) / 2.0)
     else:
-        eps_f_arr = np.ascontiguousarray(
-            np.asarray(epsilon, dtype=np.float64) / 2.0)
+        if eps_A is None or eps_B is None:
+            raise ValueError("eps_A and eps_B must be provided together.")
+        eps_A_arr = _to_2d(eps_A, Nx, Ny)
+        eps_B_arr = _to_2d(eps_B, Nx, Ny)
+        eps_tot_arr = _to_2d(epsilon, Nx, Ny)
+        if np.any(eps_A_arr + eps_B_arr > eps_tot_arr + 1e-9):
+            raise ValueError(
+                "eps_A + eps_B exceeds epsilon at some cells — the two fluid "
+                "channels cannot together occupy more than the total void "
+                "fraction.")
+        if not np.allclose(eps_A_arr, eps_B_arr):
+            raise NotImplementedError(
+                "Asymmetric eps_A / eps_B is not yet routed through the LTNE "
+                "kernel (solve_full currently assumes symmetric eps/2 per "
+                "channel). Extend _gs_full_chunk to accept eps_fA_arr and "
+                "eps_fB_arr before enabling asymmetric splits.")
+        eps_f_arr = eps_A_arr  # equals eps_B_arr by the check above
 
     # Inlet boundary codes
     bc_A = dir_A

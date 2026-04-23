@@ -51,14 +51,45 @@ P_atm = 101325.0   # Standard atmospheric pressure [Pa] (for Re reference densit
 
 # ── Air property correlations ─────────────────────────────────
 
+# Validity ranges for the fitted correlations (per docstrings below).
+_AIR_T_RANGE    = (200.0, 1100.0)   # Sutherland + kappa fits
+_AIR_CP_RANGE   = (250.0, 1000.0)   # polynomial cp fit
+_WATER_T_RANGE  = (273.15, 363.15)  # 0 - 90 °C polynomial water fits
+
+_range_warnings_emitted = set()
+
+
+def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
+    """Emit a single UserWarning per (name) key when T goes outside the
+    fitted validity range. Keeps logs readable when coupled solvers
+    call these functions millions of times per run."""
+    T_arr = np.asarray(T, dtype=float)
+    if T_arr.size == 0:
+        return
+    T_min = float(T_arr.min())
+    T_max = float(T_arr.max())
+    if T_min < lo or T_max > hi:
+        key = (name, round(T_min, 1), round(T_max, 1))
+        if key in _range_warnings_emitted:
+            return
+        _range_warnings_emitted.add(key)
+        warnings.warn(
+            f"{name}: T=[{T_min:.1f}, {T_max:.1f}] K outside fitted range "
+            f"[{lo:.1f}, {hi:.1f}] K — extrapolating.",
+            stacklevel=3,
+        )
+
+
 def air_viscosity(T_K: float) -> float:
     """Dynamic viscosity of air via Sutherland's law [Pa·s]."""
+    _warn_range_once('air_viscosity', T_K, *_AIR_T_RANGE)
     T0, mu0, S = 273.15, 1.716e-5, 110.4
     return mu0 * (T_K / T0) ** 1.5 * (T0 + S) / (T_K + S)
 
 
 def air_conductivity(T_K: float) -> float:
     """Thermal conductivity of air [W/(m·K)]."""
+    _warn_range_once('air_conductivity', T_K, *_AIR_T_RANGE)
     return 0.0241 * (T_K / 273.15) ** 0.82
 
 
@@ -72,6 +103,7 @@ def air_cp(T_K):
     Polynomial fit valid 250-1000K, error < 0.5%.
     Supports scalar or numpy array input.
     """
+    _warn_range_once('air_cp', T_K, *_AIR_CP_RANGE)
     dT = T_K - 273.15
     return 1004.5 + 0.172 * dT - 7.56e-5 * dT**2
 
@@ -80,24 +112,28 @@ def air_cp(T_K):
 
 def water_density(T_K):
     """Density of liquid water [kg/m³]. Polynomial valid 0-90 °C."""
+    _warn_range_once('water_density', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 999.84 - 0.05 * T_C - 0.004 * T_C**2
 
 
 def water_viscosity(T_K):
     """Dynamic viscosity of liquid water [Pa·s]. Exponential fit 0-90 °C."""
+    _warn_range_once('water_viscosity', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 1.79e-3 * np.exp(-0.035 * T_C)
 
 
 def water_conductivity(T_K):
     """Thermal conductivity of liquid water [W/(m·K)]. Linear fit 0-90 °C."""
+    _warn_range_once('water_conductivity', T_K, *_WATER_T_RANGE)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 0.569 + 0.0018 * T_C
 
 
 def water_cp(T_K):
     """Specific heat of liquid water [J/(kg·K)]. ~constant 280-370 K."""
+    _warn_range_once('water_cp', T_K, *_WATER_T_RANGE)
     return 4182.0
 
 

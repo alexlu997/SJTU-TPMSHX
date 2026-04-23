@@ -495,7 +495,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           inlet_mask_A=None, inlet_mask_B=None,
                           Tb_prescribed=None,
                           alpha_T=0.7,
-                          alpha_T_s=None, alpha_T_fA=None, alpha_T_fB=None):
+                          alpha_T_s=None, alpha_T_fA=None, alpha_T_fB=None,
+                          eps_A=None, eps_B=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
 
     Shape contracts
@@ -564,12 +565,30 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     rho_cp_fA_arr = _to_3d(rho_cp_fA)
     rho_cp_fB_arr = _to_3d(rho_cp_fB)
 
-    if np.ndim(epsilon) == 0:
-        eps_f_arr = np.full((Nx, Ny, Nz), float(epsilon) / 2.0, dtype=np.float64)
+    # Per-fluid void-fraction split. Default = symmetric eps/2 per channel;
+    # asymmetric eps_A / eps_B raises NotImplementedError because the njit
+    # kernel currently takes a single eps_f_arr. Mirrors solve_full.py.
+    if eps_A is None and eps_B is None:
+        if np.ndim(epsilon) == 0:
+            eps_f_arr = np.full((Nx, Ny, Nz), float(epsilon) / 2.0, dtype=np.float64)
+        else:
+            eps_f_arr = np.ascontiguousarray(np.asarray(epsilon, dtype=np.float64) / 2.0)
+            if eps_f_arr.shape != (Nx, Ny, Nz):
+                raise ValueError("epsilon 3D shape mismatch")
     else:
-        eps_f_arr = np.ascontiguousarray(np.asarray(epsilon, dtype=np.float64) / 2.0)
-        if eps_f_arr.shape != (Nx, Ny, Nz):
-            raise ValueError("epsilon 3D shape mismatch")
+        if eps_A is None or eps_B is None:
+            raise ValueError("eps_A and eps_B must be provided together.")
+        eps_A_arr = _to_3d(eps_A)
+        eps_B_arr = _to_3d(eps_B)
+        eps_tot_arr = _to_3d(epsilon)
+        if np.any(eps_A_arr + eps_B_arr > eps_tot_arr + 1e-9):
+            raise ValueError(
+                "eps_A + eps_B exceeds epsilon at some cells.")
+        if not np.allclose(eps_A_arr, eps_B_arr):
+            raise NotImplementedError(
+                "Asymmetric eps_A / eps_B is not yet routed through the 3D "
+                "LTNE kernel (currently assumes symmetric eps/2).")
+        eps_f_arr = eps_A_arr
 
     # Cell-centre velocity shape check
     for name, arr in (('ucA', ucA), ('vcA', vcA), ('wcA', wcA),

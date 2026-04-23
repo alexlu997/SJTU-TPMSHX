@@ -1054,12 +1054,54 @@ def clear_cancel():
     _progress['cancel_requested'] = False
 
 
+# ConstDF-v1 D-F surrogate training domain (per memory
+# project_thermonas_c1.md and df_baseline). Outside these bounds the
+# surrogate extrapolates silently; we harden the optimiser entry so
+# the user gets a clear error instead of bogus designs.
+_SURROGATE_L_MM = (4.0, 8.0)    # unit cell size
+_SURROGATE_T_MM = (0.3, 0.5)    # wall thickness
+_SURROGATE_RE   = (400.0, 16000.0)  # Reynolds number (ρ·u·D_h/μ)
+
+
+def _check_surrogate_domain(cfg):
+    """Raise ValueError if the user's (u, T, L bounds) imply a Reynolds
+    number outside the ConstDF-v1 training window at any corner of the
+    design space. Catches silent extrapolation before it wastes an hour
+    of NSGA-II search on unphysical surrogate output."""
+    from solvers.tpms_calc import air_density, air_viscosity, geometry as _geom
+    tpms = cfg.get('tpms_type', 'Gyroid')
+    k_s  = float(cfg.get('k_s', 15.0))
+    rho_A = air_density(cfg['T_inA'], cfg.get('P_in', 101325.0))
+    mu_A  = air_viscosity(cfg['T_inA'])
+    u_A   = float(cfg['u_A'])
+    corners = [
+        (_SURROGATE_L_MM[0], _SURROGATE_T_MM[0]),
+        (_SURROGATE_L_MM[0], _SURROGATE_T_MM[1]),
+        (_SURROGATE_L_MM[1], _SURROGATE_T_MM[0]),
+        (_SURROGATE_L_MM[1], _SURROGATE_T_MM[1]),
+    ]
+    for L_mm, t_mm in corners:
+        D_h = _geom(tpms, L_mm, t_mm, k_s)['D_h']
+        Re  = rho_A * u_A * D_h / mu_A
+        if Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
+            raise ValueError(
+                f"Flow conditions (u_A={u_A} m/s, T_inA={cfg['T_inA']} K) "
+                f"push Re = {Re:.0f} at corner (L={L_mm}mm, t={t_mm}mm) "
+                f"outside the ConstDF-v1 training window "
+                f"[{_SURROGATE_RE[0]:.0f}, {_SURROGATE_RE[1]:.0f}]. Surrogate "
+                f"extrapolation would give unreliable dP — reduce u_A or "
+                f"narrow the design bounds."
+            )
+
+
 def _make_problem(config=None):
     from pymoo.core.problem import Problem
 
     cfg = {**DEFAULT_CONFIG, **(config or {})}
     dim = int(cfg.get('dim', 2))
     n_obj = 2  # -Q, dP
+
+    _check_surrogate_domain(cfg)
 
     # Bounds: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm alternating per zone
     if dim == 3:
