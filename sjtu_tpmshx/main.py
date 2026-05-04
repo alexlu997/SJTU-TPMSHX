@@ -153,6 +153,15 @@ class Main_Menu(QMainWindow):
         # what the user is typing.
         self._temp_unit = 'K'
 
+        # Compute lifecycle state (P0 re-entrancy guard, 2026-05-05 audit).
+        # Explicit init at construction time so `getattr(self, ..., False)`
+        # fallbacks elsewhere can't accidentally surface a stale value if a
+        # future refactor removes the getattr safety nets.
+        self._compute_running = False
+        self._compute_poll_timer = None
+        self._compute_thread = None
+        self._compute_btn_handler = None
+
         # Active workspace loaded from disk (A/B/C). Determines which
         # .last_session_*.json file _save_session / _restore_session target.
         import os as _os_ws
@@ -2680,6 +2689,14 @@ class Main_Menu(QMainWindow):
         # otherwise auto-suggest D_h-derived Nx/Ny/Nz. Setting the
         # `_user_edited_grid` sentinel makes compute_tpms skip its
         # auto-fill block so the 20/20/20 default is sticky.
+        # Detect if any reset diverges from saved state — if so, show a
+        # one-shot status message so the user knows their session was NOT
+        # fully restored (was previously silent — auditor's "feels like a
+        # bug" concern, 2026-05-05 audit).
+        _saved_grid = (payload.get('line_edits') or {})
+        _grid_was_custom = any(
+            (str(_saved_grid.get(_n, '20')).strip() not in ('', '20'))
+            for _n in ('le_Nx', 'le_Ny', 'le_Nz'))
         for _attr in ('le_Nx', 'le_Ny', 'le_Nz'):
             _le = getattr(self, _attr, None)
             if _le is not None:
@@ -2688,6 +2705,23 @@ class Main_Menu(QMainWindow):
                 except Exception:
                     pass
         self._user_edited_grid = True
+        # Surface reset notices via deferred status bar — wait until the
+        # window is shown so the message isn't eaten by subsequent renders.
+        from PySide6.QtCore import QTimer as _QT_msg
+        _msgs = []
+        if _grid_was_custom:
+            _msgs.append("Grid reset to 20×20×20 (default; saved values discarded)")
+        _saved_combos2 = payload.get('combos') or {}
+        if any(int(_saved_combos2.get(f'combo_fluid{_s}', 0) or 0) != 0
+               for _s in ('A', 'B')):
+            _msgs.append("Fluid type reset to Air (default; saved selection discarded)")
+        if _msgs:
+            def _flash():
+                try:
+                    self.statusBar().showMessage(" · ".join(_msgs), 8000)
+                except Exception:
+                    pass
+            _QT_msg.singleShot(800, _flash)
 
     def closeEvent(self, event):
         try:

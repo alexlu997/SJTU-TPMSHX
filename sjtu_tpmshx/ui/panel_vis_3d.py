@@ -682,11 +682,25 @@ class ThreeDVisPanel(QWidget):
     def hideEvent(self, event):
         super().hideEvent(event)
         self._render_gated = True
-        # Stop any in-flight camera tween; a hidden panel should not burn
-        # CPU on QTimer ticks that never become visible.
+        # If a camera tween was in flight, snap to its END pose before
+        # stopping the timer. Otherwise the camera is left mid-interpolation
+        # and re-entering the tab shows a partial pose that the user has to
+        # manually fix.
         if self._tween_timer is not None:
-            try: self._tween_timer.stop()
-            except Exception: pass
+            try:
+                self._tween_timer.stop()
+            except Exception:
+                pass
+            tween_end = getattr(self, '_tween_end_pose', None)
+            if tween_end is not None:
+                try:
+                    cam = self.plotter.camera
+                    cam.position = tween_end[0]
+                    cam.focal_point = tween_end[1]
+                    cam.up = tween_end[2]
+                except Exception:
+                    pass
+                self._tween_end_pose = None
         try:
             self.plotter.disable_render()
         except Exception:
@@ -842,6 +856,9 @@ class ThreeDVisPanel(QWidget):
         timer = QTimer(self)
         timer.setInterval(16)                    # ≈60 fps
         self._tween_timer = timer
+        # Stash the target pose so hideEvent can snap there if user switches
+        # tabs mid-tween (avoids leaving camera at half-rotated state).
+        self._tween_end_pose = end
         n_frames = 18
         state = {'i': 0}
 
@@ -857,6 +874,7 @@ class ThreeDVisPanel(QWidget):
             state['i'] += 1
             if t >= 1.0:
                 timer.stop()
+                self._tween_end_pose = None   # tween done, no need to snap
                 self._sync_view_button(preset)
 
         timer.timeout.connect(_step)
@@ -879,7 +897,14 @@ class ThreeDVisPanel(QWidget):
         return dict((p, a) for (p, _l, a) in _PLANE_OPTIONS)[plane_id]
 
     def _validate_coord_input(self):
-        """Flag the coord field when value is out of domain, disable Apply."""
+        """Flag the coord field when value is out of domain, disable Apply.
+
+        Skips the unpolish/polish round-trip when the error state hasn't
+        actually changed (cached on `_coord_error_state`). Old code did
+        full QSS re-evaluation on every keystroke (~1 ms each); on
+        consecutive keys with same state that's wasted work + a tiny
+        flicker on some Windows display chains.
+        """
         if self._grid is None:
             return
         ok = True
@@ -894,10 +919,13 @@ class ThreeDVisPanel(QWidget):
                   'z': self._L_mm[2]}[axis]
             if v < 0.0 or v > hi:
                 ok = False
-        self.le_coord.setProperty('error', 'false' if ok else 'true')
-        # Re-polish so stylesheet property selector applies
-        style = self.le_coord.style()
-        style.unpolish(self.le_coord); style.polish(self.le_coord)
+        prev = getattr(self, '_coord_error_state', None)
+        if prev is not ok:
+            self.le_coord.setProperty('error', 'false' if ok else 'true')
+            # Re-polish so stylesheet property selector applies
+            style = self.le_coord.style()
+            style.unpolish(self.le_coord); style.polish(self.le_coord)
+            self._coord_error_state = ok
         self.btn_apply.setEnabled(ok and self.le_coord.isEnabled())
         if not ok and txt:
             axis = self._current_axis()
