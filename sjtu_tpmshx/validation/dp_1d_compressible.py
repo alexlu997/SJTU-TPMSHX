@@ -24,11 +24,11 @@ R_AIR = 287.05  # J/(kg·K), dry air specific gas constant
 # Geometry (identical to validate_shanghai.py)
 TPMS, L_CELL, T_WALL, K_S = 'Gyroid', 7.0, 0.6, 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']
+EPS = g['epsilon']; EPS_A = g['epsilon_A']
 L_DOM = 0.231
 A_FLOW = 36 * 18.0565e-6
 
-K, cF = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2)
+K, cF = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
 print(f"ConstDF-v1:  K = {K:.4e} m²   c_F = {cF:.4e} 1/m")
 print(f"Geometry:    L_dom = {L_DOM} m   A_flow = {A_FLOW*1e4:.3f} cm²")
 print()

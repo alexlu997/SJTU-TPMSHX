@@ -10,7 +10,7 @@ import matplotlib.tri as mtri
 from matplotlib.gridspec import GridSpec
 
 from PySide6.QtWidgets import QApplication, QMessageBox
-from .tpms_calc import geometry as tpms_geometry
+from .tpms_calc import geometry as tpms_geometry, air_cp
 from .fvm_solver import solve_polygon_domain
 from .unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
 from ui.theme import get_theme
@@ -52,7 +52,6 @@ def _parse_inputs(window, _log):
 
     L = float(window.le_L.text())
     H = float(window.le_H.text())
-    cp_f = float(window.le_cp_f.text())
     u_A = float(window.le_uA.text())
     u_B = float(window.le_uB.text())
     # Honour UI K/°C toggle — compute path always receives Kelvin
@@ -62,6 +61,9 @@ def _parse_inputs(window, _log):
     else:
         T_inA = float(window.le_TinA.text())
         T_inB = float(window.le_TinB.text())
+    # Fluid cp evaluated at inlet T (matches SIMPLE path; previously read from
+    # a read-only UI field that held a placeholder string and crashed).
+    cp_f = float(air_cp(T_inA))
 
     shape = window.combo_shape.currentText()
     verts = um.hexagon(L, H) if shape == 'Hexagon' else um.octagon(L, H)

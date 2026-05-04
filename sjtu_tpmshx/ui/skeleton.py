@@ -25,21 +25,41 @@ class Skeleton(QWidget):
         super().__init__(parent)
         self._kind = kind
         self._phase = 0.0
+        self._should_run = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
     def start(self):
-        if not self._timer.isActive():
+        self._should_run = True
+        if not self._timer.isActive() and self.isVisible():
             # 14 ms ≈ 70 Hz — buttery on a 144 Hz display without burning
             # CPU when the user's not looking at the skeleton tab.
             self._timer.start(14)
         self.show()
         self.raise_()
+        self._sync_timer()
 
     def stop(self):
+        self._should_run = False
         self._timer.stop()
         self.hide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_timer()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _sync_timer(self):
+        if self._should_run and self.isVisible():
+            if not self._timer.isActive():
+                # 14 ms ~= 70 Hz; only run while the parent card is visible.
+                self._timer.start(14)
+        else:
+            self._timer.stop()
 
     def _tick(self):
         self._phase = (self._phase + 0.015) % 1.2

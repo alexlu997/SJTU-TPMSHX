@@ -27,16 +27,18 @@ The caller can hand real 3D SIMPLE+LTNE results in via `set_fields`.
 """
 
 from __future__ import annotations
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
 import pyvista as pv
 from pyvistaqt import QtInteractor
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame, QSlider,
+    QButtonGroup,
 )
 
 
@@ -264,11 +266,15 @@ class ThreeDVisPanel(QWidget):
         params.addSpacing(10)
 
         # Opacity slider — controls volume transparency (0 = invisible, 100 = opaque)
+        # Defaults balance "glass cube" feel against cold-end legibility:
+        # at these values the opacity ramp (lo = op*0.55) keeps cold voxels
+        # visible on the slate viewport bg instead of dissolving to black.
         lbl_op = QLabel("Opacity:"); lbl_op.setStyleSheet(_label_qss())
         params.addWidget(lbl_op)
         self.slider_opacity = QSlider(Qt.Orientation.Horizontal)
         self.slider_opacity.setRange(0, 100)
-        self.slider_opacity.setValue(60)          # default 60% — softly cloud-like
+        _op_default = 30 if get_theme_name() == 'dark' else 25
+        self.slider_opacity.setValue(_op_default)
         self.slider_opacity.setFixedWidth(110)
         self.slider_opacity.setFixedHeight(_CTRL_HEIGHT)
         self.slider_opacity.setStyleSheet(_slider_qss())
@@ -276,8 +282,10 @@ class ThreeDVisPanel(QWidget):
         self.slider_opacity.setToolTip(
             "Volume transparency — 0% fully transparent, 100% solid")
         self.slider_opacity.valueChanged.connect(self._on_opacity_changed)
+        self.slider_opacity.setToolTip(
+            "Volume density: lower values keep long ducts readable")
         params.addWidget(self.slider_opacity)
-        self.lbl_opacity_val = QLabel("60%")
+        self.lbl_opacity_val = QLabel(f"{_op_default}%")
         self.lbl_opacity_val.setStyleSheet(_label_qss())
         self.lbl_opacity_val.setFixedWidth(36)
         params.addWidget(self.lbl_opacity_val)
@@ -325,40 +333,50 @@ class ThreeDVisPanel(QWidget):
 
         actions.addWidget(_divider())
 
-        # View preset segmented buttons: Top / Front / Iso
+        # View preset segmented buttons: Top / Front / Side / Iso
+        # QButtonGroup (exclusive) keeps one button visually "active" so the
+        # user can tell which canonical view is currently framed.
         view_seg = QHBoxLayout(); view_seg.setSpacing(0); view_seg.setContentsMargins(0, 0, 0, 0)
-        self.btn_view_top = QPushButton("Top")
-        self.btn_view_top.setStyleSheet(_seg_qss('left'))
-        self.btn_view_top.setFixedHeight(_CTRL_HEIGHT); self.btn_view_top.setFixedWidth(46)
-        self.btn_view_top.setToolTip("Camera → XY plane looking down -Z")
-        self.btn_view_top.setEnabled(False)
-        self.btn_view_top.clicked.connect(lambda: self._set_view('top'))
-        view_seg.addWidget(self.btn_view_top)
+        self._view_btn_group = QButtonGroup(self)
+        self._view_btn_group.setExclusive(True)
 
-        self.btn_view_front = QPushButton("Front")
-        self.btn_view_front.setStyleSheet(_seg_qss('mid'))
-        self.btn_view_front.setFixedHeight(_CTRL_HEIGHT); self.btn_view_front.setFixedWidth(52)
-        self.btn_view_front.setToolTip("Camera → XZ plane (looking at -Y face)")
-        self.btn_view_front.setEnabled(False)
-        self.btn_view_front.clicked.connect(lambda: self._set_view('front'))
-        view_seg.addWidget(self.btn_view_front)
+        def _mk_view_btn(label, corners, width, preset, tip, hotkey):
+            b = QPushButton(label)
+            b.setStyleSheet(_seg_qss(corners))
+            b.setFixedHeight(_CTRL_HEIGHT); b.setFixedWidth(width)
+            b.setCheckable(True)
+            b.setToolTip(f"{tip}   [{hotkey}]")
+            b.setEnabled(False)
+            b.clicked.connect(lambda: self._set_view(preset))
+            view_seg.addWidget(b)
+            self._view_btn_group.addButton(b)
+            return b
 
-        self.btn_view_side = QPushButton("Side")
-        self.btn_view_side.setStyleSheet(_seg_qss('mid'))
-        self.btn_view_side.setFixedHeight(_CTRL_HEIGHT); self.btn_view_side.setFixedWidth(46)
-        self.btn_view_side.setToolTip("Camera → YZ plane (looking at -X face)")
-        self.btn_view_side.setEnabled(False)
-        self.btn_view_side.clicked.connect(lambda: self._set_view('side'))
-        view_seg.addWidget(self.btn_view_side)
-
-        self.btn_view_iso = QPushButton("Iso")
-        self.btn_view_iso.setStyleSheet(_seg_qss('right'))
-        self.btn_view_iso.setFixedHeight(_CTRL_HEIGHT); self.btn_view_iso.setFixedWidth(44)
-        self.btn_view_iso.setToolTip("Camera → isometric (default)")
-        self.btn_view_iso.setEnabled(False)
-        self.btn_view_iso.clicked.connect(lambda: self._set_view('iso'))
-        view_seg.addWidget(self.btn_view_iso)
+        self.btn_view_top = _mk_view_btn(
+            "Top", 'left', 46, 'top',
+            "Camera → XY plane looking down -Z", "T")
+        self.btn_view_front = _mk_view_btn(
+            "Front", 'mid', 52, 'front',
+            "Camera → XZ plane (looking at -Y face)", "F")
+        self.btn_view_side = _mk_view_btn(
+            "Side", 'mid', 46, 'side',
+            "Camera → YZ plane (looking at -X face)", "S")
+        self.btn_view_iso = _mk_view_btn(
+            "Iso", 'right', 44, 'iso',
+            "Camera → isometric (default)", "I")
+        self.btn_view_iso.setChecked(True)   # default view on load
         actions.addLayout(view_seg)
+
+        # Keyboard shortcuts — T/F/S/I trigger the same presets.
+        # ApplicationShortcut keeps them active regardless of focused widget
+        # inside the 3D panel, so power users never leave the mouse.
+        for key, btn in (('T', self.btn_view_top),
+                         ('F', self.btn_view_front),
+                         ('S', self.btn_view_side),
+                         ('I', self.btn_view_iso)):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(btn.click)
 
         actions.addWidget(_divider())
 
@@ -385,6 +403,12 @@ class ThreeDVisPanel(QWidget):
         root.addWidget(self.plotter.interactor, stretch=1)
 
         pv.set_plot_theme('dark' if get_theme_name() == 'dark' else 'document')
+        # Override PyVista's pure-black dark viewport with a deep-slate so
+        # cold voxels (turbo low end) don't dissolve into the background.
+        try:
+            self.plotter.set_background(get_theme().get('vp_bg_3d', '#12161c'))
+        except Exception:
+            pass
 
         # ── Status ──
         self.status = QLabel(
@@ -411,7 +435,14 @@ class ThreeDVisPanel(QWidget):
         self._last_hover_text = ''
         self._base_status_text = ''
         self._popup_dialogs: list = []               # keep refs so they aren't GC'd
-        self._opacity = 0.60                         # 0..1, mirrors slider/100
+        self._opacity = _op_default / 100.0          # 0..1, mirrors slider/100
+        self._flow_dir = '+x'                        # Fluid A arrow direction
+        self._flow_dir_B = None                      # Fluid B arrow direction
+        self._tween_timer: Optional[QTimer] = None   # active camera interp
+        # Render-gate: True when card is off-screen (tab hidden). Suppresses
+        # PyVistaQt paint events so switching away from the 3D tab doesn't
+        # burn CPU on ray-casting a volume the user can't see.
+        self._render_gated = False
         # Realtime-apply debounce: user typing in coord field keeps firing
         # textChanged; we single-shot a QTimer (240 ms) so the slice rebuilds
         # only after typing pauses, instead of on every keystroke.
@@ -419,6 +450,12 @@ class ThreeDVisPanel(QWidget):
         self._coord_debounce.setSingleShot(True)
         self._coord_debounce.setInterval(240)
         self._coord_debounce.timeout.connect(self._on_apply_slice_realtime)
+        # Opacity slider rebuilds the VTK piecewise function on every tick
+        # during a drag — coalesce to one render after 50 ms idle.
+        self._opacity_debounce = QTimer(self)
+        self._opacity_debounce.setSingleShot(True)
+        self._opacity_debounce.setInterval(50)
+        self._opacity_debounce.timeout.connect(self._apply_opacity_now)
 
         self._render_placeholder()
         self._setup_hover()
@@ -427,7 +464,8 @@ class ThreeDVisPanel(QWidget):
 
     def set_fields(self, Ta=None, vmag=None, P_kPa=None, L_mm=None,
                    dx=None, dy=None, dz=None, real_dims=(0.182, 0.042, 0.042),
-                   *, Tb=None, Ts=None, vmag_B=None, P_B_kPa=None):
+                   *, Tb=None, Ts=None, vmag_B=None, P_B_kPa=None,
+                   flow_dir='+x', flow_dir_B=None):
         """Attach 3D fields to the panel. Shape of every field: (Nx, Ny, Nz).
 
         Positional args preserved for backward compatibility with
@@ -441,6 +479,9 @@ class ThreeDVisPanel(QWidget):
         if dx is None or dy is None or dz is None:
             raise ValueError("set_fields: dx/dy/dz are required")
 
+        self._flow_dir = str(flow_dir) if flow_dir else '+x'
+        self._flow_dir_B = str(flow_dir_B) if flow_dir_B else None
+
         candidate = {
             'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
             'vmag': vmag, 'vmag_B': vmag_B,
@@ -451,11 +492,22 @@ class ThreeDVisPanel(QWidget):
                         for k, v in candidate.items() if v is not None}
         if not self._arrays:
             raise ValueError("set_fields: at least one field must be non-None")
+        field_shape = next(iter(self._arrays.values())).shape
+        if len(field_shape) != 3:
+            raise ValueError(f"set_fields: 3D fields required, got {field_shape}")
+        for key, arr in self._arrays.items():
+            if arr.shape != field_shape:
+                raise ValueError(
+                    f"set_fields: {key} shape {arr.shape} != {field_shape}")
 
         # 1-D edges / centres in mm
         dx_m = np.asarray(dx, dtype=np.float64)
         dy_m = np.asarray(dy, dtype=np.float64)
         dz_m = np.asarray(dz, dtype=np.float64)
+        if field_shape != (dx_m.size, dy_m.size, dz_m.size):
+            raise ValueError(
+                "set_fields: field shape "
+                f"{field_shape} != grid ({dx_m.size}, {dy_m.size}, {dz_m.size})")
         self._dx_mm = dx_m * 1000.0
         self._dy_mm = dy_m * 1000.0
         self._dz_mm = dz_m * 1000.0
@@ -469,21 +521,20 @@ class ThreeDVisPanel(QWidget):
             grid.cell_data[key] = arr.flatten(order='F')
         self._grid = grid.cell_data_to_point_data()
 
-        self._global_clim = {
-            f: (float(self._grid[f].min()), float(self._grid[f].max()))
-            for f in self._arrays
-        }
+        self._global_clim = self._build_global_clim()
         self._real_dims = tuple(real_dims)
 
-        # Populate combo with available fields only (preserves FIELD_ORDER)
+        # Populate combo with available fields only (preserves FIELD_ORDER).
+        # Block signals across BOTH clear()+addItem AND setCurrentIndex below
+        # so _on_field_changed doesn't fire mid-restore (which would cause
+        # _rebuild_volume to run twice — once via the signal, once via the
+        # explicit call below at line 557).
         prev_field = self._field
         self.combo_field.blockSignals(True)
         self.combo_field.clear()
         for fkey in FIELD_ORDER:
             if fkey in self._arrays:
                 self.combo_field.addItem(FIELD_META[fkey]['label'], userData=fkey)
-        self.combo_field.blockSignals(False)
-
         # Restore previous field selection if still available, else first item
         if prev_field in self._arrays:
             idx = self.combo_field.findData(prev_field)
@@ -492,6 +543,7 @@ class ThreeDVisPanel(QWidget):
             self._field = prev_field
         else:
             self._field = self.combo_field.itemData(0)
+        self.combo_field.blockSignals(False)
 
         # Enable controls
         for w in (self.combo_field, self.combo_plane, self.le_coord,
@@ -534,6 +586,34 @@ class ThreeDVisPanel(QWidget):
                         dx=dx, dy=dy, dz=dz,
                         real_dims=(L_DOM, H_DOM, LZ))
 
+    def set_watermark(self, text):
+        """Place a warning watermark on the viewport (lower-left).
+
+        Called after set_fields when the run left the ConstDF-v1 training
+        window. Pass `None` to clear. Keeps copy compact so the 3D volume
+        remains the primary visual, while the reader still can't miss the
+        extrapolation flag in a screenshot or presentation slide.
+        """
+        pl = self.plotter
+        try:
+            pl.remove_actor('_extrap_watermark', render=False)
+        except Exception:
+            pass
+        if not text:
+            pl.render()
+            return
+        t = get_theme()
+        try:
+            pl.add_text(
+                str(text),
+                position='lower_left', font_size=9,
+                color=t.get('warn', '#F59E0B'),
+                name='_extrap_watermark', shadow=False,
+            )
+        except Exception:
+            pass
+        pl.render()
+
     def cleanup(self):
         """Release GL context + close outstanding matplotlib popups."""
         for dlg in list(self._popup_dialogs):
@@ -544,6 +624,61 @@ class ThreeDVisPanel(QWidget):
         self._popup_dialogs.clear()
         try:
             self.plotter.close()
+        except Exception:
+            pass
+
+    def _build_global_clim(self):
+        """Build comparable color ranges for related physical fields."""
+        clim = {
+            f: (float(self._grid[f].min()), float(self._grid[f].max()))
+            for f in self._arrays
+        }
+
+        def _share(fields):
+            present = [f for f in fields if f in clim]
+            if len(present) < 2:
+                return
+            lo = min(clim[f][0] for f in present)
+            hi = max(clim[f][1] for f in present)
+            if hi - lo < 1e-12:
+                hi = lo + 1.0
+            for f in present:
+                clim[f] = (lo, hi)
+
+        _share(('Ta', 'Tb', 'Ts'))
+        _share(('vmag', 'vmag_B'))
+        # Pressure A/B — share clim so the same color = same kPa across the
+        # P_kPa / P_B_kPa combo entries. Without this the user toggling
+        # between A and B sees one autoscaled view replaced with another and
+        # cannot compare magnitudes by colour alone.
+        _share(('P_kPa', 'P_B_kPa'))
+        return clim
+
+    # ─────────────────────────── visibility gate ──────────────────────
+    # Qt fires showEvent/hideEvent when the card holding this widget is
+    # toggled by `_switch_tab`. Gating the PyVistaQt render loop here is
+    # what makes Geometry ↔ 3D View tab flips feel instant — otherwise
+    # every expose triggers a full ray-cast of the volume actor.
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._render_gated = False
+        try:
+            self.plotter.enable_render()
+            # One explicit render so the viewport is fresh on tab entry.
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._render_gated = True
+        # Stop any in-flight camera tween; a hidden panel should not burn
+        # CPU on QTimer ticks that never become visible.
+        if self._tween_timer is not None:
+            try: self._tween_timer.stop()
+            except Exception: pass
+        try:
+            self.plotter.disable_render()
         except Exception:
             pass
 
@@ -564,6 +699,16 @@ class ThreeDVisPanel(QWidget):
         """Probe scalar values at cursor position on the slice (if present)."""
         if self._grid is None:
             return
+        # Throttle to ~30 Hz so fast cursor sweeps don't fire kdtree lookups
+        # 60+ times/s on top of VTK's own picker work. Without this, dragging
+        # the cursor across a refined 3D grid added perceptible jitter to
+        # the camera spin. — 2026-04-29
+        import time as _t_hover
+        _now = _t_hover.monotonic()
+        _last = getattr(self, '_hover_last_t', 0.0)
+        if _now - _last < 0.033:   # 33 ms = ~30 Hz cap
+            return
+        self._hover_last_t = _now
         try:
             import vtk
             x, y = obj.GetEventPosition()
@@ -645,8 +790,17 @@ class ThreeDVisPanel(QWidget):
         self._update_status()
 
     def _set_view(self, preset: str):
-        """Snap camera to a canonical view."""
+        """Tween camera from its current pose to a canonical preset.
+
+        Linear interp over ~18 frames (≈300 ms) on position + focal point +
+        up vector so the viewer sees the rotation instead of a hard cut.
+        Reduced-motion envs (QT_REDUCED_MOTION=1) get the old instant snap.
+        """
         pl = self.plotter
+        # Target pose: sample by snapping a *throwaway* camera at the preset,
+        # reading it, then restoring the current camera so we can animate to it.
+        cam = pl.camera
+        start = (tuple(cam.position), tuple(cam.focal_point), tuple(cam.up))
         if preset == 'top':
             pl.view_xy()
         elif preset == 'front':
@@ -656,7 +810,56 @@ class ThreeDVisPanel(QWidget):
         else:
             pl.view_isometric()
         pl.camera.zoom(1.35)
-        pl.render()
+        end = (tuple(cam.position), tuple(cam.focal_point), tuple(cam.up))
+
+        import os as _os
+        reduced = _os.environ.get('QT_REDUCED_MOTION', '').lower() in ('1', 'true')
+        if reduced or start == end:
+            pl.render()
+            self._sync_view_button(preset)
+            return
+
+        # Rewind to start and tween forward.
+        cam.position = start[0]
+        cam.focal_point = start[1]
+        cam.up = start[2]
+
+        if self._tween_timer is not None:
+            self._tween_timer.stop()
+        timer = QTimer(self)
+        timer.setInterval(16)                    # ≈60 fps
+        self._tween_timer = timer
+        n_frames = 18
+        state = {'i': 0}
+
+        def _step():
+            t = min(1.0, (state['i'] + 1) / n_frames)
+            # Ease-out cubic for natural deceleration.
+            ease = 1.0 - (1.0 - t) ** 3
+            def _lerp(a, b): return tuple(a[k] + (b[k] - a[k]) * ease for k in range(3))
+            cam.position = _lerp(start[0], end[0])
+            cam.focal_point = _lerp(start[1], end[1])
+            cam.up = _lerp(start[2], end[2])
+            pl.render()
+            state['i'] += 1
+            if t >= 1.0:
+                timer.stop()
+                self._sync_view_button(preset)
+
+        timer.timeout.connect(_step)
+        timer.start()
+
+    def _sync_view_button(self, preset: str):
+        """Reflect the active view preset on the segmented button group."""
+        btn_map = {
+            'top': self.btn_view_top, 'front': self.btn_view_front,
+            'side': self.btn_view_side, 'iso': self.btn_view_iso,
+        }
+        btn = btn_map.get(preset)
+        if btn is not None and not btn.isChecked():
+            btn.blockSignals(True)
+            btn.setChecked(True)
+            btn.blockSignals(False)
 
     def _current_axis(self) -> str:
         plane_id = self.combo_plane.currentData()
@@ -693,11 +896,13 @@ class ThreeDVisPanel(QWidget):
     def _on_opacity_changed(self, val: int):
         self._opacity = float(val) / 100.0
         self.lbl_opacity_val.setText(f"{val}%")
-        # In-place update the VTK opacity transfer function — rebuilding the
-        # whole volume on every slider tick is wasteful (and flashes the
-        # scalar bar). The opacity function spans the actor's clim range
-        # [lo, hi] with a 2-point ramp 0 → self._opacity, matching the
-        # initial `add_volume(opacity=[0.0, self._opacity])` in _rebuild_volume.
+        # Coalesce slider drags into one render via 50 ms debounce — without
+        # this every tick triggers a full VTK GPU flush (visible stutter on
+        # 100×40×30 grids).
+        self._opacity_debounce.start()
+
+    def _apply_opacity_now(self):
+        """Apply current `self._opacity` to the volume actor + render once."""
         if self._volume_actor is not None and self._field is not None:
             try:
                 from vtk import vtkPiecewiseFunction
@@ -705,14 +910,18 @@ class ThreeDVisPanel(QWidget):
                 if abs(hi - lo) < 1e-12:
                     hi = lo + 1.0
                 pw = vtkPiecewiseFunction()
-                pw.AddPoint(lo, min(0.05, self._opacity))
-                pw.AddPoint(hi, self._opacity)
+                if self._opacity <= 1e-6:
+                    pw.AddPoint(lo, 0.0); pw.AddPoint(hi, 0.0)
+                else:
+                    # Match _rebuild_volume: lo floor = op*0.4, NOT zero, so
+                    # cold voxels stay visible (otherwise user sees "all red").
+                    pw.AddPoint(lo, self._opacity * 0.4)
+                    pw.AddPoint(hi, self._opacity)
                 self._volume_actor.GetProperty().SetScalarOpacity(pw)
                 self.plotter.render()
                 return
             except Exception:
                 pass
-        # Fall-through: rebuild if actor lookup or piecewise func fails
         self._rebuild_volume()
 
     def _on_clim_toggled(self, checked: bool):
@@ -727,6 +936,10 @@ class ThreeDVisPanel(QWidget):
     def _on_apply_slice(self):
         if self._grid is None:
             return
+        # Cancel any pending realtime debounce; otherwise typing → quick Apply
+        # would rebuild the slice twice (once via this handler, once via the
+        # 240 ms timer firing afterwards). Bug 14 (2026-04-29).
+        self._coord_debounce.stop()
         try:
             coord_mm = float(self.le_coord.text())
         except ValueError:
@@ -757,7 +970,8 @@ class ThreeDVisPanel(QWidget):
         self._update_status()
 
     def _on_screenshot(self):
-        dflt = f"volume_{self._field}_{self._scale_mode}.png"
+        ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+        dflt = f"volume_{self._field}_{self._scale_mode}_{ts}.png"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save 3D view as PNG", dflt, "PNG images (*.png)")
         if not path:
@@ -779,7 +993,8 @@ class ThreeDVisPanel(QWidget):
     def _render_initial_scene(self):
         pl = self.plotter
         pl.clear()
-        pl.add_mesh(self._grid.outline(), color=get_theme()['wireframe'], line_width=2)
+        t = get_theme()
+        pl.add_mesh(self._grid.outline(), color=t['wireframe'], line_width=2)
         # Minimal bounds: only endpoint ticks (2 per axis) + smaller font
         # so numbers don't collide with the bounding-box edges. The full 3-tick
         # grid was overlapping the wireframe on narrow geometries like 42 mm.
@@ -788,19 +1003,86 @@ class ThreeDVisPanel(QWidget):
             xtitle='x (mm)', ytitle='y (mm)', ztitle='z (mm)',
             n_xlabels=2, n_ylabels=2, n_zlabels=2,
             all_edges=False, minor_ticks=False, use_2d=False,
-            font_size=9, color=get_theme()['ax_text'], padding=0.02,
+            font_size=9, color=t['ax_text'], padding=0.02,
         )
-        # Corner XYZ triad (rotates with camera view) — orientation ref
-        pl.add_axes(
-            interactive=False, line_width=2,
-            xlabel='X', ylabel='Y', zlabel='Z',
-            color=get_theme()['ax_text'],
-        )
+        # Corner XYZ triad — per-label RGB (X red / Y green / Z blue) instead
+        # of a single-colour axis helper. Engineers parse orientation by
+        # colour convention, so a monochrome triad slows down reading.
+        try:
+            _vtk_ax = pl.add_axes(
+                interactive=False, line_width=2,
+                xlabel='X', ylabel='Y', zlabel='Z',
+                x_color=t['triad_x'], y_color=t['triad_y'], z_color=t['triad_z'],
+                color=t['ax_text'],       # label text colour
+            )
+        except TypeError:
+            # Older PyVista lacks per-axis colour kwargs; fall back to mono.
+            pl.add_axes(
+                interactive=False, line_width=2,
+                xlabel='X', ylabel='Y', zlabel='Z',
+                color=t['ax_text'],
+            )
+        self._add_flow_glyph()
         pl.view_isometric()
         # Auto-fit zoom: 182×42×42 mm aspect is very flat → camera framed
         # too loose at 1.35 default. 1.55 packs the bounding box into ~85%
         # of viewport without clipping edges.
         pl.camera.zoom(1.55)
+
+    def _add_flow_glyph(self):
+        """Place faint inlet/outlet cone arrows on domain faces per flow_dir.
+
+        Keeps the 3D view self-orienting — user can tell the inlet face at a
+        glance without reading status text. Cones are thin + semi-opaque so
+        they never compete with the volume data for visual weight.
+        """
+        if self._grid is None:
+            return
+        t = get_theme()
+        Lx, Ly, Lz = self._L_mm
+        tip_len = max(1.5, 0.12 * min(Lx, Ly, Lz))
+        radius = tip_len * 0.35
+
+        def _centres(flow_dir):
+            axis = flow_dir.lstrip('+-')
+            sign = -1.0 if flow_dir.startswith('-') else 1.0
+            if axis == 'x':
+                inlet = (0.0, Ly * 0.5, Lz * 0.5) if sign > 0 else (Lx, Ly * 0.5, Lz * 0.5)
+                outlet = (Lx, Ly * 0.5, Lz * 0.5) if sign > 0 else (0.0, Ly * 0.5, Lz * 0.5)
+                direction = (sign, 0, 0)
+            elif axis == 'y':
+                inlet = (Lx * 0.5, 0.0, Lz * 0.5) if sign > 0 else (Lx * 0.5, Ly, Lz * 0.5)
+                outlet = (Lx * 0.5, Ly, Lz * 0.5) if sign > 0 else (Lx * 0.5, 0.0, Lz * 0.5)
+                direction = (0, sign, 0)
+            else:
+                inlet = (Lx * 0.5, Ly * 0.5, 0.0) if sign > 0 else (Lx * 0.5, Ly * 0.5, Lz)
+                outlet = (Lx * 0.5, Ly * 0.5, Lz) if sign > 0 else (Lx * 0.5, Ly * 0.5, 0.0)
+                direction = (0, 0, sign)
+            return inlet, outlet, direction
+
+        def _add_pair(flow_dir, tag, inlet_color, outlet_color, opacity):
+            inlet_center, outlet_center, direction = _centres(flow_dir)
+            inlet_cone = pv.Cone(center=inlet_center, direction=direction,
+                                 height=tip_len, radius=radius, resolution=32)
+            outlet_cone = pv.Cone(center=outlet_center, direction=direction,
+                                  height=tip_len, radius=radius, resolution=32)
+            self.plotter.add_mesh(
+                inlet_cone, color=inlet_color, opacity=opacity,
+                name=f'_flow_inlet_{tag}', show_scalar_bar=False, lighting=True)
+            self.plotter.add_mesh(
+                outlet_cone, color=outlet_color, opacity=opacity,
+                name=f'_flow_outlet_{tag}', show_scalar_bar=False, lighting=True)
+
+        try:
+            _add_pair(self._flow_dir, 'A',
+                      t['inlet_color'], t['outlet_color'], 0.55)
+            if self._flow_dir_B and any(f in self._arrays for f in ('Tb', 'vmag_B', 'P_B_kPa')):
+                _add_pair(self._flow_dir_B, 'B',
+                          t.get('accent_green', t['inlet_color']),
+                          t.get('accent_primary', t['outlet_color']),
+                          0.45)
+        except Exception:
+            pass
 
     def _clim_for(self, fkey: str):
         """Resolve (lo, hi) clim for the given field per current scale mode."""
@@ -847,17 +1129,36 @@ class ThreeDVisPanel(QWidget):
                 pass
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
-        # Opacity ramp: minimum 0.05 (not 0) so the lowest-value voxels still
-        # carry faint color instead of becoming fully transparent = white.
-        # This keeps the volume colorbar consistent with the 2D matplotlib
-        # colorbar where every cmap level is solid.
-        op_lo = min(0.05, self._opacity)   # 0% slider → truly invisible
-        opacity_list = [op_lo, self._opacity]
+        # Opacity ramp:
+        #   slider==0 → pure transparent (true 0, not 0.05) so a dark bg
+        #               shows a clean bounding box without colour haze.
+        #   slider>0  → lo = max(0.08, op*0.55), hi = op.
+        #               Scaling the floor with the slider (instead of hard 5%)
+        #               keeps cold voxels legible on the slate viewport bg —
+        #               a hard 5% floor at 40% opacity made cold regions
+        #               disappear into the background (read as "black cube").
+        if self._opacity <= 1e-6:
+            opacity_list = [0.0, 0.0]
+        else:
+            # Two-point ramp: lo end = op*0.4 (NOT zero) so cold voxels stay
+            # visible. Pure 0 floor made the cold half (e.g. B-inlet thermal
+            # layer) totally transparent — user reads the volume as "all red".
+            # 0.4× factor preserves hot/cold contrast while keeping cold
+            # legible on the slate viewport bg.
+            opacity_list = [self._opacity * 0.4, self._opacity]
+        t = get_theme()
         try:
             self._volume_actor = pl.add_volume(
                 self._grid, scalars=self._field,
                 cmap=meta['cmap'], clim=clim,
-                opacity=opacity_list, shade=False,
+                opacity=opacity_list,
+                # shade=True + mild ambient/diffuse/specular gives the
+                # volume real depth cues; without it the ray-cast reads
+                # as a flat 2D projection (especially on dark bg).
+                # ambient=0.45 (up from 0.35) lifts interior samples so
+                # cold voxels read a colour instead of black; diffuse
+                # trimmed to 0.65 to keep overall brightness balanced.
+                shade=False,
                 name='main_volume',
                 show_scalar_bar=False,     # suppress volume's built-in bar
             )
@@ -874,49 +1175,35 @@ class ThreeDVisPanel(QWidget):
                 vol_mapper.SetSampleDistance(max(0.01, min_cell * 0.25))
             except Exception:
                 pass
-            # Add a separate opaque scalar bar so the colorbar doesn't
-            # inherit the volume's opacity ramp (which washes out low values).
-            # Build the LUT from PyVista/VTK (not matplotlib — VTK has
-            # 'rainbow' but matplotlib does not).
-            n_lut = 256
-            lo, hi = clim
+            # Scalar bar — responsive placement + theme mono font. Narrow
+            # viewports (<800 px wide) slim the bar so it doesn't overlap
+            # the viewport edge.
+            win_w = 1.0
             try:
-                import vtk as _vtk
-                _lut = _vtk.vtkLookupTable()
-                _lut.SetNumberOfTableValues(n_lut)
-                _lut.SetRange(lo, hi)
-                _lut.SetHueRange(0.667, 0.0)   # VTK rainbow: blue→red
-                _lut.Build()
-                # Force alpha=1 on every entry
-                for _i in range(n_lut):
-                    r, g, b, _a = _lut.GetTableValue(_i)
-                    _lut.SetTableValue(_i, r, g, b, 1.0)
-                _lut.Build()
-                pl.add_scalar_bar(
-                    title=meta['title'],
-                    n_labels=5, vertical=True,
-                    position_x=0.905, position_y=0.12,
-                    width=0.045, height=0.76,
-                    fmt=meta['fmt'],
-                    title_font_size=12, label_font_size=11,
-                    color=get_theme()['ax_text'], font_family='courier',
-                    bold=False, italic=False,
-                    shadow=False, outline=False,
-                )
-                # Overwrite the plotter's active scalar bar LUT
-                if pl.mapper is not None:
-                    pl.mapper.SetLookupTable(_lut)
+                wsize = pl.window_size
+                win_w = max(1, int(wsize[0]))
             except Exception:
-                # Fallback: let PyVista default render the bar
-                pl.add_scalar_bar(
-                    title=meta['title'],
-                    n_labels=5, vertical=True,
-                    position_x=0.905, position_y=0.12,
-                    width=0.045, height=0.76,
-                    fmt=meta['fmt'],
-                    title_font_size=12, label_font_size=11,
-                    color=get_theme()['ax_text'], font_family='courier',
-                )
+                pass
+            bar_width = 0.040 if win_w >= 800 else 0.030
+            bar_x = 0.905 if win_w >= 800 else 0.920
+            mono = t.get('mono_family',
+                         "'Fira Code','Consolas','Courier New',monospace")
+            pl.add_scalar_bar(
+                title=meta['title'],
+                n_labels=5, vertical=True,
+                position_x=bar_x, position_y=0.12,
+                width=bar_width, height=0.76,
+                fmt=meta['fmt'],
+                title_font_size=12, label_font_size=11,
+                color=t['ax_text'], font_family='arial',
+                bold=False, italic=False,
+                shadow=False, outline=False,
+            )
+            # VTK's scalar-bar accepts only a small enum of font_family names
+            # ('arial'/'courier'/'times'); we route through 'arial' for mixed
+            # copy and rely on system font fallback for localised labels. The
+            # theme `mono_family` is consumed by Qt widgets around it.
+            _ = mono
 
         except Exception as e:
             # GPU/VTK volume rendering may fail on some driver combos; fall
@@ -990,19 +1277,33 @@ class ThreeDVisPanel(QWidget):
             h_lbl, v_lbl = 'X [mm]', 'Y [mm]'
 
         meta = FIELD_META[key]
+        t = get_theme()
         dlg = QDialog(self)
+        # WA_DeleteOnClose: destroy dialog widget when user closes it so the
+        # matplotlib Figure + canvas are released. Previously they leaked
+        # because dlg.close() only hid the widget. Bug 9 (2026-04-29).
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.setWindowTitle(
             f"Slice {axis.upper()}={coord_mm:.2f} mm  |  {meta['label']}")
+        dlg.setStyleSheet(f"QDialog {{ background: {t['bg']}; color: {t['fg']}; }}")
         fig = Figure(figsize=(7.2, 5.4), dpi=110)
+        fig.patch.set_facecolor(t['fig_bg'])
         canvas = FigureCanvasQTAgg(fig)
         ax = fig.add_subplot(111)
+        ax.set_facecolor(t['ax_bg'])
         im = ax.contourf(horiz, vert, slc2d.T, levels=30, cmap=meta['cmap'])
         cbar = fig.colorbar(im, ax=ax)
-        cbar.set_label(meta['title'])
-        ax.set_xlabel(h_lbl); ax.set_ylabel(v_lbl)
+        cbar.set_label(meta['title'], color=t['ax_text'])
+        cbar.ax.tick_params(colors=t['ax_text'])
+        cbar.outline.set_edgecolor(t['ax_spine'])
+        ax.set_xlabel(h_lbl, color=t['ax_text']); ax.set_ylabel(v_lbl, color=t['ax_text'])
+        ax.tick_params(colors=t['ax_text'])
+        for sp in ax.spines.values():
+            sp.set_edgecolor(t['ax_spine'])
         ax.set_aspect('equal')
         ax.set_title(
-            f"{meta['label']} — slice {axis.upper()} = {coord_mm:.2f} mm")
+            f"{meta['label']} — slice {axis.upper()} = {coord_mm:.2f} mm",
+            color=t['ax_text'])
         fig.tight_layout()
 
         lay = QVBoxLayout(dlg)
@@ -1028,12 +1329,21 @@ class ThreeDVisPanel(QWidget):
                 self._popup_dialogs.remove(dlg)
             except ValueError:
                 pass
+            # Release the matplotlib Figure so the canvas backend frees its
+            # off-screen buffers. Without this, Figure objects accumulate
+            # even after WA_DeleteOnClose destroys the QDialog wrapper.
+            try:
+                import matplotlib.pyplot as _plt
+                _plt.close(fig)
+            except Exception:
+                pass
         dlg.finished.connect(lambda _=None: _on_closed())
         self._popup_dialogs.append(dlg)
         dlg.show()
 
     def _save_figure(self, fig, axis: str, coord_mm: float, key: str):
-        dflt = f"slice_{key}_{axis}_{coord_mm:.2f}mm.png"
+        ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+        dflt = f"slice_{key}_{axis}_{coord_mm:.2f}mm_{ts}.png"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save 2D slice", dflt,
             "PNG (*.png);;PDF (*.pdf);;SVG (*.svg)")

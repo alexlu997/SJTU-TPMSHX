@@ -76,6 +76,10 @@ _THEMES = {
         pareto_accent="#cc4444",
         triad_x="#d13b3b", triad_y="#3bbd3b", triad_z="#3b68d1",
         wireframe="#3c4758", pane_edge="#e0e0e0", pane_grid="#cfd4d9",
+        # 3D viewport background — pure white on light theme reads fine.
+        vp_bg_3d="#ffffff",
+        mono_family="'Fira Code','JetBrains Mono','Consolas','Courier New',monospace",
+        sans_family="'Fira Sans','Inter','Segoe UI',sans-serif",
         glass_bg_alpha=1.0, glass_border_alpha=0.0,
         chk_bg="#ffffff", chk_border="#aeb4ba", chk_hover_border="#2c5282",
         chk_hover_bg="#eef2f6", chk_checked_bg="#2c5282", chk_checked_border="#1e3a5f",
@@ -151,6 +155,12 @@ _THEMES = {
         pareto_accent="#F87171",
         triad_x="#F87171", triad_y="#4ADE80", triad_z="#60A5FA",
         wireframe="#475569", pane_edge="#334155", pane_grid="#1E293B",
+        # 3D viewport background — deep slate (not pure black) so transparent
+        # cold voxels read against a soft contrast instead of dissolving
+        # into a "black hole". Lifted ~4% above pure black.
+        vp_bg_3d="#12161c",
+        mono_family="'Fira Code','JetBrains Mono','Consolas','Courier New',monospace",
+        sans_family="'Fira Sans','Inter','Segoe UI',sans-serif",
         glass_bg_alpha=1.0, glass_border_alpha=0.0,
         chk_bg="#1E293B", chk_border="#334155",
         chk_hover_border="#3B82F6", chk_hover_bg="#1E293B",

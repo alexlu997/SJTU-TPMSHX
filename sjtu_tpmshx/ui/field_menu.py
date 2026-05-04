@@ -100,7 +100,6 @@ def _revert_field_to_default(window, le, attr):
         'le_uA': '20.0',  'le_TinA': '422.0', 'le_PinA': '192362',
         'le_uB': '0.133', 'le_TinB': '300.0', 'le_PinB': '101973',
         'le_Nx': '30',    'le_Ny': '20',      'le_Nz': '5',
-        'le_T_init_s': '325.0',
         'le_pipeA_in_ctr': '0.021', 'le_pipeA_in_w': '0.042',
         'le_pipeA_out_ctr': '0.021', 'le_pipeA_out_w': '0.042',
         'le_pipeB_in_ctr': '0.154', 'le_pipeB_in_w': '0.042',
@@ -112,7 +111,7 @@ def _revert_field_to_default(window, le, attr):
             f"No preset default for {attr}.", 3000)
         return
     # Temperature fields are authored in K; convert if UI shows °C.
-    if attr in ('le_TinA', 'le_TinB', 'le_T_init_s') and \
+    if attr in ('le_TinA', 'le_TinB') and val != '' and \
             getattr(window, '_temp_unit', 'K') == 'C':
         try:
             val = f"{float(val) - 273.15:.2f}"

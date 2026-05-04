@@ -33,7 +33,7 @@ ALPHA_T   = 0.6       # under-relaxation factor for T_field update
 # ── Geometry ──
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
+EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
 L_DOM = 0.182; H_DOM = 0.042
 # C-1: Shanghai Electric 样机 has N_UNITS parallel unit cells (Excel ratio
 # c5/c3 = 36.00 exactly across all 16 cases; also (H_DOM/L_cell)² = 36 from
@@ -82,7 +82,7 @@ df = pd.read_excel(DATA_PATH, engine='openpyxl', sheet_name='Sheet1', header=Non
 
 print(f"Geometry: {TPMS} L={L_CELL} t={T_WALL} eps={EPS:.4f} D_h={D_H*1000:.3f}mm")
 print(f"Domain: {L_DOM*1000:.0f}x{H_DOM*1000:.0f}mm, Grid: {N_X}x{N_Y}")
-K_pred_header, cF_pred_header = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+K_pred_header, cF_pred_header = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
 print(f"D-F coeffs (ConstDF-v1): K={K_pred_header:.4e} m², c_F={cF_pred_header:.4e} 1/m")
 print()
 
@@ -127,7 +127,7 @@ for ci in range(16):
     #     P_out² = P_Ain² − 2·R·T·(μG/K + c_F·G²)·L_dom
     # so SIMPLE's converged state matches the correct isothermal compressible
     # physics to within a few percent of the closed-form 1D answer.
-    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
     G_est = m_air / A_FLOW
     C_est = mu_A * G_est / K_pred + cF_pred * G_est**2
     P_out_sq = P_Ain**2 - 2.0 * R_AIR_VAL * T_Ain_K * C_est * L_DOM
@@ -204,7 +204,7 @@ for ci in range(16):
     dP_B_sim = 0.0
 
     # ── Temperature solver constants (geometry / Nu at inlet) ──
-    eps_f = EPS / 2.0
+    eps_f = EPS_A   # alias
     K_ffA = eps_f * k_A
     K_ffB = eps_f * k_B
     K_ss = (1.0 - EPS) * K_S

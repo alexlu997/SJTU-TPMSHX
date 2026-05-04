@@ -196,14 +196,22 @@ def get_geometry_lut(tpms_type, **kwargs):
 # ── Vectorized property computation ──────────────────────────
 
 def _nu_vec(tpms_type, Re, eps, L_mm, D_h_mm):
-    """Vectorized Nu computation for arrays."""
+    """Vectorized Nu computation for arrays.
+
+    Form (3p pure power-law + explicit Pr^(1/3), Pr=0.72 air const):
+      Nu = c · Pr^(1/3) · Re^a · (D_h/L)^d
+    Coefficients match `tpms_calc._nu_diamond` / `_nu_gyroid`
+    (user-locked fits 2026-04-28 from 试验记录表_整理版_v3.1.xlsx).
+    eps argument unused (kept for API compatibility).
+    """
+    from solvers.tpms_calc import _NU_ROUGHNESS_FACTOR
     Re = np.maximum(Re, 10.0)
+    pr13 = Pr ** (1/3)
     if tpms_type == 'Diamond':
-        n = 0.618 - 0.800 * np.log(eps)
-        return 0.008 * Pr**(1/3) * Re**n * eps**7.41 * (D_h_mm / (1000*Sa_mm))**(-1.92)
+        Nu_smooth = 0.0944 * pr13 * Re**0.8273 * (D_h_mm / L_mm)**0.226
     else:
-        n = 0.177 * Re**0.1 * eps**(-2/3)
-        return 0.17 * Pr**(1/3) * Re**n * eps**2.25 * (L_mm / (1000*Sa_mm))**(-2.01)
+        Nu_smooth = 0.126 * pr13 * Re**0.7898 * (D_h_mm / L_mm)**0.2409
+    return _NU_ROUGHNESS_FACTOR * Nu_smooth
 
 
 # ── Main entry point ─────────────────────────────────────────
@@ -215,7 +223,8 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
                             lut, P_in=101325.0,
                             sigmoid_width_y=0.02, sigmoid_width_x=0.05,
                             fix_L=False, fix_t=False, opt_axis='y',
-                            dx_arr=None, dy_arr=None):
+                            dx_arr=None, dy_arr=None,
+                            allow_extrap=None):
     """Build per-cell property arrays from sigmoid-interpolated L(x,y), t(x,y).
 
     Parameters
@@ -263,9 +272,26 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
                                y_trans_inlet, y_trans_outlet,
                                sigmoid_width_x, sigmoid_width_y)
 
-    # Clip to valid range
-    L_field = np.clip(L_field, 4.0, 8.0)
-    t_field = np.clip(t_field, 0.3, 0.5)
+    # Clip to fit range — bypassed under allow_extrap so user can sweep
+    # outside ConstDF-v1 [L 4-8mm, t 0.3-0.5mm] (e.g. Shanghai t=0.6mm).
+    # Env var TPMSHX_ALLOW_EXTRAP=1 also triggers bypass for non-UI callers.
+    if allow_extrap is None:
+        import os as _os_ax
+        allow_extrap = _os_ax.environ.get(
+            'TPMSHX_ALLOW_EXTRAP', '').lower() in ('1', 'true', 'yes')
+    if not allow_extrap:
+        L_field = np.clip(L_field, 4.0, 8.0)
+        t_field = np.clip(t_field, 0.3, 0.5)
+    else:
+        Lo, Lhi = float(L_field.min()), float(L_field.max())
+        to, thi = float(t_field.min()), float(t_field.max())
+        if Lo < 4.0 or Lhi > 8.0 or to < 0.3 or thi > 0.5:
+            import warnings as _w_ax
+            _w_ax.warn(
+                f"[ConstDF-v1 extrap] L=[{Lo:.2f},{Lhi:.2f}]mm "
+                f"t=[{to:.3f},{thi:.3f}]mm outside fit "
+                "L[4,8] / t[0.3,0.5]; LUT/Nu extrapolated.",
+                stacklevel=2)
 
     # 4. Query LUT for epsilon and A_0
     eps_arr, A0_arr = lut.query(L_field, t_field)

@@ -78,12 +78,12 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
     dz = np.full(Nz, LZ / Nz)
 
     eps_arr = np.full((Nx, Ny, Nz), EPS)
-    eps_f = EPS / 2.0
-    K_ffA = np.full((Nx, Ny, Nz), eps_f * air_conductivity(T_Ain_K))
-    K_ffB = np.full((Nx, Ny, Nz), eps_f * 0.6)
+    eps_A = 0.5 * EPS    # per-stream void fraction
+    K_ffA = np.full((Nx, Ny, Nz), eps_A * air_conductivity(T_Ain_K))
+    K_ffB = np.full((Nx, Ny, Nz), eps_A * 0.6)
     K_ss = np.full((Nx, Ny, Nz), (1.0 - EPS) * K_S)
 
-    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, eps_f)
+    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, eps_A)
     K_A_arr = np.full((Nx, Nz), K_pred)
     cF_A_arr = np.full((Nx, Nz), cF_pred)
 

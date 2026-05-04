@@ -42,7 +42,7 @@ P_Ain = P_atm + float(df.iloc[ci, 30])
 rho_A = air_density(T_Ain_K, P_Ain); mu_A = air_viscosity(T_Ain_K)
 u_A = m_air / (rho_A * A_FLOW)
 
-K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, 0.5 * EPS)
 G = m_air / A_FLOW
 C = mu_A*G/K_pred + cF_pred*G**2
 P_out_sq = P_Ain**2 - 2*R_AIR*T_Ain_K*C*L_DOM

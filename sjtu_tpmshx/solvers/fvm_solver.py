@@ -335,10 +335,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     if (K_arr is None) ^ (cF_arr is None):
         raise ValueError("Provide both K_arr and cF_arr, or neither.")
     if K_arr is None:
-        try:
-            from df_fit.predict import predict_K_cF
-        except ImportError:
-            from sjtu_tpmshx.df_fit.predict import predict_K_cF
+        from df_fit.predict import predict_K_cF
         K_val, cF_val = predict_K_cF(tpms_type, float(L_mm), float(t_mm),
                                      float(eps) / 2.0)
         K_arr = np.full(nc, K_val, dtype=np.float64)
@@ -520,10 +517,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     Returns: u_cell, v_cell, P_cell, face_Un
     """
     nc = mesh.n_cells
-    try:
-        from df_fit.predict import predict_K_cF
-    except ImportError:
-        from sjtu_tpmshx.df_fit.predict import predict_K_cF
+    from df_fit.predict import predict_K_cF
     K, cF = predict_K_cF(tpms_type, float(L_mm), float(t_mm), float(eps) / 2.0)
     mu_eff = mu / eps
 
@@ -796,7 +790,8 @@ def solve_energy(mesh, face_Un_A, face_Un_B,
 #  High-level wrapper
 # ===================================================================
 
-_RE_FLOOR = 400.0   # Nu/f correlations validated for Re >= 400
+_RE_FLOOR = 800.0   # Nu correlation validated for D_h-Re >= 800 (post-refit 2026-04-26;
+                     # = 2·400 since training Excel Re used r_h convention)
 
 
 def _compute_local_hv(umag, tpms_type, L_mm, t_mm, eps, A_0, D_h,
@@ -805,27 +800,28 @@ def _compute_local_hv(umag, tpms_type, L_mm, t_mm, eps, A_0, D_h,
 
     Re(x,y) → Nu(x,y) → h_sf(x,y) → h_v(x,y) = h_sf * A_0
 
-    Re is clamped to _RE_FLOOR (400) at the lower end so that the
+    Re is clamped to _RE_FLOOR (800) at the lower end so that the
     Nu correlation is never extrapolated below its validated range.
     In low-velocity regions this gives a *conservative* (upper-bound)
     estimate of h_v, which is physically safer than extrapolating
     the power-law to near-zero Re.
     """
-    r_h = D_h / 2.0
     rho_ref = air_density(T_in, P_atm)
     k_f = air_conductivity(T_in)
     D_h_mm = D_h * 1000.0
+    eps_A = 0.5 * eps   # per-stream void fraction (post-refit 2026-04-26)
     nc = len(umag)
     h_v = np.empty(nc)
     n_clamped = 0
 
     for ci in range(nc):
         u_local = max(umag[ci], 0.01)
-        Re_local = rho_ref * u_local * r_h / mu
+        # D_h-based Re (single-stream u): matches refit Nu correlation
+        Re_local = rho_ref * u_local * D_h / mu
         if Re_local < _RE_FLOOR:
             Re_local = _RE_FLOOR
             n_clamped += 1
-        Nu = nu_from_Re(tpms_type, Re_local, eps, L_mm, D_h_mm)
+        Nu = nu_from_Re(tpms_type, Re_local, eps_A, L_mm, D_h_mm)
         h_sf = Nu * k_f / D_h
         h_v[ci] = h_sf * A_0
 
@@ -877,10 +873,7 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
             mesh.cell_centers[:, 1] - ymin, nc, H_mesh)
 
         # Darcy solver: per-cell (K, c_F) via ConstDF-v1 surrogate
-        try:
-            from df_fit.predict import predict_K_cF_vec
-        except ImportError:
-            from sjtu_tpmshx.df_fit.predict import predict_K_cF_vec
+        from df_fit.predict import predict_K_cF_vec
         L_row = np.empty(nc, dtype=np.float64)
         t_row = np.empty(nc, dtype=np.float64)
         for ci in range(nc):

@@ -143,7 +143,7 @@ def _attach_geometry(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
     out["eps"] = eps
-    out["eps_f"] = eps / 2.0
+    out["eps_f"] = eps / 2.0   # ε_A: per-stream void fraction (sheet HX)
     out["r_h_m"] = rh
     return out[[
         "tpms", "L_mm", "t_mm", "eps", "eps_f", "r_h_m",

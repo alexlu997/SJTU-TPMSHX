@@ -12,6 +12,51 @@ from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
 
 
+def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
+                          dx_arr, dy_arr, inlet_mask=None, outlet_mask=None):
+    """Mass-conserving enthalpy balance Q = ṁ_in · (T_in_avg − T_out_avg).
+
+    Uses the inlet plane ρ·|u|·A·mask as ṁ·cp reference so the returned Q
+    is robust to partial SIMPLE mass-conservation convergence (B-1 refactor
+    2026-04-24). The earlier H_in − H_out form gave spurious non-zero Q
+    when ṁ_inlet ≠ ṁ_outlet, which in fast-mode NSGA-II inflated Q by 3×.
+
+    Positive = fluid gives up heat (T_in > T_out).
+    Optional 1D masks (length = cross-axis) gate the integral to partial
+    inlet / outlet pipes; missing masks default to full face.
+    """
+    if dir_code in (0, 1):
+        i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
+        A_cell = dy_arr
+        n_cross = T_field.shape[1]
+        m_in_arr  = (np.asarray(inlet_mask,  dtype=np.float64)
+                     if inlet_mask  is not None else np.ones(n_cross))
+        m_out_arr = (np.asarray(outlet_mask, dtype=np.float64)
+                     if outlet_mask is not None else np.ones(n_cross))
+        m_in_w  = rho_cp_field[i_in,  :] * np.abs(uc[i_in,  :]) * A_cell * m_in_arr
+        m_out_w = rho_cp_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell * m_out_arr
+        T_in_face, T_out_face = T_field[i_in, :], T_field[i_out, :]
+    else:
+        j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
+        A_cell = dx_arr
+        n_cross = T_field.shape[0]
+        m_in_arr  = (np.asarray(inlet_mask,  dtype=np.float64)
+                     if inlet_mask  is not None else np.ones(n_cross))
+        m_out_arr = (np.asarray(outlet_mask, dtype=np.float64)
+                     if outlet_mask is not None else np.ones(n_cross))
+        m_in_w  = rho_cp_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell * m_in_arr
+        m_out_w = rho_cp_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell * m_out_arr
+        T_in_face, T_out_face = T_field[:, j_in], T_field[:, j_out]
+    m_dot_cp = float(np.sum(m_in_w))
+    if m_dot_cp < 1e-30:
+        return 0.0
+    T_in_avg = float(np.sum(m_in_w * T_in_face)) / m_dot_cp
+    m_out_total = float(np.sum(m_out_w))
+    T_out_avg = (float(np.sum(m_out_w * T_out_face)) / m_out_total
+                 if m_out_total > 1e-30 else float(np.mean(T_out_face)))
+    return m_dot_cp * (T_in_avg - T_out_avg)
+
+
 def run_calculation_inner(window):
     """Orchestrator: split into 4 phases for readability."""
     cfg = _parse_inputs(window)
@@ -33,10 +78,16 @@ def _parse_inputs(window):
     if hasattr(window, 'combo_fluidB'):
         validate_fluid_type(parse_fluid_type(window.combo_fluidB), 'B')
 
-    # Surrogate training-domain hard check for the UI Compute path (#10) —
-    # previously only the optimizer did this; now a single out-of-window
-    # (u, T, L, t) on the Compute tab will refuse to run rather than let
-    # the RBF extrapolate silently.
+    # Surrogate training-domain guard for the UI Compute path (#10) —
+    # previously only the optimizer did this; the Compute tab now also
+    # guards a single out-of-window (u, T, L, t) from silent RBF extrap.
+    # If the "Allow surrogate extrapolation" checkbox is on (or env var
+    # TPMSHX_ALLOW_EXTRAP=1), out-of-window values downgrade to warn and
+    # we stash the reasons on window._extrap_reasons so run_calculation
+    # can mark the result + watermark the plots.
+    window._extrap_reasons = []
+    _allow_extrap = bool(getattr(window, 'chk_allow_extrap', None)
+                         and window.chk_allow_extrap.isChecked())
     try:
         from optimization.optimizer import check_surrogate_domain_at_point
         _tpms = window.combo_tpms.currentText()
@@ -51,8 +102,12 @@ def _parse_inputs(window):
         _P_A = float(window.le_PinA.text())
         _P_B = float(window.le_PinB.text())
         _uA = float(window.le_uA.text()); _uB = float(window.le_uB.text())
-        check_surrogate_domain_at_point(_tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A')
-        check_surrogate_domain_at_point(_tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B')
+        window._extrap_reasons += check_surrogate_domain_at_point(
+            _tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A',
+            allow_extrap=_allow_extrap) or []
+        window._extrap_reasons += check_surrogate_domain_at_point(
+            _tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B',
+            allow_extrap=_allow_extrap) or []
     except (AttributeError, ValueError) as _e:
         if isinstance(_e, ValueError):
             raise
@@ -81,10 +136,30 @@ def _parse_inputs(window):
                   if hasattr(window, '_temp_to_K')
                   else _parse(window.le_TinB, "Inlet Temp B (T_inB)")),
     }
+
+    # Optional solid initial temperature — empty means legacy seed
+    # 0.5*(T_inA+T_inB) inside solve_full_domain. Not a prescribed Ts.
+    _le_ts = getattr(window, 'le_TsInit', None)
+    T_s_init = None
+    if _le_ts is not None and _le_ts.text().strip():
+        if hasattr(window, '_temp_to_K'):
+            T_s_init = window._temp_to_K(_le_ts)
+        else:
+            T_s_init = float(_le_ts.text())
     bad = [v for v in _fields.values() if isinstance(v, str)]
     if bad:
         raise ValueError(f"Invalid input in: {', '.join(bad)}")
     L, H = _fields['L'], _fields['H']
+    # Defensive unit firewall — see run_calculation_3d.py:_parse_inputs for
+    # rationale (GUI labels L/H in METERS but L_cell/t in MM; mistyping the
+    # mm value into the metre field silently spawns a multi-metre domain).
+    _DOMAIN_MAX_M = 10.0
+    for _name, _val in [('L', L), ('H', H)]:
+        if _val > _DOMAIN_MAX_M:
+            raise ValueError(
+                f"Domain dimension {_name!r}={_val} m exceeds {_DOMAIN_MAX_M} m. "
+                f"Likely unit slip — GUI expects meters here, while L_cell "
+                f"and t use millimeters. Re-check input.")
     N_x, N_y = _fields['N_x'], _fields['N_y']
     u_A, u_B = _fields['u_A'], _fields['u_B']
     T_inA, T_inB = _fields['T_inA'], _fields['T_inB']
@@ -121,13 +196,16 @@ def _parse_inputs(window):
                 if _x_dec is not None:
                     from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
                     _lut = get_geometry_lut(tpms_type)
+                    _ax_ui = bool(getattr(window, 'chk_allow_extrap', None)
+                                  and window.chk_allow_extrap.isChecked())
                     za = build_continuous_arrays(
                         _x_dec, Lcell, t_wall,
                         getattr(window, '_pareto_y_trans_inlet', 0.2),
                         getattr(window, '_pareto_y_trans_outlet', 0.2),
                         N_x, N_y, L, H,
                         tpms_type, k_s,
-                        u_A, u_B, T_inA, T_inB, _lut)
+                        u_A, u_B, T_inA, T_inB, _lut,
+                        allow_extrap=_ax_ui)
                     print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
                     from solvers.zone_config import ZoneConfig
@@ -167,6 +245,7 @@ def _parse_inputs(window):
         'dx': dx, 'dy': dy,
         'u_A': u_A, 'u_B': u_B,
         'T_inA': T_inA, 'T_inB': T_inB,
+        'T_s_init': T_s_init,
         'cfgA': cfgA, 'cfgB': cfgB,
         'dir_A': dir_A, 'dir_B': dir_B,
         'tpms_type': tpms_type,
@@ -267,7 +346,10 @@ def _build_fields(window, cfg):
     # Use 4-wall Brinkman-BL refined grid when inlet/outlet are full-width (no
     # break points). Otherwise, fall back to aligned uniform grid since
     # refinement would conflict with inlet/outlet boundary alignment.
-    _wall_refine_gui = (len(_x_breaks) == 0 and len(_y_breaks) == 0)
+    _wall_refine_gui = (
+        len(_x_breaks) == 0 and len(_y_breaks) == 0
+        and zone_config is None and za is None
+    )
     if _wall_refine_gui:
         from solvers.df_projection import build_master_refined_grid
         try:
@@ -281,11 +363,72 @@ def _build_fields(window, cfg):
         energy_dx = _aligned_grid(N_x, L, list(_x_breaks))
         energy_dy = _aligned_grid(N_y, H, list(_y_breaks))
 
+    # From this point onward the 2D compute path must use the effective grid
+    # dimensions implied by energy_dx/energy_dy, not the raw UI values.  The
+    # refined-grid path can expand e.g. user Nx=20 to actual Nx=23; keeping the
+    # old cfg dimensions made Ta/rho/P fields broadcast as (20, 4) vs (23, 4).
+    N_x = int(len(energy_dx))
+    N_y = int(len(energy_dy))
+    cfg['N_x'] = N_x
+    cfg['N_y'] = N_y
+
+    def _resize_zone_arrays_to_effective_grid(za_dict, shape):
+        if za_dict is None:
+            return
+
+        def _nearest(arr):
+            sx, sy = arr.shape
+            ix = np.clip(((np.arange(shape[0]) + 0.5) * sx / shape[0]).astype(int),
+                         0, sx - 1)
+            iy = np.clip(((np.arange(shape[1]) + 0.5) * sy / shape[1]).astype(int),
+                         0, sy - 1)
+            return arr[np.ix_(ix, iy)]
+
+        def _linear(arr):
+            sx, sy = arr.shape
+            x_old = (np.arange(sx) + 0.5) / sx
+            y_old = (np.arange(sy) + 0.5) / sy
+            x_new = (np.arange(shape[0]) + 0.5) / shape[0]
+            y_new = (np.arange(shape[1]) + 0.5) / shape[1]
+            tmp = np.empty((shape[0], sy), dtype=np.float64)
+            for j in range(sy):
+                tmp[:, j] = np.interp(x_new, x_old, arr[:, j])
+            out = np.empty(shape, dtype=np.float64)
+            for i in range(shape[0]):
+                out[i, :] = np.interp(y_new, y_old, tmp[i, :])
+            return out
+
+        for key, value in list(za_dict.items()):
+            arr = np.asarray(value)
+            if arr.ndim != 2 or arr.shape == shape:
+                continue
+            if arr.shape[0] == 0 or arr.shape[1] == 0:
+                continue
+            if key == 'zone_id' or not np.issubdtype(arr.dtype, np.floating):
+                za_dict[key] = _nearest(arr)
+            else:
+                za_dict[key] = _linear(arr.astype(np.float64, copy=False))
+
+        if 'eps_arr' in za_dict:
+            za_dict['eps_f_arr'] = np.asarray(za_dict['eps_arr'],
+                                              dtype=np.float64) / 2.0
+
+    _resize_zone_arrays_to_effective_grid(za, (N_x, N_y))
+
     # Build the _run_simple closure here so it captures all needed locals.
     # It is returned in fields and called by Phase 3.
     simple_warnings = {}
 
-    def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0):
+    def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
+                    T_field_real=None):
+        """Build + solve SIMPLE for one fluid.
+
+        T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
+        supplied (after first outer iter, from LTNE Ta/Tb), propagated to
+        SIMPLE.T_field via update_T_field so inner _update_density() uses
+        local T (not stale scalar T_in_f). Required for compressible coupling
+        consistency across outer iters.
+        """
         d = cfg_fluid['dir']
         is_x = window._is_x_dir(d)
         pipe_lo = cfg_fluid['in_ctr'] - cfg_fluid['in_w'] / 2
@@ -330,7 +473,7 @@ def _build_fields(window, cfg):
                              P_ref_abs=P_in_abs)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
-            s.dy_arr = _aligned_grid(N_x, L, list(_x_breaks))
+            s.dy_arr = energy_dx.copy()
         else:
             s = SIMPLESolver(L, H, N_x, N_y, tpms_type, Lcell, t_wall,
                              eps, r_h, rho_simple, mu_simple, T_in_f,
@@ -343,6 +486,14 @@ def _build_fields(window, cfg):
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
+        # Zoned ε push (#2 fix): if zone config gives spatial eps_arr, push to
+        # SIMPLE so its continuity uses ∇·(ε·ρ·u)=0 instead of ∇·(ρ·u)=0.
+        # Uniform ε leaves default (eps_field=eps everywhere) unchanged.
+        if za is not None and za.get('eps_arr') is not None:
+            eps_real = np.asarray(za['eps_arr'], dtype=np.float64)
+            eps_sol = _to_simple_coords(eps_real)
+            if eps_sol.shape == s.eps_field.shape:
+                s.eps_field = np.ascontiguousarray(eps_sol, dtype=np.float64)
         # ── Design-specific K/c_F override (2026-04-17) ──
         # zone_config path above already populates per-row K/c_F via
         # predict_K_cF_vec inside SIMPLE.__init__. But zone_arrays path and
@@ -361,6 +512,12 @@ def _build_fields(window, cfg):
                                      za['grid_cells'], None, None, fluid)
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         _tol = 5e-4 if _has_partial else 1e-5
+        # Propagate Ta/Tb to SIMPLE.T_field if available (compressible coupling
+        # fix; without this _update_density uses stale scalar T_in inside SIMPLE)
+        if T_field_real is not None:
+            T_simple = _to_simple_coords(T_field_real)
+            if T_simple.shape == s.T_field.shape:
+                s.update_T_field(np.ascontiguousarray(T_simple))
         # Live residual hook — push (iter, residual) onto the shared
         # window buffer so the UI sparkline can render during the solve
         # instead of only after it returns.
@@ -434,6 +591,47 @@ def _run_solvers(window, cfg, fields):
     _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
     _ALPHA_COUP = 0.7     # under-relaxation
 
+    # Local-Re Nu rescale (2D #1 fix 2026-04-25): per-cell h_v using local
+    # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to Nu_lam=4.36 floor
+    # (laminar Hagen-Poiseuille limit, prevents Nu→0 non-physical extrapolation).
+    _NU_LAM_FLOOR_2D = 4.36
+
+    def _build_hv_local_2d(rho_scalar, mu_scalar, k_f_scalar,
+                            u_mag_field, L_mm_field, t_mm_field):
+        """Per-cell h_v = A_0 · max(Nu(Re_local), Nu_lam) · k_f / D_h.
+        L_mm_field, t_mm_field None → uniform Lcell, t_wall."""
+        Nx_l, Ny_l = u_mag_field.shape
+        if L_mm_field is None:
+            g_u = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
+            A0 = g_u['A_0']; D_h = g_u['D_h']; eps_g = g_u['epsilon']
+            Re_loc = rho_scalar * (np.abs(u_mag_field) + 1e-12) * D_h / mu_scalar
+            out = np.empty((Nx_l, Ny_l), dtype=np.float64)
+            for i in range(Nx_l):
+                for j in range(Ny_l):
+                    # single-stream: ε_f = ε/2 (post-refit 2026-04-26)
+                    nu_corr = _tc.nu_from_Re(tpms_type,
+                                              max(float(Re_loc[i, j]), 1.0),
+                                              eps_g / 2.0, Lcell, D_h * 1000.0)
+                    Nu_l = max(nu_corr, _NU_LAM_FLOOR_2D)
+                    out[i, j] = A0 * Nu_l * k_f_scalar / D_h
+            return out
+        out = np.empty((Nx_l, Ny_l), dtype=np.float64)
+        for i in range(Nx_l):
+            for j in range(Ny_l):
+                L_ij = float(L_mm_field[i, j]); t_ij = float(t_mm_field[i, j])
+                g = tpms_geometry(tpms_type, L_ij, t_ij, k_s)
+                D_h_l = g['D_h']
+                Re_l = rho_scalar * (abs(float(u_mag_field[i, j])) + 1e-12) * D_h_l / mu_scalar
+                # single-stream: ε_f = ε/2
+                nu_corr = _tc.nu_from_Re(tpms_type, max(Re_l, 1.0),
+                                          g['epsilon'] / 2.0, L_ij, D_h_l * 1000.0)
+                Nu_l = max(nu_corr, _NU_LAM_FLOOR_2D)
+                out[i, j] = g['A_0'] * Nu_l * k_f_scalar / D_h_l
+        return out
+
+    tpms_type = cfg['tpms_type']
+    Lcell = cfg['Lcell']; t_wall = cfg['t_wall']; k_s = cfg['k_s']
+
     rho_A, rho_B = window._rho_A, window._rho_B
     mu_A, mu_B = window._mu_A, window._mu_B
     P_inA_val = float(window.le_PinA.text())
@@ -448,6 +646,19 @@ def _run_solvers(window, cfg, fields):
     Ta_prev = Tb_prev = None
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
     Ta = Tb = Ts = None
+    # User-provided solid warm-start seed. Empty → solver fallback
+    # (per-fluid inlet T for Ta/Tb, 0.5*(T_inA+T_inB) for Ts).
+    # Filled → only Ts is overridden with the user value; Ta/Tb stay at
+    # the per-fluid inlet T to avoid the 0.5-mean energy-balance leak
+    # documented in solve_full_3d.py:1442-44 (mid-T value at non-pipe
+    # inlet cells diffuses back as a virtual heat source, ~20–25% on
+    # partial-inlet geometries). Ts is *not* prescribed; the solid
+    # energy equation still updates it every sweep.
+    _Ts_init_user = cfg.get('T_s_init')
+    if _Ts_init_user is not None:
+        Ta = np.full((N_x, N_y), float(T_inA), dtype=np.float64)
+        Tb = np.full((N_x, N_y), float(T_inB), dtype=np.float64)
+        Ts = np.full((N_x, N_y), float(_Ts_init_user), dtype=np.float64)
     _has_partial_A = False
     _has_partial_B = False
     ucA = vcA = ucB = vcB = None
@@ -463,11 +674,18 @@ def _run_solvers(window, cfg, fields):
     for _coup_it in range(_MAX_COUPLING):
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
 
-        # Step 1: SIMPLE velocity with current rho field
+        # Step 1: SIMPLE velocity with current rho field. Pass Ta/Tb after
+        # first outer iter so SIMPLE _update_density uses local T (not stale T_in).
+        _Ta_for_simpA = Ta if _coup_it > 0 else None
+        _Tb_for_simpB = Tb if _coup_it > 0 else None
         with _warn.catch_warnings(record=True) as _caught:
             _warn.simplefilter("always")
-            ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A, 'Fluid A', P_inA_val)
-            ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B, 'Fluid B', P_inB_val)
+            ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A,
+                                            'Fluid A', P_inA_val,
+                                            T_field_real=_Ta_for_simpA)
+            ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B,
+                                            'Fluid B', P_inB_val,
+                                            T_field_real=_Tb_for_simpB)
         if _coup_it == 0:
             for w in _caught:
                 warnings_list.append(str(w.message))
@@ -491,12 +709,31 @@ def _run_solvers(window, cfg, fields):
         _imA = simpA.inlet_frac.astype(np.float64)  # 1D float, length = SIMPLE Nx for A
         _imB = simpB.inlet_frac.astype(np.float64)  # 1D float, length = SIMPLE Nx for B
 
+        # Build local-Re per-cell h_v fields (#1 fix). Use cell-center magnitude.
+        u_mag_A = np.sqrt(ucA**2 + vcA**2)
+        u_mag_B = np.sqrt(ucB**2 + vcB**2)
+        rho_A_scalar = float(rho_A_field.mean())
+        rho_B_scalar = float(rho_B_field.mean())
+        mu_A_scalar = float(np.asarray(mu_A).mean()) if np.ndim(mu_A) else float(mu_A)
+        mu_B_scalar = float(np.asarray(mu_B).mean()) if np.ndim(mu_B) else float(mu_B)
+        k_fA = float(_tc.air_conductivity(T_inA))
+        k_fB = float(_tc.air_conductivity(T_inB))
+        # Zoned L/t fields (only if zone_config and grid mode); otherwise None
+        L_field_2d = None; t_field_2d = None
+        if zone_config is not None and za is not None:
+            L_field_2d = za.get('L_mm_arr')
+            t_field_2d = za.get('t_arr')
+        h_vA_local = _build_hv_local_2d(rho_A_scalar, mu_A_scalar, k_fA,
+                                         u_mag_A, L_field_2d, t_field_2d)
+        h_vB_local = _build_hv_local_2d(rho_B_scalar, mu_B_scalar, k_fB,
+                                         u_mag_B, L_field_2d, t_field_2d)
+
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
         if zone_config is not None:
             Ta, Tb, Ts, e_info = solve_full_domain(
                 L, H, N_x, N_y, T_inA, T_inB,
                 za['K_ffA_arr'], za['K_ffB_arr'], za['K_ss_arr'],
-                za['h_vA_arr'], za['h_vB_arr'],
+                h_vA_local, h_vB_local,
                 rho_cp_A, rho_cp_B,
                 za['eps_arr'], ucA, vcA, ucB, vcB,
                 dir_A, dir_B,
@@ -509,7 +746,7 @@ def _run_solvers(window, cfg, fields):
             Ta, Tb, Ts, e_info = solve_full_domain(
                 L, H, N_x, N_y, T_inA, T_inB,
                 window._K_ffA, window._K_ffB, window._K_ss,
-                window._h_vA, window._h_vB,
+                h_vA_local, h_vB_local,
                 rho_cp_A, rho_cp_B,
                 eps, ucA, vcA, ucB, vcB,
                 dir_A, dir_B,
@@ -710,10 +947,10 @@ def _run_solvers(window, cfg, fields):
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
     if za is not None and 'h_vB_arr' in za:
-        Q_100 = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area))
+        Q_solid_100 = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area))
     else:
         h_vB = window._h_vB
-        Q_100 = float(np.sum(h_vB * (Ts - Tb) * _cell_area))
+        Q_solid_100 = float(np.sum(h_vB * (Ts - Tb) * _cell_area))
 
     # Richardson: run energy at 200×100 for Q extrapolation
     Nx2, Ny2 = N_x * 2, N_y * 2
@@ -760,18 +997,66 @@ def _run_solvers(window, cfg, fields):
         dx_arr=energy_dx2, dy_arr=energy_dy2)
     _area2 = energy_dx2[:, None] * energy_dy2[None, :]
     if za is not None and 'h_vB_arr' in za:
-        Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
+        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
     else:
-        Q_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
-    # Richardson extrapolation — second-order scheme (SOU convection + 2nd-order
-    # diffusion): F_ext = (r^p · F_fine − F_coarse) / (r^p − 1) with r = 2
-    # (grid halving) and p = 2 → (4 · Q_fine − Q_coarse) / 3.
-    # Previously used `2*Q_fine − Q_coarse` which is the p = 1 formula and
-    # under-corrects the discretisation error for a formally 2nd-order solver.
-    # Three-grid verification of the observed order (Roache GCI) is not wired
-    # in yet — the 2-grid extrapolation trusts that p ≈ 2 as designed; a
-    # third grid at 4× would let us measure p in practice.
-    Q_total = (4.0 * Q_200 - Q_100) / 3.0
+        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
+    # Diagnostic only — solid-side Richardson retains the old signed
+    # convention and lets us track grid convergence on ∑h_vB·(Ts−Tb).
+    Q_solid_richardson = (4.0 * Q_solid_200 - Q_solid_100) / 3.0
+
+    # Primary Q_total via Richardson on enthalpy max(|Q_A|,|Q_B|) — signed-to-
+    # unsigned fix (Option C, 2026-04-24). Coarse grid has no SIMPLE, so mask
+    # is upsampled from the fine-grid inlet_frac (nearest-neighbor 2× repeat;
+    # exact since Nx2 = 2·N_x, Ny2 = 2·N_y).
+    mA_in  = simpA.inlet_frac.astype(np.float64)  if simpA is not None else None
+    mA_out = simpA.outlet_frac.astype(np.float64) if simpA is not None else None
+    mB_in  = simpB.inlet_frac.astype(np.float64)  if simpB is not None else None
+    mB_out = simpB.outlet_frac.astype(np.float64) if simpB is not None else None
+    mA_in2  = np.repeat(mA_in,  2) if mA_in  is not None else None
+    mA_out2 = np.repeat(mA_out, 2) if mA_out is not None else None
+    mB_in2  = np.repeat(mB_in,  2) if mB_in  is not None else None
+    mB_out2 = np.repeat(mB_out, 2) if mB_out is not None else None
+
+    rho_cp_A_fld = (rho_cp_A if np.ndim(rho_cp_A) > 0
+                    else np.full((N_x, N_y), rho_cp_A))
+    rho_cp_B_fld = (rho_cp_B if np.ndim(rho_cp_B) > 0
+                    else np.full((N_x, N_y), rho_cp_B))
+
+    try:
+        Q_A_fine = _enthalpy_balance_2d(
+            Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
+            inlet_mask=mA_in, outlet_mask=mA_out)
+        Q_B_fine = _enthalpy_balance_2d(
+            Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
+            inlet_mask=mB_in, outlet_mask=mB_out)
+        Q_A_coarse = _enthalpy_balance_2d(
+            Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
+            inlet_mask=mA_in2, outlet_mask=mA_out2)
+        Q_B_coarse = _enthalpy_balance_2d(
+            Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
+            inlet_mask=mB_in2, outlet_mask=mB_out2)
+        # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
+        # separately, THEN take max. Each Richardson acts on a smooth
+        # (single-sign) function across refinement, so the formal
+        # 2nd-order extrapolation stays valid. Prior pipeline applied
+        # Richardson after max(), which fails if max-argument flips
+        # between the coarse and fine grids.
+        Q_A_ext = (4.0 * abs(Q_A_fine)   - abs(Q_A_coarse)  ) / 3.0
+        Q_B_ext = (4.0 * abs(Q_B_fine)   - abs(Q_B_coarse)  ) / 3.0
+        Q_total = max(Q_A_ext, Q_B_ext)
+        Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
+        Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
+        # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
+        # assumption in doubt). Per-side unified metric: compare the side
+        # that dominates Q_total.
+        _denom = max(Q_fine_max, 1e-12)
+        richardson_warn = abs(Q_fine_max - Q_coarse_max) / _denom > 0.10
+    except Exception:
+        Q_A_fine = Q_B_fine = float('nan')
+        Q_A_ext = Q_B_ext = float('nan')
+        Q_fine_max = float('nan')
+        Q_total = float('nan')
+        richardson_warn = False
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
@@ -808,42 +1093,16 @@ def _run_solvers(window, cfg, fields):
     #   H_in  = ∑_face ρ·cp·|u·n̂|·A · T
     #   H_out = same on the outlet face
     #   Q_fluid = H_in − H_out   (positive = heat given up by the fluid)
-    def _enthalpy_balance(T_field, uc, vc, rho_cp_field, dir_code, dx_arr, dy_arr):
-        if dir_code in (0, 1):
-            i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
-            A_cell = dy_arr
-            H_in  = float(np.sum(rho_cp_field[i_in, :]
-                                  * np.abs(uc[i_in, :])
-                                  * A_cell
-                                  * T_field[i_in, :]))
-            H_out = float(np.sum(rho_cp_field[i_out, :]
-                                  * np.abs(uc[i_out, :])
-                                  * A_cell
-                                  * T_field[i_out, :]))
-        else:
-            j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
-            A_cell = dx_arr
-            H_in  = float(np.sum(rho_cp_field[:, j_in]
-                                  * np.abs(vc[:, j_in])
-                                  * A_cell
-                                  * T_field[:, j_in]))
-            H_out = float(np.sum(rho_cp_field[:, j_out]
-                                  * np.abs(vc[:, j_out])
-                                  * A_cell
-                                  * T_field[:, j_out]))
-        return H_in - H_out  # heat given up by the fluid (W)
+    # Enthalpy balance uses module-level _enthalpy_balance_2d; see top of file.
 
+    # Reuse fine-grid enthalpy already computed above in the Richardson block.
+    Q_A = Q_A_fine
+    Q_B = Q_B_fine
     try:
-        Q_A = _enthalpy_balance(Ta, ucA, vcA,
-                                rho_cp_A if np.ndim(rho_cp_A) > 0 else np.full((N_x, N_y), rho_cp_A),
-                                dir_A, energy_dx, energy_dy)
-        Q_B = _enthalpy_balance(Tb, ucB, vcB,
-                                rho_cp_B if np.ndim(rho_cp_B) > 0 else np.full((N_x, N_y), rho_cp_B),
-                                dir_B, energy_dx, energy_dy)
         Q_net = Q_A + Q_B
         energy_rel = abs(Q_net) / (abs(Q_A) + abs(Q_B) + 1e-30)
     except Exception:
-        Q_A = Q_B = Q_net = energy_rel = float('nan')
+        Q_net = energy_rel = float('nan')
 
     result = {
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
@@ -857,6 +1116,11 @@ def _run_solvers(window, cfg, fields):
         # Conservation diagnostics
         'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,
         'energy_imbalance_rel': energy_rel,
+        # Q-reconciliation diagnostics (Option C, 2026-04-24)
+        'Q_enthalpy_A': abs(Q_A_fine) if Q_A_fine == Q_A_fine else float('nan'),
+        'Q_enthalpy_B': abs(Q_B_fine) if Q_B_fine == Q_B_fine else float('nan'),
+        'Q_solid_richardson': Q_solid_richardson,
+        'Q_richardson_warn': bool(richardson_warn),
     }
     return result
 
@@ -935,7 +1199,9 @@ def plot_temperature_3panel(window, r, _t):
     for ax, (field, main_title, subtitle) in zip(axes, plot_items):
         ax.set_facecolor(_t['ax_bg'])
         if 'T_s' in main_title:
-            kw = dict(levels=512, cmap='coolwarm')
+            # T_s uses turbo to match fluid T_a/T_b + 3D volume — all physics
+            # fields share the same modern-rainbow LUT for cross-plot parity.
+            kw = dict(levels=512, cmap='turbo')
             if vmin_s is not None:
                 kw.update(vmin=vmin_s, vmax=vmax_s)
         else:
@@ -1119,3 +1385,22 @@ def finalize_plots(window):
 
     window.slider.hide()
     window._update_tout(-1)
+
+    # Surrogate extrapolation watermark — one compact label across all
+    # result canvases so the reader always sees this run left the
+    # validated (L, t, Re) window. Also stored on window._has_extrap so
+    # the Pareto / export paths can refuse or flag it downstream.
+    _reasons = list(getattr(window, '_extrap_reasons', []) or [])
+    window._has_extrap = bool(_reasons)
+    if _reasons:
+        from ui.theme import get_theme as _gt
+        _tw = _gt().get('warn', '#B45309')
+        _wm_text = "⚠ ConstDF-v1 extrapolated: " + " | ".join(_reasons)
+        for _cv in (window.canvas_temp, window.canvas_pres, window.canvas_vel):
+            try:
+                _cv.fig.text(0.5, 0.005, _wm_text,
+                             color=_tw, fontsize=8, ha='center', va='bottom',
+                             fontweight='bold', alpha=0.85)
+                _cv.draw_idle()
+            except Exception:
+                pass

@@ -1,5 +1,17 @@
 import sys
 import json
+from pathlib import Path as _PathBoot
+
+# Make both import styles work regardless of launch mode:
+#   python main.py                    -> from solvers..., from runs...
+#   python -m sjtu_tpmshx.main        -> from sjtu_tpmshx...
+_BOOT_PATH = _PathBoot(__file__).resolve().parent
+_BOOT_DIR = str(_BOOT_PATH)
+_PROJECT_PARENT = str(_BOOT_PATH.parent)
+for _p in (_BOOT_DIR, _PROJECT_PARENT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")
@@ -185,12 +197,20 @@ class Main_Menu(QMainWindow):
         self._restore_session()
         # Track manual grid edits so `compute_tpms` (invoked by Auto-fill)
         # does NOT overwrite user-customised Nx/Ny/Nz. textEdited fires on
-        # keyboard input only, not on programmatic `setText`.
-        self._user_edited_grid = False
+        # keyboard input only, not on programmatic `setText`. NB: do NOT
+        # reset _user_edited_grid here — `_apply_shanghai_defaults` and
+        # `_restore_session` both raise it to True so preset/saved Nx/Ny/Nz
+        # survive the next compute_tpms call. Resetting it here would let
+        # auto-suggest stomp the user-visible defaults.
         for le in (self.le_Nx, self.le_Ny, self.le_Nz):
             le.textEdited.connect(self._mark_grid_edited)
         self._setup_shortcuts()
-        self._schedule_3d_preinit()
+        # PyVista/VTK context creation costs 1-2 s and was running 500 ms
+        # after startup. Keep it lazy unless explicitly opted in for demos.
+        import os as _os_perf
+        if _os_perf.environ.get('TPMSHX_PREINIT_3D', '0') == '1':
+            self._schedule_3d_preinit()
+        self._schedule_tpms_geometry_prewarm()
         self._install_inline_unit_parser()
         self._wire_fluid_defaults()
         self._install_status_bar_widgets()
@@ -418,9 +438,9 @@ class Main_Menu(QMainWindow):
             # refined 46×36×21 = ~35k cells, compressible dual-fluid
             # solve ~2–3 min. Keeping the 2D default 100/50 here would
             # push refined 3D to ~160k cells and 10+ min.
-            'le_Nx':    '30',
+            'le_Nx':    '20',
             'le_Ny':    '20',
-            'le_Nz':    '5',
+            'le_Nz':    '20',
             # Shanghai pipe inlet/outlet: A full-width (42 mm strip), B
             # staggered cross-flow (water enters top-right +x end, exits
             # bottom-left -x end; inlet/outlet 42 mm strips along real x).
@@ -436,14 +456,14 @@ class Main_Menu(QMainWindow):
         # showing °C, convert on write so the displayed digits match the
         # user's current unit (avoids the silent 273.15 bug where a preset
         # dumps "422" into a °C field and compute then reads 695 K).
-        temp_fields = {'le_TinA', 'le_TinB', 'le_T_init_s'}
+        temp_fields = {'le_TinA', 'le_TinB'}
         unit = getattr(self, '_temp_unit', 'K')
         for attr, val in presets.items():
             w = getattr(self, attr, None)
             if w is None:
                 continue
             try:
-                if attr in temp_fields and unit == 'C':
+                if attr in temp_fields and unit == 'C' and val != '':
                     w.setText(f"{float(val) - 273.15:.2f}")
                 else:
                     w.setText(val)
@@ -461,6 +481,10 @@ class Main_Menu(QMainWindow):
                 self.combo_dim.setCurrentIndex(1)
         except Exception:
             pass
+        # Treat preset Nx/Ny/Nz as authoritative — without this flag the next
+        # `compute_tpms` call would auto-overwrite the preset values with
+        # D_h-derived suggestions (e.g. 20/20/20 → 14/25/25).
+        self._user_edited_grid = True
         self.statusBar().showMessage(
             "Loaded Shanghai Electric preset (3D, Gyroid L=7 t=0.6, 182×42×42 mm).",
             5000)
@@ -484,6 +508,39 @@ class Main_Menu(QMainWindow):
                 return
             self.statusBar().showMessage("3D viewer ready.", 2000)
         QTimer.singleShot(500, _preinit)
+
+    def _schedule_tpms_geometry_prewarm(self):
+        """Warm the current TPMS geometry cache off the UI thread.
+
+        Auto-fill calls compute_tpms(), whose first exact geometry evaluation
+        builds a 256^3 voxel grid. Doing that in the background keeps the
+        first Auto-fill click from paying the full cold-cache cost.
+        """
+        from PySide6.QtCore import QTimer
+
+        def _start():
+            try:
+                args = (
+                    self.combo_tpms.currentText(),
+                    float(self.le_Lcell.text()),
+                    float(self.le_t.text()),
+                    float(self.le_ks.text()),
+                )
+            except Exception:
+                return
+
+            def _worker():
+                try:
+                    tpms_geometry(*args)
+                except Exception:
+                    pass
+
+            import threading
+            threading.Thread(
+                target=_worker, name="tpms-geometry-prewarm",
+                daemon=True).start()
+
+        QTimer.singleShot(900, _start)
 
     # ─────────────────────────────────────────────────────────
     #  Top-level layout
@@ -649,6 +706,15 @@ class Main_Menu(QMainWindow):
         if target_btn is not None and not target_btn.isEnabled() and tab != 'layout':
             tab = 'layout'
 
+        # Tab-switch fast path: no-op only when the active card is visible.
+        # Preview can draw layout while the startup-hidden layout card is
+        # still marked active, so visibility must be part of the guard.
+        if tab == getattr(self, '_active_tab', None) \
+                and not getattr(self, '_split_tabs', None):
+            card = getattr(self, '_canvas_cards', {}).get(tab)
+            if card is not None and card.isVisible():
+                return
+
         self._active_tab = tab
         tabs = [
             ('temp',   self.btn_tab_temp),
@@ -660,6 +726,14 @@ class Main_Menu(QMainWindow):
         ]
         drawn = getattr(self, '_drawn_tabs', set())
         showed_any = False
+        # Batch show/hide under a single repaint: setUpdatesEnabled(False) on
+        # the scroll viewport suppresses N intermediate layout invalidations
+        # (one per card toggle). With 6 cards this alone cuts tab-switch lag
+        # from ~120 ms → <20 ms on refined 3D grids.
+        _scroll = getattr(self, '_canvas_scroll', None)
+        _viewport = _scroll.viewport() if _scroll is not None else None
+        if _viewport is not None:
+            _viewport.setUpdatesEnabled(False)
         for key, btn in tabs:
             card = self._canvas_cards.get(key)
             if key == tab:
@@ -672,15 +746,13 @@ class Main_Menu(QMainWindow):
                     card.show()
                     showed_any = True
                 elif key == '3d':
-                    # No 3D compute yet — hide card + gentle hint instead of
-                    # rendering a heavyweight placeholder (which was what made
-                    # the first tab-click feel slow). User runs Compute →
-                    # finalize_plots_3d will populate + show.
+                    # No 3D compute yet — hide card. _empty_state_label below
+                    # at line ~762 already covers the "Configure + Compute"
+                    # hint centrally; previously we also showed a status-bar
+                    # message here, which duplicated the central placeholder
+                    # for ~6s. Removed 2026-04-29 to de-duplicate.
                     if card:
                         card.hide()
-                    self.statusBar().showMessage(
-                        "3D view is empty — switch to 3D mode in Domain panel "
-                        "and click Compute to populate.", 6000)
                 btn.setStyleSheet(self._PTAB_ON)
             else:
                 if card: card.hide()
@@ -694,6 +766,8 @@ class Main_Menu(QMainWindow):
         if hasattr(self, '_empty_state_label'):
             self._empty_state_label.setVisible(not showed_any)
         self._hover_label.setText("")
+        if _viewport is not None:
+            _viewport.setUpdatesEnabled(True)
 
     def _on_hover(self, event):
         """Show data value at mouse position on contour plots."""
@@ -849,7 +923,6 @@ class Main_Menu(QMainWindow):
     def compute_tpms(self) -> bool:
         """Compute pure geometry (ε, A₀, D_h, K_ss) from TPMS inputs. Returns True on success."""
         self.statusBar().showMessage("Computing TPMS geometry...")
-        QApplication.processEvents()
         try:
             r = tpms_geometry(
                 self.combo_tpms.currentText(),
@@ -889,10 +962,12 @@ class Main_Menu(QMainWindow):
                 Nx_sug = max(14, round(L_dom / (1.0 * D_h)))
                 Ny_sug = max(8,  round(H_dom / (0.5 * D_h)))
                 Nz_sug = max(3,  round(Lz_dom / (0.5 * D_h)))
-                # Cap to keep refined total cells under ~100k
-                # (user_cells + 16 per axis tensor-product)
+                # Cap to keep refined total cells under ~50k for fast UX
+                # (user_cells + 16 per axis tensor-product when wall_refine ON).
+                # Previous cap 150k led to 116k cells = 12 min compute on
+                # Shanghai-scale domains. 50k → ~3-5 min wall_refine, ~30s flat.
                 while ((Nx_sug + 16) * (Ny_sug + 16) * (Nz_sug + 16)
-                       > 150_000 and Nx_sug > 14):
+                       > 50_000 and Nx_sug > 14):
                     Nx_sug = max(14, int(Nx_sug * 0.8))
                 # Only overwrite if user hasn't manually edited grid fields —
                 # otherwise Auto-fill (which calls compute_tpms) would stomp
@@ -998,12 +1073,8 @@ class Main_Menu(QMainWindow):
             # Domain
             "L":         self.le_L.text(),
             "H":         self.le_H.text(),
-            "T_init_s":  self.le_T_init_s.text(),
             # Solid
             "rho_s":     self.le_rho_s.text(),
-            "cp_s":      self.le_cp_s.text(),
-            # Fluid
-            "cp_f":      self.le_cp_f.text(),
             # Solver
             "Nx":        self.le_Nx.text(),
             "Ny":        self.le_Ny.text(),
@@ -1012,6 +1083,8 @@ class Main_Menu(QMainWindow):
             "L_cell":    self.le_Lcell.text(),
             "t":         self.le_t.text(),
             "k_s":       self.le_ks.text(),
+            # Solid initial temperature (optional; empty = legacy seed)
+            "T_s_init":  self.le_TsInit.text() if hasattr(self, 'le_TsInit') else "",
             # Fluid A
             "u_A":       self.le_uA.text(),
             "T_inA":     self.le_TinA.text(),
@@ -1057,10 +1130,7 @@ class Main_Menu(QMainWindow):
 
         _set(self.le_L,        "L")
         _set(self.le_H,        "H")
-        _set(self.le_T_init_s, "T_init_s")
         _set(self.le_rho_s,    "rho_s")
-        _set(self.le_cp_s,     "cp_s")
-        _set(self.le_cp_f,     "cp_f")
         _set(self.le_Nx,       "Nx")
         _set(self.le_Ny,       "Ny")
         _set(self.le_Lcell,    "L_cell")
@@ -1072,6 +1142,8 @@ class Main_Menu(QMainWindow):
         _set(self.le_uB,       "u_B")
         _set(self.le_TinB,     "T_inB")
         _set(self.le_PinB,     "P_inB")
+        if hasattr(self, 'le_TsInit'):
+            _set(self.le_TsInit, "T_s_init")
         # Pipe geometry
         _set(self.le_pipeA_in_ctr,  "pipeA_in_ctr")
         _set(self.le_pipeA_in_w,    "pipeA_in_w")
@@ -1278,14 +1350,14 @@ class Main_Menu(QMainWindow):
 
     def _sync_temp_unit_labels(self):
         """Refresh the `[K]`/`[°C]` suffix on the three temperature row
-        labels (T_inA, T_inB, T_init_s) + the header button caption to
+        labels (T_inA, T_inB) + the header button caption to
         match `self._temp_unit`. Call whenever the unit changes, whether via
         the toggle button, preset load, or session restore — prevents the
         value-vs-label mismatch the user reported."""
         unit_display = "°C" if getattr(self, '_temp_unit', 'K') == 'C' else "K"
         # Swap the trailing " [K]"/" [°C]" on each label. The label text uses
         # QLabel rich-text HTML so we replace both variants.
-        for attr in ('_lbl_TinA_unit', '_lbl_TinB_unit', '_lbl_T_init_s_unit'):
+        for attr in ('_lbl_TinA_unit', '_lbl_TinB_unit', '_lbl_TsInit_unit'):
             lbl = getattr(self, attr, None)
             if lbl is None:
                 continue
@@ -1310,7 +1382,7 @@ class Main_Menu(QMainWindow):
         fields = [
             getattr(self, 'le_TinA', None),
             getattr(self, 'le_TinB', None),
-            getattr(self, 'le_T_init_s', None),
+            getattr(self, 'le_TsInit', None),
         ]
         def _fmt(v):
             return f"{v:.2f}"
@@ -1765,12 +1837,18 @@ class Main_Menu(QMainWindow):
                 bad.append((label, name, '(empty)'))
         if not bad:
             return True
+        # Escape user-typed text before interpolating into RichText HTML.
+        # Without escape, a user typing `<img>` / `&` / quote characters
+        # into a LineEdit would either break the table layout or render
+        # arbitrary HTML in the modal. (Qt RichText doesn't run JS but
+        # still parses tags; we escape every cell to be safe.) — 2026-04-29
+        import html as _html_esc
         rows = "".join(
-            f"<tr><td style='padding:4px 14px 4px 0;'>{lbl}</td>"
+            f"<tr><td style='padding:4px 14px 4px 0;'>{_html_esc.escape(str(lbl))}</td>"
             f"<td style='padding:4px 14px 4px 0; color:#6b7280;'>"
-            f"<code>{name}</code></td>"
+            f"<code>{_html_esc.escape(str(name))}</code></td>"
             f"<td style='padding:4px 0; color:#DC2626; font-family:monospace;'>"
-            f"{val}</td></tr>"
+            f"{_html_esc.escape(str(val))}</td></tr>"
             for lbl, name, val in bad[:30])
         html = (
             f"<h3 style='margin:0 0 8px 0;'>"
@@ -1796,6 +1874,123 @@ class Main_Menu(QMainWindow):
             except Exception:
                 pass
         return False
+
+    def _preflight_grid(self):
+        """Grid-legality preflight (runs after field-level validator).
+
+        Previews the refined grid, checks inlet/outlet cell coverage, and
+        warns when Richardson doubling would blow up runtime. Returns True
+        if OK to continue (no errors AND user acknowledged any warnings).
+        """
+        from ui.preflight import FluidCfg, compute_preflight
+
+        def _f(attr, default=0.0):
+            le = getattr(self, attr, None)
+            if le is None:
+                return default
+            try:
+                return float(le.text())
+            except (TypeError, ValueError):
+                return default
+
+        def _i(attr, default=0):
+            le = getattr(self, attr, None)
+            if le is None:
+                return default
+            try:
+                return int(le.text())
+            except (TypeError, ValueError):
+                return default
+
+        L = _f('le_L'); H = _f('le_H'); Lz = _f('le_Lz')
+        Nx = _i('le_Nx'); Ny = _i('le_Ny'); Nz = _i('le_Nz', 1)
+        is_3d = (hasattr(self, 'combo_dim')
+                 and self.combo_dim.currentIndex() == 1)
+        wall_refine_3d = True
+        if is_3d and hasattr(self, 'chk_wall_refine_3d'):
+            wall_refine_3d = bool(self.chk_wall_refine_3d.isChecked())
+
+        def _cfg(which):
+            try:
+                raw = self._fluid_config(which)
+            except Exception:
+                return None
+            return FluidCfg(
+                dir=raw['dir'],
+                in_ctr=raw['in_ctr'], in_w=raw['in_w'],
+                out_ctr=raw.get('out_ctr', raw['in_ctr']),
+                out_w=raw.get('out_w', raw['in_w']),
+                z_in_ctr=raw.get('in_z_ctr'),
+                z_in_w=raw.get('in_z_w'))
+
+        def _t_k(attr):
+            le = getattr(self, attr, None)
+            if le is None or not le.text().strip():
+                return None
+            try:
+                return self._temp_to_K(le)
+            except (TypeError, ValueError):
+                return None
+
+        report = compute_preflight(
+            L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
+            is_3d=is_3d, wall_refine_3d=wall_refine_3d,
+            fluid_A=_cfg('A'), fluid_B=_cfg('B'),
+            T_inA=_t_k('le_TinA'), T_inB=_t_k('le_TinB'))
+
+        if not report.errors and not report.warnings:
+            # Still surface info in the status bar so the user knows the
+            # effective grid size even when everything passes.
+            if report.info:
+                self.statusBar().showMessage(
+                    " · ".join(report.info[:2]), 6000)
+            return True
+
+        import html as _h
+
+        def _rows(items, color):
+            return "".join(
+                f"<li style='margin:4px 0; color:{color};'>{_h.escape(s)}</li>"
+                for s in items)
+
+        sev_html = []
+        if report.errors:
+            sev_html.append(
+                f"<h4 style='margin:8px 0 4px 0; color:#DC2626;'>"
+                f"{len(report.errors)} error"
+                f"{'s' if len(report.errors) != 1 else ''}</h4>"
+                f"<ul style='margin:0;'>{_rows(report.errors, '#DC2626')}</ul>")
+        if report.warnings:
+            sev_html.append(
+                f"<h4 style='margin:8px 0 4px 0; color:#B45309;'>"
+                f"{len(report.warnings)} warning"
+                f"{'s' if len(report.warnings) != 1 else ''}</h4>"
+                f"<ul style='margin:0;'>{_rows(report.warnings, '#B45309')}</ul>")
+        if report.info:
+            sev_html.append(
+                f"<h4 style='margin:8px 0 4px 0; color:#6b7280;'>Info</h4>"
+                f"<ul style='margin:0;'>{_rows(report.info, '#6b7280')}</ul>")
+
+        html = (
+            "<h3 style='margin:0 0 8px 0;'>Grid preflight</h3>"
+            "<p style='margin:0 0 8px 0; color:#6b7280;'>"
+            "Reviewed wall-refine fit, inlet/outlet coverage, "
+            "and Richardson budget.</p>" + "".join(sev_html))
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Grid preflight")
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(html)
+        if report.errors:
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+            return False
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        return msg.exec() == QMessageBox.StandardButton.Yes
 
     def _cycle_tab(self, step):
         """Ctrl+↑/↓ — walk through enabled tabs in toolbar order."""
@@ -2078,18 +2273,29 @@ class Main_Menu(QMainWindow):
         combo.blockSignals(blocker)
 
     def _apply_user_preset(self, preset):
-        """Apply a saved preset payload (shape matches _save_session output)."""
+        """Apply a saved preset payload (shape matches _save_session output).
+
+        Widget names are filtered through the SESSION allow-lists so a tampered
+        or malicious share-link cannot address arbitrary window attributes.
+        """
         unit = preset.get('temp_unit', 'K')
         if unit in ('K', 'C'):
             self._temp_unit = unit
             if hasattr(self, '_sync_temp_unit_labels'):
                 self._sync_temp_unit_labels()
+        allowed_edits = set(self._SESSION_LINE_EDITS)
+        allowed_combos = set(self._SESSION_COMBOS)
+        allowed_checks = set(self._SESSION_CHECKS)
         for name, txt in (preset.get('line_edits') or {}).items():
+            if name not in allowed_edits:
+                continue
             w = getattr(self, name, None)
             if w is not None:
                 try: w.setText(str(txt))
                 except Exception: pass
         for name, idx in (preset.get('combos') or {}).items():
+            if name not in allowed_combos:
+                continue
             c = getattr(self, name, None)
             if c is not None:
                 try:
@@ -2097,6 +2303,8 @@ class Main_Menu(QMainWindow):
                         c.setCurrentIndex(int(idx))
                 except Exception: pass
         for name, val in (preset.get('checks') or {}).items():
+            if name not in allowed_checks:
+                continue
             b = getattr(self, name, None)
             if b is not None:
                 try: b.setChecked(bool(val))
@@ -2196,10 +2404,11 @@ class Main_Menu(QMainWindow):
     #  Session auto-persist (restores last-used field state)
     # ─────────────────────────────────────────────────────────
     _SESSION_LINE_EDITS = (
-        'le_L', 'le_H', 'le_Lz', 'le_Lcell', 'le_t', 'le_ks', 'le_T_init_s',
+        'le_L', 'le_H', 'le_Lz', 'le_Lcell', 'le_t', 'le_ks',
         'le_uA', 'le_TinA', 'le_PinA', 'le_uB', 'le_TinB', 'le_PinB',
+        # le_TsInit removed 2026-04-29 (numerical seed only, not physical)
         'le_Nx', 'le_Ny', 'le_Nz',
-        'le_rho_s', 'le_cp_s', 'le_cp_f',
+        'le_rho_s',
         'le_pipeA_in_ctr', 'le_pipeA_in_w',
         'le_pipeA_out_ctr', 'le_pipeA_out_w',
         'le_pipeB_in_ctr', 'le_pipeB_in_w',
@@ -2357,6 +2566,11 @@ class Main_Menu(QMainWindow):
             # the restored text ("148.85") is not misread as Kelvin.
             if hasattr(self, '_sync_temp_unit_labels'):
                 self._sync_temp_unit_labels()
+        # User preference: app must open with temperature unit = K. If the
+        # saved session was authored in °C, the line-edit text below is in
+        # °C — restore it as-is, then convert + flip the unit to K so the
+        # initial view is always Kelvin.
+        _temp_field_names = {'le_TinA', 'le_TinB'}
         for name, txt in (payload.get('line_edits') or {}).items():
             w = getattr(self, name, None)
             if w is None:
@@ -2365,7 +2579,26 @@ class Main_Menu(QMainWindow):
                 w.setText(str(txt))
             except Exception:
                 continue
+        if saved_unit == 'C':
+            for name in _temp_field_names:
+                w = getattr(self, name, None)
+                if w is None:
+                    continue
+                try:
+                    val = float(w.text())
+                    w.setText(f"{val + 273.15:.2f}")
+                except (ValueError, TypeError):
+                    continue
+            self._temp_unit = 'K'
+            if hasattr(self, '_sync_temp_unit_labels'):
+                self._sync_temp_unit_labels()
         for name, idx in (payload.get('combos') or {}).items():
+            # User preference: app must open with both fluids defaulted to
+            # Air, regardless of what the previous session stored. Skip
+            # restoring combo_fluidA/B and let the construction-time index 0
+            # (Air) stand.
+            if name in ('combo_fluidA', 'combo_fluidB'):
+                continue
             c = getattr(self, name, None)
             if c is None:
                 continue
@@ -2400,6 +2633,37 @@ class Main_Menu(QMainWindow):
                 self.restoreState(QByteArray(_b64.b64decode(st_b64)))
             except Exception:
                 pass
+        # User preference: both fluid-type combos open as Air. Combos stay
+        # at construction-time index 0; if the saved session had a *non-Air*
+        # selection (Water / sCO₂), the line-edits are now in that fluid's
+        # value range — push Air defaults to keep u/T/P consistent with the
+        # forced Air combo. If the saved combo was already Air, leave the
+        # restored line-edits alone so user customisations survive.
+        _saved_combos = payload.get('combos') or {}
+        for _side in ('A', 'B'):
+            try:
+                _saved_idx = int(_saved_combos.get(f'combo_fluid{_side}', 0))
+            except (ValueError, TypeError):
+                _saved_idx = 0
+            if _saved_idx != 0:
+                try:
+                    self._apply_fluid_defaults(_side)
+                except Exception:
+                    pass
+        # User preference: grid defaults Nx=Ny=Nz=20 must win on every
+        # startup, even when a previous session saved different values, AND
+        # must survive a subsequent "Compute TPMS Geometry" call which would
+        # otherwise auto-suggest D_h-derived Nx/Ny/Nz. Setting the
+        # `_user_edited_grid` sentinel makes compute_tpms skip its
+        # auto-fill block so the 20/20/20 default is sticky.
+        for _attr in ('le_Nx', 'le_Ny', 'le_Nz'):
+            _le = getattr(self, _attr, None)
+            if _le is not None:
+                try:
+                    _le.setText('20')
+                except Exception:
+                    pass
+        self._user_edited_grid = True
 
     def closeEvent(self, event):
         try:
@@ -2515,8 +2779,6 @@ class Main_Menu(QMainWindow):
             'le_t': ("Wall thickness",  "TPMS solid wall thickness in millimetres"),
             'le_ks': ("Solid conductivity",
                       "Thermal conductivity of the solid phase, W/m-K"),
-            'le_T_init_s': ("Solid initial temperature",
-                             "Initial temperature of the solid phase"),
             'le_uA': ("Fluid A velocity", "Interstitial velocity, m/s"),
             'le_uB': ("Fluid B velocity", "Interstitial velocity, m/s"),
             'le_TinA': ("Fluid A inlet temperature", "Inlet temperature of fluid A"),
@@ -2771,9 +3033,6 @@ class Main_Menu(QMainWindow):
         'le_PinB': (
             "<b>Fluid B inlet absolute pressure <i>P<sub>in,B</sub></i></b> "
             "[Pa]"),
-        'le_T_init_s': (
-            "<b>Solid initial temperature <i>T<sub>0,s</sub></i></b><br/>"
-            "Seeds the LTNE 3-temperature energy equation."),
         'le_Nx': (
             "<b>Grid count along <i>x</i></b><br/>"
             "3D refinement adds +8 cells per wall on each axis."),
@@ -2871,9 +3130,8 @@ class Main_Menu(QMainWindow):
             'le_L', 'le_H', 'le_Lz', 'le_Lcell', 'le_t', 'le_ks',
             'le_uA', 'le_uB',
             'le_TinA', 'le_TinB', 'le_PinA', 'le_PinB',
-            'le_T_init_s',
             'le_Nx', 'le_Ny', 'le_Nz',
-            'le_rho_s', 'le_cp_s', 'le_cp_f',
+            'le_rho_s',
         ]
         def _validator(le, strict_positive=True):
             # Preserve the field's baseline tooltip so we can restore it when
@@ -2931,7 +3189,6 @@ class Main_Menu(QMainWindow):
         'le_uA': ('speed', 'm/s'), 'le_uB': ('speed', 'm/s'),
         'le_PinA': ('pressure', 'Pa'), 'le_PinB': ('pressure', 'Pa'),
         'le_TinA': ('temp', None), 'le_TinB': ('temp', None),
-        'le_T_init_s': ('temp', None),
         # counts (no unit allowed)
         'le_Nx': ('count', None), 'le_Ny': ('count', None),
         'le_Nz': ('count', None), 'le_mesh_density': ('count', None),
@@ -3056,12 +3313,22 @@ class Main_Menu(QMainWindow):
             t.timeout.connect(self._drain_live_residuals)
             self._live_resid_timer = t
         self._live_resid_timer.start()
+        # Cooperative cancel: clear the flag at compute start, then repurpose
+        # the Compute button as a Cancel button. The worker polls
+        # `_compute_cancel` at outer-iteration boundaries (the only safe
+        # interrupt point — JIT'd inner sweeps can't be killed mid-run).
+        self._compute_cancel = False
         if hasattr(self, 'btn_compute'):
-            self.btn_compute.setEnabled(False)
             self._btn_compute_text_saved = self.btn_compute.text()
             eta = self._compute_eta_for_active_mode()
             self.btn_compute.setText(
-                f"Computing… (ETA ~{eta})" if eta else "Computing…")
+                f"Cancel  (Computing… ETA ~{eta})" if eta else "Cancel  (Computing…)")
+            self.btn_compute.setEnabled(True)
+            try:
+                self.btn_compute.clicked.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.btn_compute.clicked.connect(self._on_cancel_compute)
         if hasattr(self, '_empty_state_label'):
             self._empty_state_label.setVisible(False)
         self.statusBar().showMessage(status)
@@ -3224,6 +3491,19 @@ class Main_Menu(QMainWindow):
             except Exception:
                 pass
 
+    def _on_cancel_compute(self):
+        """User clicked the Compute button while a solve was running, so it
+        is currently labelled "Cancel". Set the flag the worker polls; the
+        button stays disabled until the worker reaches the next checkpoint
+        and returns through `_check`."""
+        self._compute_cancel = True
+        if hasattr(self, 'btn_compute'):
+            self.btn_compute.setEnabled(False)
+            self.btn_compute.setText("Cancelling…")
+        self.statusBar().showMessage(
+            "Cancel requested — waiting for solver to finish current sweep…",
+            6000)
+
     def _end_compute_ui(self, success):
         """Restore Compute button and either fade out progress (success) or
         hide immediately (failure). On success also refreshes the headline
@@ -3232,6 +3512,13 @@ class Main_Menu(QMainWindow):
             self.btn_compute.setEnabled(True)
             self.btn_compute.setText(
                 getattr(self, '_btn_compute_text_saved', '▶  &Compute'))
+            # Restore the original Compute click handler — `_begin_compute_ui`
+            # repurposed it to call `_on_cancel_compute`.
+            try:
+                self.btn_compute.clicked.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.btn_compute.clicked.connect(self.run_calculation)
         if success:
             self.progress.setValue(100)
             from PySide6.QtCore import QTimer as _QT
@@ -3305,6 +3592,10 @@ class Main_Menu(QMainWindow):
         # of letting the solver hit them one at a time.
         if not self._validate_inputs_preflight():
             return
+        # Grid-legality preflight — refined shape, inlet/outlet coverage,
+        # Richardson budget. Errors block, warnings prompt continue?.
+        if not self._preflight_grid():
+            return
         # Mark the compute start so `_end_compute_ui` can push the wall
         # clock into the ETA history ring. Set regardless of 2D/3D/poly
         # branch — the 3D branch overwrites this with its own clock anyway.
@@ -3337,7 +3628,10 @@ class Main_Menu(QMainWindow):
 
         # Capture stdout from the solver thread into a ring so the D9
         # solve-log viewer can show residual dumps / warnings post-run.
+        # Reset the captured-log string each run so memory does not grow
+        # unbounded over many computes (see project_ui_bug_sweep memory).
         import io as _io_sl
+        self._last_solve_log = ""
         self._last_solve_log_buf = _io_sl.StringIO()
 
         def _worker():
@@ -3368,19 +3662,34 @@ class Main_Menu(QMainWindow):
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-        # Poll for completion — ALL Qt updates happen here (main thread)
-        timer = QTimer()
+        # Poll for completion — ALL Qt updates happen here (main thread).
+        # Parent the timer to self so Qt owns its lifetime (avoids premature
+        # GC of the QTimer C++ object if the Python ref drops).
+        timer = QTimer(self)
         def _check():
             if t.is_alive():
                 self.progress.setValue(min(90, self._compute_progress))
                 return
             timer.stop()
-            # Freeze the captured log as a plain string for the viewer.
+            # Freeze the captured log as a plain string for the viewer,
+            # capped at 500 KB so a verbose=True solver run can't grow the
+            # MainWindow memory footprint into the multi-MB range.
             try:
-                self._last_solve_log = self._last_solve_log_buf.getvalue()
+                self._last_solve_log = (
+                    self._last_solve_log_buf.getvalue()[:500_000])
             except Exception:
                 self._last_solve_log = ""
             if self._compute_error:
+                # Drop stale 2D results so canvases / exports can't silently
+                # serve previous-run data after a failed Compute.
+                self._compute_results = {}
+                self._has_results_2d = False
+                if not getattr(self, '_has_results_3d', False):
+                    self._has_results = False
+                for _bname in ('btn_export_results', 'btn_export_figure'):
+                    if hasattr(self, _bname):
+                        getattr(self, _bname).setEnabled(False)
+                self._update_tab_visibility()
                 self._end_compute_ui(success=False)
                 QMessageBox.critical(self, "Compute Error", self._compute_error)
                 try:
@@ -3813,18 +4122,9 @@ class Main_Menu(QMainWindow):
 
     def _run_calculation_3d(self):
         """Threaded 3D solve → auto-switch to 3D View tab on success."""
-        # Lazy-init 3D panel if user never clicked 3D tab before
-        if self.canvas_3d is None:
-            self._lazy_init_3d_panel()
-        if self.canvas_3d is None:
-            err = getattr(self, '_vis3d_import_error',
-                          'PyVistaQt unavailable (headless or missing pyvistaqt)')
-            QMessageBox.warning(
-                self, "3D View Unavailable",
-                f"The embedded 3D viewer is not available:\n\n{err}\n\n"
-                "Run `pip install pyvistaqt` or use the standalone script\n"
-                "`python -u examples/demo_vis_3d_interactive.py` instead.")
-            return
+        # Do not initialise PyVista/VTK on button click. The GL context is
+        # expensive and made Compute feel frozen before progress appeared;
+        # finalize_plots_3d creates/populates the panel after the solve.
 
         # Large-grid warning (wall-refine expands cells ~6-9x)
         try:
@@ -3833,6 +4133,21 @@ class Main_Menu(QMainWindow):
             est_cells = (Nx_u + 16) * (Ny_u + 16) * (Nz_u + 16)
         except Exception:
             est_cells = 0
+
+        # Nz guard: Nz=1 under 3D dispatch degenerates the z-momentum / z-energy
+        # transport and returns a z-uniform field that looks like "T_a = T_inA
+        # everywhere" — the user sees a flat-colour cube with scalar-bar min==max
+        # and mistakes it for a broken solver. Force at least 2 z-cells for the
+        # 3D path; suggest 2D mode otherwise.
+        if Nz_u < 2:
+            QMessageBox.warning(
+                self, "Nz too small for 3D",
+                f"Grid Nz = {Nz_u} is too small for 3D compute — the solver "
+                f"degenerates to a z-uniform slab and fields look flat.\n\n"
+                "Options:\n"
+                "  • Increase Nz to 5 or more for a real 3D run (recommended).\n"
+                "  • Switch Dimensionality to 2D for single-layer homogeneous cases.")
+            return
         if est_cells > 100_000:
             reply = QMessageBox.question(
                 self, "Large 3D Grid",
@@ -3848,10 +4163,20 @@ class Main_Menu(QMainWindow):
 
         import time as _time
         self._compute_t0 = _time.time()
-        Nx_r, Ny_r, Nz_r = Nx_u + 16, Ny_u + 16, Nz_u + 16
+        # Cell count must reflect the actual refine setting — adding +16 per
+        # axis unconditionally inflated the displayed grid by ~5x when refine
+        # was OFF and made the ETA estimate way too generous.
+        _refine_on = bool(getattr(self, 'chk_wall_refine_3d', None)
+                          and self.chk_wall_refine_3d.isChecked())
+        if _refine_on:
+            Nx_r, Ny_r, Nz_r = Nx_u + 16, Ny_u + 16, Nz_u + 16
+            _cell_label = f"refined {Nx_r}×{Ny_r}×{Nz_r}"
+        else:
+            Nx_r, Ny_r, Nz_r = Nx_u, Ny_u, Nz_u
+            _cell_label = f"{Nx_r}×{Ny_r}×{Nz_r}"
         est_cells_r = Nx_r * Ny_r * Nz_r
         self._begin_compute_ui(
-            status=f"Computing 3D (refined {Nx_r}×{Ny_r}×{Nz_r} = "
+            status=f"Computing 3D ({_cell_label} = "
                    f"{est_cells_r:,} cells, compressible dual-fluid SIMPLE; "
                    f"typical ~2-10 min)…")
 
@@ -3873,31 +4198,84 @@ class Main_Menu(QMainWindow):
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-        timer = QTimer()
+        # Parent timer to self so Qt owns its lifetime.
+        timer = QTimer(self)
+        # Hard wall-clock budget. The solver can stiffen pathologically when
+        # the user picks a high-Re fluid setup (e.g. u=30 m/s air → Re ~7000)
+        # combined with a 3D non-isothermal outer loop, and there is no
+        # in-kernel watchdog. After 10 minutes the timer auto-sets the
+        # cancel flag so the worker exits at its next outer-iter checkpoint.
+        _hard_timeout_s = 600.0
         def _check():
             if t.is_alive():
                 self.progress.setValue(min(90, self._compute_progress))
                 elapsed = _time.time() - self._compute_t0
+                if (elapsed > _hard_timeout_s
+                        and not getattr(self, '_compute_cancel', False)):
+                    self._compute_cancel = True
+                    self.statusBar().showMessage(
+                        f"3D compute exceeded {int(_hard_timeout_s)}s budget "
+                        "— auto-cancelling at next checkpoint.", 8000)
                 # ETA: linear scale from Shanghai 46x36x21 ≈ 35k cells / 150 s
                 # baseline. Underestimates for steep compressibility gradients;
                 # clamps to ≥ 10 s.
                 _ref_cells = 35000
                 _ref_sec = 150.0
                 eta_total = max(10.0, est_cells_r / _ref_cells * _ref_sec)
-                eta_remain = max(0.0, eta_total - elapsed)
+                eta_remain = eta_total - elapsed
                 from ui.fmt import duration as _fmt
+                # Once elapsed exceeds the linear-scale estimate the remaining
+                # time is unknowable (steep ρ(P,T) gradients, BC corner cases),
+                # so swap the ETA token for an explicit "over budget" notice
+                # — otherwise users read "ETA ~0.0s" as "done".
+                if eta_remain > 0:
+                    eta_txt = f"ETA ~{_fmt(eta_remain)}"
+                else:
+                    over = elapsed - eta_total
+                    eta_txt = f"past estimate by {_fmt(over)} — solver still running"
                 self.statusBar().showMessage(
                     f"Computing 3D… {_fmt(elapsed)} elapsed "
-                    f"({est_cells_r:,} cells) • ETA ~{_fmt(eta_remain)}")
+                    f"({est_cells_r:,} cells) • {eta_txt}")
                 return
             timer.stop()
             if self._compute_error:
+                # Drop stale 3D results so 3D panel / exports can't silently
+                # serve previous-run data after a failed Compute.
+                self._result_3d = None
+                self._has_results_3d = False
+                if not getattr(self, '_has_results_2d', False):
+                    self._has_results = False
+                for _bname in ('btn_export_results', 'btn_export_figure'):
+                    if hasattr(self, _bname):
+                        getattr(self, _bname).setEnabled(False)
+                self._update_tab_visibility()
                 self._end_compute_ui(success=False)
-                QMessageBox.critical(self, "3D Compute Error", self._compute_error)
+                # User-cancelled or wall-clock timeout: show a status
+                # message instead of an error popup.
+                _err_lc = self._compute_error.lower()
+                if 'cancel' in _err_lc or 'timeout' in _err_lc:
+                    self.statusBar().showMessage(
+                        f"3D compute aborted — {self._compute_error}.", 6000)
+                else:
+                    QMessageBox.critical(
+                        self, "3D Compute Error", self._compute_error)
             else:
                 from runs.run_calculation_3d import finalize_plots_3d
-                finalize_plots_3d(self)
-                self._end_compute_ui(success=True)
+                _finalize_ok = False
+                try:
+                    finalize_plots_3d(self)
+                    try:
+                        self._push_recent_run()
+                    except Exception:
+                        pass
+                    _finalize_ok = True
+                finally:
+                    # Always end compute UI so the live-residual timer stops
+                    # and the Compute button re-enables — finalize raising
+                    # would otherwise leave the UI locked + sparkline polling.
+                    self._end_compute_ui(success=_finalize_ok)
+                if not _finalize_ok:
+                    return
                 self._has_results = True
                 self._has_results_3d = True
                 for _bname in ('btn_export_results', 'btn_export_figure'):
@@ -3905,8 +4283,10 @@ class Main_Menu(QMainWindow):
                         getattr(self, _bname).setEnabled(True)
                 drawn = getattr(self, '_drawn_tabs', set())
                 # All 2D canvases also populated via mid-z slice — mark drawn
-                for k in ('3d', 'temp', 'pres', 'vel'):
-                    drawn.add(k)
+                drawn.add('3d')
+                if getattr(self, '_rendered_3d_slices', False):
+                    for k in ('temp', 'pres', 'vel'):
+                        drawn.add(k)
                 self._drawn_tabs = drawn
                 self._update_tab_visibility()
                 self._switch_tab('3d')
@@ -3939,7 +4319,7 @@ class Main_Menu(QMainWindow):
             ax.cla()
         kw_f = dict(levels=100, cmap="turbo",
                     vmin=c.min_temp, vmax=c.max_temp)
-        kw_s = dict(levels=100, cmap="coolwarm",
+        kw_s = dict(levels=100, cmap="turbo",
                     vmin=c.min_s, vmax=c.max_s)
         c.axes[0][0].contourf(c.X, c.Y, self.T_fA[value], **kw_f)
         c.axes[0][1].contourf(c.X, c.Y, self.T_fB[value], **kw_f)

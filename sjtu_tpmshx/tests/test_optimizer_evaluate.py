@@ -46,7 +46,12 @@ def test_evaluate_uniform_baseline():
 
 def test_evaluate_fast_mode_smoke():
     """fast_mode=True → finite positive Q, dP, mass + deviation from full
-    within acceptance window (Q < 5%, dP < 10%)."""
+    within acceptance window (Q < 5%, dP < 10%).
+
+    The mass-conserving enthalpy form (B-1 refactor, 2026-04-24) keeps Q
+    robust to partial SIMPLE convergence, so fast-mode ≈ full-mode Q to
+    well under 1% for canonical configs despite n_rho_loops=1.
+    """
     cfg = dict(DEFAULT_CONFIG)
     cfg.update({
         'tpms_type': 'Gyroid',

@@ -54,13 +54,53 @@ def draw_layout(window):
             sp.set_edgecolor(_t['ax_spine'])
 
     window.canvas_layout.fig.set_facecolor(_t['fig_bg'])
-    window.canvas_layout.draw()
     if not hasattr(window, '_drawn_tabs'):
         window._drawn_tabs = set()
     window._drawn_tabs.add('layout')
     if hasattr(window, 'btn_export_figure'):
         window.btn_export_figure.setEnabled(True)
+    # Switch tab so the Layout card is shown, then defer the draw() calls
+    # to subsequent event-loop ticks. The issue fixed here: Matplotlib's
+    # FigureCanvas needs a real (non-zero) geometry before draw() can flush
+    # pixels. card.show() inside _switch_tab only schedules a Qt Show event;
+    # the widget's width/height are not finalised until Qt has drained the
+    # show + layout + resize events. A draw() issued immediately after
+    # _switch_tab can paint into a 0×0 buffer, leaving the canvas blank
+    # until the user switches tabs twice (which forces another resize).
+    #
+    # The fix: kick the draw via QTimer.singleShot(0, ...) so it runs on
+    # the NEXT event-loop iteration, after Qt has fully laid out the card.
+    # Belt and braces: issue one more draw_idle after 50 ms as a safety net
+    # against slow layout cascades (scroll-area viewport resize, splitter
+    # width propagation, etc.).
     window._switch_tab('layout')
+
+    def _deferred_draw():
+        try:
+            window.canvas_layout.draw()
+        except Exception:
+            pass
+
+    def _deferred_draw_idle():
+        try:
+            window.canvas_layout.draw_idle()
+        except Exception:
+            pass
+
+    try:
+        from PySide6.QtCore import QTimer as _QTimer
+        from PySide6.QtWidgets import QApplication as _QApp
+        _QApp.processEvents()
+        _QTimer.singleShot(0, _deferred_draw)
+        _QTimer.singleShot(50, _deferred_draw_idle)
+        _QTimer.singleShot(200, _deferred_draw_idle)
+    except Exception:
+        # Fallback: synchronous draw if Qt is unavailable (shouldn't happen
+        # at runtime, but keep headless tests happy).
+        try:
+            window.canvas_layout.draw()
+        except Exception:
+            pass
 
 
 def draw_layout_rect_3d(window, ax, L, H, Lz):
@@ -83,15 +123,21 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),
              (0,4),(1,5),(2,6),(3,7)]
     for i, j in edges:
-        ax.plot(*zip(pts[i], pts[j]), color=_t['wireframe'], lw=1.4)
+        # Bump linewidth so the cuboid skeleton stays visible against the
+        # dark theme even when the wireframe colour is close to fig_bg
+        # — without this, zoomed views show only the face fills.
+        ax.plot(*zip(pts[i], pts[j]), color=_t['wireframe'], lw=2.0,
+                alpha=0.9)
 
     face_patches = []
+    drag_artists = []
 
     def _face_patch(verts, color, alpha):
         poly = Poly3DCollection([verts], alpha=alpha, facecolor=color,
                                  edgecolor=_t['ax_text'], linewidths=1.2)
         ax.add_collection3d(poly)
         face_patches.append(poly)
+        drag_artists.append(poly)
 
     def _rect_face(axis, val, ctr, w, low, high):
         lo = max(ctr - w / 2, low); hi = min(ctr + w / 2, high)
@@ -115,12 +161,14 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
                         INLET_COL, face_alpha)
             _face_patch(_rect_face('x', out_face_val, out_ctr_mm, out_w_mm, 0, Hmm),
                         OUTLET_COL, face_alpha)
-            ax.text(in_face_val, in_ctr_mm, Lzmm + label_offset,
-                    f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
-                    fontweight='bold', ha='center')
-            ax.text(out_face_val, out_ctr_mm, Lzmm + label_offset,
-                    f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
-                    fontweight='bold', ha='center')
+            drag_artists.append(ax.text(
+                in_face_val, in_ctr_mm, Lzmm + label_offset,
+                f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
+            drag_artists.append(ax.text(
+                out_face_val, out_ctr_mm, Lzmm + label_offset,
+                f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
         else:
             in_face_val = 0.0 if d == 2 else Hmm
             out_face_val = Hmm if d == 2 else 0.0
@@ -128,12 +176,14 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
                         INLET_COL, face_alpha)
             _face_patch(_rect_face('y', out_face_val, out_ctr_mm, out_w_mm, 0, Lmm),
                         OUTLET_COL, face_alpha)
-            ax.text(in_ctr_mm, in_face_val, Lzmm + label_offset,
-                    f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
-                    fontweight='bold', ha='center')
-            ax.text(out_ctr_mm, out_face_val, Lzmm + label_offset,
-                    f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
-                    fontweight='bold', ha='center')
+            drag_artists.append(ax.text(
+                in_ctr_mm, in_face_val, Lzmm + label_offset,
+                f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
+            drag_artists.append(ax.text(
+                out_ctr_mm, out_face_val, Lzmm + label_offset,
+                f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
 
     try:
         fA = window._fluid_config('A')
@@ -156,12 +206,15 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
 
     # Origin triad
     triad_len = max(Lmm, Hmm, Lzmm) * 0.06
-    ax.quiver(0, 0, 0, triad_len, 0, 0, color=_t['triad_x'], arrow_length_ratio=0.3,
-               linewidth=1.8)
-    ax.quiver(0, 0, 0, 0, triad_len, 0, color=_t['triad_y'], arrow_length_ratio=0.3,
-               linewidth=1.8)
-    ax.quiver(0, 0, 0, 0, 0, triad_len, color=_t['triad_z'], arrow_length_ratio=0.3,
-               linewidth=1.8)
+    drag_artists.append(ax.quiver(
+        0, 0, 0, triad_len, 0, 0, color=_t['triad_x'],
+        arrow_length_ratio=0.3, linewidth=1.8))
+    drag_artists.append(ax.quiver(
+        0, 0, 0, 0, triad_len, 0, color=_t['triad_y'],
+        arrow_length_ratio=0.3, linewidth=1.8))
+    drag_artists.append(ax.quiver(
+        0, 0, 0, 0, 0, triad_len, color=_t['triad_z'],
+        arrow_length_ratio=0.3, linewidth=1.8))
 
     # Axis labels — bold
     ax.set_xlabel('x [mm]', color=_t['ax_text'], fontsize=11,
@@ -205,10 +258,9 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     if not hasattr(canvas, '_orig_wheel_event'):
         canvas._orig_wheel_event = canvas.wheelEvent
 
-    # Matplotlib's mplot3d redraw is slow with semi-transparent polygons on a
-    # large Qt canvas. During camera drag, temporarily hide the inlet/outlet
-    # face fills so interaction stays closer to wireframe speed; restore them
-    # on mouse release.
+    # Matplotlib's mplot3d redraw is slow on a large Qt canvas. During camera
+    # drag, temporarily hide decorative face fills/labels/triad so interaction
+    # stays closer to wireframe speed; restore them on mouse release.
     for cid in getattr(canvas, '_tpms_fast_drag_cids', []):
         try:
             canvas.mpl_disconnect(cid)
@@ -220,7 +272,7 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
         if evt.inaxes is not ax:
             return
         changed = False
-        for p in face_patches:
+        for p in drag_artists:
             if p.get_visible():
                 p.set_visible(False)
                 changed = True
@@ -229,7 +281,7 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
 
     def _fast_drag_off(evt):
         changed = False
-        for p in face_patches:
+        for p in drag_artists:
             if not p.get_visible():
                 p.set_visible(True)
                 changed = True
@@ -241,16 +293,56 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     canvas._tpms_fast_drag_cids.append(
         canvas.mpl_connect('button_release_event', _fast_drag_off))
 
+    # The wheel handler stores the *intended* camera distance on the axes
+    # (`_tpms_intended_dist`). matplotlib's mpl3d mouse-drag handler calls
+    # `view_init(...)` which on some mpl versions (3.6 → 3.10 transition)
+    # silently re-resolves `_dist` back to its default at the next draw, so
+    # the zoom factor is lost as soon as the user rotates. We pin the
+    # intended dist on every draw via a `draw_event` hook and re-apply it
+    # on `button_release_event` for redundancy.
+    def _apply_dist():
+        d = getattr(ax, '_tpms_intended_dist', None)
+        if d is None:
+            return
+        for _name in ('dist', '_dist'):
+            if hasattr(ax, _name):
+                try:
+                    setattr(ax, _name, d)
+                except Exception:
+                    pass
+
     def _qt_wheel_zoom_3d(evt):
         delta = evt.angleDelta().y()
         if delta == 0:
             evt.ignore(); return
         factor = 0.88 if delta > 0 else 1.14
-        ax.dist = max(2.0, min(30.0, ax.dist * factor))
+        cur_dist = float(getattr(ax, '_tpms_intended_dist',
+                                 getattr(ax, '_dist',
+                                         getattr(ax, 'dist', 10.0))))
+        # With clip_on=False set on every artist below, content can safely
+        # extend past the axes bbox, so the lower bound only has to stay
+        # above mpl's degenerate-projection regime.
+        new_dist = max(3.0, min(30.0, cur_dist * factor))
+        ax._tpms_intended_dist = new_dist
+        _apply_dist()
         canvas.draw_idle()
         evt.accept()
 
     canvas.wheelEvent = _qt_wheel_zoom_3d
+
+    # Restore intended dist after rotation drag releases — covers the case
+    # where mpl's view_init pathway clobbers _dist mid-rotate.
+    def _reapply_after_release(evt):
+        _apply_dist()
+        canvas.draw_idle()
+    canvas._tpms_fast_drag_cids.append(
+        canvas.mpl_connect('button_release_event', _reapply_after_release))
+
+    # Pin dist on every redraw (cheap; idempotent when no zoom set).
+    def _pin_dist_on_draw(_evt):
+        _apply_dist()
+    canvas._tpms_fast_drag_cids.append(
+        canvas.mpl_connect('draw_event', _pin_dist_on_draw))
 
     # Aspect ratio (soft-stretch thin axes for visibility)
     max_dim = max(Lmm, Hmm, Lzmm)
@@ -273,6 +365,30 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
     try:
         ax.figure.subplots_adjust(left=0.0, right=1.0, top=0.94, bottom=0.0)
         ax.set_position([0.02, 0.02, 0.96, 0.86])
+    except Exception:
+        pass
+
+    # Disable axes-bbox clipping for every artist drawn here so wheel-zoom
+    # can push the cuboid past the (invisible) axes rectangle without
+    # truncating content. This is the root cause of the "invisible frame
+    # cuts off the geometry on zoom" report — mpl3d clips Poly3D, Line3D,
+    # and Text to the 2D axes bbox at draw time. The 3D axes already fills
+    # ~96 % of the figure (set_position above), so disabling clip here
+    # only lets the cuboid bleed into the remaining figure margin instead
+    # of disappearing.
+    try:
+        for _coll in ax.collections:
+            _coll.set_clip_on(False)
+        for _line in ax.lines:
+            _line.set_clip_on(False)
+        for _txt in ax.texts:
+            _txt.set_clip_on(False)
+        for _lbl in (ax.xaxis.label, ax.yaxis.label, ax.zaxis.label,
+                     ax.title):
+            try:
+                _lbl.set_clip_on(False)
+            except Exception:
+                pass
     except Exception:
         pass
 

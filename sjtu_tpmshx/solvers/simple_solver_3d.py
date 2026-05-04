@@ -343,7 +343,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
 
     Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
     non-uniform inlet profile for manifold mal-distribution modeling (P2).
-    Outlet j=Ny is zero-gradient (v[i, Ny, k] = v[i, Ny-1, k]).
+    Outlet j=Ny preserves rho*v mass flux for variable-density flow.
     """
     for _ in range(n_sweeps):
         for i in range(Nx):
@@ -429,7 +429,18 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
-            v[i, Ny, k] = v[i, Ny - 1, k]  # zero-gradient outlet
+            # Gate outflow by outlet_frac — wall cells pin v=0 (consistent
+            # with _correct_jit_3d).
+            if outlet_frac[i, k] > 0.5:
+                if Ny >= 2:
+                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
+                                            + rho_field[i, Ny - 1, k])
+                    rho_outer_face = rho_field[i, Ny - 1, k]
+                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
+                else:
+                    v[i, Ny, k] = v[i, Ny - 1, k]
+            else:
+                v[i, Ny, k] = 0.0
 
 
 # Parallel red-black Gauss-Seidel variant of `_sweep_v_jit_df_3d`.
@@ -514,7 +525,16 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
-            v[i, Ny, k] = v[i, Ny - 1, k]
+            if outlet_frac[i, k] > 0.5:
+                if Ny >= 2:
+                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
+                                            + rho_field[i, Ny - 1, k])
+                    rho_outer_face = rho_field[i, Ny - 1, k]
+                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
+                else:
+                    v[i, Ny, k] = v[i, Ny - 1, k]
+            else:
+                v[i, Ny, k] = 0.0
 
 
 # ── SIMPLE Step 3: w-momentum (z-direction) — new in 3D ────────────
@@ -933,7 +953,18 @@ def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
-            v[i, Ny, k] = v[i, Ny - 1, k]
+            # Wall cells (outlet_mask_ij=False) pin v=0; open cells preserve
+            # rho*v mass flux across the outlet for compressible runs.
+            if outlet_mask_ij[i, k]:
+                if Ny >= 2:
+                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
+                                            + rho_field[i, Ny - 1, k])
+                    rho_outer_face = rho_field[i, Ny - 1, k]
+                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
+                else:
+                    v[i, Ny, k] = v[i, Ny - 1, k]
+            else:
+                v[i, Ny, k] = 0.0
     for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0
@@ -1145,9 +1176,16 @@ class SIMPLESolver3D:
         # Scalar broadcasts for rho, mu → 3D fields
         self.rho_field = np.full((Nx, Ny, Nz), self.rho, dtype=np.float64)
         self.mu_field = np.full((Nx, Ny, Nz), self.mu, dtype=np.float64)
+        # mu_eff = mu/ε. Per-cell ε supports zoned via eps_field (set below).
         self._mu_eff_field = np.full((Nx, Ny, Nz),
                                        self.mu / self.eps,
                                        dtype=np.float64)
+        # eps_field initialised after to allow re-init with zoned values
+        # Per-cell porosity (default uniform; caller sets eps_field for zoned).
+        # Used in mass conservation kernels: ∇·(ε·ρ·u) = 0 (correct macroscopic
+        # form for porous media). Without ε factor, zoned-eps cases miss the
+        # ∇ε term and accumulate ~5-20% per-cell mass divergence.
+        self.eps_field = np.full((Nx, Ny, Nz), self.eps, dtype=np.float64)
         # T field for ideal-gas rho update (uniform T_in by default)
         self.T_field = np.full((Nx, Ny, Nz), self.T_in, dtype=np.float64)
         # v_inlet_field is a fixed-velocity BC; density updates do not modify it.
@@ -1222,7 +1260,10 @@ class SIMPLESolver3D:
             from .tpms_calc import air_viscosity
             mu_new = air_viscosity(self.T_field).astype(np.float64)
             self.mu_field = np.ascontiguousarray(mu_new)
-            self._mu_eff_field = np.ascontiguousarray(mu_new / self.eps)
+            # Use eps_field for per-cell μ/ε (zoned ε support); falls back to
+            # uniform self.eps when eps_field is the default uniform array.
+            eps_eff = self.eps_field if hasattr(self, 'eps_field') else self.eps
+            self._mu_eff_field = np.ascontiguousarray(mu_new / eps_eff)
 
     def solve(self, max_iter=3000, tol=1e-6,
               n_inner=1, verbose=False):
@@ -1253,6 +1294,11 @@ class SIMPLESolver3D:
             _sweep_w = _sweep_w_jit_df_3d
 
         for it in range(1, max_iter + 1):
+            # Effective density for continuity: ε·ρ. Uniform ε → multiplicative
+            # constant (no functional change). Zoned ε → captures macroscopic
+            # ∇·(ε·ρ·u)=0 form; without this the ∇ε contribution is dropped.
+            rho_eps_field = np.ascontiguousarray(
+                self.rho_field * self.eps_field, dtype=np.float64)
             _sweep_u(self.u, self.v, self.w, self.P, self.d_u,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
@@ -1276,7 +1322,7 @@ class SIMPLESolver3D:
             rebuild = (it == 1) or (it % self.pyamg_rebuild_every == 0)
             _solve_pp_amg(self.Pp, self.u, self.v, self.w,
                            self.d_u, self.d_v, self.d_w,
-                           Nx, Ny, Nz, dx, dy, dz, self.rho_field,
+                           Nx, Ny, Nz, dx, dy, dz, rho_eps_field,
                            self._pp_sparsity, self._ml_cache, rebuild)
 
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
@@ -1287,7 +1333,7 @@ class SIMPLESolver3D:
 
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
-                                     self.rho_field)
+                                     rho_eps_field)
             self.residuals.append(res)
 
             if verbose and it % 50 == 0:

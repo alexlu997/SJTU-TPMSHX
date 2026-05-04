@@ -44,7 +44,7 @@ rho_A = air_density(T_Ain_K, P_Ain)
 mu_A  = air_viscosity(T_Ain_K); k_A = air_conductivity(T_Ain_K); cp_A = air_cp(T_Ain_K)
 u_A   = m_air / (rho_A * A_FLOW)
 
-K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2)
+K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, 0.5 * EPS)
 G_est = m_air / A_FLOW
 C_est = mu_A * G_est / K_pred + cF_pred * G_est**2
 P_out_est = float(np.sqrt(max(P_Ain**2 - 2*R_AIR_VAL*T_Ain_K*C_est*L_DOM, 1e4)))
@@ -74,9 +74,9 @@ def run_case(Tb_scalar_C, label):
     cA, nA = sA.solve(max_iter=3000, tol=1e-4, verbose=False)
     dP_iso = sA.P[:,0].mean() - sA.P[:,-1].mean()
 
-    eps_f = EPS/2
-    K_ffA = eps_f * k_A
-    K_ffB = eps_f * air_conductivity(T_Bin_K)
+    eps_A = 0.5 * EPS
+    K_ffA = eps_A * k_A
+    K_ffB = eps_A * air_conductivity(T_Bin_K)
     K_ss  = (1-EPS) * K_S
     r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
     h_vA = A0 * r_A['H_sf']

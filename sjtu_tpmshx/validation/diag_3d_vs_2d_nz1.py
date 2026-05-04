@@ -51,7 +51,7 @@ def main():
     mu_air = air_viscosity(T_in)
 
     # D-F surrogate at Gyroid L=7 t=0.6
-    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS / 2.0)
+    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, 0.5 * EPS)
 
     # P_ref_abs 1D closed-form seed
     G_A = rho_air * u_inlet

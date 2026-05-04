@@ -82,8 +82,9 @@ def run_single_case(case: dict) -> dict:
         h_vB = 1.0e10
 
         # Thermal conductivity and heat capacity arrays
-        K_ffA = (EPS / 2) * k_A
-        K_ffB = (EPS / 2) * 0.6     # placeholder water k (unused since Tb frozen)
+        EPS_A = 0.5 * EPS    # per-stream void fraction
+        K_ffA = EPS_A * k_A
+        K_ffB = EPS_A * 0.6  # placeholder water k (unused since Tb frozen)
         K_ss = (1 - EPS) * K_S
         rho_cp_A = rho_A * cp_A
         rho_cp_B = 4.18e6           # placeholder water rho*cp

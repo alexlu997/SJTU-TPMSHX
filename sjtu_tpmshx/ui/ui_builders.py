@@ -340,11 +340,12 @@ def build_ui(window):
     header_row.addWidget(btn_export, 0)
     root.addWidget(header_widget, 0)
 
-    # E5 — workflow breadcrumb strip just below the header. 5 named
-    # steps keep users oriented inside a long research session:
-    # Geometry → Boundary → Zones → Compute → Optimize.
-    _bc = _build_workflow_breadcrumb(window, _t)
-    root.addWidget(_bc, 0)
+    # E5 (removed per user request) — workflow breadcrumb strip used to
+    # show GEOMETRY → BOUNDARY → ZONES → COMPUTE → OPTIMIZE pills here,
+    # but the steps duplicated the left-panel collapsibles and the
+    # progress bar already covers compute state, so the strip was just
+    # noise. `refresh_workflow_breadcrumb` no-ops when `_wf_pills` isn't
+    # populated, so leaving the call sites alone is safe.
 
     # Splitter: 1px separator — narrow band that reads as a divider,
     # widens on hover for a grab affordance.
@@ -536,10 +537,6 @@ def build_page_domain(window):
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
     window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.042")
     window._lbl_Lz     = g.itemAtPosition(2, 0).widget()
-    window.le_T_init_s = row(window, g, 3, "Solid init. temp <i>T</i><sub>0</sub> [K]", "325.0")
-    # Grab the QLabel sibling so `_toggle_temp_unit` can swap the [K]/[°C]
-    # suffix in lockstep with the numeric value.
-    window._lbl_T_init_s_unit = g.itemAtPosition(3, 0).widget()
 
     # Update edge labels when L or H changes
     window.le_L.editingFinished.connect(window._update_edge_combos)
@@ -550,7 +547,7 @@ def build_page_domain(window):
     window.combo_shape.addItems(["Rectangle", "Hexagon", "Octagon"])
     window.combo_shape.setStyleSheet(_COMBO)
     window.combo_shape.currentIndexChanged.connect(window._on_shape_changed)
-    add_row(window, g, 4, "Domain shape", window.combo_shape)
+    add_row(window, g, 3, "Domain shape", window.combo_shape)
 
     # Dimensionality (2D / 3D MVP) — dispatch in run_calculation
     window.combo_dim = QComboBox()
@@ -558,7 +555,7 @@ def build_page_domain(window):
     window.combo_dim.setStyleSheet(_COMBO)
     window.combo_dim.currentIndexChanged.connect(
         lambda *_: _on_dim_changed(window))
-    add_row(window, g, 5, "Dimensionality", window.combo_dim)
+    add_row(window, g, 4, "Dimensionality", window.combo_dim)
 
     # ── TPMS Structure ──
     g0, _ = section(window, lay, "  TPMS Structure", _T_NEUTRAL, _F_NEUTRAL)
@@ -568,7 +565,13 @@ def build_page_domain(window):
     window.combo_tpms.setStyleSheet(_COMBO)
     add_row(window, g0, 0, "Type", window.combo_tpms)
     window.le_Lcell = row(window, g0, 1, "<i>L</i><sub>cell</sub> [mm]", "7.0")
-    window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.6")
+    # t default: 0.5 mm sits at the upper bound of the ConstDF-v1 surrogate
+    # training window [0.3, 0.5] so the default GUI run does NOT trigger
+    # the extrapolation watermark every time. Users wanting t=0.6 mm (the
+    # original Shanghai geometry) must edit explicitly and acknowledge the
+    # extrap warning that follows. Re-train the surrogate to expand the
+    # range when new CFD data arrives.
+    window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.5")
     window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m\u00b7K)]", "16.0")
     btn_tpms = QPushButton("Compute TPMS &Geometry")
     btn_tpms.setFixedHeight(28); btn_tpms.setStyleSheet(m._BTN_SECONDARY)
@@ -581,18 +584,49 @@ def build_page_domain(window):
     window._v_Dh   = res_row(window, g0, 7, "<i>D<sub>h</sub></i> [mm]")
     window._v_Kss  = res_row(window, g0, 8, "<i>K</i><sub>ss</sub> [W/(m\u00b7K)]")
 
-    # Material
+    # Surrogate-domain guard. Default ON \u2014 near-boundary extrapolation
+    # (e.g. Shanghai t=0.6 mm, 20% past the [0.3, 0.5] cap) is the common
+    # validation workflow. Unchecking reverts to strict: out-of-window
+    # inputs abort Compute. Either way, extrapolated results carry an
+    # `extrapolated=True` flag and a watermark on every plot for
+    # traceability.
+    window.chk_allow_extrap = QCheckBox("Allow surrogate extrapolation")
+    window.chk_allow_extrap.setChecked(True)
+    window.chk_allow_extrap.setToolTip(
+        "ConstDF-v1 \u8bad\u7ec3\u57df: L \u2208 [4, 8] mm, t \u2208 [0.3, 0.5] mm, Re \u2208 [400, 16000].\n"
+        "\u9ed8\u8ba4\u4e25\u683c: \u8d85\u51fa\u4efb\u4e00\u8303\u56f4 Compute \u62d2\u7edd\u8fd0\u884c.\n"
+        "\u52fe\u9009\u540e: \u8d85\u51fa\u4ec5 warn, \u7ed3\u679c\u6807\u8bb0\u4e3a extrapolated, \u56fe\u4e0a\u52a0\u6c34\u5370.\n"
+        "\u7528\u4e8e Shanghai t=0.6 mm \u7b49\u8fd1\u8fb9\u754c\u9a8c\u8bc1\u5de5\u51b5."
+    )
+    _extrap_t = get_theme()
+    window.chk_allow_extrap.setStyleSheet(
+        f"QCheckBox{{color:{_extrap_t['fg']}; font-size:9pt; background:transparent;}}"
+        f"QCheckBox::indicator{{width:14px; height:14px;"
+        f"border:1px solid {_extrap_t['chk_indicator_border']};"
+        f"border-radius:3px; background:{_extrap_t['chk_bg']};}}"
+        f"QCheckBox::indicator:checked{{background:{_extrap_t['chk_checked_bg']};"
+        f"border-color:{_extrap_t['chk_checked_border']};}}")
+    g0.addWidget(window.chk_allow_extrap, 9, 0, 1, 2)
+
+    # Material \u2014 only rho_s remains (k_s is in the solver/geometry panel).
+    # cp_s and cp_f were removed: no solver path reads them. Solid cp is a
+    # per-material constant hardcoded downstream; fluid cp is computed
+    # per-cell via air_cp(T) inside tpms_calc.
     g2, _ = section(window, lay, "  Material Properties", _T_NEUTRAL, _F_NEUTRAL)
     window.le_rho_s = row(window, g2, 0, "<i>&rho;</i><sub>s</sub> [kg/m\u00b3]", "7900")
-    window.le_cp_s  = row(window, g2, 1, "<i>c</i><sub>p,s</sub> [J/(kg\u00b7K)]", "500")
-    # cp_f removed: fluid cp is computed per-cell from local T via air_cp(T)
-    # inside tpms_calc.py. Keeping a user-editable cp_f field let the number
-    # silently disagree with what the solver actually used. (#1)
-    window.le_cp_f  = row(window, g2, 2, "<i>c</i><sub>p,f</sub> (auto)", "from air_cp(T)")
-    window.le_cp_f.setEnabled(False)
-    window.le_cp_f.setToolTip(
-        "Fluid cp is computed per-cell from local T via air_cp(T). "
-        "This field is read-only \u2014 edit the temperature inputs instead.")
+    # rho_s is NOT consumed by the steady-state LTNE energy equation
+    # (\u2202T_s/\u2202t is dropped \u2192 \u03c1_s\u00b7cp_s prefactor disappears). It is saved with
+    # the session config for forward compatibility with a future transient
+    # extension (kernel would add \u03c1_s\u00b7cp_s\u00b7(T_s^{n+1}\u2212T_s^n)/\u0394t).
+    window.le_rho_s.setToolTip(
+        "Solid density. Saved with session config but NOT read by the "
+        "current steady-state LTNE solver (no \u2202T_s/\u2202t term in the solid "
+        "energy equation). Reserved for a future transient extension.")
+    # T_s_init removed from UI (2026-04-29) -- was numerical iteration seed
+    # only, not a physical parameter. Solver auto-seeds at 0.5*(T_inA+T_inB);
+    # converged Ts is independent of seed within solver tolerance. Removed to
+    # avoid user confusion. _parse_inputs falls back to None when le_TsInit
+    # absent via getattr().
 
     # ── Grid Settings (rect mode) ──
     g4, sec_solver_rect = section(window, lay, "  Grid Settings", _T_NEUTRAL, _F_NEUTRAL)
@@ -602,13 +636,15 @@ def build_page_domain(window):
     window.le_Nz = row(window, g4, 2, "Grid <i>N<sub>z</sub></i> (3D only)", "5")
     window._lbl_Nz = g4.itemAtPosition(2, 0).widget()
 
-    # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces)
+    # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces).
+    # OFF by default (5-15× faster, ~1pp accuracy cost). Turn ON for production
+    # validation runs where dP near-wall BL matters more than UX speed.
     window.chk_wall_refine_3d = QCheckBox("6-wall BL refine (3D)")
-    window.chk_wall_refine_3d.setChecked(True)
+    window.chk_wall_refine_3d.setChecked(False)
     window.chk_wall_refine_3d.setToolTip(
         "Enable six-wall boundary-layer refinement for 3D solves. "
         "Adds 8 cells per wall (first_cell=0.02 mm, growth 1.8). "
-        "Turn off for pure uniform grid.")
+        "ON: 5-15× slower, ~+1pp dP accuracy. OFF: production-fast (default).")
     _tc = get_theme()
     window.chk_wall_refine_3d.setStyleSheet(f"""
         QCheckBox {{
@@ -670,6 +706,21 @@ def build_page_domain(window):
     window._r_dP_A  = res_row(window, rg, 2, "\u0394<i>P</i><sub>total</sub> [Pa]", 0)
     window._r_dP_B  = res_row(window, rg, 2, "\u0394<i>P</i><sub>total</sub> [Pa]", 2)
     window._r_Q     = res_row(window, rg, 3, "<i>Q</i><sub>total</sub> [W/m]", 0)
+    # Document which Q metric is shown so users don't conflate it with the
+    # other diagnostics in the result dict (Q_solid_B, Q_sA, Q_sB,
+    # Q_interior). Run_calculation_3d.py:1510 sets primary Q =
+    # mean(Q_enthalpy_A, Q_enthalpy_B) when both fluids solve, else
+    # Q_enthalpy_A alone.
+    try:
+        window._r_Q.setToolTip(
+            "Primary heat transfer rate.\n"
+            "Q = 0.5 · (Q_enthalpy_A + Q_enthalpy_B) when both fluids solve\n"
+            "  = |m_dot · cp · (T_in − T_out)| per side\n"
+            "  = Q_enthalpy_A alone when Fluid B is frozen.\n"
+            "Diagnostic metrics (Q_solid_B, Q_sA/Q_sB, Q_interior) are "
+            "exported in the result dict but NOT shown here.")
+    except Exception:
+        pass
     lay.addWidget(res_frame, 0)
 
     lay.addStretch()
@@ -717,13 +768,31 @@ def build_page_fluids(window):
     # ── Fluid A (input + computed) ────────────────────────
     g1, _ = section(window, _fluids_row_lay, "Fluid A", _T_A, _F_A)
     _FLUID_TYPES = ["Air", "Water", "sCO₂"]
+    # Fluid A only supports Air right now (Water needs an incompressible
+    # SIMPLE A path; sCO₂ needs a real-gas property table). Disabling the
+    # unsupported combo entries instead of hiding them keeps the option
+    # visible as a "coming soon" hint without letting users hit
+    # NotImplementedError at compute time. See run_calculation_3d.py:954-957.
     window.combo_fluidA = QComboBox()
     window.combo_fluidA.addItems(_FLUID_TYPES)
     window.combo_fluidA.setCurrentIndex(0)
     window.combo_fluidA.setStyleSheet(_COMBO)
     window.combo_fluidA.setToolTip(
-        "Water and sCO₂ correlations are not yet fitted — "
-        "solver blocks these and raises an error at compute time.")
+        "Fluid A currently supports Air only.\n"
+        "Water and sCO₂ are reserved (greyed) — solver blocks them.")
+    # Disable Water (1) and sCO₂ (2) on Fluid A side
+    try:
+        _modelA = window.combo_fluidA.model()
+        for _idx in (1, 2):
+            _it = _modelA.item(_idx)
+            if _it is not None:
+                _it.setEnabled(False)
+                _it.setToolTip(
+                    "Not yet supported for Fluid A — see "
+                    "run_calculation_3d.py:954 (Water needs incompressible "
+                    "SIMPLE A path; sCO₂ needs real-gas property table).")
+    except Exception:
+        pass
     add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
     window.le_uA   = row(window, g1, 1, "<i>u</i><sub>A</sub> [m/s]",  "20.0")
     window.le_TinA = row(window, g1, 2, "<i>T</i><sub>in</sub> [K]",   "422.0")
@@ -742,18 +811,38 @@ def build_page_fluids(window):
 
     # ── Fluid B (input + computed) — sits to the right of Fluid A ─────
     g2b, _ = section(window, _fluids_row_lay, "Fluid B", _T_B, _F_B)
+    # Fluid B supports Air + Water (incompressible SIMPLE B path is wired,
+    # see run_calculation_3d.py:910-917). sCO₂ remains unsupported until
+    # a real-gas property table is added.
     window.combo_fluidB = QComboBox()
     window.combo_fluidB.addItems(_FLUID_TYPES)
     window.combo_fluidB.setCurrentIndex(0)
     window.combo_fluidB.setStyleSheet(_COMBO)
     window.combo_fluidB.setToolTip(
-        "Water and sCO₂ correlations are not yet fitted — "
-        "solver blocks these and raises an error at compute time.")
+        "Fluid B supports Air and Water.\n"
+        "sCO₂ is reserved (greyed) — solver blocks it.")
+    try:
+        _modelB = window.combo_fluidB.model()
+        _it = _modelB.item(2)   # sCO₂
+        if _it is not None:
+            _it.setEnabled(False)
+            _it.setToolTip(
+                "Not yet supported for Fluid B — needs real-gas property "
+                "table. See run_calculation_3d.py:962.")
+    except Exception:
+        pass
     add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)
-    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "0.133")
-    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "300.0")
+    # Fluid B defaults: air-air startup scenario with B as the cold side.
+    # u_B=10.0 m/s sits in the same magnitude as Fluid A (20.0 m/s) and
+    # keeps Re inside the validated correlation range [600, 30000] for
+    # typical TPMS D_h. T_inB=293.15 K (20 °C) and P_inB=101325 Pa
+    # (standard atmosphere) give a clean reference cold-side ambient.
+    # Driving ΔT = T_inA − T_inB ≈ 129 K provides enough thermal headroom
+    # for an LTNE air-air run without further user tuning.
+    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "10.0")
+    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "293.15")
     window._lbl_TinB_unit = g2b.itemAtPosition(2, 0).widget()
-    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101973")
+    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101325")
     _computed_divider(g2b, 4)
     window._v_rhoB = res_row(window, g2b, 5, "<i>&rho;</i> [kg/m\u00b3]")
     window._v_ReB  = res_row(window, g2b, 6, "Re")
@@ -1927,6 +2016,16 @@ def toggle_canvas_cols(window):
 def canvas_zoom(window, factor):
     """Ex-Main_Menu._canvas_zoom(self, factor). Zoom current canvas card by factor."""
     tab = window._active_tab
+    if tab == '3d':
+        panel = getattr(window, 'canvas_3d', None)
+        plotter = getattr(panel, 'plotter', None)
+        if plotter is not None:
+            try:
+                plotter.camera.zoom(float(factor))
+                plotter.render()
+                return
+            except Exception:
+                pass
     card = window._canvas_cards.get(tab)
     if card:
         h = max(200, int(card.height() * factor))
@@ -1936,6 +2035,14 @@ def canvas_zoom(window, factor):
 def canvas_zoom_reset(window):
     """Ex-Main_Menu._canvas_zoom_reset(self). Reset current canvas card to default height."""
     tab = window._active_tab
+    if tab == '3d':
+        panel = getattr(window, 'canvas_3d', None)
+        if panel is not None:
+            try:
+                panel._set_view('iso')
+                return
+            except Exception:
+                pass
     card = window._canvas_cards.get(tab)
     if card and tab in window._canvas_default_h:
         card.setFixedHeight(window._canvas_default_h[tab])

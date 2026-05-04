@@ -156,8 +156,8 @@ def run_optimize(window):
     t = threading.Thread(target=_opt_thread, daemon=True)
     t.start()
 
-    # Poll for completion using QTimer
-    window._opt_timer = QTimer()
+    # Poll for completion using QTimer — parent to window for proper lifetime.
+    window._opt_timer = QTimer(window)
     window._opt_thread_ref = t
     window._opt_tick = [0]
 

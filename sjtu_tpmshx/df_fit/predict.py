@@ -23,6 +23,7 @@ Usage
 """
 from __future__ import annotations
 
+import os
 import sys
 from math import sqrt
 from pathlib import Path
@@ -33,6 +34,15 @@ _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
 R_AIR = 287.05
+
+
+def _residual_correction_enabled() -> bool:
+    """Env-var-gated toggle for residual learning correction.
+
+    Set TPMSHX_DF_RESIDUAL_CORR=1 to enable. Default off — preserves
+    historical baseline behavior in tests, optimizers, and existing scripts.
+    """
+    return os.environ.get("TPMSHX_DF_RESIDUAL_CORR", "0").strip() == "1"
 
 
 # ==================================================================
@@ -103,6 +113,10 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
 
     P_out^2 = P_in^2 - 2*R*T*(mu*G/K + c_F*G^2)*L
 
+    If env var ``TPMSHX_DF_RESIDUAL_CORR=1`` is set, applies the residual
+    learning correction: dP_corrected = dP_baseline * (1 + g(Re, eps_f)).
+    See `residual_correction.py` for details.
+
     Parameters
     ----------
     G : mass flux [kg/(m^2 s)]
@@ -116,7 +130,21 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
     P_out_sq = P_in ** 2 - 2.0 * R_AIR * T * C * L
     if P_out_sq <= 0:
         return P_in
-    return P_in - sqrt(P_out_sq)
+    dP_baseline = P_in - sqrt(P_out_sq)
+
+    if not _residual_correction_enabled():
+        return dP_baseline
+
+    # Apply residual learning correction
+    from .residual_correction import get_corrector
+    from solvers.tpms_calc import geometry as tpms_geometry
+    geom = tpms_geometry(tpms_type, L_mm, t_mm, 16.0)
+    D_h = float(geom["D_h"])
+    rho_in = P_in / (R_AIR * T)
+    u_in = G / rho_in
+    Re = rho_in * u_in * D_h / mu
+    g = get_corrector(tpms_type).correction(Re, eps_f)
+    return max(dP_baseline * (1.0 + g), 0.0)
 
 
 # ==================================================================

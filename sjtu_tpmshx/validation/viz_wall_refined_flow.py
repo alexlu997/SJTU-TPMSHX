@@ -42,7 +42,7 @@ def build_wall_refined_1d(W, N_bulk, n_refine=8, first_cell=0.02e-3, growth=1.8)
 CASE = 8
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2
+EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2
 L_DOM = 0.231; H_DOM = 0.042
 N_UNITS = 36
 A_FLOW = N_UNITS * 18.0565e-6
@@ -61,7 +61,7 @@ dP_exp = float(df.iloc[ci, 30]) - float(df.iloc[ci, 31])
 rho_A = air_density(T_Ain_K, P_Ain); mu_A = air_viscosity(T_Ain_K)
 u_A = m_air / (rho_A * A_FLOW)
 
-K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
 G = m_air / A_FLOW
 C = mu_A*G/K_pred + cF_pred*G**2
 P_out_sq = P_Ain**2 - 2*R_AIR*T_Ain_K*C*L_DOM

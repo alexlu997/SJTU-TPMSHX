@@ -42,7 +42,7 @@ R_AIR = 287.05
 # ── Shanghai geometry (mirrors 2D validate_shanghai.py) ──
 TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
+EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
 L_DOM = 0.182; H_DOM = 0.042
 LZ = 0.042 # arbitrary 3D depth (water uniform along z)
 
@@ -70,22 +70,26 @@ def water_cp(T_K):
 
 def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, eps=EPS, d_h=D_H,
                             L_cell=L_CELL):
-    """Local Gyroid Nu → h_vA field (mirror 2D _compute_h_vA_field).
+    """Local single-stream Nu → h_vA field (mirror 2D _compute_h_vA_field).
+
+    Uses post-refit single-stream convention: ε_f = ε/2, Re = ρ·u·D_h/μ,
+    Nu = h·D_h/k_f via _nu_vec (Diamond F4-D / Gyroid F7).
 
     Ta_field, ucA_field : (Nx, Ny, Nz) real-coord cell-centre
     sA: SIMPLESolver3D for fluid A (internal dims (Ny, Nx, Nz))
     Returns h_vA shape (Nx, Ny, Nz).
     """
-    # SIMPLE A: internal (Ny, Nx, Nz); P in SIMPLE coords. Transpose to real.
+    from solvers.sigmoid_field import _nu_vec
     P_abs_sf = (sA.P_ref_abs + sA.P).transpose(1, 0, 2)  # (Nx, Ny, Nz)
     rho_loc = P_abs_sf / (R_AIR * Ta_field)
     mu_loc = air_viscosity(Ta_field)
     k_loc = air_conductivity(Ta_field)
     Re_loc = rho_loc * np.abs(ucA_field) * d_h / mu_loc
     Re_loc = np.clip(Re_loc, 1.0, None)
-    n_field = 0.177 * Re_loc**0.1 * eps**(-2.0 / 3.0)
-    Nu_field = (0.17 * Pr**(1.0 / 3.0) * Re_loc**n_field
-                * eps**2.25 * (L_cell / (1000.0 * Sa_mm))**(-2.01))
+    L_mm_arr = np.full_like(Re_loc, L_cell)
+    D_h_mm_arr = np.full_like(Re_loc, d_h * 1000.0)
+    Nu_field = _nu_vec(TPMS, Re_loc, np.full_like(Re_loc, eps),
+                       L_mm_arr, D_h_mm_arr)
     H_sf = Nu_field * k_loc / d_h
     return A0 * H_sf
 
@@ -171,13 +175,12 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     dx, dy, dz, Nx, Ny, Nz = _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=wall_refine)
 
     eps_arr = np.full((Nx, Ny, Nz), EPS)
-    eps_f = EPS / 2.0
-    K_ffA = np.full((Nx, Ny, Nz), eps_f * air_conductivity(T_Ain_K))
-    K_ffB = np.full((Nx, Ny, Nz), eps_f * 0.6)   # water k ~0.6 W/mK
+    K_ffA = np.full((Nx, Ny, Nz), EPS_A * air_conductivity(T_Ain_K))
+    K_ffB = np.full((Nx, Ny, Nz), EPS_A * 0.6)   # water k ~0.6 W/mK; ε_B = ε_A
     K_ss = np.full((Nx, Ny, Nz), (1.0 - EPS) * K_S)
 
-    # D-F coeffs from surrogate
-    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS / 2.0)
+    # D-F coeffs from surrogate (per-stream void fraction ε_A)
+    K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
     K_A_arr = np.full((Nx, Nz), K_pred)         # SIMPLE A: (Ny_sA=Nx, Nz)
     cF_A_arr = np.full((Nx, Nz), cF_pred)
 
@@ -185,7 +188,22 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
     h_vA0 = A0 * r_A['H_sf']
     h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
-    h_vB_field = np.full((Nx, Ny, Nz), 1.0e10)  # water perfect sink
+
+    # Physical h_vB (was hard-coded 1e10 perfect-sink hack — 2D fix
+    # `validate_shanghai_aligned.py v1.0.10` saved 15 pp dP error by
+    # replacing this with a real Nu calc; mirror it here).
+    # Air-fitted Nu correlation extrapolated to water Pr (single-stream
+    # eps_f = EPS_A). Same approximation used in 2D aligned script.
+    from solvers.tpms_calc import nu_from_Re
+    mu_B0 = water_mu(T_Bin_K)
+    k_B = 0.6                                          # water k ~0.6 W/mK
+    m_water = float(df.iloc[ci, 7])
+    u_B = m_water / (rho_B * A_FLOW)
+    Re_B = rho_B * abs(u_B) * D_H / mu_B0
+    Nu_B = nu_from_Re(TPMS, Re_B, EPS_A, L_CELL, D_H * 1000.0)
+    H_sf_B = Nu_B * k_B / D_H
+    h_vB0 = A0 * H_sf_B
+    h_vB_field = np.full((Nx, Ny, Nz), h_vB0)
 
     rho_cp_A = rho_A * cp_A
     rho_cp_B = rho_B * water_cp(T_Bin_K)
@@ -267,8 +285,12 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
                 break
         Ta_prev = Ta.copy()
 
-        # Update SIMPLE A rho/mu/mu_eff from new Ta
+        # Update SIMPLE A T_field/rho/mu/mu_eff from new Ta.
+        # Critical: SIMPLE _update_density() uses sA.T_field — must propagate
+        # Ta here, otherwise ρ drifts back to T_in inside the inner SIMPLE loop
+        # (causing ρ to reflect only P drop, missing the T-cooling densification).
         Ta_sA = Ta.transpose(1, 0, 2).copy()
+        sA.update_T_field(Ta_sA)
         P_abs_sA = sA.P_ref_abs + sA.P
         rho_A_new = P_abs_sA / (R_AIR * Ta_sA)
         mu_A_new = air_viscosity(Ta_sA)

@@ -20,7 +20,7 @@ from df_fit.predict import predict_K_cF
 
 TPMS, L_CELL, T_WALL, K_S = 'Gyroid', 7.0, 0.6, 16.0
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
+EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
 L_DOM = 0.231; H_DOM = 0.042
 N_UNITS = 36
 A_FLOW = N_UNITS * 18.0565e-6
@@ -39,7 +39,7 @@ mu_A   = air_viscosity(T_in_K)
 u_A    = m_air / (rho_A * A_FLOW)
 dP_exp = P_in_g - float(raw.iloc[ci, 31])
 
-K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2)
+K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
 
 print(f"=== Case 16 setup ===")
 print(f"  m_air = {m_air:.4f} kg/s   T_in = {T_in_K-273.15:.1f}°C")
@@ -84,7 +84,7 @@ from solvers.solve_full import solve_full_domain
 T_Bin_K = float(raw.iloc[ci, 24]) + 273.15
 T_Bout_K = float(raw.iloc[ci, 25]) + 273.15
 k_A = air_conductivity(T_in_K); cp_A = air_cp(T_in_K)
-eps_f = EPS/2; K_ffA = eps_f*k_A; K_ffB = eps_f*air_conductivity(T_Bin_K); K_ss = (1-EPS)*K_S
+K_ffA = EPS_A*k_A; K_ffB = EPS_A*air_conductivity(T_Bin_K); K_ss = (1-EPS)*K_S
 r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_in_K, P_Ain, K_S)
 h_vA = A0 * r_A['H_sf']; h_vB = 1e10
 rho_cp_A = rho_A * cp_A; rho_cp_B = 999.0 * 4182

@@ -198,10 +198,24 @@ def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
     result = _compute_raw(tpms_type, L_mm, t_mm, N)
     eps = result['epsilon']
     A0 = result['A_0']
-    D_h = 2.0 * eps / A0 if A0 > 0 else 0.0
+    # Per-stream void fractions for the bicontinuous sheet HX.
+    # Sheet TPMS splits the void ε equally between two fluid channels A and B,
+    # so each fluid occupies ε_A = ε_B = ε/2 of the total domain volume.
+    # Each fluid contacts the FULL wall area A_0 from its own side.
+    eps_A = 0.5 * eps
+    eps_B = 0.5 * eps
+    # Standard hydraulic diameter for a single fluid stream:
+    # D_h = 4·V_void_single / A_wet_single = 4·ε_A / A_0
+    # (Same coefficient 4 as the textbook D_h definition; the per-stream void
+    # fraction ε_A already absorbs the bicontinuous sheet split. Equivalent to
+    # the legacy form 2·ε/A_0 used before 2026-04-29. See memory
+    # `reference_dh_convention.md`.)
+    D_h = 4.0 * eps_A / A0 if A0 > 0 else 0.0
 
     return {
         'epsilon': eps,
+        'epsilon_A': eps_A,
+        'epsilon_B': eps_B,
         'A_0': A0,
         'D_h': D_h,
     }

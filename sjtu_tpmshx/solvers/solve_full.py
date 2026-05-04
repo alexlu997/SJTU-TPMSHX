@@ -176,10 +176,18 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     hvA = h_vA_arr[i, j] * vol
                     ef = eps_f_arr[i, j]
 
-                    dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxi if i < Nx-1 else 0.0
-                    dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxi if i > 0 else 0.0
-                    dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyj if j < Ny-1 else 0.0
-                    dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dyj if j > 0 else 0.0
+                    # Face spacing δx_e = 0.5·(dx_P + dx_E) ensures conservative
+                    # diffusion stencil — same value used by cell P (as east-flux)
+                    # and cell E (as west-flux) at shared face. Old /dxi used cell
+                    # P width only; non-uniform grids broke face-flux symmetry.
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                    dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                    dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                    dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
                     u_loc = ucA[i,j]; v_loc = vcA[i,j]
                     Fx = ef * rho_cp_fA[i, j] * abs(u_loc) * dyj
@@ -210,10 +218,15 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 hvA_s = h_vA_arr[i, j] * vol_s
                 hvB_s = h_vB_arr[i, j] * vol_s
 
-                Ds_e = 2.0*Ks_loc*K_ss_arr[i+1,j]/(Ks_loc+K_ss_arr[i+1,j]+1e-30)*dyj/dxi if i < Nx-1 else Ks_loc*dyj/dxi
-                Ds_w = 2.0*Ks_loc*K_ss_arr[i-1,j]/(Ks_loc+K_ss_arr[i-1,j]+1e-30)*dyj/dxi if i > 0    else Ks_loc*dyj/dxi
-                Ds_n = 2.0*Ks_loc*K_ss_arr[i,j+1]/(Ks_loc+K_ss_arr[i,j+1]+1e-30)*dxi/dyj if j < Ny-1 else Ks_loc*dxi/dyj
-                Ds_s = 2.0*Ks_loc*K_ss_arr[i,j-1]/(Ks_loc+K_ss_arr[i,j-1]+1e-30)*dxi/dyj if j > 0    else Ks_loc*dxi/dyj
+                # Face spacing for solid diffusion stencil (conservative)
+                dxe_s = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw_s = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn_s = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys_s = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                Ds_e = 2.0*Ks_loc*K_ss_arr[i+1,j]/(Ks_loc+K_ss_arr[i+1,j]+1e-30)*dyj/dxe_s if i < Nx-1 else Ks_loc*dyj/dxi
+                Ds_w = 2.0*Ks_loc*K_ss_arr[i-1,j]/(Ks_loc+K_ss_arr[i-1,j]+1e-30)*dyj/dxw_s if i > 0    else Ks_loc*dyj/dxi
+                Ds_n = 2.0*Ks_loc*K_ss_arr[i,j+1]/(Ks_loc+K_ss_arr[i,j+1]+1e-30)*dxi/dyn_s if j < Ny-1 else Ks_loc*dxi/dyj
+                Ds_s = 2.0*Ks_loc*K_ss_arr[i,j-1]/(Ks_loc+K_ss_arr[i,j-1]+1e-30)*dxi/dys_s if j > 0    else Ks_loc*dxi/dyj
 
                 sE = Ts[i+1,j] if i < Nx-1 else Ts[i,j]
                 sW = Ts[i-1,j] if i > 0    else Ts[i,j]
@@ -256,10 +269,15 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         hvB = h_vB_arr[i, j] * vol_b
                         ef = eps_f_arr[i, j]
 
-                        dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxi if i < Nx-1 else 0.0
-                        dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxi if i > 0 else 0.0
-                        dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyj if j < Ny-1 else 0.0
-                        dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dyj if j > 0 else 0.0
+                        # Face spacing for B diffusion stencil (conservative)
+                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                        dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                        dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                        dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                        dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
                         u_loc = ucB[i,j]; v_loc = vcB[i,j]
                         Fx = ef * rho_cp_fB[i, j] * abs(u_loc) * dyj
@@ -375,19 +393,19 @@ def solve_full_domain(L, H, Nx, Ny,
     rho_cp_fB_arr = _to_2d(rho_cp_fB, Nx, Ny)
 
     # Per-fluid void-fraction split. Default is symmetric 50/50
-    # (eps_fA = eps_fB = epsilon / 2) — matches symmetric TPMS.
+    # (ε_A = ε_B = ε/2) — matches symmetric bicontinuous sheet TPMS.
     #
-    # **eps_A / eps_B are private hooks, NOT a public API** — they exist
-    # only so a future kernel upgrade can pass distinct eps_fA_arr /
-    # eps_fB_arr without changing the signature. Today the kernel takes
-    # one eps_f_arr, so any caller that supplies asymmetric values gets
+    # **eps_A / eps_B kwargs are private hooks, NOT a public API** — they
+    # exist only so a future kernel upgrade can pass distinct ε_A / ε_B
+    # arrays without changing the signature. Today the kernel takes a
+    # single eps_f_arr, so any caller that supplies asymmetric values gets
     # NotImplementedError. UI / optimizer never pass them (#13).
     if eps_A is None and eps_B is None:
         if np.ndim(epsilon) == 0:
-            eps_f_arr = np.full((Nx, Ny), float(epsilon) / 2.0, dtype=np.float64)
+            eps_f_arr = np.full((Nx, Ny), 0.5 * float(epsilon), dtype=np.float64)
         else:
             eps_f_arr = np.ascontiguousarray(
-                np.asarray(epsilon, dtype=np.float64) / 2.0)
+                0.5 * np.asarray(epsilon, dtype=np.float64))
     else:
         if eps_A is None or eps_B is None:
             raise ValueError("eps_A and eps_B must be provided together.")
@@ -401,9 +419,9 @@ def solve_full_domain(L, H, Nx, Ny,
                 "fraction.")
         if not np.allclose(eps_A_arr, eps_B_arr):
             raise NotImplementedError(
-                "Asymmetric eps_A / eps_B is not yet routed through the LTNE "
-                "kernel (solve_full currently assumes symmetric eps/2 per "
-                "channel). Extend _gs_full_chunk to accept eps_fA_arr and "
+                "Asymmetric ε_A / ε_B is not yet routed through the LTNE "
+                "kernel (solve_full currently assumes symmetric ε_A = ε_B = "
+                "ε/2). Extend _gs_full_chunk to accept eps_fA_arr and "
                 "eps_fB_arr before enabling asymmetric splits.")
         eps_f_arr = eps_A_arr  # equals eps_B_arr by the check above
 

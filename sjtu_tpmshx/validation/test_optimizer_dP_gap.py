@@ -66,7 +66,7 @@ Nx_g, Ny_g = optimizer._resolve_grid(cfg, alpha=0.8)
 print(f"  Grid: Nx={Nx_g}, Ny={Ny_g}")
 print(f"  Geometry: eps={eps:.4f}, D_h={D_h*1000:.3f}mm")
 
-K_pred, cF_pred = predict_K_cF(TPMS, L0, T0, eps/2.0)
+K_pred, cF_pred = predict_K_cF(TPMS, L0, T0, 0.5 * eps)
 print(f"  SurrogateV3: K={K_pred:.3e}, c_F={cF_pred:.2f}")
 
 # Fluid A: flows +x, SIMPLE 内部坐标 (W=H, H=L, Ny=Nx_g)

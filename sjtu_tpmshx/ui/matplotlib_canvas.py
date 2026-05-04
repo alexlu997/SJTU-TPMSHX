@@ -6,6 +6,7 @@ went away with apply_theme).
 """
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.ticker import FormatStrFormatter
 from .theme import _THEMES, get_theme
@@ -42,7 +43,13 @@ def _label_axes(axes, L, H, mode=""):
 # ── Matplotlib canvas ─────────────────────────────────────────
 class MatplotlibCanvas(FigureCanvas):
     def __init__(self, nrows=1, ncols=3, figsize=(15, 4.5)):
-        self.fig, axes_raw = plt.subplots(nrows, ncols, figsize=figsize)
+        # Use Figure() directly instead of plt.subplots() so the figure is
+        # NOT registered with pyplot's global figure manager (Gcf). pyplot
+        # registration would keep the figure alive for the lifetime of the
+        # process even after this canvas is destroyed (theme switch / window
+        # close), pinning ~MB of cached arrays per figure. — 2026-04-29
+        self.fig = Figure(figsize=figsize)
+        axes_raw = self.fig.subplots(nrows, ncols)
         _t = get_theme()
         self.fig.patch.set_facecolor(_t['fig_bg'])
         # Normalise to 2-D list [[ax, ...], ...]
@@ -110,8 +117,8 @@ class MatplotlibCanvas(FigureCanvas):
                     Y, X = np.meshgrid(y, x)
                     if r < 2:  # fluid
                         kw = dict(levels=512, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
-                    else:      # solid
-                        kw = dict(levels=512, cmap='coolwarm')
+                    else:      # solid — unified turbo for cross-field parity
+                        kw = dict(levels=512, cmap='turbo')
                     try:
                         cf = ax.contourf(X, Y, field, **kw)
                         cb = self.fig.colorbar(cf, ax=ax, shrink=0.8, aspect=15, format="%.0f")
@@ -158,8 +165,8 @@ class MatplotlibCanvas(FigureCanvas):
         y = np.linspace(0, H, N_y)
         self.Y, self.X = np.meshgrid(y, x)
 
-        kw_f = dict(levels=100, cmap="turbo",      vmin=self.min_temp, vmax=self.max_temp)
-        kw_s = dict(levels=100, cmap="coolwarm", vmin=self.min_s,    vmax=self.max_s)
+        kw_f = dict(levels=100, cmap="turbo", vmin=self.min_temp, vmax=self.max_temp)
+        kw_s = dict(levels=100, cmap="turbo", vmin=self.min_s,    vmax=self.max_s)
 
         datasets = [
             (T_fA[-1], r"$T_{f,A}$ [K] — Fluid A", kw_f),

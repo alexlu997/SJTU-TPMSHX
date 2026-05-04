@@ -603,13 +603,20 @@ def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet, outlet_frac,
         u[0, j] = 0.0; u[Nx, j] = 0.0
     for i in range(Nx):
         v[i, 0] = v_inlet * inlet_frac[i]
-        # Variable density outflow: ρ·v conserved across last face
-        if Ny >= 2:
-            rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
-            rho_outer_face = rho_field[i, Ny-1]
-            v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+        # Variable density outflow: ρ·v conserved across last face.
+        # Wall cells (outlet_frac ≤ 0.5) must pin v=0 — matches _sweep_v_jit_df
+        # end-of-sweep BC. Without this gate, zoned / partial-outlet configs
+        # drive spurious through-wall flow that the pp-equation sees as mass
+        # imbalance. Benign for full-outlet Shanghai (outlet_frac ≡ 1).
+        if outlet_frac[i] > 0.5:
+            if Ny >= 2:
+                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
+                rho_outer_face = rho_field[i, Ny-1]
+                v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+            else:
+                v[i, Ny] = v[i, Ny - 1]
         else:
-            v[i, Ny] = v[i, Ny - 1]
+            v[i, Ny] = 0.0
 
 
 # ── SIMPLE Step 6: convergence ────────────────────────────────────
@@ -913,6 +920,11 @@ class SIMPLESolver:
         self.eps = eps
         self.r_h = r_h
         self.mu_eff = mu / eps
+        # Per-cell porosity (2D #2 fix). Default uniform; caller sets
+        # eps_field for zoned. Used in continuity: ∇·(ε·ρ·u) = 0 macroscopic
+        # form. Without ε factor, zoned-ε cases miss ∇ε term and accumulate
+        # 5-20% per-cell mass divergence.
+        self.eps_field = np.full((Nx, Ny), float(eps), dtype=np.float64)
 
         # Fluid — rho can be scalar or 2D array (Nx, Ny)
         if np.ndim(rho) == 0:
@@ -955,10 +967,7 @@ class SIMPLESolver:
         # Broadcast for uniform geometry; per-row predictions for zone_config
         # graded designs. zone_arrays path doesn't carry L/t/eps metadata, so
         # it falls back to the uniform (scalar) prediction.
-        try:
-            from df_fit.predict import predict_K_cF, predict_K_cF_vec
-        except ImportError:
-            from sjtu_tpmshx.df_fit.predict import predict_K_cF, predict_K_cF_vec
+        from df_fit.predict import predict_K_cF, predict_K_cF_vec
 
         if zone_config is not None:
             # Per-row (L, t, eps_f) → batched prediction
@@ -975,14 +984,14 @@ class SIMPLESolver:
                 L_row[j] = z.L_mm
                 t_row[j] = z.t_mm
                 z_eps = z.props_A['epsilon'] if z.props_A else eps
-                eps_f_row[j] = z_eps / 2.0  # single-channel porosity
+                eps_f_row[j] = 0.5 * z_eps  # ε_A: per-stream void fraction
             K_vec, cF_vec = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_row)
             self._K_arr = K_vec.astype(np.float64)
             self._cF_arr = cF_vec.astype(np.float64)
         else:
             # Uniform (or zone_arrays fallback): single (K, c_F), broadcast
             K_val, cF_val = predict_K_cF(
-                tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
+                tpms_type, float(L_cell_mm), float(t_mm), 0.5 * float(eps),
             )
             self._K_arr = np.full(Ny, K_val, dtype=np.float64)
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
@@ -1120,7 +1129,9 @@ class SIMPLESolver:
         from .tpms_calc import air_viscosity
         mu_new = air_viscosity(self.T_field).astype(np.float64)
         self.mu_field = np.ascontiguousarray(mu_new)
-        self._mu_eff_field = np.ascontiguousarray(mu_new / self.eps)
+        # Per-cell μ/ε (zoned ε support); falls back to uniform self.eps.
+        eps_eff = self.eps_field if hasattr(self, 'eps_field') else self.eps
+        self._mu_eff_field = np.ascontiguousarray(mu_new / eps_eff)
 
     # ──────────────── velocity solve ──────────────────────────────
     def solve(self, max_iter=3000, tol=1e-6,
@@ -1136,6 +1147,12 @@ class SIMPLESolver:
         dx_a, dy_a = self.dx_arr, self.dy_arr
 
         for it in range(1, max_iter + 1):
+            # Effective density for continuity (#2 fix): ε·ρ. Uniform ε →
+            # multiplicative constant (no functional change). Zoned ε →
+            # captures macroscopic ∇·(ε·ρ·u)=0 form. Momentum unchanged
+            # (uses interstitial u with ε encoded in K).
+            rho_eps_field = np.ascontiguousarray(
+                self.rho_field * self.eps_field, dtype=np.float64)
             _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                             self.inlet_frac, self.outlet_frac,
                             Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
@@ -1150,7 +1167,7 @@ class SIMPLESolver:
                 self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_frac)
             _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
                                   self.outlet_frac,
-                                  Nx, Ny, dx_a, dy_a, self.rho_field,
+                                  Nx, Ny, dx_a, dy_a, rho_eps_field,
                                   self._pp_sparsity)
             _correct_jit(self.u, self.v, self.P, self.Pp,
                          self.d_u, self.d_v,
@@ -1158,7 +1175,7 @@ class SIMPLESolver:
                          Nx, Ny, alpha_p, self.rho_field)
             self._update_density()  # compressible: update rho from P
 
-            res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, self.rho_field)
+            res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
             self.residuals.append(res)
 
             # Live progress hook for UI sparklines — throttled to every

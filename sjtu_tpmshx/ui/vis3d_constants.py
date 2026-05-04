@@ -8,10 +8,15 @@ from __future__ import annotations
 
 
 # Display order + per-field rendering metadata.
-# Matches 2D canvas convention (turbo for T/speed; coolwarm for solid; plasma for P).
-# `Ta`/`vmag`/`P_kPa`/`L_mm` retained for backward compatibility with legacy
-# callers (load_shanghai_demo, hover probe). The full 3D result now also feeds
-# Tb / Ts / vmag_B / P_B_kPa when cross-flow fluid B has run.
+# Cmap policy:
+#   All physical fields (T / v / P) → turbo (Google 2019 "modern rainbow",
+#     perceptually-uniform replacement for jet; colorblind-improved).
+#     Uniform rainbow across T/v/P keeps the 3D/2D scalar bars visually
+#     consistent so the user can cross-compare without re-learning a
+#     new LUT per field.
+#   L_mm (design zones, ordinal) → cividis (colorblind-safe sequential,
+#     deliberately different from physical fields so design vs result is
+#     immediately distinguishable).
 FIELD_ORDER = [
     'Ta', 'Tb', 'Ts',
     'vmag', 'vmag_B',
@@ -19,21 +24,21 @@ FIELD_ORDER = [
     'L_mm',
 ]
 FIELD_META = {
-    'Ta':      {'cmap': 'rainbow',  'title': 'T_a (K)',       'fmt': '%.1f',
+    'Ta':      {'cmap': 'turbo',    'title': 'T_a (K)',         'fmt': '%.1f',
                 'label': 'Temperature A'},
-    'Tb':      {'cmap': 'rainbow',  'title': 'T_b (K)',       'fmt': '%.1f',
+    'Tb':      {'cmap': 'turbo',    'title': 'T_b (K)',         'fmt': '%.1f',
                 'label': 'Temperature B'},
-    'Ts':      {'cmap': 'rainbow',  'title': 'T_s (K)',       'fmt': '%.1f',
+    'Ts':      {'cmap': 'turbo',    'title': 'T_s (K)',         'fmt': '%.1f',
                 'label': 'Temperature Solid'},
-    'vmag':    {'cmap': 'rainbow',  'title': 'speed A (m/s)', 'fmt': '%.2f',
+    'vmag':    {'cmap': 'turbo',    'title': 'speed A (m/s)',   'fmt': '%.2f',
                 'label': 'Velocity A'},
-    'vmag_B':  {'cmap': 'rainbow',  'title': 'speed B (m/s)', 'fmt': '%.2f',
+    'vmag_B':  {'cmap': 'turbo',    'title': 'speed B (m/s)',   'fmt': '%.2f',
                 'label': 'Velocity B'},
-    'P_kPa':   {'cmap': 'rainbow',  'title': 'P_A gauge (kPa)','fmt': '%.1f',
+    'P_kPa':   {'cmap': 'turbo',    'title': 'P_A gauge (kPa)', 'fmt': '%.1f',
                 'label': 'Pressure A'},
-    'P_B_kPa': {'cmap': 'rainbow',  'title': 'P_B gauge (kPa)','fmt': '%.1f',
+    'P_B_kPa': {'cmap': 'turbo',    'title': 'P_B gauge (kPa)', 'fmt': '%.1f',
                 'label': 'Pressure B'},
-    'L_mm':    {'cmap': 'rainbow',  'title': 'L (mm)',         'fmt': '%.2f',
+    'L_mm':    {'cmap': 'cividis',  'title': 'L (mm)',          'fmt': '%.2f',
                 'label': 'Design L'},
 }
 

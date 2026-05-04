@@ -137,7 +137,7 @@ class ZoneConfig:
             z = self.zones[zone_id_1d[k]]
             pA, pB = z.props_A, z.props_B
             eps = pA['epsilon']
-            v = (zone_id_1d[k], eps, eps/2.0, pA['K_ff'], pB['K_ff'],
+            v = (zone_id_1d[k], eps, pA['epsilon_A'], pA['K_ff'], pB['K_ff'],
                  pA['K_ss'], pA['H_sf']*pA['A_0'], pB['H_sf']*pB['A_0'],
                  pA['D_h']/2.0, pA['A_0'])
             arrs = (zone_id, eps_arr, eps_f_arr, K_ffA_arr, K_ffB_arr,
@@ -264,7 +264,7 @@ class ZoneConfig:
                         K_ss_arr[i, j]  = pA['K_ss']
                         h_vA_arr[i, j]  = pA['H_sf'] * pA['A_0']
                         h_vB_arr[i, j]  = pB['H_sf'] * pB['A_0']
-                        eps_f_arr[i, j] = eps / 2.0
+                        eps_f_arr[i, j] = pA['epsilon_A']
                         r_h_arr[i, j]   = pA['D_h'] / 2.0
                         A_0_arr[i, j]   = pA['A_0']
                         break
@@ -280,7 +280,7 @@ class ZoneConfig:
                     K_ss_arr[i, j]  = pA['K_ss']
                     h_vA_arr[i, j]  = pA['H_sf'] * pA['A_0']
                     h_vB_arr[i, j]  = pB['H_sf'] * pB['A_0']
-                    eps_f_arr[i, j] = eps / 2.0
+                    eps_f_arr[i, j] = pA['epsilon_A']
                     r_h_arr[i, j]   = pA['D_h'] / 2.0
                     A_0_arr[i, j]   = pA['A_0']
 
@@ -347,7 +347,7 @@ class ZoneConfig:
             eps = pA['epsilon']
 
             eps_arr[ci]   = eps
-            eps_f_arr[ci] = eps / 2.0
+            eps_f_arr[ci] = pA['epsilon_A']
             K_ffA_arr[ci] = pA['K_ff']
             K_ffB_arr[ci] = pB['K_ff']
             K_ss_arr[ci]  = pA['K_ss']

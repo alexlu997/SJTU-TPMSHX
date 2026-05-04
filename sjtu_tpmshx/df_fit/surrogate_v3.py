@@ -44,6 +44,9 @@ _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parent.parent
 _PROJECT = _PROJECT_ROOT.parent
 
+# Make sjtu_tpmshx/ importable as a search root so `from solvers.tpms_calc`
+# below resolves regardless of how the app was launched (python main.py from
+# sjtu_tpmshx/, python -m sjtu_tpmshx.main from parent, or packaged entry).
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

@@ -73,7 +73,7 @@ print(f"  rho_A = {rho_A:.3f} kg/m³, mu_A = {mu_A:.3e} Pa·s")
 print(f"  dP_A_exp = {dP_A_exp:.0f} Pa")
 print()
 
-K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS/2.0)
+K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, 0.5 * EPS)
 print(f"SurrogateV3: K = {K_pred:.3e} m², c_F = {cF_pred:.3f}")
 print()
 
@@ -114,8 +114,8 @@ sA = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
 sA.solve(max_iter=3000, tol=1e-4, verbose=False)
 
 # Setup solve_full inputs
-eps_f = EPS / 2.0
-K_ffA = eps_f * k_A; K_ffB = eps_f * k_B; K_ss = (1.0 - EPS) * K_S
+eps_A = 0.5 * EPS
+K_ffA = eps_A * k_A; K_ffB = eps_A * k_B; K_ss = (1.0 - EPS) * K_S
 r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
 h_vA = A0 * r_A['H_sf']
 h_vB = 1.0e10

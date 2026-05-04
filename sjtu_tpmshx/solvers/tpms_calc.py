@@ -118,10 +118,19 @@ def water_density(T_K):
 
 
 def water_viscosity(T_K):
-    """Dynamic viscosity of liquid water [Pa·s]. Exponential fit 0-90 °C."""
+    """Dynamic viscosity of liquid water [Pa·s].
+
+    Vogel form (Andrade equation), NIST 0–90 °C max error < 2 %:
+        mu = 2.414e-5 * 10^(247.8 / (T_K - 140))   [Pa·s, T_K in K]
+
+    Replaced legacy `1.79e-3·exp(-0.035·T_C)` (2026-04-29) which decayed
+    far too fast (-33 % at 40 °C, -53 % at 60 °C vs NIST). The legacy
+    formula matched only 0–15 °C; Shanghai water bulk T 20-40 °C was
+    systematically under-viscous → over-predicted Re_water ~50 % at hi T.
+    """
     _warn_range_once('water_viscosity', T_K, *_WATER_T_RANGE)
-    T_C = np.asarray(T_K, dtype=float) - 273.15
-    return 1.79e-3 * np.exp(-0.035 * T_C)
+    T_K_arr = np.asarray(T_K, dtype=float)
+    return 2.414e-5 * 10.0 ** (247.8 / (T_K_arr - 140.0))
 
 
 def water_conductivity(T_K):
@@ -135,6 +144,35 @@ def water_cp(T_K):
     """Specific heat of liquid water [J/(kg·K)]. ~constant 280-370 K."""
     _warn_range_once('water_cp', T_K, *_WATER_T_RANGE)
     return 4182.0
+
+
+def nu_water_gyroid_yan6(Re, Pr):
+    """Water-side Nusselt number for Gyroid TPMS, Yan et al 2024 [6].
+
+        Nu = 0.471 · Re^0.627 · Pr^(1/3)
+
+    Source: K. Yan, H. Deng, Y. Xiao, J. Wang, Y. Luo,
+    'Thermo-hydraulic performance evaluation through experiment and
+    simulation of additive manufactured Gyroid-structured heat exchanger',
+    Appl. Therm. Eng. 241 (2024) 122402.
+    doi:10.1016/j.applthermaleng.2024.122402
+
+    Validated range: 150 < Re < 3000 (water, AM Gyroid).
+
+    Convention:
+      Re = ρ·u·D_h / μ        (single-stream, D_h = 4·ε_A/A_0)
+      Nu = h_sf · D_h / k_f   (face heat-transfer coefficient h_sf)
+      Pr = μ·c_p / k_f
+
+    Notes:
+      * Experiment + CFD double-fit on AM gyroid sample (cell 20 mm).
+      * Surface roughness from AM is naturally embedded; do not apply
+        an extra ×1.28 roughness factor on top.
+      * Project Shanghai cases 3-16 (Re 173-1146) fall in-range.
+      * Cases 1-2 (Re 54, 108) extrapolate to lower Re, ≈ -9 % on Nu
+        relative to Yan [58] in-range; acceptable since h_vB dominates U.
+    """
+    return 0.471 * Re ** 0.627 * Pr ** (1.0 / 3.0)
 
 
 # ── Fluid type validation ─────────────────────────────────────
@@ -174,34 +212,152 @@ def validate_fluid_type(fluid_type: str, side: str) -> None:
 
 # ── Nu correlations ───────────────────────────────────────────
 
-def _nu_diamond(Re: float, eps: float, D_h_mm: float) -> float:
-    """Diamond TPMS Nu correlation.
+_NU_ROUGHNESS_FACTOR = 1.28
+# Roughness-driven heat-transfer enhancement factor (2026-04-28 re-enable).
+#
+# Physical rationale (NEW — distinct from 2026-04-23 CFD3 reason):
+#   The Nu correlation `_nu_diamond` / `_nu_gyroid` is fitted on CFD data
+#   that uses idealised SMOOTH walls. The physical TPMS specimens
+#   (additively-manufactured, e.g. SLM Inconel/Ti-6Al-4V) carry surface
+#   roughness Sa ≈ 30 µm which augments wall heat transfer beyond the
+#   smooth-wall CFD prediction. We therefore rescale the Nu output by a
+#   global enhancement factor:
+#
+#       φ_rough = mean over angles of  Q_exp / Q_DB(Re)
+#
+#   where Q_exp is the measured experimental heat-transfer rate and
+#   Q_DB is the Dittus-Boelter prediction at the matched Re. Averaging
+#   across multiple as-printed angles (0°, 30°, 45°, 60°, 90°) on the
+#   characterisation rig gives φ_rough ≈ 1.28.
+#
+# This factor multiplies the smooth-wall Nu uniformly. It is NOT a
+# Re-convention correction, NOT a fitting residual, and NOT a Pr
+# adjustment — it captures roughness-driven turbulence enhancement
+# inside the TPMS channels that CFD smooth-wall cases cannot resolve.
+#
+# Applied identically in `nu_from_Re` (air, this file) and the inline
+# copy `solvers.sigmoid_field._nu_vec` (vectorised path). Both must
+# stay in lock-step; sigmoid_field imports the constant from here so a
+# single edit propagates.
+#
+# Historical context (do NOT conflate the two reasons):
+#   - CFD3-era (≤ 2026-04-23): ×1.28 was a Re-convention compensation
+#     when the production code used a different Re definition than the
+#     fit. Removed in 2026-04-23 once Re conventions were aligned.
+#   - 2026-04-28: re-introduced with the above experimental-rough
+#     justification, and now physically meaningful.
 
-    INPUT  convention: Re = ρ·u·D_h / μ
-    OUTPUT convention: Nu = h·D_h / k_f
+
+def _nu_diamond(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:
+    """Diamond TPMS Nu correlation (single-stream convention, simple PL 3p).
+
+    INPUT:
+      Re    = ρ·u·D_h / μ           (D_h-based, single-stream u)
+      eps_f = ε_full / 2             (single-stream porosity, unused — kept for API)
+      L_mm:    unit cell size [mm]
+      D_h_mm:  hydraulic diameter [mm]
+
+    OUTPUT: Nu = h·D_h / k_f         (standard, smooth wall)
+
+    Form (3p pure power-law, Pr^(1/3) explicit, Pr=0.72 air const):
+      Nu = c · Pr^(1/3) · Re^a · (D_h/L)^d
+
+    Refit 2026-04-28 on 试验记录表_整理版_v3.1.xlsx (Diamond_汇总 sheet,
+    Nu_pre_deepseek column, all blocks consistent). Coefficients per
+    user-locked fit: c=0.0944, a=0.8273, d=0.226. Numerically identical
+    to 2026-04-27 v4 fit within rounding (was c=0.094440, d=0.2260).
+    Boundary effect coefficient ignored (smooth-wall reference).
     """
-    n = 0.618 - 0.800 * np.log(eps)
-    return 0.008 * Pr ** (1 / 3) * Re ** n * eps ** 7.41 * (D_h_mm / (1000 * Sa_mm)) ** (-1.92)
+    del eps_f  # not used — kept for backward-compatible signature
+    return 0.0944 * Pr ** (1/3) * Re ** 0.8273 * (D_h_mm / L_mm) ** 0.226
 
 
-def nu_from_Re(tpms_type: str, Re: float, eps: float,
+_NU_RE_FIT_MIN = 400.0
+_NU_RE_FIT_MAX = 16000.0
+_NU_EXTRAP_WARNED = {'lo': False, 'hi': False}
+
+
+def nu_from_Re(tpms_type: str, Re: float, eps_f: float,
                L_mm: float, D_h_mm: float) -> float:
-    """Compute Nu from Re for any TPMS type (public interface)."""
-    if tpms_type == 'Diamond':
-        return _nu_diamond(Re, eps, D_h_mm)
-    return _nu_gyroid(Re, eps, L_mm)
+    """Compute Nu from Re for any TPMS type (public interface).
 
+    Convention (post-refit 2026-04-26):
+      Re input:   D_h-based, single-stream u
+      eps_f input: single-stream porosity = full TPMS ε / 2
+      Nu output:  standard h·D_h / k_f
 
-def _nu_gyroid(Re: float, eps: float, L_cell_mm: float) -> float:
-    """Gyroid TPMS Nu correlation.
+    Caller must pass ε_f = g['epsilon'] / 2.0 (NOT full ε).
+    See `fit_nu_single_stream.py` and audit doc for derivation.
 
-    INPUT  convention: Re = ρ·u·D_h / μ
-    OUTPUT convention: Nu = h·D_h / k_f
-
-    L_cell_mm is in mm (Gyroid uses unit cell size as length scale).
+    Out-of-fit Re emits a one-shot UserWarning per direction (low/high)
+    instead of clipping or raising — extrapolated Nu is still returned so
+    the user can see the prediction. Fit window: Re ∈ [400, 16000].
     """
-    n = 0.177 * Re ** 0.1 * eps ** (-2 / 3)
-    return 0.17 * Pr ** (1 / 3) * Re ** n * eps ** 2.25 * (L_cell_mm / (1000 * Sa_mm)) ** (-2.01)
+    Re_f = float(Re)
+    if Re_f < _NU_RE_FIT_MIN and not _NU_EXTRAP_WARNED['lo']:
+        import warnings as _w_nu
+        _w_nu.warn(
+            f"[Nu extrap] Re={Re_f:.0f} < fit floor {_NU_RE_FIT_MIN:.0f} "
+            f"(tpms={tpms_type}); Nu correlation extrapolated. "
+            "Suppressing further low-Re warnings this session.",
+            stacklevel=2)
+        _NU_EXTRAP_WARNED['lo'] = True
+    elif Re_f > _NU_RE_FIT_MAX and not _NU_EXTRAP_WARNED['hi']:
+        import warnings as _w_nu
+        _w_nu.warn(
+            f"[Nu extrap] Re={Re_f:.0f} > fit ceiling {_NU_RE_FIT_MAX:.0f} "
+            f"(tpms={tpms_type}); Nu correlation extrapolated. "
+            "Suppressing further high-Re warnings this session.",
+            stacklevel=2)
+        _NU_EXTRAP_WARNED['hi'] = True
+    if tpms_type == 'Diamond':
+        Nu_smooth = _nu_diamond(Re_f, eps_f, L_mm, D_h_mm)
+    else:
+        Nu_smooth = _nu_gyroid(Re_f, eps_f, L_mm, D_h_mm)
+    return _NU_ROUGHNESS_FACTOR * Nu_smooth
+
+
+def nu_water_from_Re(tpms_type: str, Re: float, eps_f: float,
+                     L_mm: float, D_h_mm: float, Pr_water: float) -> float:
+    """Water-side Nu via Pr-substitution into the air-fitted correlation.
+
+    Reynolds analogy (Dittus-Boelter, Sieder-Tate basis): Pr enters Nu
+    as Pr^(1/3), so swapping the working fluid only rescales Nu by
+    (Pr_water / Pr_air)^(1/3). Re uses water properties.
+
+    Air-side Nu uses 3p pure power-law (Re, D_h/L, Pr^(1/3)) fit on
+    试验记录表_整理版_v3 (Pr=0.72 air const explicit). Water side rescales by
+    (Pr_water/Pr_air)^(1/3) on top, since Pr^(1/3) is multiplicative in form.
+    **Not independently fitted on water-side data** (training set is air-only).
+    Use for engineering h_water estimate; quote Reynolds-analogy + literature
+    cross-check (Wakao-Kaguei packed bed, Dittus-Boelter pipe) when reporting.
+    """
+    Re_f = float(Re)
+    Nu_air = nu_from_Re(tpms_type, Re_f, eps_f, L_mm, D_h_mm)
+    return Nu_air * (Pr_water / Pr) ** (1.0 / 3.0)
+
+
+def _nu_gyroid(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:
+    """Gyroid TPMS Nu correlation (single-stream convention, simple PL 3p).
+
+    INPUT:
+      Re    = ρ·u·D_h / μ           (D_h-based, single-stream u)
+      eps_f = ε_full / 2             (single-stream porosity, unused — kept for API)
+      L_mm:    unit cell size [mm]
+      D_h_mm:  hydraulic diameter [mm]
+
+    OUTPUT: Nu = h·D_h / k_f         (standard, smooth wall)
+
+    Form (3p pure power-law, Pr^(1/3) explicit, Pr=0.72 air const):
+      Nu = c · Pr^(1/3) · Re^a · (D_h/L)^d
+
+    Refit 2026-04-28 on 试验记录表_整理版_v3.1.xlsx (Gyroid_汇总 sheet,
+    Nu_pre_deepseek column). User-locked fit: c=0.126, a=0.7898, d=0.2409.
+    Numerically ≈ log-LSQ optimum (drift d 0.2409 vs 0.2325 in v4 only).
+    Boundary effect coefficient ignored (smooth-wall reference).
+    """
+    del eps_f  # not used — kept for backward-compatible signature
+    return 0.126 * Pr ** (1/3) * Re ** 0.7898 * (D_h_mm / L_mm) ** 0.2409
 
 
 # ── Geometry-only interface (no fluid needed) ─────────────────
@@ -242,15 +398,23 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
 
     Returns
     -------
-    dict with keys: epsilon, A_0, D_h, K_ss
+    dict with keys: epsilon, epsilon_A, epsilon_B, A_0, D_h, K_ss
+
+    Notes
+    -----
+    epsilon_A = epsilon_B = epsilon / 2 are the per-stream void fractions for
+    the bicontinuous sheet HX (two fluid channels sharing the void equally).
+    D_h is the single-stream hydraulic diameter D_h = 4·epsilon_A / A_0.
     """
     g = _tpms_geom(tpms_type, L_cell_mm, t_mm)
     chi = float(CHI_S if chi_s is None else chi_s)
     return {
-        'epsilon': g['epsilon'],
-        'A_0':     g['A_0'],
-        'D_h':     g['D_h'],
-        'K_ss':    chi * (1.0 - g['epsilon']) * k_s,
+        'epsilon':   g['epsilon'],
+        'epsilon_A': g['epsilon_A'],
+        'epsilon_B': g['epsilon_B'],
+        'A_0':       g['A_0'],
+        'D_h':       g['D_h'],
+        'K_ss':      chi * (1.0 - g['epsilon']) * k_s,
     }
 
 
@@ -348,20 +512,20 @@ def compute(tpms_type: str,
         )
 
     # ── Nusselt number and heat transfer coefficient ──────────
+    # Single-stream convention (post-refit 2026-04-26): pass ε_A (per-stream
+    # void fraction; sheet HX splits ε equally between two fluid channels).
+    eps_A = 0.5 * eps
     if tpms_type == 'Diamond':
-        Nu = _nu_diamond(Re, eps, D_h_mm)
+        Nu = _nu_diamond(Re, eps_A, L_cell_mm, D_h_mm)
     else:
-        Nu = _nu_gyroid(Re, eps, L_cell_mm)
+        Nu = _nu_gyroid(Re, eps_A, L_cell_mm, D_h_mm)
 
     H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
 
     # ── Pressure drop via ConstDF-v1 D-F surrogate ──────────────
     # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
     # convention, see df_fit/predict.py).
-    try:
-        from df_fit.predict import predict_K_cF
-    except ImportError:
-        from sjtu_tpmshx.df_fit.predict import predict_K_cF
+    from df_fit.predict import predict_K_cF
     K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
                                float(eps) / 2.0)
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
@@ -378,20 +542,22 @@ def compute(tpms_type: str,
     K_ss = CHI_S * (1.0 - eps) * k_s
 
     return {
-        'epsilon':  eps,
-        'A_0':      A0,
-        'D_h':      D_h_m,
-        'Re':       Re,
-        'Nu':       Nu,
-        'K_df':     K_df,       # permeability [m²] (ConstDF-v1)
-        'cF_df':    cF_df,      # Forchheimer coeff [1/m] (ConstDF-v1)
-        'dP_per_L': dP_per_L,
-        'H_sf':     H_sf,
-        'K_ff':     K_ff,
-        'K_ss':     K_ss,
-        'rho':      rho,
-        'mu':       mu,
-        'k_f':      k_f,
+        'epsilon':   eps,
+        'epsilon_A': eps_A,
+        'epsilon_B': eps_A,     # symmetric sheet HX: ε_B = ε_A = ε/2
+        'A_0':       A0,
+        'D_h':       D_h_m,
+        'Re':        Re,
+        'Nu':        Nu,
+        'K_df':      K_df,      # permeability [m²] (ConstDF-v1)
+        'cF_df':     cF_df,     # Forchheimer coeff [1/m] (ConstDF-v1)
+        'dP_per_L':  dP_per_L,
+        'H_sf':      H_sf,
+        'K_ff':      K_ff,
+        'K_ss':      K_ss,
+        'rho':       rho,
+        'mu':        mu,
+        'k_f':       k_f,
     }
 
 

@@ -105,7 +105,8 @@ def build_continuous_arrays_3d(x, L0, t0,
                                 sigmoid_width_y=0.02,
                                 sigmoid_width_z=0.05,
                                 fix_L=False, fix_t=False,
-                                dx_arr=None, dy_arr=None, dz_arr=None):
+                                dx_arr=None, dy_arr=None, dz_arr=None,
+                                allow_extrap=None):
     """Construct per-cell property arrays from 108-d decision vector.
 
     Parameters
@@ -163,8 +164,25 @@ def build_continuous_arrays_3d(x, L0, t0,
                                 y_trans_inlet, y_trans_outlet,
                                 sigmoid_width_x, sigmoid_width_y, sigmoid_width_z)
 
-    L_field = np.clip(L_field, 4.0, 8.0)
-    t_field = np.clip(t_field, 0.3, 0.5)
+    # Clip to fit range — bypassed under allow_extrap (env TPMSHX_ALLOW_EXTRAP=1
+    # or kwarg=True). Mirrors 2D path so Shanghai t=0.6mm runs through.
+    if allow_extrap is None:
+        import os as _os_ax
+        allow_extrap = _os_ax.environ.get(
+            'TPMSHX_ALLOW_EXTRAP', '').lower() in ('1', 'true', 'yes')
+    if not allow_extrap:
+        L_field = np.clip(L_field, 4.0, 8.0)
+        t_field = np.clip(t_field, 0.3, 0.5)
+    else:
+        Lo, Lhi = float(L_field.min()), float(L_field.max())
+        to, thi = float(t_field.min()), float(t_field.max())
+        if Lo < 4.0 or Lhi > 8.0 or to < 0.3 or thi > 0.5:
+            import warnings as _w_ax
+            _w_ax.warn(
+                f"[ConstDF-v1 extrap 3D] L=[{Lo:.2f},{Lhi:.2f}]mm "
+                f"t=[{to:.3f},{thi:.3f}]mm outside fit "
+                "L[4,8] / t[0.3,0.5]; LUT/Nu extrapolated.",
+                stacklevel=2)
 
     # LUT query (shape-agnostic)
     eps_arr, A0_arr = lut.query(L_field, t_field)

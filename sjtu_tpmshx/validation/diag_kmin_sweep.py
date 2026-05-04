@@ -63,8 +63,8 @@ def run_one_case(ci, K_override, cF_override):
     sA.solve(max_iter=3000, tol=1e-4, verbose=False)
 
     # solve_full + outer coupling
-    eps_f = EPS/2.0
-    K_ffA = eps_f*k_A; K_ffB = eps_f*k_B; K_ss = (1.0-EPS)*K_S
+    eps_A = 0.5 * EPS
+    K_ffA = eps_A*k_A; K_ffB = eps_A*k_B; K_ss = (1.0-EPS)*K_S
     r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
     h_vA = A0 * r_A['H_sf']; h_vB = 1.0e10
     rho_cp_A = rho_A*cp_A; rho_cp_B = rho_B*cp_B
