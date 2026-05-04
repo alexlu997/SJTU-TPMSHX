@@ -676,7 +676,8 @@ def build_page_domain(window):
         }}
     """)
     g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
-    window._chk_wall_refine_3d = window.chk_wall_refine_3d  # alias
+    # NOTE: legacy `_chk_wall_refine_3d` alias removed 2026-05-05 audit;
+    # no remaining readers (grep confirmed). Use `chk_wall_refine_3d`.
 
     # Hide 3D-only inputs by default (2D mode)
     _on_dim_changed(window)

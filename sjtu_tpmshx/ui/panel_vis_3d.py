@@ -454,7 +454,11 @@ class ThreeDVisPanel(QWidget):
         # during a drag — coalesce to one render after 50 ms idle.
         self._opacity_debounce = QTimer(self)
         self._opacity_debounce.setSingleShot(True)
-        self._opacity_debounce.setInterval(50)
+        # 120 ms — longer than typical drag tick (16 ms @ 60 Hz) so consecutive
+        # ticks coalesce reliably. Old 50 ms was shorter than fast-mouse drag
+        # cadence on some Windows display chains, leaking 2-3 GPU flushes per
+        # drag (user pain point).
+        self._opacity_debounce.setInterval(120)
         self._opacity_debounce.timeout.connect(self._apply_opacity_now)
 
         self._render_placeholder()
@@ -511,6 +515,12 @@ class ThreeDVisPanel(QWidget):
         self._dx_mm = dx_m * 1000.0
         self._dy_mm = dy_m * 1000.0
         self._dz_mm = dz_m * 1000.0
+        # Pre-compute cell-centre 1D coordinate arrays once per set_fields().
+        # _show_slice_popup previously recomputed these cumsum's on every popup
+        # (each open ≈ O(N) per axis). Cached here so popups are O(1).
+        self._cx_mm = np.cumsum(self._dx_mm) - self._dx_mm / 2
+        self._cy_mm = np.cumsum(self._dy_mm) - self._dy_mm / 2
+        self._cz_mm = np.cumsum(self._dz_mm) - self._dz_mm / 2
         x_edges = np.concatenate([[0.0], np.cumsum(self._dx_mm)])
         y_edges = np.concatenate([[0.0], np.cumsum(self._dy_mm)])
         z_edges = np.concatenate([[0.0], np.cumsum(self._dz_mm)])
@@ -746,11 +756,14 @@ class ThreeDVisPanel(QWidget):
         if idx < 0 or self._grid is None:
             return
         self._field = self.combo_field.itemData(idx)
-        self._rebuild_volume()
-        # If a slice is up, refresh it in the new field too
+        # Batch volume + slice actor mutations into a single GPU flush.
+        # Without this, switching fields triggers 2-3 sequential pl.render()
+        # calls (visible stutter on 100×40×30 grids — user pain point).
+        self._rebuild_volume(render=False)
         if self._slice_info is not None:
             self._add_slice_actor(self._slice_info['axis'],
-                                  self._slice_info['coord_mm'])
+                                  self._slice_info['coord_mm'], render=False)
+        self.plotter.render()
         self._update_status()
 
     def _on_plane_changed(self, idx):
@@ -927,10 +940,12 @@ class ThreeDVisPanel(QWidget):
     def _on_clim_toggled(self, checked: bool):
         self._scale_mode = 'local' if checked else 'global'
         self.btn_clim.setText(f"Range: {'Slice' if checked else 'Full'}")
-        self._rebuild_volume()
+        # Batch — same rationale as _on_field_changed.
+        self._rebuild_volume(render=False)
         if self._slice_info is not None:
             self._add_slice_actor(self._slice_info['axis'],
-                                  self._slice_info['coord_mm'])
+                                  self._slice_info['coord_mm'], render=False)
+        self.plotter.render()
         self._update_status()
 
     def _on_apply_slice(self):
@@ -1105,8 +1120,14 @@ class ThreeDVisPanel(QWidget):
             hi = lo + 1.0
         return lo, hi
 
-    def _rebuild_volume(self):
-        """Redraw the volume-rendered cube for the current field."""
+    def _rebuild_volume(self, render: bool = True):
+        """Redraw the volume-rendered cube for the current field.
+
+        `render=False` lets cascade callers (field/clim/slice toggle) batch
+        multiple actor mutations into a single GPU flush. Default True
+        preserves drop-in behaviour for direct callers (slider drag,
+        opacity apply).
+        """
         if self._grid is None or self._field is None:
             return
         pl = self.plotter
@@ -1210,19 +1231,24 @@ class ThreeDVisPanel(QWidget):
             # back to an outlined bounding box + user slice (if any).
             self.status.setText(
                 f"Volume rendering unavailable ({e!s}); use Apply to see slices.")
-        pl.render()
+        if render:
+            pl.render()
 
     def _slice_index(self, axis: str, coord_mm: float) -> int:
-        """Map mm coord along `axis` to nearest cell-centre index."""
-        centres = {
-            'x': np.cumsum(self._dx_mm) - self._dx_mm / 2,
-            'y': np.cumsum(self._dy_mm) - self._dy_mm / 2,
-            'z': np.cumsum(self._dz_mm) - self._dz_mm / 2,
-        }[axis]
+        """Map mm coord along `axis` to nearest cell-centre index.
+
+        Uses pre-cached centres from set_fields() — was rebuilding the cumsum
+        per call, which dominated cost on rapid coord-text typing (debounced
+        but still O(N) per debounce tick).
+        """
+        centres = {'x': self._cx_mm, 'y': self._cy_mm, 'z': self._cz_mm}[axis]
         return int(np.argmin(np.abs(centres - coord_mm)))
 
-    def _add_slice_actor(self, axis: str, coord_mm: float):
-        """Add (or replace) a single user slice actor overlaid on the volume."""
+    def _add_slice_actor(self, axis: str, coord_mm: float, render: bool = True):
+        """Add (or replace) a single user slice actor overlaid on the volume.
+
+        `render=False` defers the GPU flush so cascade callers can batch.
+        """
         if self._grid is None:
             return
         pl = self.plotter
@@ -1249,7 +1275,8 @@ class ThreeDVisPanel(QWidget):
             show_edges=False, name=self._slice_actor_name,
             show_scalar_bar=False,     # volume owns the single scalar bar
         )
-        pl.render()
+        if render:
+            pl.render()
 
     def _show_slice_popup(self, axis: str, coord_mm: float):
         """Pop up a matplotlib window with the 2D contour of the slice."""
@@ -1262,18 +1289,15 @@ class ThreeDVisPanel(QWidget):
         idx = self._slice_index(axis, coord_mm)
         if axis == 'x':
             slc2d = field[idx, :, :]
-            horiz = np.cumsum(self._dy_mm) - self._dy_mm / 2
-            vert  = np.cumsum(self._dz_mm) - self._dz_mm / 2
+            horiz = self._cy_mm; vert = self._cz_mm
             h_lbl, v_lbl = 'Y [mm]', 'Z [mm]'
         elif axis == 'y':
             slc2d = field[:, idx, :]
-            horiz = np.cumsum(self._dx_mm) - self._dx_mm / 2
-            vert  = np.cumsum(self._dz_mm) - self._dz_mm / 2
+            horiz = self._cx_mm; vert = self._cz_mm
             h_lbl, v_lbl = 'X [mm]', 'Z [mm]'
         else:
             slc2d = field[:, :, idx]
-            horiz = np.cumsum(self._dx_mm) - self._dx_mm / 2
-            vert  = np.cumsum(self._dy_mm) - self._dy_mm / 2
+            horiz = self._cx_mm; vert = self._cy_mm
             h_lbl, v_lbl = 'X [mm]', 'Y [mm]'
 
         meta = FIELD_META[key]
@@ -1338,6 +1362,17 @@ class ThreeDVisPanel(QWidget):
             except Exception:
                 pass
         dlg.finished.connect(lambda _=None: _on_closed())
+        # Cap concurrent slice popups at 5 — close oldest if user opens
+        # additional ones. Without this `_popup_dialogs` grew unbounded
+        # across long sessions, leaking matplotlib Figure buffers (~5 MB
+        # each on 100×100 grids).
+        _MAX_POPUPS = 5
+        while len(self._popup_dialogs) >= _MAX_POPUPS:
+            old = self._popup_dialogs.pop(0)
+            try:
+                old.close()
+            except Exception:
+                pass
         self._popup_dialogs.append(dlg)
         dlg.show()
 

@@ -93,18 +93,35 @@ class QuickSliders(QDockWidget):
             _le.setText(txt)
             _lbl.setText(txt)
 
-        # Sync LineEdit → slider on editingFinished
+        # Sync LineEdit → slider on editingFinished. If user types a value
+        # outside the slider bounds, clamp the slider visually but DO NOT
+        # rewrite the LineEdit (avoids the silent-clamp drift bug — typed
+        # 0.05 m/s would otherwise lose information when slider min is 0.1).
+        # Show the real value in the label with a leading "!" marker so the
+        # mismatch is visible.
         def _on_edit(_le=le, _sl=slider, _lbl=val_label, _lo=lo, _hi=hi,
                       _s=scale):
             try:
                 v = float(_le.text())
             except ValueError:
                 return
-            v = max(_lo, min(_hi, v))
-            _sl.blockSignals(True)
-            _sl.setValue(int(v * _s))
-            _sl.blockSignals(False)
-            _lbl.setText(f"{v:.3g}")
+            if v < _lo or v > _hi:
+                # Out of slider range — clamp slider, mark label, keep LE.
+                v_clamp = max(_lo, min(_hi, v))
+                _sl.blockSignals(True)
+                _sl.setValue(int(v_clamp * _s))
+                _sl.blockSignals(False)
+                _lbl.setText(f"!{v:.3g}")
+                _lbl.setToolTip(
+                    f"Value {v:.3g} is outside the slider range "
+                    f"[{_lo}, {_hi}]. The slider is pinned at its limit; the "
+                    f"line-edit retains the typed value.")
+            else:
+                _sl.blockSignals(True)
+                _sl.setValue(int(v * _s))
+                _sl.blockSignals(False)
+                _lbl.setText(f"{v:.3g}")
+                _lbl.setToolTip("")
 
         slider.valueChanged.connect(_on_slider)
         le.editingFinished.connect(_on_edit)

@@ -463,8 +463,12 @@ class Main_Menu(QMainWindow):
             if w is None:
                 continue
             try:
-                if attr in temp_fields and unit == 'C' and val != '':
-                    w.setText(f"{float(val) - 273.15:.2f}")
+                if attr in temp_fields and val != '':
+                    # Unified temp setter — handles K/°C dispatch in one
+                    # place so preset load can never disagree with session
+                    # restore on the 273.15 sign (latent bug fixed
+                    # 2026-05-05 audit).
+                    self._set_temp_K(w, val)
                 else:
                     w.setText(val)
             except Exception:
@@ -1347,6 +1351,26 @@ class Main_Menu(QMainWindow):
         if getattr(self, '_temp_unit', 'K') == 'C':
             v += 273.15
         return v
+
+    def _set_temp_K(self, le, kelvin_value, fmt='{:.2f}'):
+        """Write a Kelvin temperature into a QLineEdit, converting to the
+        currently displayed unit. Single source of truth — replaces ad-hoc
+        `setText(f"{val - 273.15:.2f}")` snippets in preset-load and
+        session-restore that previously had drift potential (one would
+        subtract, another would add, depending on _temp_unit timing).
+        """
+        if le is None or kelvin_value is None or kelvin_value == '':
+            return
+        try:
+            v = float(kelvin_value)
+        except (TypeError, ValueError):
+            return
+        if getattr(self, '_temp_unit', 'K') == 'C':
+            v -= 273.15
+        try:
+            le.setText(fmt.format(v))
+        except Exception:
+            pass
 
     def _sync_temp_unit_labels(self):
         """Refresh the `[K]`/`[°C]` suffix on the three temperature row
@@ -3324,11 +3348,25 @@ class Main_Menu(QMainWindow):
             self.btn_compute.setText(
                 f"Cancel  (Computing… ETA ~{eta})" if eta else "Cancel  (Computing…)")
             self.btn_compute.setEnabled(True)
-            try:
-                self.btn_compute.clicked.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self.btn_compute.clicked.connect(self._on_cancel_compute)
+            # Surgical disconnect of the *exact* current handler (run_calculation
+            # or a stale Cancel handler from prior run). disconnect() with no
+            # args was nuking *all* clicked slots, which let stray reconnects
+            # accumulate after a failed compute (compute hang on re-click).
+            prev = getattr(self, '_compute_btn_handler', None)
+            if prev is not None:
+                try:
+                    self.btn_compute.clicked.disconnect(prev)
+                except (TypeError, RuntimeError):
+                    pass
+            else:
+                # First-time path — drop the constructor's run_calculation
+                # connection (we'll re-add via _end_compute_ui).
+                try:
+                    self.btn_compute.clicked.disconnect(self.run_calculation)
+                except (TypeError, RuntimeError):
+                    pass
+            self._compute_btn_handler = self._on_cancel_compute
+            self.btn_compute.clicked.connect(self._compute_btn_handler)
         if hasattr(self, '_empty_state_label'):
             self._empty_state_label.setVisible(False)
         self.statusBar().showMessage(status)
@@ -3507,18 +3545,38 @@ class Main_Menu(QMainWindow):
     def _end_compute_ui(self, success):
         """Restore Compute button and either fade out progress (success) or
         hide immediately (failure). On success also refreshes the headline
-        result summary bar from the detail-value labels."""
+        result summary bar from the detail-value labels.
+
+        Idempotent on re-entrancy: also clears the compute-running flag and
+        stops/clears the polling timer + thread refs so a second click on
+        Compute starts cleanly without orphan timers polling stale closures.
+        """
+        # Tear down compute lifecycle state FIRST so a fast re-click doesn't
+        # see _compute_running == True and bail out.
+        self._compute_running = False
+        old_timer = getattr(self, '_compute_poll_timer', None)
+        if old_timer is not None:
+            try:
+                old_timer.stop()
+            except Exception:
+                pass
+        self._compute_poll_timer = None
+        self._compute_thread = None
         if hasattr(self, 'btn_compute'):
             self.btn_compute.setEnabled(True)
             self.btn_compute.setText(
                 getattr(self, '_btn_compute_text_saved', '▶  &Compute'))
-            # Restore the original Compute click handler — `_begin_compute_ui`
-            # repurposed it to call `_on_cancel_compute`.
-            try:
-                self.btn_compute.clicked.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self.btn_compute.clicked.connect(self.run_calculation)
+            # Restore the original Compute click handler. Surgical
+            # disconnect of the *exact* current handler avoids dropping
+            # third-party connections (e.g. shortcut bridges).
+            prev = getattr(self, '_compute_btn_handler', None)
+            if prev is not None:
+                try:
+                    self.btn_compute.clicked.disconnect(prev)
+                except (TypeError, RuntimeError):
+                    pass
+            self._compute_btn_handler = self.run_calculation
+            self.btn_compute.clicked.connect(self._compute_btn_handler)
         if success:
             self.progress.setValue(100)
             from PySide6.QtCore import QTimer as _QT
@@ -3587,6 +3645,19 @@ class Main_Menu(QMainWindow):
 
     def run_calculation(self):
         """Full-domain solve: SIMPLE velocity → coupled energy on L × H."""
+        # Re-entrancy guard — refuse to launch a second compute while the
+        # first thread is still alive. Without this, two QTimers and two
+        # threads run in parallel: the timer-from-prior-run polls a stale
+        # `t.is_alive()` closure and wins the race to `_finalize_plots()`,
+        # corrupting the new run's results. Symptom: UI hangs after fast
+        # re-Compute (user pain point, 2026-05-05 audit).
+        if getattr(self, '_compute_running', False):
+            QMessageBox.information(
+                self, "Compute Busy",
+                "A computation is already running.\n\n"
+                "Click Cancel (the Compute button while it's red) and wait "
+                "for the solver to reach its next checkpoint, then re-Compute.")
+            return
         # E10 — pre-flight: if the user has any invalid fields flagged by
         # the inline validator, surface them together in a modal instead
         # of letting the solver hit them one at a time.
@@ -3659,14 +3730,36 @@ class Main_Menu(QMainWindow):
                     file=self._last_solve_log_buf)
 
         self._compute_error = None
+        # Defensively stop any orphan poll timer from a prior aborted run
+        # before installing the new one — old timer's _check() closure holds
+        # a reference to a dead `t` and would race the new timer otherwise.
+        old_timer = getattr(self, '_compute_poll_timer', None)
+        if old_timer is not None:
+            try:
+                old_timer.stop()
+            except Exception:
+                pass
         t = threading.Thread(target=_worker, daemon=True)
+        self._compute_thread = t   # keep ref so _check() reads same handle
+        self._compute_running = True
         t.start()
 
         # Poll for completion — ALL Qt updates happen here (main thread).
         # Parent the timer to self so Qt owns its lifetime (avoids premature
         # GC of the QTimer C++ object if the Python ref drops).
         timer = QTimer(self)
+        self._compute_poll_timer = timer
         def _check():
+            # Cross-check identity: if the active timer is no longer *this*
+            # closure's timer, the user has already started a new compute and
+            # this _check is a stale callback firing one last time before its
+            # own stop() takes effect. Bail without touching shared state.
+            if getattr(self, '_compute_poll_timer', None) is not timer:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+                return
             if t.is_alive():
                 self.progress.setValue(min(90, self._compute_progress))
                 return
@@ -4122,6 +4215,16 @@ class Main_Menu(QMainWindow):
 
     def _run_calculation_3d(self):
         """Threaded 3D solve → auto-switch to 3D View tab on success."""
+        # Re-entrancy guard — same rationale as 2D run_calculation. Without
+        # this a fast re-Compute spawned two QTimer instances + two threads,
+        # both alive, racing to call _finalize_plots_3d().
+        if getattr(self, '_compute_running', False):
+            QMessageBox.information(
+                self, "Compute Busy",
+                "A 3D computation is already running.\n\n"
+                "Click Cancel (red Compute button) and wait for the solver "
+                "to reach its next checkpoint, then re-Compute.")
+            return
         # Do not initialise PyVista/VTK on button click. The GL context is
         # expensive and made Compute feel frozen before progress appeared;
         # finalize_plots_3d creates/populates the panel after the solve.
@@ -4195,11 +4298,22 @@ class Main_Menu(QMainWindow):
                 import traceback; traceback.print_exc()
 
         self._compute_error = None
+        # Stop any orphan poll timer from a prior aborted run before installing
+        # the new one — old timer's _check() closure holds a stale `t` ref.
+        old_timer = getattr(self, '_compute_poll_timer', None)
+        if old_timer is not None:
+            try:
+                old_timer.stop()
+            except Exception:
+                pass
         t = threading.Thread(target=_worker, daemon=True)
+        self._compute_thread = t
+        self._compute_running = True
         t.start()
 
         # Parent timer to self so Qt owns its lifetime.
         timer = QTimer(self)
+        self._compute_poll_timer = timer
         # Hard wall-clock budget. The solver can stiffen pathologically when
         # the user picks a high-Re fluid setup (e.g. u=30 m/s air → Re ~7000)
         # combined with a 3D non-isothermal outer loop, and there is no
@@ -4207,6 +4321,15 @@ class Main_Menu(QMainWindow):
         # cancel flag so the worker exits at its next outer-iter checkpoint.
         _hard_timeout_s = 600.0
         def _check():
+            # Identity cross-check — a stale _check from a previous compute
+            # that hasn't fully torn down can fire one last time before its
+            # own stop() takes effect. Bail without touching shared state.
+            if getattr(self, '_compute_poll_timer', None) is not timer:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+                return
             if t.is_alive():
                 self.progress.setValue(min(90, self._compute_progress))
                 elapsed = _time.time() - self._compute_t0
