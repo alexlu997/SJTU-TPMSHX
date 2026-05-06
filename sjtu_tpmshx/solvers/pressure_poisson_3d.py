@@ -154,6 +154,103 @@ def build_pressure_laplacian_3d(
 # ----------------------------------------------------------------- source stub
 
 
+def _face_to_center_3d(u_face, v_face, w_face):
+    """Average staggered face velocities to cell centers.
+
+    Inputs (staggered, MAC layout):
+      u_face : (Nx+1, Ny, Nz)   — x-component on x-faces
+      v_face : (Nx, Ny+1, Nz)   — y-component on y-faces
+      w_face : (Nx, Ny, Nz+1)   — z-component on z-faces
+
+    Returns (uc, vc, wc) all shape (Nx, Ny, Nz) at cell centers.
+    """
+    uc = 0.5 * (u_face[:-1, :, :] + u_face[1:, :, :])
+    vc = 0.5 * (v_face[:, :-1, :] + v_face[:, 1:, :])
+    wc = 0.5 * (w_face[:, :, :-1] + w_face[:, :, 1:])
+    return uc, vc, wc
+
+
+def _laplacian_centered_3d(field, dx, dy, dz):
+    """Cell-centered ∇²(field) via 7-point stencil with one-sided BC.
+
+    At interior cells: standard central differences.
+    At boundary cells: copy-edge (zero-gradient ghost), which yields the
+    homogeneous Neumann ∂/∂n = 0 limit. Adequate for source assembly where
+    the goal is ∇·F at interior cells; the divergence operator already
+    masks boundary cells via central-difference stencil reach.
+    """
+    f = field
+    out = np.zeros_like(f)
+    out[1:-1, :, :] += (f[2:, :, :] - 2 * f[1:-1, :, :] + f[:-2, :, :]) / (dx * dx)
+    out[:, 1:-1, :] += (f[:, 2:, :] - 2 * f[:, 1:-1, :] + f[:, :-2, :]) / (dy * dy)
+    out[:, :, 1:-1] += (f[:, :, 2:] - 2 * f[:, :, 1:-1] + f[:, :, :-2]) / (dz * dz)
+    # Boundary rows: copy nearest-interior Laplacian (one-sided extrapolation).
+    # Acceptable for the ∇·F outer divergence, which uses central differences
+    # that themselves reach boundary cells only at the second row inward.
+    out[0, :, :] = out[1, :, :];  out[-1, :, :] = out[-2, :, :]
+    out[:, 0, :] = out[:, 1, :];  out[:, -1, :] = out[:, -2, :]
+    out[:, :, 0] = out[:, :, 1];  out[:, :, -1] = out[:, :, -2]
+    return out
+
+
+def _convective_uDel_u_3d(uc, vc, wc, dx, dy, dz):
+    """Compute (u·∇)u component-wise at cell centers, central differences.
+
+    Returns (Cx, Cy, Cz) where:
+        Cx = u·∂u/∂x + v·∂u/∂y + w·∂u/∂z
+        Cy = u·∂v/∂x + v·∂v/∂y + w·∂v/∂z
+        Cz = u·∂w/∂x + v·∂w/∂y + w·∂w/∂z
+
+    Boundary rows: one-sided difference (nearest interior gradient copied
+    onto the boundary cell — equivalent to ∂u/∂n=0 ghost).
+
+    Note: SOU/MINMOD upwind would be more consistent with the momentum
+    sweep. For B.2 we use central differences (simpler, matches MMS
+    smooth solutions). Phase B.4 will benchmark against MINMOD.
+    """
+    def _grad_x(f):
+        g = np.zeros_like(f)
+        g[1:-1, :, :] = (f[2:, :, :] - f[:-2, :, :]) / (2 * dx)
+        g[0, :, :] = (f[1, :, :] - f[0, :, :]) / dx
+        g[-1, :, :] = (f[-1, :, :] - f[-2, :, :]) / dx
+        return g
+
+    def _grad_y(f):
+        g = np.zeros_like(f)
+        g[:, 1:-1, :] = (f[:, 2:, :] - f[:, :-2, :]) / (2 * dy)
+        g[:, 0, :] = (f[:, 1, :] - f[:, 0, :]) / dy
+        g[:, -1, :] = (f[:, -1, :] - f[:, -2, :]) / dy
+        return g
+
+    def _grad_z(f):
+        g = np.zeros_like(f)
+        g[:, :, 1:-1] = (f[:, :, 2:] - f[:, :, :-2]) / (2 * dz)
+        g[:, :, 0] = (f[:, :, 1] - f[:, :, 0]) / dz
+        g[:, :, -1] = (f[:, :, -1] - f[:, :, -2]) / dz
+        return g
+
+    Cx = uc * _grad_x(uc) + vc * _grad_y(uc) + wc * _grad_z(uc)
+    Cy = uc * _grad_x(vc) + vc * _grad_y(vc) + wc * _grad_z(vc)
+    Cz = uc * _grad_x(wc) + vc * _grad_y(wc) + wc * _grad_z(wc)
+    return Cx, Cy, Cz
+
+
+def _divergence_centered_3d(Fx, Fy, Fz, dx, dy, dz):
+    """∇·F at cell centers via central differences. Boundary one-sided."""
+    div = np.zeros_like(Fx)
+    div[1:-1, :, :] += (Fx[2:, :, :] - Fx[:-2, :, :]) / (2 * dx)
+    div[:, 1:-1, :] += (Fy[:, 2:, :] - Fy[:, :-2, :]) / (2 * dy)
+    div[:, :, 1:-1] += (Fz[:, :, 2:] - Fz[:, :, :-2]) / (2 * dz)
+    # Boundary one-sided
+    div[0, :, :] += (Fx[1, :, :] - Fx[0, :, :]) / dx
+    div[-1, :, :] += (Fx[-1, :, :] - Fx[-2, :, :]) / dx
+    div[:, 0, :] += (Fy[:, 1, :] - Fy[:, 0, :]) / dy
+    div[:, -1, :] += (Fy[:, -1, :] - Fy[:, -2, :]) / dy
+    div[:, :, 0] += (Fz[:, :, 1] - Fz[:, :, 0]) / dz
+    div[:, :, -1] += (Fz[:, :, -1] - Fz[:, :, -2]) / dz
+    return div
+
+
 def assemble_ppe_source_3d(
     u_face: np.ndarray, v_face: np.ndarray, w_face: np.ndarray,
     mu_field: np.ndarray, K_arr: np.ndarray, cF_arr: np.ndarray,
@@ -162,18 +259,77 @@ def assemble_ppe_source_3d(
 ) -> np.ndarray:
     """Assemble S = ∇·F on cell centers.
 
-    F = μ∇²u - (μ/K)u - ρ·c_F·|u|·u - ρ(u·∇)u
+    F = μ·∇²u − (μ/K)·u − ρ·c_F·|u|·u − ρ·(u·∇)u
 
-    STUB (Phase B.1): returns zeros. Real assembly lands in Phase B.2.
-    Once filled in, the pure-Poisson harness here will deliver a true
-    PPE solution; for now the harness is testable against synthetic S.
+    Each term is a 3-vector at cell centers. The PPE source is the
+    divergence of this composite force field.
+
+    Discretization
+    --------------
+    - Face → center via 0.5·(u_left + u_right) (MAC standard).
+    - μ∇²u : 7-point cell-centered Laplacian, one-sided at boundaries.
+    - (μ/K)·u : algebraic, K_arr broadcast across i.
+    - ρ·c_F·|u|·u : algebraic.
+    - ρ(u·∇)u : central differences (B.2 first-pass; SOU/MINMOD in B.4).
+    - ∇·F : central differences, one-sided at boundaries.
+
+    Phase B.2 (this commit) implements the full source pipeline using
+    pure NumPy. Phase B.4 may replace inner kernels with numba for speed
+    once MMS h-refinement validates correctness.
+
+    Parameters
+    ----------
+    u_face, v_face, w_face : staggered face velocities.
+    mu_field, rho_field, eps_field : (Nx, Ny, Nz) cell-centered.
+    K_arr, cF_arr : (Ny, Nz). Broadcast across the i-axis.
+    dx, dy, dz : uniform grid spacing.
 
     Returns
     -------
-    S : (Nx, Ny, Nz) cell-centered source field.
+    S : (Nx, Ny, Nz) cell-centered scalar source.
     """
     Nx, Ny, Nz = rho_field.shape
-    return np.zeros((Nx, Ny, Nz), dtype=np.float64)
+
+    # Step 1 — face → cell-center velocities
+    uc, vc, wc = _face_to_center_3d(u_face, v_face, w_face)
+
+    # Step 2 — viscous term μ∇²u (per component, cell-center)
+    Lap_u = _laplacian_centered_3d(uc, dx, dy, dz)
+    Lap_v = _laplacian_centered_3d(vc, dx, dy, dz)
+    Lap_w = _laplacian_centered_3d(wc, dx, dy, dz)
+    Vx = mu_field * Lap_u
+    Vy = mu_field * Lap_v
+    Vz = mu_field * Lap_w
+
+    # Step 3 — Brinkman drag −(μ/K)·u
+    K_3d = np.broadcast_to(K_arr[None, :, :], (Nx, Ny, Nz))
+    inv_K = 1.0 / np.maximum(K_3d, 1e-30)
+    Bx = -mu_field * inv_K * uc
+    By = -mu_field * inv_K * vc
+    Bz = -mu_field * inv_K * wc
+
+    # Step 4 — Forchheimer drag −ρ·c_F·|u|·u
+    cF_3d = np.broadcast_to(cF_arr[None, :, :], (Nx, Ny, Nz))
+    umag = np.sqrt(uc * uc + vc * vc + wc * wc)
+    Forch = rho_field * cF_3d * umag
+    Fx_forch = -Forch * uc
+    Fy_forch = -Forch * vc
+    Fz_forch = -Forch * wc
+
+    # Step 5 — convection −ρ(u·∇)u
+    Cx, Cy, Cz = _convective_uDel_u_3d(uc, vc, wc, dx, dy, dz)
+    Fx_conv = -rho_field * Cx
+    Fy_conv = -rho_field * Cy
+    Fz_conv = -rho_field * Cz
+
+    # Step 6 — assemble F
+    Fx = Vx + Bx + Fx_forch + Fx_conv
+    Fy = Vy + By + Fy_forch + Fy_conv
+    Fz = Vz + Bz + Fz_forch + Fz_conv
+
+    # Step 7 — divergence S = ∇·F
+    S = _divergence_centered_3d(Fx, Fy, Fz, dx, dy, dz)
+    return S
 
 
 # ----------------------------------------------------------------- public solve

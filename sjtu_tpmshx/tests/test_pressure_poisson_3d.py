@@ -142,8 +142,8 @@ def test_amg_hierarchy_cache_reuse():
 # ----------------------------------------------------------------- assembly stub
 
 
-def test_source_stub_returns_zeros():
-    """Phase B.1 source is a stub; B.2 will replace with real ∇·F."""
+def test_source_zero_velocity_zero_source():
+    """All-zero u,v,w → all terms zero → S ≡ 0."""
     Nx, Ny, Nz = 4, 6, 4
     u, v, w = _make_zeros_3d(Nx, Ny, Nz)
     rho = np.ones((Nx, Ny, Nz))
@@ -155,6 +155,83 @@ def test_source_stub_returns_zeros():
     S = assemble_ppe_source_3d(u, v, w, mu, K, cF, rho, eps, 0.01, 0.01, 0.01)
     assert S.shape == (Nx, Ny, Nz)
     assert np.all(S == 0.0)
+
+
+def test_source_uniform_constant_velocity_zero():
+    """Constant u throughout → ∇²u = 0, (u·∇)u = 0 → only Brinkman + Forchheimer
+    survive, but those are spatially uniform too (uniform K, cF, ρ) → ∇·F = 0."""
+    Nx, Ny, Nz = 6, 8, 6
+    u_face = np.full((Nx + 1, Ny, Nz), 2.0)
+    v_face = np.zeros((Nx, Ny + 1, Nz))
+    w_face = np.zeros((Nx, Ny, Nz + 1))
+    rho = np.ones((Nx, Ny, Nz))
+    mu = np.full_like(rho, 2e-5)
+    eps = np.full_like(rho, 0.5)
+    K = np.full((Ny, Nz), 1e-9)
+    cF = np.full((Ny, Nz), 0.5)
+
+    S = assemble_ppe_source_3d(
+        u_face, v_face, w_face, mu, K, cF, rho, eps, 0.01, 0.01, 0.01)
+    # All inputs uniform → F is uniform vector → ∇·F = 0 in interior.
+    # Boundary cells may have small one-sided differences but should be ≈ 0.
+    inner = S[1:-1, 1:-1, 1:-1]
+    assert np.max(np.abs(inner)) < 1e-10, \
+        f"Uniform field source not zero in interior: max|S|={np.max(np.abs(inner)):.3e}"
+
+
+def test_source_mms_brinkman_only():
+    """MMS-style: pick u_x = sin(π·y/Ly), all else zero.
+    Set K so Brinkman dominates; verify analytic ∇·F matches assembled S
+    on interior cells.
+
+    For u = (sin(πy/Ly), 0, 0):
+      ∇²u_x = -(π/Ly)² sin(πy/Ly)
+      (u·∇)u = (u_x · ∂u_x/∂x, ...) = 0 (no x-dependence)
+      Brinkman F_x = -(μ/K) sin(πy/Ly)
+      Forchheimer F_x = -ρ·c_F·|sin|·sin (sign of |u|·u in y-dir is 0
+        contribution via x-component; but |u|=|u_x|, and F_x = -ρcF|u|·u_x)
+      Total F_x = (μ·Lap + Brink + Forch) terms in x.
+      F_y, F_z = 0 (since v=w=0 and u-grad-only acts on x-component).
+
+    Then ∇·F = ∂F_x/∂x = 0 (F_x has no x-dependence — ok)
+            + ∂F_y/∂y = 0
+            + ∂F_z/∂z = 0
+            = 0.
+
+    So ∇·F should be machine-zero on interior. Tests the divergence stencil.
+    """
+    Nx, Ny, Nz = 8, 16, 8
+    Lx = Ly = Lz = 0.1
+    dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
+
+    yc = (np.arange(Ny) + 0.5) * dy
+    sin_y = np.sin(np.pi * yc / Ly)
+
+    # u_x at x-faces: same value across i (no x-dependence). At face i,
+    # cell-center reconstruction will give the same sin profile.
+    u_face = np.zeros((Nx + 1, Ny, Nz))
+    for j in range(Ny):
+        u_face[:, j, :] = sin_y[j]
+    v_face = np.zeros((Nx, Ny + 1, Nz))
+    w_face = np.zeros((Nx, Ny, Nz + 1))
+
+    rho = np.ones((Nx, Ny, Nz))
+    mu = np.full_like(rho, 2e-5)
+    eps = np.full_like(rho, 0.5)
+    K = np.full((Ny, Nz), 1e-9)
+    cF = np.full((Ny, Nz), 0.5)
+
+    S = assemble_ppe_source_3d(
+        u_face, v_face, w_face, mu, K, cF, rho, eps, dx, dy, dz)
+
+    # Interior cells (away from y-boundaries by 2 cells)
+    inner = S[2:-2, 2:-2, 2:-2]
+    # Source terms have no x or z dependence by construction; F_x, F_y, F_z
+    # depend only on y. So ∇·F = ∂F_x/∂x + ∂F_y/∂y + ∂F_z/∂z. F_x has no x
+    # dependence → ∂F_x/∂x = 0. F_y = F_z = 0. So ∂F_y/∂y = ∂F_z/∂z = 0.
+    # ∇·F should be exactly 0 on interior.
+    assert np.max(np.abs(inner)) < 1e-8, \
+        f"MMS Brinkman-only ∇·F not zero on interior: max={np.max(np.abs(inner)):.3e}"
 
 
 # ----------------------------------------------------------------- MMS-lite
