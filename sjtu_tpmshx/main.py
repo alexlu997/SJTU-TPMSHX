@@ -161,6 +161,20 @@ class Main_Menu(QMainWindow):
         self._compute_poll_timer = None
         self._compute_thread = None
         self._compute_btn_handler = None
+        self._cancel_token = None  # set by ComputeOrchestrator on each start
+
+        # ComputeOrchestrator — Phase 1 of 2026-05-06 main.py refactor (#4).
+        # Provides Qt-native solver lifecycle: started/progress/finished/error/
+        # cancelled signals + cooperative cancel + per-mode ETA. Replaces the
+        # raw threading.Thread + QTimer poll pattern in run_calculation. See
+        # vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
+        from controllers import ComputeOrchestrator
+        self.compute = ComputeOrchestrator(self)
+        self.compute.started.connect(self._on_orch_started)
+        self.compute.progress.connect(self._on_orch_progress)
+        self.compute.finished.connect(self._on_orch_finished)
+        self.compute.error.connect(self._on_orch_error)
+        self.compute.cancelled.connect(self._on_orch_cancelled)
 
         # Active workspace loaded from disk (A/B/C). Determines which
         # .last_session_*.json file _save_session / _restore_session target.
@@ -3677,15 +3691,124 @@ class Main_Menu(QMainWindow):
                 self._sb_live_resid.hide()
             self._live_resid_cursor = 0
 
+    # -------------------------------------------------------------------
+    # ComputeOrchestrator signal handlers (Plan #4 Phase 1.2 — A.2 wiring).
+    # Replace the raw threading.Thread + QTimer poll pattern in
+    # run_calculation. orchestrator's signals auto-marshal to the GUI thread,
+    # so these handlers run on the main thread (Qt-safe).
+    # -------------------------------------------------------------------
+
+    def _on_orch_started(self, mode):
+        """Compute kicked off. Lock UI + start progress widgets."""
+        self._begin_compute_ui()
+        # Backwards-compat: tests / external code still read _compute_running.
+        # We mirror it from the orchestrator's authoritative flag.
+        self._compute_running = True
+        # Fresh per-run log buffer for the D9 solve-log viewer.
+        self._last_solve_log = ""
+        # Start a small UI-only progress poll (orchestrator handles thread
+        # lifecycle; this just renders self._compute_progress on the bar).
+        # Live residuals already drained separately via _drain_live_residuals.
+        from PySide6.QtCore import QTimer
+        self._compute_progress = 10
+        if getattr(self, '_compute_poll_timer', None) is not None:
+            try:
+                self._compute_poll_timer.stop()
+            except Exception:
+                pass
+        timer = QTimer(self)
+        self._compute_poll_timer = timer
+
+        def _tick_progress():
+            if not self.compute.is_running():
+                timer.stop()
+                return
+            self.progress.setValue(min(90, self._compute_progress))
+        timer.timeout.connect(_tick_progress)
+        timer.start(200)
+
+    def _on_orch_progress(self, percent):
+        """Worker emitted explicit progress (rare for current solver). Render."""
+        self.progress.setValue(min(100, max(0, int(percent))))
+
+    def _on_orch_finished(self, _result_dict):
+        """Compute succeeded. Render plots + push to recent runs ring."""
+        self._compute_running = False
+        # Persist the captured log for the D9 viewer (orchestrator already
+        # capped at 500 KB).
+        self._last_solve_log = self.compute.last_log()
+        # Stop the progress timer if still running.
+        t = getattr(self, '_compute_poll_timer', None)
+        if t is not None:
+            try:
+                t.stop()
+            except Exception:
+                pass
+        self._finalize_plots()
+        self._end_compute_ui(success=True)
+        self._has_results = True
+        self._has_results_2d = True
+        self._update_tab_visibility()
+        for _bname in ('btn_export_results', 'btn_export_figure'):
+            if hasattr(self, _bname):
+                getattr(self, _bname).setEnabled(True)
+        self._switch_tab('temp')
+        self.statusBar().showMessage("Done.", 5000)
+
+    def _on_orch_error(self, message, log_text):
+        """Compute raised. Show error + drop stale 2D results."""
+        self._compute_running = False
+        self._compute_error = message
+        self._last_solve_log = log_text
+        t = getattr(self, '_compute_poll_timer', None)
+        if t is not None:
+            try:
+                t.stop()
+            except Exception:
+                pass
+        # Drop stale 2D state so canvases / exports cannot serve dirty data.
+        self._compute_results = {}
+        self._has_results_2d = False
+        if not getattr(self, '_has_results_3d', False):
+            self._has_results = False
+        for _bname in ('btn_export_results', 'btn_export_figure'):
+            if hasattr(self, _bname):
+                getattr(self, _bname).setEnabled(False)
+        self._update_tab_visibility()
+        self._end_compute_ui(success=False)
+        QMessageBox.critical(self, "Compute Error", message)
+        try:
+            from ui.microanim import toast as _toast
+            _toast(self, f"Compute failed — {message[:80]}",
+                   kind='error',
+                   copy_payload=log_text or message)
+        except Exception:
+            pass
+
+    def _on_orch_cancelled(self, log_text):
+        """Worker observed cancel_token. Treat as soft completion."""
+        self._compute_running = False
+        self._last_solve_log = log_text
+        t = getattr(self, '_compute_poll_timer', None)
+        if t is not None:
+            try:
+                t.stop()
+            except Exception:
+                pass
+        self._end_compute_ui(success=False)
+        self.statusBar().showMessage("Cancelled.", 3000)
+
     def run_calculation(self):
-        """Full-domain solve: SIMPLE velocity → coupled energy on L × H."""
-        # Re-entrancy guard — refuse to launch a second compute while the
-        # first thread is still alive. Without this, two QTimers and two
-        # threads run in parallel: the timer-from-prior-run polls a stale
-        # `t.is_alive()` closure and wins the race to `_finalize_plots()`,
-        # corrupting the new run's results. Symptom: UI hangs after fast
-        # re-Compute (user pain point, 2026-05-05 audit).
-        if getattr(self, '_compute_running', False):
+        """Full-domain solve: SIMPLE velocity → coupled energy on L × H.
+
+        2026-05-06 refactor (audit fix #4 / Plan #4 Phase 1.2): solver thread
+        lifecycle delegated to ComputeOrchestrator. Re-entrancy guard, cancel,
+        result distribution, error handling all flow through orch signals.
+        """
+        # Re-entrancy guard — orchestrator rejects start() while running, but
+        # we surface it as a user-visible modal here for parity with the prior
+        # UX (memory: 2026-05-05 audit user pain point).
+        if self.compute.is_running() or getattr(self, '_compute_running', False):
             QMessageBox.information(
                 self, "Compute Busy",
                 "A computation is already running.\n\n"
@@ -3716,7 +3839,7 @@ class Main_Menu(QMainWindow):
             self._run_calculation_3d()
             return
 
-        # Validate inputs BEFORE launching thread (Qt-safe on main thread)
+        # Validate inputs BEFORE launching solver (Qt-safe on main thread)
         if self._K_ffA is None:
             QMessageBox.warning(self, "Missing Input",
                                 "Please click 'Auto-fill Fluid A' first."); return
@@ -3724,123 +3847,29 @@ class Main_Menu(QMainWindow):
             QMessageBox.warning(self, "Missing Input",
                                 "Please click 'Auto-fill Fluid B' first."); return
 
-        self._begin_compute_ui()
-
-        import threading
-        from PySide6.QtCore import QTimer
-
-        self._compute_progress = 10  # shared progress value for worker thread
-
-        # Capture stdout from the solver thread into a ring so the D9
-        # solve-log viewer can show residual dumps / warnings post-run.
-        # Reset the captured-log string each run so memory does not grow
-        # unbounded over many computes (see project_ui_bug_sweep memory).
-        import io as _io_sl
-        self._last_solve_log = ""
-        self._last_solve_log_buf = _io_sl.StringIO()
-
-        def _worker():
-            import contextlib as _cx_sl, sys as _sys_sl
-            try:
-                # Tee to original stdout so terminal users still see output;
-                # capture a copy into _last_solve_log_buf for the viewer.
-                class _Tee:
-                    def __init__(self, *streams): self._s = streams
-                    def write(self, x):
-                        for s in self._s:
-                            try: s.write(x)
-                            except Exception: pass
-                    def flush(self):
-                        for s in self._s:
-                            try: s.flush()
-                            except Exception: pass
-                with _cx_sl.redirect_stdout(
-                        _Tee(_sys_sl.__stdout__, self._last_solve_log_buf)):
-                    self._run_calculation_inner()
-                self._compute_error = None
-            except Exception as e:
-                self._compute_error = str(e)
-                import traceback; traceback.print_exc(
-                    file=self._last_solve_log_buf)
+        # Worker function for orchestrator. Wraps run_calculation_inner so
+        # solver runs on the QRunnable thread; result lands in
+        # window._compute_results (existing convention, finalize_plots reads
+        # from there). Cancel token is parked on `self` so future solver
+        # kernels can poll it at epoch boundaries (cooperative cancel).
+        def _2d_worker(cfg, cancel_token, progress_cb):
+            self._cancel_token = cancel_token
+            from runs.run_calculation import run_calculation_inner
+            run_calculation_inner(self)
+            # Result already on self._compute_results; orchestrator's finished
+            # signal payload can be empty.
+            return {}
 
         self._compute_error = None
-        # Defensively stop any orphan poll timer from a prior aborted run
-        # before installing the new one — old timer's _check() closure holds
-        # a reference to a dead `t` and would race the new timer otherwise.
-        old_timer = getattr(self, '_compute_poll_timer', None)
-        if old_timer is not None:
-            try:
-                old_timer.stop()
-            except Exception:
-                pass
-        t = threading.Thread(target=_worker, daemon=True)
-        self._compute_thread = t   # keep ref so _check() reads same handle
-        self._compute_running = True
-        t.start()
-
-        # Poll for completion — ALL Qt updates happen here (main thread).
-        # Parent the timer to self so Qt owns its lifetime (avoids premature
-        # GC of the QTimer C++ object if the Python ref drops).
-        timer = QTimer(self)
-        self._compute_poll_timer = timer
-        def _check():
-            # Cross-check identity: if the active timer is no longer *this*
-            # closure's timer, the user has already started a new compute and
-            # this _check is a stale callback firing one last time before its
-            # own stop() takes effect. Bail without touching shared state.
-            if getattr(self, '_compute_poll_timer', None) is not timer:
-                try:
-                    timer.stop()
-                except Exception:
-                    pass
-                return
-            if t.is_alive():
-                self.progress.setValue(min(90, self._compute_progress))
-                return
-            timer.stop()
-            # Freeze the captured log as a plain string for the viewer,
-            # capped at 500 KB so a verbose=True solver run can't grow the
-            # MainWindow memory footprint into the multi-MB range.
-            try:
-                self._last_solve_log = (
-                    self._last_solve_log_buf.getvalue()[:500_000])
-            except Exception:
-                self._last_solve_log = ""
-            if self._compute_error:
-                # Drop stale 2D results so canvases / exports can't silently
-                # serve previous-run data after a failed Compute.
-                self._compute_results = {}
-                self._has_results_2d = False
-                if not getattr(self, '_has_results_3d', False):
-                    self._has_results = False
-                for _bname in ('btn_export_results', 'btn_export_figure'):
-                    if hasattr(self, _bname):
-                        getattr(self, _bname).setEnabled(False)
-                self._update_tab_visibility()
-                self._end_compute_ui(success=False)
-                QMessageBox.critical(self, "Compute Error", self._compute_error)
-                try:
-                    from ui.microanim import toast as _toast
-                    _toast(self, f"Compute failed — {self._compute_error[:80]}",
-                           kind='error',
-                           copy_payload=getattr(self, '_last_solve_log', '')
-                                           or self._compute_error)
-                except Exception:
-                    pass
-            else:
-                # Render plots on main thread using stored results
-                self._finalize_plots()
-                self._end_compute_ui(success=True)
-                self._has_results = True
-                self._has_results_2d = True
-                self._update_tab_visibility()
-                for _bname in ('btn_export_results', 'btn_export_figure'):
-                    if hasattr(self, _bname):
-                        getattr(self, _bname).setEnabled(True)
-                self._switch_tab('temp')
-                self.statusBar().showMessage("Done.", 5000)
-        timer.timeout.connect(_check)
-        timer.start(200)
+        if not self.compute.start('2d', _2d_worker, cfg={}):
+            # Should be unreachable due to is_running() guard above; defensive.
+            QMessageBox.information(
+                self, "Compute Busy",
+                "Compute orchestrator rejected start — already running.")
+            return
+        # Lifecycle now driven entirely by orchestrator signals; the legacy
+        # threading.Thread + QTimer poll block is gone (~100 lines deleted).
+        return
 
     def _run_calculation_inner(self):
         """Thin wrapper — delegates to run_calculation module (Task B.9)."""
