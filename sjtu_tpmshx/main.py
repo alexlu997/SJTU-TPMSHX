@@ -3732,10 +3732,13 @@ class Main_Menu(QMainWindow):
         self.progress.setValue(min(100, max(0, int(percent))))
 
     def _on_orch_finished(self, _result_dict):
-        """Compute succeeded. Render plots + push to recent runs ring."""
+        """Compute succeeded. Render plots + push to recent runs ring.
+
+        Mode-aware: 2D path calls _finalize_plots (matplotlib canvases).
+        3D path calls finalize_plots_3d (PyVista panel) + sets _has_results_3d.
+        Polygon path runs on main thread (does not pass through orch).
+        """
         self._compute_running = False
-        # Persist the captured log for the D9 viewer (orchestrator already
-        # capped at 500 KB).
         self._last_solve_log = self.compute.last_log()
         # Stop the progress timer if still running.
         t = getattr(self, '_compute_poll_timer', None)
@@ -3744,6 +3747,53 @@ class Main_Menu(QMainWindow):
                 t.stop()
             except Exception:
                 pass
+        # Stop any 3D wall-clock budget watchdog that may still be alive.
+        wd = getattr(self, '_compute_3d_watchdog', None)
+        if wd is not None:
+            try:
+                wd.stop()
+            except Exception:
+                pass
+
+        mode = self.compute.current_mode()
+        if mode == '3d':
+            from runs.run_calculation_3d import finalize_plots_3d
+            _finalize_ok = False
+            try:
+                finalize_plots_3d(self)
+                try:
+                    self._push_recent_run()
+                except Exception:
+                    pass
+                _finalize_ok = True
+            finally:
+                self._end_compute_ui(success=_finalize_ok)
+            if not _finalize_ok:
+                return
+            self._has_results = True
+            self._has_results_3d = True
+            for _bname in ('btn_export_results', 'btn_export_figure'):
+                if hasattr(self, _bname):
+                    getattr(self, _bname).setEnabled(True)
+            drawn = getattr(self, '_drawn_tabs', set())
+            drawn.add('3d')
+            if getattr(self, '_rendered_3d_slices', False):
+                for k in ('temp', 'pres', 'vel'):
+                    drawn.add(k)
+            self._drawn_tabs = drawn
+            self._update_tab_visibility()
+            self._switch_tab('3d')
+            res = getattr(self, '_result_3d', {})
+            if res:
+                try:
+                    self.statusBar().showMessage(
+                        f"3D done — Q={res.get('Q', 0):.1f} W  "
+                        f"dP={res.get('dP', 0):.0f} Pa", 6000)
+                except Exception:
+                    pass
+            return
+
+        # 2D mode (default)
         self._finalize_plots()
         self._end_compute_ui(success=True)
         self._has_results = True
@@ -3756,7 +3806,7 @@ class Main_Menu(QMainWindow):
         self.statusBar().showMessage("Done.", 5000)
 
     def _on_orch_error(self, message, log_text):
-        """Compute raised. Show error + drop stale 2D results."""
+        """Compute raised. Show error + drop stale results (mode-aware)."""
         self._compute_running = False
         self._compute_error = message
         self._last_solve_log = log_text
@@ -3766,7 +3816,30 @@ class Main_Menu(QMainWindow):
                 t.stop()
             except Exception:
                 pass
-        # Drop stale 2D state so canvases / exports cannot serve dirty data.
+        wd = getattr(self, '_compute_3d_watchdog', None)
+        if wd is not None:
+            try:
+                wd.stop()
+            except Exception:
+                pass
+
+        mode = self.compute.current_mode()
+        if mode == '3d':
+            self._result_3d = None
+            self._has_results_3d = False
+            if not getattr(self, '_has_results_2d', False):
+                self._has_results = False
+            for _bname in ('btn_export_results', 'btn_export_figure'):
+                if hasattr(self, _bname):
+                    getattr(self, _bname).setEnabled(False)
+            self._update_tab_visibility()
+            self._end_compute_ui(success=False)
+            # User-cancel or timeout already surfaced as cancelled signal —
+            # if we reach here it's a real error.
+            QMessageBox.critical(self, "3D Compute Error", message)
+            return
+
+        # 2D / poly fallback
         self._compute_results = {}
         self._has_results_2d = False
         if not getattr(self, '_has_results_3d', False):
@@ -3786,7 +3859,7 @@ class Main_Menu(QMainWindow):
             pass
 
     def _on_orch_cancelled(self, log_text):
-        """Worker observed cancel_token. Treat as soft completion."""
+        """Worker observed cancel_token. Treat as soft completion (mode-aware)."""
         self._compute_running = False
         self._last_solve_log = log_text
         t = getattr(self, '_compute_poll_timer', None)
@@ -3795,6 +3868,24 @@ class Main_Menu(QMainWindow):
                 t.stop()
             except Exception:
                 pass
+        wd = getattr(self, '_compute_3d_watchdog', None)
+        if wd is not None:
+            try:
+                wd.stop()
+            except Exception:
+                pass
+
+        mode = self.compute.current_mode()
+        if mode == '3d':
+            # 3D-specific: drop result + status message
+            self._result_3d = None
+            self._has_results_3d = False
+            self._update_tab_visibility()
+            self._end_compute_ui(success=False)
+            self.statusBar().showMessage(
+                "3D compute aborted (cancelled or timed-out).", 6000)
+            return
+
         self._end_compute_ui(success=False)
         self.statusBar().showMessage("Cancelled.", 3000)
 
@@ -4346,143 +4437,61 @@ class Main_Menu(QMainWindow):
                    f"{est_cells_r:,} cells, compressible dual-fluid SIMPLE; "
                    f"typical ~2-10 min)…")
 
-        import threading
+        # ComputeOrchestrator path (Plan #4 P1.3 — A.3, 2026-05-06).
+        # Replaces the legacy threading.Thread + 600 s poll _check closure.
+        # Hard wall-clock budget (10 min) implemented as a separate QTimer
+        # that calls self.compute.cancel() — orchestrator forwards as
+        # cooperative cancel to the worker, which exits at next checkpoint.
         from PySide6.QtCore import QTimer
 
-        self._compute_progress = 10
-
-        def _worker():
-            try:
-                from runs.run_calculation_3d import run_calculation_3d_inner
-                run_calculation_3d_inner(self)
-                self._compute_error = None
-            except Exception as e:
-                self._compute_error = str(e)
-                import traceback; traceback.print_exc()
+        def _3d_worker(cfg, cancel_token, progress_cb):
+            self._cancel_token = cancel_token
+            from runs.run_calculation_3d import run_calculation_3d_inner
+            run_calculation_3d_inner(self)
+            return {}
 
         self._compute_error = None
-        # Stop any orphan poll timer from a prior aborted run before installing
-        # the new one — old timer's _check() closure holds a stale `t` ref.
-        old_timer = getattr(self, '_compute_poll_timer', None)
-        if old_timer is not None:
-            try:
-                old_timer.stop()
-            except Exception:
-                pass
-        t = threading.Thread(target=_worker, daemon=True)
-        self._compute_thread = t
-        self._compute_running = True
-        t.start()
+        if not self.compute.start('3d', _3d_worker, cfg={'est_cells': est_cells_r}):
+            QMessageBox.information(
+                self, "Compute Busy",
+                "3D compute orchestrator rejected start — already running.")
+            return
 
-        # Parent timer to self so Qt owns its lifetime.
-        timer = QTimer(self)
-        self._compute_poll_timer = timer
-        # Hard wall-clock budget. The solver can stiffen pathologically when
-        # the user picks a high-Re fluid setup (e.g. u=30 m/s air → Re ~7000)
-        # combined with a 3D non-isothermal outer loop, and there is no
-        # in-kernel watchdog. After 10 minutes the timer auto-sets the
-        # cancel flag so the worker exits at its next outer-iter checkpoint.
+        # ETA / status updater on a separate QTimer (orchestrator handles
+        # the thread; this is a UI-only ticker that polls solver progress
+        # + reports elapsed wall-clock + ETA).
+        wd = QTimer(self)
+        self._compute_3d_watchdog = wd
         _hard_timeout_s = 600.0
-        def _check():
-            # Identity cross-check — a stale _check from a previous compute
-            # that hasn't fully torn down can fire one last time before its
-            # own stop() takes effect. Bail without touching shared state.
-            if getattr(self, '_compute_poll_timer', None) is not timer:
-                try:
-                    timer.stop()
-                except Exception:
-                    pass
+        _ref_cells = 35000
+        _ref_sec = 150.0
+
+        def _tick_3d():
+            if not self.compute.is_running():
+                wd.stop()
                 return
-            if t.is_alive():
-                self.progress.setValue(min(90, self._compute_progress))
-                elapsed = _time.time() - self._compute_t0
-                if (elapsed > _hard_timeout_s
-                        and not getattr(self, '_compute_cancel', False)):
-                    self._compute_cancel = True
-                    self.statusBar().showMessage(
-                        f"3D compute exceeded {int(_hard_timeout_s)}s budget "
-                        "— auto-cancelling at next checkpoint.", 8000)
-                # ETA: linear scale from Shanghai 46x36x21 ≈ 35k cells / 150 s
-                # baseline. Underestimates for steep compressibility gradients;
-                # clamps to ≥ 10 s.
-                _ref_cells = 35000
-                _ref_sec = 150.0
-                eta_total = max(10.0, est_cells_r / _ref_cells * _ref_sec)
-                eta_remain = eta_total - elapsed
-                from ui.fmt import duration as _fmt
-                # Once elapsed exceeds the linear-scale estimate the remaining
-                # time is unknowable (steep ρ(P,T) gradients, BC corner cases),
-                # so swap the ETA token for an explicit "over budget" notice
-                # — otherwise users read "ETA ~0.0s" as "done".
-                if eta_remain > 0:
-                    eta_txt = f"ETA ~{_fmt(eta_remain)}"
-                else:
-                    over = elapsed - eta_total
-                    eta_txt = f"past estimate by {_fmt(over)} — solver still running"
+            elapsed = _time.time() - self._compute_t0
+            if elapsed > _hard_timeout_s:
                 self.statusBar().showMessage(
-                    f"Computing 3D… {_fmt(elapsed)} elapsed "
-                    f"({est_cells_r:,} cells) • {eta_txt}")
+                    f"3D compute exceeded {int(_hard_timeout_s)}s budget "
+                    "— auto-cancelling at next checkpoint.", 8000)
+                self.compute.cancel()
+                wd.stop()
                 return
-            timer.stop()
-            if self._compute_error:
-                # Drop stale 3D results so 3D panel / exports can't silently
-                # serve previous-run data after a failed Compute.
-                self._result_3d = None
-                self._has_results_3d = False
-                if not getattr(self, '_has_results_2d', False):
-                    self._has_results = False
-                for _bname in ('btn_export_results', 'btn_export_figure'):
-                    if hasattr(self, _bname):
-                        getattr(self, _bname).setEnabled(False)
-                self._update_tab_visibility()
-                self._end_compute_ui(success=False)
-                # User-cancelled or wall-clock timeout: show a status
-                # message instead of an error popup.
-                _err_lc = self._compute_error.lower()
-                if 'cancel' in _err_lc or 'timeout' in _err_lc:
-                    self.statusBar().showMessage(
-                        f"3D compute aborted — {self._compute_error}.", 6000)
-                else:
-                    QMessageBox.critical(
-                        self, "3D Compute Error", self._compute_error)
+            eta_total = max(10.0, est_cells_r / _ref_cells * _ref_sec)
+            eta_remain = eta_total - elapsed
+            from ui.fmt import duration as _fmt
+            if eta_remain > 0:
+                eta_txt = f"ETA ~{_fmt(eta_remain)}"
             else:
-                from runs.run_calculation_3d import finalize_plots_3d
-                _finalize_ok = False
-                try:
-                    finalize_plots_3d(self)
-                    try:
-                        self._push_recent_run()
-                    except Exception:
-                        pass
-                    _finalize_ok = True
-                finally:
-                    # Always end compute UI so the live-residual timer stops
-                    # and the Compute button re-enables — finalize raising
-                    # would otherwise leave the UI locked + sparkline polling.
-                    self._end_compute_ui(success=_finalize_ok)
-                if not _finalize_ok:
-                    return
-                self._has_results = True
-                self._has_results_3d = True
-                for _bname in ('btn_export_results', 'btn_export_figure'):
-                    if hasattr(self, _bname):
-                        getattr(self, _bname).setEnabled(True)
-                drawn = getattr(self, '_drawn_tabs', set())
-                # All 2D canvases also populated via mid-z slice — mark drawn
-                drawn.add('3d')
-                if getattr(self, '_rendered_3d_slices', False):
-                    for k in ('temp', 'pres', 'vel'):
-                        drawn.add(k)
-                self._drawn_tabs = drawn
-                self._update_tab_visibility()
-                self._switch_tab('3d')
-                res = getattr(self, '_result_3d', {})
-                self.statusBar().showMessage(
-                    f"3D done — Q={res.get('Q', 0):.1f} W  dP={res.get('dP', 0):.0f} Pa",
-                    6000,
-                )
-        timer.timeout.connect(_check)
-        timer.start(200)
+                over = elapsed - eta_total
+                eta_txt = f"past estimate by {_fmt(over)} — solver still running"
+            self.statusBar().showMessage(
+                f"Computing 3D… {_fmt(elapsed)} elapsed "
+                f"({est_cells_r:,} cells) • {eta_txt}")
+        wd.timeout.connect(_tick_3d)
+        wd.start(500)
+        return
 
     # ─────────────────────────────────────────────────────────
     #  Polygon domain solver
