@@ -251,6 +251,83 @@ def _divergence_centered_3d(Fx, Fy, Fz, dx, dy, dz):
     return div
 
 
+def compute_inlet_neumann_flux_3d(
+    u_face: np.ndarray, v_face: np.ndarray, w_face: np.ndarray,
+    mu_field: np.ndarray, K_arr: np.ndarray, cF_arr: np.ndarray,
+    rho_field: np.ndarray,
+    dx: float, dy: float, dz: float,
+) -> np.ndarray:
+    """Compute non-homogeneous Neumann BC value g = ∂P/∂y|_inlet (Phase B.3).
+
+    At the inlet face (y = 0, lower face of j=0 cells), the y-momentum
+    equation projects to:
+
+      ∂P/∂y |_inlet = -ρ·v·∂v/∂y - ρ·u·∂v/∂x - ρ·w·∂v/∂z
+                      + μ·∇²v
+                      - (μ/K)·v
+                      - ρ·c_F·|u|·v
+
+    i.e. g = F_y at the inlet cell center, evaluated at j=0 (which is
+    immediately adjacent to the inlet face — first-order approximation).
+    A second-order extrapolation to the face would use j=0 + (j=0 - j=1)/2,
+    but for B.3 we accept first-order; B.4 h-refinement will quantify.
+
+    Returns
+    -------
+    g_inlet : (Nx, Nz) array, F_y evaluated at j=0 cell centers.
+              Caller adds  -g_inlet/dy  to RHS for inlet rows.
+    """
+    Nx, Ny, Nz = rho_field.shape
+    uc, vc, wc = _face_to_center_3d(u_face, v_face, w_face)
+
+    # Slice j=0 row (Nx, Nz)
+    uc_in = uc[:, 0, :]
+    vc_in = vc[:, 0, :]
+    wc_in = wc[:, 0, :]
+    rho_in = rho_field[:, 0, :]
+    mu_in = mu_field[:, 0, :]
+    K_in = np.broadcast_to(K_arr[0:1, :], (Nx, Nz))   # K at j=0
+    cF_in = np.broadcast_to(cF_arr[0:1, :], (Nx, Nz))
+
+    # μ∇²v at j=0 — use one-sided second derivative for ∂²v/∂y² (forward diff
+    # over 3 points). For ∂²v/∂x² and ∂²v/∂z² use centered diffs.
+    Lap_v_at_in = np.zeros((Nx, Nz))
+    Lap_v_at_in[1:-1, :] += (vc[2:, 0, :] - 2 * vc[1:-1, 0, :]
+                             + vc[:-2, 0, :]) / (dx * dx)
+    Lap_v_at_in[:, 1:-1] += (vc[:, 0, 2:] - 2 * vc[:, 0, 1:-1]
+                             + vc[:, 0, :-2]) / (dz * dz)
+    if Ny >= 3:
+        Lap_v_at_in += (vc[:, 2, :] - 2 * vc[:, 1, :] + vc[:, 0, :]) / (dy * dy)
+    Vy_in = mu_in * Lap_v_at_in
+
+    # Brinkman drag −(μ/K)·v
+    By_in = -mu_in / np.maximum(K_in, 1e-30) * vc_in
+
+    # Forchheimer drag −ρ·c_F·|u|·v
+    umag_in = np.sqrt(uc_in * uc_in + vc_in * vc_in + wc_in * wc_in)
+    Forch_y = -rho_in * cF_in * umag_in * vc_in
+
+    # Convection −ρ(u·∇)v at j=0:
+    # uc·∂v/∂x + vc·∂v/∂y + wc·∂v/∂z
+    # Use one-sided ∂v/∂y at j=0 (forward).
+    if Ny >= 2:
+        dvdy_at_in = (vc[:, 1, :] - vc[:, 0, :]) / dy
+    else:
+        dvdy_at_in = np.zeros((Nx, Nz))
+    dvdx_at_in = np.zeros((Nx, Nz))
+    dvdx_at_in[1:-1, :] = (vc[2:, 0, :] - vc[:-2, 0, :]) / (2 * dx)
+    dvdx_at_in[0, :] = (vc[1, 0, :] - vc[0, 0, :]) / dx
+    dvdx_at_in[-1, :] = (vc[-1, 0, :] - vc[-2, 0, :]) / dx
+    dvdz_at_in = np.zeros((Nx, Nz))
+    dvdz_at_in[:, 1:-1] = (vc[:, 0, 2:] - vc[:, 0, :-2]) / (2 * dz)
+    dvdz_at_in[:, 0] = (vc[:, 0, 1] - vc[:, 0, 0]) / dz
+    dvdz_at_in[:, -1] = (vc[:, 0, -1] - vc[:, 0, -2]) / dz
+    Conv_y = -rho_in * (uc_in * dvdx_at_in + vc_in * dvdy_at_in
+                        + wc_in * dvdz_at_in)
+
+    return Vy_in + By_in + Forch_y + Conv_y
+
+
 def assemble_ppe_source_3d(
     u_face: np.ndarray, v_face: np.ndarray, w_face: np.ndarray,
     mu_field: np.ndarray, K_arr: np.ndarray, cF_arr: np.ndarray,
@@ -376,8 +453,20 @@ def solve_pressure_poisson_3d(
     cache: Optional[_PPEHierarchyCache] = None,
     tol: float = 1e-10,
     max_v_cycles: int = 50,
+    inlet_neumann: bool = True,
 ) -> Tuple[np.ndarray, dict]:
     """Solve ∇²P = ∇·F for cell-centered P (gauge, P_outlet = 0).
+
+    Boundary conditions (Phase B.3, 2026-05-06):
+      - Outlet (j=Ny-1, outlet_mask_ij): Dirichlet P = 0 (gauge anchor).
+      - Inlet (j=0): non-homogeneous Neumann ∂P/∂y = F_y|_inlet (from y-
+        momentum normal projection; see plan §2). When `inlet_neumann=False`,
+        falls back to homogeneous Neumann (legacy behavior, less accurate).
+      - Walls (i=0/Nx-1, k=0/Nz-1): homogeneous Neumann ∂P/∂n = 0
+        (no-slip → Brinkman penalty viscous term contribution; B.4 h-refine
+        will quantify whether non-homog wall correction is needed).
+      - Closed outlet cells (j=Ny-1 with outlet_mask_ij = False): homog
+        Neumann (treated as wall).
 
     Parameters
     ----------
@@ -392,11 +481,15 @@ def solve_pressure_poisson_3d(
         AMG hierarchy across multiple outer iterations.
     tol : AMG residual tolerance (relative).
     max_v_cycles : AMG iteration cap.
+    inlet_neumann : if True (default), apply non-homog Neumann at j=0 face
+        derived from F_y at j=0 cell centers. Set False for testing /
+        comparison against legacy homog-Neumann behavior.
 
     Returns
     -------
     P : (Nx, Ny, Nz) gauge pressure field, P[outlet_mask] = 0.
-    info : dict with keys 'iter', 'residual_rel', 'residual_abs'.
+    info : dict with keys 'iter', 'residual_rel', 'residual_abs',
+           'inlet_g_max' (max |g| at inlet for diagnostic).
     """
     Nx, Ny, Nz = rho_field.shape
 
@@ -423,7 +516,31 @@ def solve_pressure_poisson_3d(
         u_face, v_face, w_face, mu_field, K_arr, cF_arr,
         rho_field, eps_field, dx, dy, dz)
     b = -S.ravel(order='C').astype(np.float64)
-    # Dirichlet rows: b = 0 (pin to gauge zero).
+
+    # Inlet Neumann (B.3): add ghost-cell flux contribution to RHS at j=0.
+    # Derivation (see plan §2 + ghost-cell trick):
+    #   ∂P/∂y|_face = g  →  P[ghost] = P[0] - dy·g
+    #   stencil substitution → row at (i,0,k) of -∇²P contributes +g/dy to LHS
+    #   →  b[idx(i,0,k)] += -g/dy  to balance, but since we already have
+    #      b = -S, the *inlet correction* term is -(-g/dy) = +g/dy on -∇² LHS,
+    #      equivalently we subtract g/dy from b (b is RHS).
+    #   Convention: b -= g/dy at inlet rows. Equivalently b[inlet] -= g_inlet/dy.
+    inlet_g_max = 0.0
+    if inlet_neumann and Ny >= 2:
+        g_inlet = compute_inlet_neumann_flux_3d(
+            u_face, v_face, w_face, mu_field, K_arr, cF_arr,
+            rho_field, dx, dy, dz)   # (Nx, Nz)
+        inlet_g_max = float(np.max(np.abs(g_inlet)))
+        # Map (Nx, Nz) g_inlet to flat indices at j=0.
+        # idx(i, 0, k) = i*Ny*Nz + 0*Nz + k = i*Ny*Nz + k
+        # Build flat index array
+        inlet_flat = (np.arange(Nx)[:, None] * Ny * Nz
+                      + np.arange(Nz)[None, :])
+        b[inlet_flat.ravel()] -= g_inlet.ravel() / dy
+
+    # Dirichlet rows: b = 0 (pin to gauge zero). Done LAST so the inlet
+    # correction above doesn't accidentally write into outlet rows (only
+    # possible when Ny == 2, i.e. inlet face == outlet face — pathological).
     b[dirichlet_mask.ravel(order='C')] = 0.0
 
     # AMG V-cycles
@@ -441,5 +558,6 @@ def solve_pressure_poisson_3d(
         'residual_rel': float(residuals[-1] / max(residuals[0], 1e-30))
                         if residuals else 0.0,
         'residual_abs': float(residuals[-1]) if residuals else 0.0,
+        'inlet_g_max': inlet_g_max,
     }
     return P, info

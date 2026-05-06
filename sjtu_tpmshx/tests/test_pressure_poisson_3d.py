@@ -28,6 +28,7 @@ from solvers.pressure_poisson_3d import (
     build_pressure_laplacian_3d,
     solve_pressure_poisson_3d,
     assemble_ppe_source_3d,
+    compute_inlet_neumann_flux_3d,
     _PPEHierarchyCache,
 )
 
@@ -235,6 +236,112 @@ def test_source_mms_brinkman_only():
 
 
 # ----------------------------------------------------------------- MMS-lite
+
+# ----------------------------------------------------------------- inlet Neumann (B.3)
+
+
+def test_inlet_neumann_flux_zero_velocity():
+    """Zero velocity → all F_y components are zero → g_inlet = 0."""
+    Nx, Ny, Nz = 6, 8, 6
+    u, v, w = _make_zeros_3d(Nx, Ny, Nz)
+    rho = np.ones((Nx, Ny, Nz))
+    mu = np.full_like(rho, 2e-5)
+    K = np.full((Ny, Nz), 1e-9)
+    cF = np.full((Ny, Nz), 0.5)
+
+    g = compute_inlet_neumann_flux_3d(u, v, w, mu, K, cF, rho,
+                                       0.01, 0.01, 0.01)
+    assert g.shape == (Nx, Nz)
+    assert np.allclose(g, 0.0)
+
+
+def test_inlet_neumann_uniform_v_brinkman_dominant():
+    """Uniform v=v_in everywhere, all else zero, K small → Brinkman dominates.
+    g_inlet ≈ -(μ/K)·v_in (uniform across inlet face)."""
+    Nx, Ny, Nz = 6, 8, 6
+    v_in = 2.0
+    u_face = np.zeros((Nx + 1, Ny, Nz))
+    v_face = np.full((Nx, Ny + 1, Nz), v_in)
+    w_face = np.zeros((Nx, Ny, Nz + 1))
+    rho = np.ones((Nx, Ny, Nz))
+    mu_val = 2e-5
+    K_val = 1e-9
+    mu = np.full_like(rho, mu_val)
+    K = np.full((Ny, Nz), K_val)
+    cF = np.full((Ny, Nz), 0.0)   # disable Forchheimer for clean check
+
+    g = compute_inlet_neumann_flux_3d(u_face, v_face, w_face,
+                                       mu, K, cF, rho,
+                                       0.01, 0.01, 0.01)
+
+    # Expected: g = μ·∇²v + (-μ/K)·v + (-ρ·c_F·|u|·v) + (-ρ·u·∇v)
+    # Uniform v → ∇²v = 0, ∇v = 0, c_F = 0 → g ≈ -(μ/K)·v_in
+    expected = -mu_val / K_val * v_in
+    inner = g[1:-1, 1:-1]   # avoid boundary one-sided diffs
+    np.testing.assert_allclose(inner, expected, rtol=1e-6,
+                                err_msg="Brinkman-dominated inlet flux off")
+
+
+def test_solve_with_inlet_neumann_no_regression():
+    """Production-config solve still produces P field with inlet_neumann=True.
+    Verifies the BC injection doesn't crash + Dirichlet still pins outlet."""
+    Nx, Ny, Nz = 8, 12, 8
+    dx = dy = dz = 0.01
+
+    # Modest non-trivial velocity (uniform v in main flow direction)
+    u_face = np.zeros((Nx + 1, Ny, Nz))
+    v_face = np.full((Nx, Ny + 1, Nz), 1.0)
+    w_face = np.zeros((Nx, Ny, Nz + 1))
+    rho = np.ones((Nx, Ny, Nz))
+    mu = np.full_like(rho, 2e-5)
+    eps = np.full_like(rho, 0.5)
+    K = np.full((Ny, Nz), 1e-9)
+    cF = np.full((Ny, Nz), 0.5)
+    outlet_mask = np.ones((Nx, Nz), dtype=bool)
+
+    P, info = solve_pressure_poisson_3d(
+        u_face, v_face, w_face, mu, K, cF, rho, eps, dx, dy, dz,
+        outlet_mask, inlet_neumann=True, max_v_cycles=80)
+
+    assert P.shape == (Nx, Ny, Nz)
+    assert np.all(P[:, -1, :] == 0.0)   # outlet still pinned
+    assert info['inlet_g_max'] > 0   # non-trivial inlet flux applied
+    # Relative residual should be small even when absolute is large
+    # (source magnitude ~μ/K·v/dy ≈ 2e6 for these params).
+    assert info['residual_rel'] < 1e-6, \
+        f"AMG relative residual too high: {info['residual_rel']:.2e}"
+
+
+def test_solve_inlet_neumann_off_vs_on_differ():
+    """inlet_neumann=False (homog Neumann) vs True (non-homog) give
+    different P fields when v is non-zero. Sanity that the BC actually fires."""
+    Nx, Ny, Nz = 8, 12, 8
+    dx = dy = dz = 0.01
+
+    u_face = np.zeros((Nx + 1, Ny, Nz))
+    v_face = np.full((Nx, Ny + 1, Nz), 5.0)   # strong inflow
+    w_face = np.zeros((Nx, Ny, Nz + 1))
+    rho = np.ones((Nx, Ny, Nz))
+    mu = np.full_like(rho, 2e-5)
+    eps = np.full_like(rho, 0.5)
+    K = np.full((Ny, Nz), 1e-9)
+    cF = np.full((Ny, Nz), 0.5)
+    outlet_mask = np.ones((Nx, Nz), dtype=bool)
+
+    cache_off = _PPEHierarchyCache()
+    P_off, _ = solve_pressure_poisson_3d(
+        u_face, v_face, w_face, mu, K, cF, rho, eps, dx, dy, dz,
+        outlet_mask, inlet_neumann=False, cache=cache_off)
+    cache_on = _PPEHierarchyCache()
+    P_on, _ = solve_pressure_poisson_3d(
+        u_face, v_face, w_face, mu, K, cF, rho, eps, dx, dy, dz,
+        outlet_mask, inlet_neumann=True, cache=cache_on)
+
+    # Should differ noticeably (Brinkman drag at v=5 m/s, K=1e-9 → very large g)
+    diff_max = np.max(np.abs(P_on - P_off))
+    assert diff_max > 1.0, \
+        f"Inlet Neumann had negligible effect: max|ΔP|={diff_max:.3e}"
+
 
 def test_synthetic_source_recovers_manufactured_P():
     """Single-grid sanity: solve ∇²P = S with full-Dirichlet box.
