@@ -1073,13 +1073,22 @@ class SIMPLESolver:
     def _update_density(self):
         """Update rho_field from pressure field (ideal gas: rho = P_abs / (R*T)).
         Under-relaxed to avoid oscillation. v_inlet stays fixed (velocity-inlet
-        BC); mass flux at inlet floats with density. No-op for incompressible."""
+        BC); mass flux at inlet floats with density. No-op for incompressible.
+
+        Clipping policy (2026-05-06 fix #1):
+            Clip the *physical inputs* (P_abs) to the HX operating envelope
+            [10 kPa, 1 MPa], then derive ρ from ρ = P/(R·T). Do NOT clip ρ
+            directly — that would silently break the ideal-gas relation.
+            Previous code clipped ρ ∈ [0.01, 100] kg/m³ which corresponds to
+            P~770 Pa or P~78×STP, far outside any real HX state, and could
+            decouple ρ from (P,T) during transient iterations.
+        """
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
-        np.clip(P_abs, 1000.0, None, out=P_abs)
+        np.clip(P_abs, 10.0e3, 1.0e6, out=P_abs)  # 10 kPa .. 1 MPa
         rho_new = P_abs / (self.R_gas * self.T_field)
-        np.clip(rho_new, 0.01, 100.0, out=rho_new)
+        # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
 
@@ -1193,14 +1202,14 @@ class SIMPLESolver:
             if res < tol and it >= 20:
                 if verbose:
                     print(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
-                self._enforce_mass_conservation()
+                self._enforce_mass_conservation(verbose=verbose)
                 return True, it
 
         if verbose:
             print(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
 
         # Post-solve: enforce mass conservation at partial outlet
-        self._enforce_mass_conservation()
+        self._enforce_mass_conservation(verbose=verbose)
 
         return False, max_iter
 
@@ -1230,9 +1239,32 @@ class SIMPLESolver:
 
         return u_masked, v_masked
 
-    def _enforce_mass_conservation(self):
+    def _enforce_mass_conservation(self, verbose=True):
         """Scale outlet velocities to enforce global MASS conservation
-        (variable density: ∫ρv dx at outlet = ∫ρv dx at inlet)."""
+        (variable density: ∫ρv dx at outlet = ∫ρv dx at inlet).
+
+        Why this exists (2026-05-06 fix #3 documentation):
+            For PARTIAL outlets (outlet_frac < 1 on some cells, e.g. manifold
+            geometry in Shanghai HX), the pp-equation pins P=0 only at active
+            outlet cells. Closed outlet cells are treated as walls (v=0). After
+            the pp solve, global ∫ρv at the outlet face may drift from inlet
+            mass flux by O(pp_residual). This post-hoc rescale snaps the global
+            balance to machine precision.
+
+            For FULL outlet (outlet_frac == 1 everywhere), pp-equation balances
+            mass naturally and `scale ≈ 1.000`. The rescale is a no-op.
+
+            **Diagnostic**: |scale - 1| > 1e-3 indicates pp-equation didn't
+            converge mass-wise; it warrants tightening `tol` or adding outlet
+            iterations rather than relying on the rescale.
+
+            To disable (e.g. for V&V where post-hoc band-aids are unwanted),
+            set `self.enforce_outlet_mass_balance = False` after construction.
+        """
+        # Allow opt-out (default keeps backward-compatible behaviour)
+        if not getattr(self, 'enforce_outlet_mass_balance', True):
+            self._last_outlet_mass_scale = 1.0
+            return
         Nx, Ny = self.Nx, self.Ny
         inlet_mass = 0.0
         outlet_mass = 0.0
@@ -1242,9 +1274,18 @@ class SIMPLESolver:
                 outlet_mass += self.rho_field[i, Ny - 1] * self.v[i, Ny] * self.dx_arr[i]
         if abs(outlet_mass) > 1e-15:
             scale = inlet_mass / outlet_mass
+            self._last_outlet_mass_scale = float(scale)
+            # Diagnostic: warn if rescale magnitude > 0.1% — indicates loose
+            # pp-equation convergence, not a healthy "free" mass balance.
+            if verbose and abs(scale - 1.0) > 1e-3:
+                print(f"  [WARN] outlet mass rescale = {scale:.6f} "
+                      f"(|Δ| = {abs(scale-1)*100:.3f}%); "
+                      f"pp-equation residual likely loose at outlet face.")
             for i in range(Nx):
                 if self.outlet_frac[i] > 0.5:
                     self.v[i, Ny] *= scale
+        else:
+            self._last_outlet_mass_scale = 1.0
 
     # ──────────────── temperature solve ───────────────────────────
     def solve_temperature(self, K_ff, K_ss, h_v, rho_cp_f,

@@ -1231,13 +1231,17 @@ class SIMPLESolver3D:
     def _update_density(self):
         """Compressible rho update: ρ = P_abs / (R·T), under-relaxed.
         v_inlet_field stays fixed (velocity-inlet BC); mass flux at inlet
-        floats with density. No-op for incompressible fluid_type."""
+        floats with density. No-op for incompressible fluid_type.
+
+        Clipping policy (2026-05-06 fix #1): clip P_abs to [10 kPa, 1 MPa]
+        (physical HX envelope), derive ρ from ideal-gas. Do NOT clip ρ —
+        that decouples ρ from (P,T). See simple_solver.py:_update_density."""
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
-        np.clip(P_abs, 1000.0, None, out=P_abs)
+        np.clip(P_abs, 10.0e3, 1.0e6, out=P_abs)  # 10 kPa .. 1 MPa
         rho_new = P_abs / (self.R_gas * self.T_field)
-        np.clip(rho_new, 0.01, 100.0, out=rho_new)
+        # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
 
