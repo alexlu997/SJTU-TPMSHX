@@ -22,6 +22,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# Three-tier import fallback so this module loads correctly whether it's
+# imported as `sjtu_tpmshx.solvers.streamfunction_solver_3d` (full path),
+# as `solvers.streamfunction_solver_3d` (with sjtu_tpmshx/ on sys.path —
+# default for validation/test scripts), or directly via solvers/ on path.
+# The middle tier is the production import — keep it robust to package mode
+# so downstream relative imports inside simple_solver_3d (e.g. `.tpms_calc`)
+# continue to resolve correctly.
 try:
     from sjtu_tpmshx.solvers.simple_solver_3d import (
         SIMPLESolver3D,
@@ -36,18 +43,39 @@ try:
         helmholtz_project, build_cell_laplacian_3d, divergence_m,
     )
 except ImportError:
-    from simple_solver_3d import (
-        SIMPLESolver3D,
-        _sweep_u_jit_df_3d, _sweep_v_jit_df_3d, _sweep_w_jit_df_3d,
-        _sweep_u_jit_df_3d_parallel, _sweep_v_jit_df_3d_parallel,
-        _sweep_w_jit_df_3d_parallel,
-        _should_parallelize,
-        _build_pp_sparsity_3d,
-        _mass_res_jit_3d,
-    )
-    from edge_potential_3d import (
-        helmholtz_project, build_cell_laplacian_3d, divergence_m,
-    )
+    try:
+        # Production import: when sjtu_tpmshx/ is on sys.path (e.g. via
+        # tests/conftest.py or a validation script's ROOT injection).
+        # Loads simple_solver_3d as part of the `solvers` package, so its
+        # relative imports (`from .tpms_calc import ...`) resolve.
+        from solvers.simple_solver_3d import (
+            SIMPLESolver3D,
+            _sweep_u_jit_df_3d, _sweep_v_jit_df_3d, _sweep_w_jit_df_3d,
+            _sweep_u_jit_df_3d_parallel, _sweep_v_jit_df_3d_parallel,
+            _sweep_w_jit_df_3d_parallel,
+            _should_parallelize,
+            _build_pp_sparsity_3d,
+            _mass_res_jit_3d,
+        )
+        from solvers.edge_potential_3d import (
+            helmholtz_project, build_cell_laplacian_3d, divergence_m,
+        )
+    except ImportError:
+        # Last-resort flat layout (solvers/ itself on sys.path). Breaks
+        # simple_solver_3d's relative `.tpms_calc` — only works if user
+        # is running solver as a standalone unit test in isolation.
+        from simple_solver_3d import (
+            SIMPLESolver3D,
+            _sweep_u_jit_df_3d, _sweep_v_jit_df_3d, _sweep_w_jit_df_3d,
+            _sweep_u_jit_df_3d_parallel, _sweep_v_jit_df_3d_parallel,
+            _sweep_w_jit_df_3d_parallel,
+            _should_parallelize,
+            _build_pp_sparsity_3d,
+            _mass_res_jit_3d,
+        )
+        from edge_potential_3d import (
+            helmholtz_project, build_cell_laplacian_3d, divergence_m,
+        )
 
 import pyamg
 
