@@ -56,10 +56,35 @@ class StreamfunctionSolver3D(SIMPLESolver3D):
     """SIMPLE3D variant using Helmholtz scalar projection for strict mass cons.
 
     Same interface as SIMPLESolver3D; flow direction is +y (inlet at j=0).
+
+    Pressure recovery
+    -----------------
+    After Helmholtz projection (∇·m = 0 to machine eps) the velocity field
+    is mass-conserving but P is not yet consistent with the porous-medium
+    momentum equation. Two recovery paths:
+
+      'poisson' (default, 2026-05-06 fix #2): solve full 3D Pressure-Poisson
+        ∇²P = ∇·F   where F = μ∇²u − (μ/K)u − ρcF|u|u − ρ(u·∇)u.
+        Captures lateral pressure gradients (∂P/∂x, ∂P/∂z), correct for 3D
+        flows with cross-stream acceleration. See solvers/pressure_poisson_3d.
+
+      'axial' (legacy, kept for A/B comparison): integrate dP/dy along
+        flow direction assuming 1D plug flow. Drops lateral gradients.
+        Documented as the root cause of the SF Shanghai dP 47% > SIMPLE 38%
+        gap (see vault/reports/streamfunction/2026-04-26-P7-shanghai-16case
+        + 2026-05-06-poisson-rewrite-plan-CN.md).
+
+    Set via constructor kwarg `pressure_recovery='poisson'` (default) or
+    `'axial'`.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, pressure_recovery='poisson', **kwargs):
         super().__init__(*args, **kwargs)
+        if pressure_recovery not in ('poisson', 'axial'):
+            raise ValueError(
+                f"pressure_recovery must be 'poisson' or 'axial', "
+                f"got {pressure_recovery!r}")
+        self._pressure_recovery_mode = pressure_recovery
         # Build cell Laplacian once (uniform dx/dy/dz from SIMPLE3D init)
         self._helm_dx = float(self.dx[0])
         self._helm_dy = float(self.dy[0])
@@ -70,6 +95,10 @@ class StreamfunctionSolver3D(SIMPLESolver3D):
         self._helm_ml = pyamg.smoothed_aggregation_solver(self._helm_lap)
         # Mass residual history (Helmholtz path)
         self.helm_mass_residuals = []
+        # PPE hierarchy cache (built lazily on first call to _recover_pressure_poisson)
+        self._ppe_cache = None
+        # Diagnostic: last PPE iter count + residual (for tests / logging)
+        self._last_ppe_info = None
 
     def _helmholtz_correct_step(self):
         """Replacement for _solve_pp_amg + _correct_jit_3d.
@@ -77,7 +106,7 @@ class StreamfunctionSolver3D(SIMPLESolver3D):
         1. m_star = ε·ρ·u·A_face on each face direction
         2. helmholtz_project(m_star) -> m_proj (strict ∇·m=0)
         3. Recover u_face = m_proj / (ε·ρ·A_face)
-        4. Axial P update along y (flow dir) integrating Brinkman-Forchheimer
+        4. Pressure recovery via dispatch on self._pressure_recovery_mode
         """
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self._helm_dx, self._helm_dy, self._helm_dz
@@ -152,6 +181,22 @@ class StreamfunctionSolver3D(SIMPLESolver3D):
         self.v = m_y_p / np.maximum(eps_fy * rho_fy * Aface_y, 1e-30)
         self.w = m_z_p / np.maximum(eps_fz * rho_fz * Aface_z, 1e-30)
 
+        # Pressure recovery — dispatch on configured mode
+        if self._pressure_recovery_mode == 'poisson':
+            self._recover_pressure_poisson()
+        else:
+            self._recover_pressure_axial()
+
+    def _recover_pressure_axial(self):
+        """Legacy 1D axial Brinkman-Forchheimer integration along flow direction.
+
+        Documented limitation: assumes 1D plug flow, drops lateral pressure
+        gradients. Root cause of SF Shanghai dP 47% > SIMPLE 38% gap.
+        Kept for A/B comparison vs the new Poisson path.
+        """
+        Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
+        dy = self._helm_dy
+        rho = self.rho_field
         # Pressure update: axial integration along y (dir=2 flow)
         # -dP/dy = (μ/K)·v + ρ·cF·|v|·v  (Brinkman-Forchheimer source)
         # Note: K_arr, cF_arr have shape (Ny, Nz) in SIMPLE3D
@@ -178,6 +223,40 @@ class StreamfunctionSolver3D(SIMPLESolver3D):
         # Convert absolute → gauge for SIMPLE convention compatibility
         P_new_gauge = P_axial_abs - self.P_ref_abs
         self.P = (1 - self.alpha_p) * P_old + self.alpha_p * P_new_gauge
+
+    def _recover_pressure_poisson(self):
+        """3D Pressure-Poisson recovery: ∇²P = ∇·F.
+
+        Captures lateral pressure gradients. Wired in 2026-05-06 (audit fix
+        #2 Phase B). Source assembly + BC injection done in
+        solvers/pressure_poisson_3d.py (Phase A B.1-B.4 verified, MMS
+        p_obs = 1.975).
+        """
+        from .pressure_poisson_3d import (
+            solve_pressure_poisson_3d, _PPEHierarchyCache)
+        if self._ppe_cache is None:
+            self._ppe_cache = _PPEHierarchyCache()
+
+        dx, dy, dz = self._helm_dx, self._helm_dy, self._helm_dz
+        # Solver returns gauge-zero P field with P[outlet_mask] = 0.
+        # Convert to project's gauge convention (P stored as gauge already).
+        P_new_gauge, info = solve_pressure_poisson_3d(
+            self.u, self.v, self.w,
+            self.mu_field, self.K_arr, self.cF_arr,
+            self.rho_field, self.eps_field,
+            dx, dy, dz,
+            self.outlet_mask_ij,
+            cache=self._ppe_cache,
+            tol=1e-10,
+            max_v_cycles=80,
+            inlet_neumann=True,
+        )
+        self._last_ppe_info = info
+
+        # Apply under-relaxation (consistent with axial path's alpha_p blend).
+        P_old = self.P
+        self.P = ((1 - self.alpha_p) * P_old
+                  + self.alpha_p * P_new_gauge.astype(P_old.dtype))
 
     def solve(self, max_iter=3000, tol=1e-6, n_inner=1, verbose=False):
         """Streamfunction-pressure solve loop (replaces SIMPLE pp step)."""
