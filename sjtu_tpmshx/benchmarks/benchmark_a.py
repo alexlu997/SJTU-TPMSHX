@@ -48,8 +48,14 @@ def measure_warm_import():
 
 
 def measure_validate_shanghai():
-    """Measure validate_shanghai.py wall time, 3 runs, take median."""
-    times = [_run([sys.executable, 'validate_shanghai.py']) for _ in range(3)]
+    """Measure legacy validate_shanghai.py wall time, 3 runs, take median.
+
+    Path updated 2026-05-06 (fix #5 cleanup): validate_shanghai.py moved to
+    validation/legacy/. Benchmark target preserved for historical
+    comparability of the v1.0.x baseline.
+    """
+    script = '../validation/legacy/validate_shanghai.py'
+    times = [_run([sys.executable, script]) for _ in range(3)]
     return statistics.median(times)
 
 

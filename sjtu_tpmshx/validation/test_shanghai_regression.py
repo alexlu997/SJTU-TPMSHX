@@ -30,11 +30,17 @@ REGRESSION_TOL = 0.03
 
 
 def _run_validation_subprocess():
-    """Run validate_shanghai and read result xlsx."""
+    """Run legacy validate_shanghai and read result xlsx.
+
+    Path updated 2026-05-06 (fix #5): validate_shanghai → legacy/. Regression
+    target preserved against v1.0.x baseline; new validation entry points
+    are validate_shanghai_lumped_dual_nu (论文 baseline, Q 1.71%) and
+    validate_shanghai_3d_real (3D, Q 2.29%).
+    """
     import subprocess
     env = dict(os.environ)
     result = subprocess.run(
-        [sys.executable, '-m', 'validation.validate_shanghai'],
+        [sys.executable, '-m', 'validation.legacy.validate_shanghai'],
         cwd=r'D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx',
         capture_output=True, text=True, env=env, timeout=600,
     )
