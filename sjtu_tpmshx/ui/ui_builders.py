@@ -1116,9 +1116,9 @@ def build_page_zones(window):
         f"QTableCornerButton::section{{background:{_t.get('surface_raised', _t['card_bg'])};"
         f"border:none;}}"
     )
-    # Import _SelectAllDelegate from main to reuse the same class
-    import main as _main_mod
-    window.zone_table.setItemDelegate(_main_mod._SelectAllDelegate(window.zone_table))
+    # Auto-select-on-edit delegate (Phase 5: moved out of main.py).
+    from .delegates import SelectAllDelegate
+    window.zone_table.setItemDelegate(SelectAllDelegate(window.zone_table))
 
     def _repaint_zone_swatches():
         """Prefix each row header with a coloured ● from the canvas_accents

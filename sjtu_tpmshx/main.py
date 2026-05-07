@@ -138,15 +138,9 @@ def _rebuild_styles(theme_name=None):
 
 
 # ── Auto-select delegate for zone table editing ─────────────
-from PySide6.QtWidgets import QStyledItemDelegate
-class _SelectAllDelegate(QStyledItemDelegate):
-    """When editing starts, auto-select all text so user can type to replace."""
-    def createEditor(self, parent, option, index):
-        editor = super().createEditor(parent, option, index)
-        if hasattr(editor, 'selectAll'):
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, editor.selectAll)
-        return editor
+# Moved to ui/delegates.py (Phase 5 follow-up). Re-exported here for
+# any historical callers that imported `main._SelectAllDelegate`.
+from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 
 
 # ── Main window ───────────────────────────────────────────────
@@ -3304,6 +3298,8 @@ class Main_Menu(QMainWindow):
             if le is not None:
                 cb = _validator(le, strict_positive=True)
                 le.editingFinished.connect(cb)
+                self.signals.adopt(le.editingFinished, cb,
+                                    tag=f'validator-{name}', sender=le)
 
     # Native unit each input field expects, used by the inline unit parser
     # below. Family keys: length (→ m or mm), pressure (→ Pa), speed (→ m/s),
@@ -3407,7 +3403,10 @@ class Main_Menu(QMainWindow):
             le = getattr(self, attr, None)
             if le is None:
                 continue
-            le.editingFinished.connect(_on_commit(le, fam, target))
+            cb = _on_commit(le, fam, target)
+            le.editingFinished.connect(cb)
+            self.signals.adopt(le.editingFinished, cb,
+                                tag=f'unit-parser-{attr}', sender=le)
 
     def _begin_compute_ui(self, status="Computing…"):
         """Lock the header Compute button + surface the progress bar so the
