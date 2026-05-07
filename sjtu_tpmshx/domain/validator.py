@@ -1,0 +1,365 @@
+"""Pure-function domain validation + helpers for TPMS HX.
+
+Phase 4 of 2026-05-06 main.py refactor (audit fix #4). See
+``domain/__init__.py`` for the rationale and high-level surface.
+
+Every function here is **Qt-free**: takes scalars / dicts, returns
+scalars / dicts / list of :class:`Warning`. No widget access, no
+side effects. This is what ``Main_Menu`` calls *after* it has
+collected the user's text from ``QLineEdit.text()``.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+
+# ---------------------------------------------------------------- types
+
+
+@dataclass
+class Warning:
+    """One domain warning. Severity is informational only — the GUI
+    decides how to render it (status bar flash vs modal vs red border).
+
+    ``code`` is a short identifier (e.g. ``'t_over_L_extrapolation'``)
+    for programmatic filtering / unit testing without string matching.
+    """
+    code: str
+    message: str
+    severity: str = 'warn'   # 'info' | 'warn' | 'error'
+
+    def __str__(self) -> str:   # pragma: no cover (cosmetic)
+        return f'[{self.severity}] {self.code}: {self.message}'
+
+
+# ---------------------------------------------------------------- grid suggestion
+
+
+def suggest_grid_2d(L_dom: float, H_dom: float, D_h: float,
+                    alpha: float = 0.4) -> Tuple[int, int]:
+    """Suggest (Nx, Ny) for a 2D run from domain extents and hydraulic
+    diameter. Mirror of ``solvers.tpms_calc.adaptive_grid`` interpreted
+    purely in Python.
+
+    The actual ``adaptive_grid`` is preferred when available; this fallback
+    matches its behaviour for the common case ``alpha=0.4`` (~5 % Q
+    accuracy on Shanghai-scale 2D runs).
+    """
+    if L_dom <= 0 or H_dom <= 0 or D_h <= 0:
+        raise ValueError(
+            f"L_dom={L_dom}, H_dom={H_dom}, D_h={D_h} must all be > 0")
+    Nx = max(8, int(round(L_dom / (alpha * D_h))))
+    Ny = max(8, int(round(H_dom / (alpha * D_h))))
+    return Nx, Ny
+
+
+def suggest_grid_3d(L_dom: float, H_dom: float, Lz_dom: float,
+                    D_h: float,
+                    max_cells: int = 50_000,
+                    wall_refine_pad: int = 16) -> Tuple[int, int, int]:
+    """Suggest (Nx, Ny, Nz) from domain + hydraulic diameter.
+
+    Heuristic (matches the inline logic of ``Main_Menu.compute_tpms``):
+
+    * stream axis (x) coarser  — flow is near-1D, ``L_dom / (1.0 * D_h)``
+    * cross axes (y, z) finer  — boundary-layer needs resolution,
+                                 ``H_dom / (0.5 * D_h)``
+    * floor: Nx>=14, Ny>=8, Nz>=3
+    * cap: ``(Nx+pad)(Ny+pad)(Nz+pad) <= max_cells`` so the wall-refined
+           total stays under ~50 k cells (3-5 min wall_refine on laptop).
+
+    ``wall_refine_pad`` is the additional cells the BL-refiner adds per
+    axis when ``wall_refine=True``; default 16 matches current solver.
+
+    Pure: no widget access, no print, deterministic.
+    """
+    for name, v in (('L_dom', L_dom), ('H_dom', H_dom),
+                    ('Lz_dom', Lz_dom), ('D_h', D_h)):
+        if v <= 0:
+            raise ValueError(f'{name} must be > 0, got {v}')
+    Nx = max(14, int(round(L_dom / (1.0 * D_h))))
+    Ny = max(8,  int(round(H_dom / (0.5 * D_h))))
+    Nz = max(3,  int(round(Lz_dom / (0.5 * D_h))))
+    p = wall_refine_pad
+    while ((Nx + p) * (Ny + p) * (Nz + p) > max_cells) and Nx > 14:
+        Nx = max(14, int(Nx * 0.8))
+    return Nx, Ny, Nz
+
+
+# ---------------------------------------------------------------- geometry
+
+
+def validate_geometry(L_dom: float, H_dom: float, Lz_dom: Optional[float],
+                      L_cell_mm: float, t_mm: float,
+                      ks: float = 16.0,
+                      is_3d: bool = False) -> List[Warning]:
+    """Sanity-check the geometric inputs. Returns a (possibly empty)
+    list of warnings; raises ``ValueError`` only on hard nonsense
+    (e.g. zero cell size).
+
+    Hard rules (raise):
+      * ``L_dom``, ``H_dom``, ``L_cell_mm``, ``t_mm``, ``ks`` all > 0
+      * 3D mode requires ``Lz_dom > 0``
+
+    Soft rules (warn):
+      * ``t/L > 0.10`` (training capped at 0.10)
+      * ``t/L < 0.05`` (extrapolation below tested range)
+      * ``L_cell_mm > min(L_dom, H_dom) * 1000`` — cell larger than a
+        domain dimension means single-cell HX, results untrustworthy.
+      * Geometry matches Shanghai (L=7, t=0.6) — extrapolation reminder.
+    """
+    for name, v in (('L_dom', L_dom), ('H_dom', H_dom),
+                    ('L_cell_mm', L_cell_mm), ('t_mm', t_mm),
+                    ('ks', ks)):
+        if v is None or v <= 0:
+            raise ValueError(f'{name} must be > 0, got {v}')
+    if is_3d:
+        if Lz_dom is None or Lz_dom <= 0:
+            raise ValueError(
+                f'3D mode requires Lz_dom > 0, got {Lz_dom}')
+
+    out: List[Warning] = []
+    ratio = t_mm / L_cell_mm
+    if ratio > 0.10:
+        out.append(Warning(
+            'tL_ratio_high',
+            f't/L = {ratio:.3f} > 0.10 — outside training range '
+            f'{{0.05, 0.067, 0.10}}, results extrapolated.'))
+    elif ratio < 0.05:
+        out.append(Warning(
+            'tL_ratio_low',
+            f't/L = {ratio:.3f} < 0.05 — outside training range, '
+            f'results extrapolated.'))
+
+    L_min_mm = min(L_dom, H_dom) * 1000.0
+    if is_3d and Lz_dom is not None:
+        L_min_mm = min(L_min_mm, Lz_dom * 1000.0)
+    if L_cell_mm > L_min_mm:
+        out.append(Warning(
+            'cell_larger_than_domain',
+            f'TPMS cell {L_cell_mm} mm exceeds smallest domain '
+            f'extent {L_min_mm:.1f} mm — domain holds < 1 cell, '
+            f'closures invalid.',
+            severity='error'))
+
+    if abs(L_cell_mm - 7.0) < 1e-6 and abs(t_mm - 0.6) < 1e-6:
+        out.append(Warning(
+            'shanghai_geometry',
+            'Geometry matches Shanghai validation (L=7, t=0.6) — '
+            'this is the unique extrapolation point in t (training '
+            'maxes at t=0.5); expect ~5-15 % wider error band.'))
+
+    return out
+
+
+def geometry_extrapolation_warning(L_cell_mm: float,
+                                    t_mm: float) -> Optional[Warning]:
+    """Return a warning if (L, t) lies outside the training Diamond +
+    Gyroid grid {4,5,6,8} × {0.3,0.4,0.5}; else None.
+
+    Lighter-weight than full ``validate_geometry`` — used by the live
+    UI to flash an inline tip without recomputing every check.
+    """
+    L_train = (4.0, 5.0, 6.0, 8.0)
+    t_train = (0.3, 0.4, 0.5)
+    in_L = any(abs(L_cell_mm - v) < 1e-6 for v in L_train)
+    in_t = any(abs(t_mm - v) < 1e-6 for v in t_train)
+    if in_L and in_t:
+        return None
+    return Warning(
+        'geometry_extrapolation',
+        f'(L={L_cell_mm}, t={t_mm}) outside training grid '
+        f'{{4,5,6,8}} × {{0.3,0.4,0.5}} mm — surrogate extrapolating.')
+
+
+# ---------------------------------------------------------------- physics
+
+
+def compute_volumetric_htc(A_0: float, H_sf: float) -> float:
+    """Convert face HTC [W/(m²·K)] to volumetric HTC [W/(m³·K)].
+
+    ``h_v = A_0 * H_sf`` where ``A_0`` is the specific surface area
+    [m²/m³] from the TPMS geometry.
+    """
+    if A_0 < 0 or H_sf < 0:
+        raise ValueError(f'A_0={A_0}, H_sf={H_sf} must both be >= 0')
+    return float(A_0) * float(H_sf)
+
+
+# ---------------------------------------------------------------- direction maps
+
+
+_INLET_WALL = {0: 'left', 1: 'right',
+               2: 'bottom', 3: 'top',
+               4: 'front', 5: 'back'}
+_OUTLET_WALL = {0: 'right', 1: 'left',
+                2: 'top', 3: 'bottom',
+                4: 'back', 5: 'front'}
+_CROSS_AXES = {
+    0: ('Y', 'Z'), 1: ('Y', 'Z'),
+    2: ('X', 'Z'), 3: ('X', 'Z'),
+    4: ('X', 'Y'), 5: ('X', 'Y'),
+}
+
+
+def wall_for_dir(d: int, role: str = 'inlet') -> str:
+    """Map flow-axis index ``d`` (0..5) and role to wall name.
+
+    ``d``: 0=+x 1=-x 2=+y 3=-y 4=+z 5=-z
+    ``role``: ``'inlet'`` or ``'outlet'``
+    """
+    if d not in _INLET_WALL:
+        raise ValueError(f'unknown direction {d}, expected 0-5')
+    if role == 'inlet':
+        return _INLET_WALL[d]
+    if role == 'outlet':
+        return _OUTLET_WALL[d]
+    raise ValueError(f"role must be 'inlet' or 'outlet', got {role!r}")
+
+
+def cross_axes_for_dir(d: int) -> Tuple[str, str]:
+    """Return (cross1, cross2) axis labels for flow-axis index ``d``.
+
+    The UI's ``in_ctr/in_w`` always controls ``cross1`` (e.g. Y for
+    x-flow); ``in_z_ctr`` always controls ``cross2`` (e.g. Z for x-flow).
+    """
+    if d not in _CROSS_AXES:
+        raise ValueError(f'unknown direction {d}, expected 0-5')
+    return _CROSS_AXES[d]
+
+
+# ---------------------------------------------------------------- pipe config
+
+
+def validate_pipe_config(cfg: Dict[str, float],
+                         L_dom: float, H_dom: float,
+                         Lz_dom: Optional[float] = None,
+                         is_3d: bool = False) -> List[Warning]:
+    """Sanity-check a pipe BC dict (output of ``Main_Menu._fluid_config``).
+
+    cfg keys: ``dir`` (0-5), ``in_ctr``, ``in_w``, ``out_ctr``, ``out_w``,
+    optional ``in_z_ctr``, ``in_z_w``, ``out_z_ctr``, ``out_z_w``.
+
+    Checks:
+      * inlet/outlet centre ± width/2 stays inside the cross-axis range
+      * width > 0
+      * z-partial fields present iff ``is_3d`` and direction is 0/1/2/3
+        (z-flow naturally fills in the streamwise axis)
+    """
+    out: List[Warning] = []
+    d = int(cfg.get('dir', 0))
+    if d not in _CROSS_AXES:
+        out.append(Warning(
+            'pipe_bad_dir',
+            f'pipe direction {d} not in 0..5', severity='error'))
+        return out
+
+    # Cross axis 1 length depends on flow axis
+    cross1_len = {0: H_dom, 1: H_dom,
+                  2: L_dom, 3: L_dom,
+                  4: L_dom, 5: L_dom}[d]
+    cross2_len = (Lz_dom if (is_3d and Lz_dom is not None)
+                  else None)
+    if d in (4, 5):
+        cross2_len = H_dom
+
+    for io in ('in', 'out'):
+        ctr = float(cfg.get(f'{io}_ctr', 0.0))
+        w = float(cfg.get(f'{io}_w', 0.0))
+        if w <= 0:
+            out.append(Warning(
+                f'pipe_{io}_w_nonpos',
+                f'{io}_w = {w} must be > 0',
+                severity='error'))
+            continue
+        if ctr - w / 2 < 0 or ctr + w / 2 > cross1_len:
+            out.append(Warning(
+                f'pipe_{io}_out_of_domain',
+                f'{io}_ctr ± {io}_w/2 = '
+                f'[{ctr - w/2:.3g}, {ctr + w/2:.3g}] m '
+                f'leaves the cross-axis range [0, {cross1_len:.3g}].',
+                severity='error'))
+
+    if is_3d and cross2_len is not None and d in (0, 1, 2, 3):
+        for io in ('in', 'out'):
+            zc = cfg.get(f'{io}_z_ctr')
+            zw = cfg.get(f'{io}_z_w')
+            if zc is None or zw is None:
+                continue   # optional — defaults applied elsewhere
+            zc, zw = float(zc), float(zw)
+            if zw <= 0:
+                out.append(Warning(
+                    f'pipe_{io}_z_w_nonpos',
+                    f'{io}_z_w = {zw} must be > 0',
+                    severity='error'))
+                continue
+            if zc - zw / 2 < 0 or zc + zw / 2 > cross2_len:
+                out.append(Warning(
+                    f'pipe_{io}_z_out_of_domain',
+                    f'{io}_z_ctr ± {io}_z_w/2 = '
+                    f'[{zc - zw/2:.3g}, {zc + zw/2:.3g}] m '
+                    f'leaves z-range [0, {cross2_len:.3g}].',
+                    severity='error'))
+    return out
+
+
+# ---------------------------------------------------------------- unit parser
+
+
+_UNIT_LENGTH = {
+    'm': 1.0, 'cm': 1e-2, 'mm': 1e-3, 'μm': 1e-6, 'um': 1e-6,
+    'in': 0.0254, 'inch': 0.0254, 'ft': 0.3048,
+}
+_UNIT_PRESSURE = {
+    'pa': 1.0, 'kpa': 1e3, 'mpa': 1e6, 'bar': 1e5, 'mbar': 1e2,
+    'psi': 6894.757, 'atm': 101325.0, 'torr': 133.322, 'mmhg': 133.322,
+}
+_UNIT_SPEED = {
+    'm/s': 1.0, 'cm/s': 1e-2, 'mm/s': 1e-3,
+    'km/h': 1.0 / 3.6, 'kph': 1.0 / 3.6,
+    'mph': 0.44704, 'ft/s': 0.3048,
+}
+
+
+def parse_unit_value(value: float, unit_text: str,
+                     family: str, target_unit: Optional[str] = None,
+                     temp_unit: str = 'K') -> Optional[float]:
+    """Convert ``value [unit_text]`` to ``target_unit`` for ``family``.
+
+    family ∈ {'length', 'pressure', 'speed', 'temp'}.
+    Returns the converted scalar in ``target_unit``, or ``None`` if the
+    unit token is unrecognised for the family.
+
+    Temperature handling honours the GUI's current display toggle
+    (``temp_unit``): if ``temp_unit='K'`` the return is Kelvin even if
+    the user typed 25 °C. ``target_unit`` is ignored for temp.
+    """
+    u = unit_text.strip().lower().replace('·', '').replace('·', '')
+    if family == 'length':
+        if u not in _UNIT_LENGTH:
+            return None
+        si = value * _UNIT_LENGTH[u]
+        return si / _UNIT_LENGTH.get((target_unit or 'm').lower(), 1.0)
+    if family == 'pressure':
+        if u not in _UNIT_PRESSURE:
+            return None
+        si = value * _UNIT_PRESSURE[u]
+        return si / _UNIT_PRESSURE.get((target_unit or 'pa').lower(), 1.0)
+    if family == 'speed':
+        if u not in _UNIT_SPEED:
+            return None
+        si = value * _UNIT_SPEED[u]
+        return si / _UNIT_SPEED.get((target_unit or 'm/s').lower(), 1.0)
+    if family == 'temp':
+        want_K = (temp_unit == 'K')
+        if u in ('k', 'kelvin'):
+            return value if want_K else value - 273.15
+        if u in ('c', '°c', 'celsius', 'degc'):
+            return value + 273.15 if want_K else value
+        if u in ('f', '°f', 'fahrenheit', 'degf'):
+            K = (value - 32.0) * 5.0 / 9.0 + 273.15
+            return K if want_K else K - 273.15
+        return None
+    raise ValueError(f"unknown family {family!r}")

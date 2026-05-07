@@ -1030,23 +1030,17 @@ class Main_Menu(QMainWindow):
         try:
             L_dom = float(self.le_L.text())
             H_dom = float(self.le_H.text())
+            # Grid suggestion delegated to domain.validator (Phase 4 #4).
+            # 2D path retains adaptive_grid (solver-side, BL-aware); 3D
+            # path matches the legacy heuristic exactly via suggest_grid_3d.
             if is_3d:
+                from domain.validator import suggest_grid_3d
                 try:
                     Lz_dom = float(self.le_Lz.text())
                 except ValueError:
                     Lz_dom = 0.02
-                D_h = r['D_h']
-                # Stream axis coarser (flow is near-1D), cross-axes finer for BL
-                Nx_sug = max(14, round(L_dom / (1.0 * D_h)))
-                Ny_sug = max(8,  round(H_dom / (0.5 * D_h)))
-                Nz_sug = max(3,  round(Lz_dom / (0.5 * D_h)))
-                # Cap to keep refined total cells under ~50k for fast UX
-                # (user_cells + 16 per axis tensor-product when wall_refine ON).
-                # Previous cap 150k led to 116k cells = 12 min compute on
-                # Shanghai-scale domains. 50k → ~3-5 min wall_refine, ~30s flat.
-                while ((Nx_sug + 16) * (Ny_sug + 16) * (Nz_sug + 16)
-                       > 50_000 and Nx_sug > 14):
-                    Nx_sug = max(14, int(Nx_sug * 0.8))
+                Nx_sug, Ny_sug, Nz_sug = suggest_grid_3d(
+                    L_dom, H_dom, Lz_dom, r['D_h'])
                 # Only overwrite if user hasn't manually edited grid fields —
                 # otherwise Auto-fill (which calls compute_tpms) would stomp
                 # on user's custom Nx/Ny/Nz between TPMS Compute and Run.
@@ -1103,8 +1097,10 @@ class Main_Menu(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e)); return
 
-        # Convert face HTC [W/(m2K)] to volumetric HTC [W/(m3K)]
-        h_v_vol = r['A_0'] * r['H_sf']    # h_v = H_sf_face * A_0
+        # Convert face HTC [W/(m2K)] to volumetric HTC [W/(m3K)] —
+        # delegated to domain.compute_volumetric_htc (Phase 4 #4).
+        from domain.validator import compute_volumetric_htc
+        h_v_vol = compute_volumetric_htc(r['A_0'], r['H_sf'])
         u_val = float(le_u.text())
         U_sf = u_val * r['epsilon']
 
@@ -1255,12 +1251,15 @@ class Main_Menu(QMainWindow):
     def _is_y_dir(self, d): return d in (2, 3)
     def _is_z_dir(self, d): return d in (4, 5)
 
+    # Wall mapping moved to domain.validator.wall_for_dir (Phase 4 #4).
+    # These shims keep call sites in main.py + ui/* working unchanged.
     def _inlet_wall(self, d):
-        return {0: 'left', 1: 'right', 2: 'bottom', 3: 'top',
-                4: 'front', 5: 'back'}[d]
+        from domain.validator import wall_for_dir
+        return wall_for_dir(d, 'inlet')
+
     def _outlet_wall(self, d):
-        return {0: 'right', 1: 'left', 2: 'top', 3: 'bottom',
-                4: 'back', 5: 'front'}[d]
+        from domain.validator import wall_for_dir
+        return wall_for_dir(d, 'outlet')
 
     def _on_dir_changed(self):
         """Relabel inlet/outlet fields to match selected flow-axis.
@@ -1272,14 +1271,14 @@ class Main_Menu(QMainWindow):
         `in_z_ctr` etc. always control cross2 — labels show the real axis
         so user knows which coord they're editing.
         """
-        _axis_by_dir = {
-            0: ('Y', 'Z'), 1: ('Y', 'Z'),
-            2: ('X', 'Z'), 3: ('X', 'Z'),
-            4: ('X', 'Y'), 5: ('X', 'Y'),
-        }
+        # Cross-axis labels delegated to domain.validator (Phase 4 #4).
+        from domain.validator import cross_axes_for_dir
         for combo, prefix in [(self.combo_dirA, 'pipeA'),
                               (self.combo_dirB, 'pipeB')]:
-            c1, c2 = _axis_by_dir.get(combo.currentIndex(), ('Y', 'Z'))
+            try:
+                c1, c2 = cross_axes_for_dir(combo.currentIndex())
+            except ValueError:
+                c1, c2 = 'Y', 'Z'
             for io, cap in (('in', 'Inlet'), ('out', 'Outlet')):
                 for kind, suffix in (('ctr', 'centre'), ('w', 'width')):
                     lbl1 = getattr(self, f'_lbl_{prefix}_{io}_{kind}', None)
@@ -3323,36 +3322,21 @@ class Main_Menu(QMainWindow):
             r"\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*"
             r"([A-Za-zμΜ°/··]+[A-Za-z0-9/··]*)\s*$")
 
+        # Unit conversion delegated to domain.parse_unit_value (Phase 4 #4).
+        # The legacy closure form is preserved here so existing call sites
+        # in this method (count family, fall-through to None) stay
+        # behaviour-identical without flipping every caller.
+        from domain.validator import parse_unit_value as _domain_parse_unit
         def _convert(family, target_unit, val, unit_txt):
-            u = unit_txt.strip().lower().replace('·', '').replace('·', '')
-            if family == 'length':
-                if u in self._UNIT_LENGTH:
-                    si = val * self._UNIT_LENGTH[u]
-                    return si / self._UNIT_LENGTH[target_unit]
-            elif family == 'pressure':
-                if u in self._UNIT_PRESSURE:
-                    si = val * self._UNIT_PRESSURE[u]
-                    return si / self._UNIT_PRESSURE.get(
-                        (target_unit or 'pa').lower(), 1.0)
-            elif family == 'speed':
-                if u in self._UNIT_SPEED:
-                    si = val * self._UNIT_SPEED[u]
-                    return si / self._UNIT_SPEED[target_unit]
-            elif family == 'temp':
-                # Target unit follows the current display toggle (_temp_unit).
-                want_K = getattr(self, '_temp_unit', 'K') == 'K'
-                if u in ('k', 'kelvin'):
-                    return val if want_K else val - 273.15
-                if u in ('c', '°c', 'celsius', 'degc'):
-                    return val + 273.15 if want_K else val
-                if u in ('f', '°f', 'fahrenheit', 'degf'):
-                    K = (val - 32.0) * 5.0 / 9.0 + 273.15
-                    return K if want_K else K - 273.15
-            elif family == 'count':
+            if family == 'count':
                 # Counts don't take units; strip the unit if it's "cells".
+                u = (unit_txt or '').strip().lower()
                 if u in ('cells', 'cell', 'pts', 'points', 'nodes'):
                     return val
-            return None
+                return None
+            return _domain_parse_unit(
+                val, unit_txt, family, target_unit=target_unit,
+                temp_unit=getattr(self, '_temp_unit', 'K'))
 
         def _on_commit(le=None, fam=None, target=None):
             def _cb():
