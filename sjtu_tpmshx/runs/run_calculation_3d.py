@@ -603,6 +603,20 @@ def _parse_inputs(window):
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
+        # 2026-05-07 (UI report 2 follow-up): default UI compute path now
+        # enables per-cell χ_B closure. Without it, ghost-B cells (where
+        # B's mass flux is < 5% of the reference) get full LTNE coupling
+        # to the hot solid → T_b equilibrates to T_a everywhere → cold
+        # region collapses to just the inlet pipe footprint. Method H8
+        # (mass_flux_threshold) is geometry-independent (no u_ref tuning)
+        # and matches the production config locked in vault memory
+        # `feedback_h8_per_cell_chi_b`.
+        partial_B_closure='per_cell_chi_b',
+        chi_B_method='mass_flux_threshold',
+        chi_B_threshold_frac=0.05,
+        chi_B_n_dilate=2,
+        chi_B_n_smooth=1,
+        chi_B_mass_ref_mode='p75',
     )
 
 
