@@ -10,5 +10,6 @@ Phase 5: FieldFactory (TODO).
 """
 from .compute_orchestrator import ComputeOrchestrator
 from .result_cache import ResultCache
+from .session_manager import SessionManager
 
-__all__ = ['ComputeOrchestrator', 'ResultCache']
+__all__ = ['ComputeOrchestrator', 'ResultCache', 'SessionManager']
