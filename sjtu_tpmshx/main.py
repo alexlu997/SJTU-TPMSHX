@@ -80,11 +80,50 @@ _TOOLBTN_SPLIT = _S.get('TOOLBTN_SPLIT', '')
 
 
 def _rebuild_styles(theme_name=None):
-    """Rebuild module-level style vars after theme switch."""
-    global _S, _BG, _LBL, _VAL, _VAL_WARN, _INP, _COMBO
+    """Rebuild module-level style vars after theme switch.
+
+    Phase 3 refactor (2026-05-06 plan #4): the module-globals refresh is
+    now performed by :class:`controllers.theme_manager.ThemeManager` via
+    ``bind_to_module``. We still call ``ui.theme.set_theme`` here for
+    backward compat (the persistent ``.theme`` marker), then delegate
+    the rebuild to the active manager if a window has constructed one;
+    otherwise fall back to the legacy inline rebuild so import-time
+    ordering in ``__main__`` keeps working.
+    """
+    global _S
+    if theme_name is not None:
+        try:
+            from ui.theme import set_theme as _st
+            _st(theme_name)
+        except Exception:
+            pass
+    # Prefer the live window's ThemeManager if one exists.
+    try:
+        import sys as _sys_rs
+        win = None
+        try:
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                for w in app.topLevelWidgets():
+                    if w.__class__.__name__ == 'Main_Menu':
+                        win = w
+                        break
+        except Exception:
+            pass
+        if win is not None and getattr(win, 'theme', None) is not None:
+            win.theme.rebuild()
+            _S = _sys_rs.modules[__name__]._S
+            apply_mpl_theme()
+            return
+    except Exception:
+        pass
+    # Legacy fallback (only used before any Main_Menu has been built).
+    global _BG, _LBL, _VAL, _VAL_WARN, _INP, _COMBO
     global _T_NEUTRAL, _T_A, _T_B, _F_NEUTRAL, _F_A, _F_B
     global _BTN_A, _BTN_B, _BTN_TPMS, _BTN_RUN
     global _BTN_PRIMARY, _BTN_SECONDARY, _BTN_TERTIARY, _BTN_LONG
+    global _TOOLBTN_SPLIT
     _S = _build_styles(theme_name)
     _BG = _S['BG']; _LBL = _S['LBL']; _VAL = _S['VAL']; _VAL_WARN = _S['VAL_WARN']
     _INP = _S['INP']; _COMBO = _S['COMBO']
@@ -94,7 +133,6 @@ def _rebuild_styles(theme_name=None):
     _BTN_TPMS = _S['BTN_TPMS']; _BTN_RUN = _S['BTN_RUN']
     _BTN_PRIMARY = _S['BTN_PRIMARY']; _BTN_SECONDARY = _S['BTN_SECONDARY']
     _BTN_TERTIARY = _S['BTN_TERTIARY']; _BTN_LONG = _S['BTN_LONG']
-    global _TOOLBTN_SPLIT
     _TOOLBTN_SPLIT = _S.get('TOOLBTN_SPLIT', '')
     apply_mpl_theme()
 
@@ -163,24 +201,38 @@ class Main_Menu(QMainWindow):
         self._compute_btn_handler = None
         self._cancel_token = None  # set by ComputeOrchestrator on each start
 
-        # Controllers — Phase 1+2 of 2026-05-06 main.py refactor (#4).
+        # Controllers — Phase 1+2+3 of 2026-05-06 main.py refactor (#4).
         # See vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
         from controllers import (ComputeOrchestrator, ResultCache,
-                                  SessionManager)
+                                  SessionManager, ThemeManager, SignalRouter)
+
+        # Phase 3: ThemeManager owns the style dict; bind it back onto this
+        # module so legacy call sites (`import main as _m; m._BG`) keep
+        # working unchanged. SignalRouter records connections for bulk
+        # disconnect on closeEvent.
+        self.theme = ThemeManager(self)
+        import sys as _sys_tm
+        self.theme.bind_to_module(_sys_tm.modules[__name__])
+        self.signals = SignalRouter(self)
 
         # Phase 1: solver lifecycle (refactor-p1-done).
         self.compute = ComputeOrchestrator(self)
-        self.compute.started.connect(self._on_orch_started)
-        self.compute.progress.connect(self._on_orch_progress)
-        self.compute.finished.connect(self._on_orch_finished)
-        self.compute.error.connect(self._on_orch_error)
-        self.compute.cancelled.connect(self._on_orch_cancelled)
+        self.signals.connect(self.compute.started, self._on_orch_started,
+                             tag='compute.started', sender=self.compute)
+        self.signals.connect(self.compute.progress, self._on_orch_progress,
+                             tag='compute.progress', sender=self.compute)
+        self.signals.connect(self.compute.finished, self._on_orch_finished,
+                             tag='compute.finished', sender=self.compute)
+        self.signals.connect(self.compute.error, self._on_orch_error,
+                             tag='compute.error', sender=self.compute)
+        self.signals.connect(self.compute.cancelled, self._on_orch_cancelled,
+                             tag='compute.cancelled', sender=self.compute)
 
         # Phase 2: result + session aggregation. SessionManager now owns
         # all .last_session_*.json / .user_presets.json / .workspace IO.
         # ResultCache is instantiated for new code; legacy result attrs
         # (_compute_results / _recent_runs / _has_results_*) stay in place
-        # and will migrate incrementally in Phase 3+ to avoid touching
+        # and will migrate incrementally in later phases to avoid touching
         # runs/run_calculation*.py call sites in this commit.
         self.sm = SessionManager(parent=self)
         self.cache = ResultCache(self)
@@ -2708,8 +2760,17 @@ class Main_Menu(QMainWindow):
             _QT_msg.singleShot(800, _flash)
 
     def closeEvent(self, event):
+        # Persist session first — the legacy contract expected this.
         try:
             self._save_session()
+        except Exception:
+            pass
+        # Phase 3 (2026-05-06 #4): bulk-disconnect router-tracked signal
+        # connections. Belt-and-braces against bound-method slots that
+        # close over ``self`` and outlive the C++ widget destruction.
+        try:
+            if getattr(self, 'signals', None) is not None:
+                self.signals.disconnect_all()
         except Exception:
             pass
         super().closeEvent(event)
