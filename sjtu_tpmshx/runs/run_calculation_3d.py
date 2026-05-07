@@ -620,14 +620,8 @@ def _parse_inputs(window):
         chi_B_method='mass_flux_threshold',
         chi_B_threshold_frac=0.20,
         chi_B_n_dilate=1,
-        chi_B_n_smooth=0,
-        chi_B_mass_ref_mode='max',
-        # 2026-05-07 fix: kernel-level ghost-pin. Phase 1 (h_vB·=χ_B +
-        # K_ffB·=χ_B) alone leaves T_b coupled to T_s through the LTNE
-        # diagonal — kernel skip needed to keep ghost T_b at its init
-        # value. Production config 0.30 from feedback_h8_per_cell_chi_b.
-        chi_B_kernel_threshold=0.30,
-        chi_B_floor=1e-3,
+        chi_B_n_smooth=1,
+        chi_B_mass_ref_mode='p75',
     )
 
 
