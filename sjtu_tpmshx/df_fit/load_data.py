@@ -151,10 +151,68 @@ def _attach_geometry(df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
+# Shanghai geometry — never appears in training. Used by
+# _assert_no_shanghai_leakage to fail loudly if anyone accidentally points
+# DATA_XLSX at a validation file or a future merge contaminates the
+# training sheets. See vault/reports/shanghai-validation/ for context.
+_SHANGHAI_GEOMETRY = (7.0, 0.6)   # (L_mm, t_mm)
+_SHANGHAI_PATH_KEYWORDS = ('shanghai', '上海')
+
+
+def _assert_no_shanghai_leakage(df: pd.DataFrame) -> None:
+    """Raise ValueError if the loaded training set contains Shanghai data.
+
+    Three independent checks (any one tripping is a hard failure):
+
+    1. ``DATA_XLSX`` filename — no ``shanghai`` / ``上海`` substring.
+    2. No row with ``t_mm == 0.6`` (Shanghai's unique wall thickness;
+       training uses {0.3, 0.4, 0.5} only).
+    3. No row with ``L_mm == 7.0`` (Shanghai's unique cell size;
+       training uses {4, 5, 6, 8} only).
+
+    The Nu/D-F surrogates are the *prediction model* for the Shanghai
+    16-case validation; if Shanghai data ever leaks into the fit set the
+    reported errors become circular and the lumped 1.71 % RMSRE
+    headline number is no longer a true out-of-sample test. C.5 of the
+    2026-05-06 audit fix campaign added this guard.
+    """
+    src = str(DATA_XLSX).lower()
+    for kw in _SHANGHAI_PATH_KEYWORDS:
+        if kw.lower() in src:
+            raise ValueError(
+                f"DATA_XLSX path contains Shanghai keyword {kw!r}: "
+                f"{DATA_XLSX!s} — training set must come from "
+                f"试验记录表_整理版.xlsx, never a Shanghai workbook.")
+    L_sh, t_sh = _SHANGHAI_GEOMETRY
+    if (df['t_mm'] == t_sh).any():
+        rows = df[df['t_mm'] == t_sh]
+        raise ValueError(
+            f"Training set contains {len(rows)} rows with t_mm={t_sh} mm "
+            f"— this matches the Shanghai validation thickness. "
+            f"Likely leakage from a Shanghai workbook. "
+            f"Affected geometries: "
+            f"{sorted(set(zip(rows['tpms'], rows['L_mm'])))}")
+    if (df['L_mm'] == L_sh).any():
+        rows = df[df['L_mm'] == L_sh]
+        raise ValueError(
+            f"Training set contains {len(rows)} rows with L_mm={L_sh} mm "
+            f"— this matches the Shanghai cell size. Likely leakage. "
+            f"Affected geometries: "
+            f"{sorted(set(zip(rows['tpms'], rows['t_mm'])))}")
+
+
 def load_all() -> pd.DataFrame:
-    """Load and combine Diamond + Gyroid training data with geometry attached."""
+    """Load and combine Diamond + Gyroid training data with geometry attached.
+
+    Includes an explicit Shanghai-leakage guard (C.5 audit fix). The
+    surrogate trained on this DataFrame is the prediction model for the
+    Shanghai 16-case validation; any Shanghai row in the training set
+    invalidates the out-of-sample RMSRE headline.
+    """
     frames = [_attach_geometry(_load_sheet(tpms)) for tpms in _SHEETS]
-    return pd.concat(frames, ignore_index=True)
+    df = pd.concat(frames, ignore_index=True)
+    _assert_no_shanghai_leakage(df)
+    return df
 
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
