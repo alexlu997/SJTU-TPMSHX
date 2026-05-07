@@ -527,7 +527,11 @@ def _build_fields(window, cfg):
             if _buf is None:
                 return
             _buf.setdefault(_s, []).append((int(it), float(res)))
-        conv, n_it = s.solve(max_iter=5000, tol=_tol, verbose=False,
+        # 2026-05-07: 2D SIMPLE max_iter 5000 → 10000. Crossflow with
+        # partial-B inlet (e.g. user's pipeB w=0.068m of L=0.182) +
+        # high-u Forchheimer-branch needs more iters to drive residual
+        # below tol. 5000 left B at res~3e-3 with target 1e-3.
+        conv, n_it = s.solve(max_iter=10000, tol=_tol, verbose=False,
                                progress_cb=_progress_cb)
         if not conv:
             simple_warnings[label] = (
