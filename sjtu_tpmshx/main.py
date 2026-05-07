@@ -163,12 +163,12 @@ class Main_Menu(QMainWindow):
         self._compute_btn_handler = None
         self._cancel_token = None  # set by ComputeOrchestrator on each start
 
-        # ComputeOrchestrator — Phase 1 of 2026-05-06 main.py refactor (#4).
-        # Provides Qt-native solver lifecycle: started/progress/finished/error/
-        # cancelled signals + cooperative cancel + per-mode ETA. Replaces the
-        # raw threading.Thread + QTimer poll pattern in run_calculation. See
-        # vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
-        from controllers import ComputeOrchestrator
+        # Controllers — Phase 1+2 of 2026-05-06 main.py refactor (#4).
+        # See vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
+        from controllers import (ComputeOrchestrator, ResultCache,
+                                  SessionManager)
+
+        # Phase 1: solver lifecycle (refactor-p1-done).
         self.compute = ComputeOrchestrator(self)
         self.compute.started.connect(self._on_orch_started)
         self.compute.progress.connect(self._on_orch_progress)
@@ -176,20 +176,19 @@ class Main_Menu(QMainWindow):
         self.compute.error.connect(self._on_orch_error)
         self.compute.cancelled.connect(self._on_orch_cancelled)
 
-        # Active workspace loaded from disk (A/B/C). Determines which
-        # .last_session_*.json file _save_session / _restore_session target.
-        import os as _os_ws
-        self._active_workspace = 'A'
-        _ws_file = _os_ws.path.join(
-            _os_ws.path.dirname(_os_ws.path.abspath(__file__)), '.workspace')
-        if _os_ws.path.exists(_ws_file):
-            try:
-                with open(_ws_file, 'r', encoding='utf-8') as _fw:
-                    _v = _fw.read().strip().upper()
-                if _v in ('A', 'B', 'C'):
-                    self._active_workspace = _v
-            except Exception:
-                pass
+        # Phase 2: result + session aggregation. SessionManager now owns
+        # all .last_session_*.json / .user_presets.json / .workspace IO.
+        # ResultCache is instantiated for new code; legacy result attrs
+        # (_compute_results / _recent_runs / _has_results_*) stay in place
+        # and will migrate incrementally in Phase 3+ to avoid touching
+        # runs/run_calculation*.py call sites in this commit.
+        self.sm = SessionManager(parent=self)
+        self.cache = ResultCache(self)
+
+        # Active workspace loaded from disk via SessionManager (replaces
+        # the legacy inline .workspace marker read). Defaults to 'A' if
+        # the marker file is missing or contains garbage.
+        self._active_workspace = self.sm.get_active_workspace()
 
         self._build_ui()
         self._apply_accessibility()
@@ -2272,31 +2271,19 @@ class Main_Menu(QMainWindow):
     _SAVE_PRESET_LABEL = "— Save current as preset… —"
 
     def _user_presets_path(self):
-        import os as _os_p
-        return _os_p.path.join(
-            _os_p.path.dirname(_os_p.path.abspath(__file__)),
-            '.user_presets.json')
+        """Legacy shim — delegates to SessionManager.presets_path()."""
+        return str(self.sm.presets_path())
 
     def _load_user_presets(self):
-        """Return the list of user-defined preset dicts (possibly empty)."""
-        import os as _os_p, json as _j
-        path = self._user_presets_path()
-        if not _os_p.path.exists(path):
-            return []
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = _j.load(f)
-            return list(data.get('presets', []))
-        except Exception:
-            return []
+        """Return the list of user-defined preset dicts (possibly empty).
+
+        Delegates to SessionManager (Plan #4 P2.3).
+        """
+        return self.sm.load_user_presets()
 
     def _save_user_presets(self, presets):
-        import json as _j
-        try:
-            with open(self._user_presets_path(), 'w', encoding='utf-8') as f:
-                _j.dump({'presets': presets}, f, indent=2)
-        except Exception:
-            pass
+        """Persist user preset list. Delegates to SessionManager (P2.3)."""
+        self.sm.save_user_presets(presets)
 
     def _rebuild_preset_combo(self):
         """Refresh the header preset dropdown with builtins + user presets +
@@ -2476,19 +2463,14 @@ class Main_Menu(QMainWindow):
     _WORKSPACES = ('A', 'B', 'C')
 
     def _session_path(self, workspace=None):
-        """Return the session-persistence file for a given workspace.
+        """Legacy shim — delegates to SessionManager.session_path() (P2.3).
 
-        Workspaces let users park 2–3 independent parameter sets
-        (e.g., "Shanghai air", "Water loop test") and flip between them
-        without losing the other's state. The legacy `.last_session.json`
-        is kept as workspace A so existing users aren't reset on upgrade.
+        Workspaces let users park 2–3 independent parameter sets and flip
+        between them without losing state. Workspace A keeps the legacy
+        `.last_session.json` filename so existing users aren't reset.
         """
-        import os as _os_s
         ws = workspace or getattr(self, '_active_workspace', 'A')
-        base = _os_s.path.dirname(_os_s.path.abspath(__file__))
-        if ws == 'A':
-            return _os_s.path.join(base, '.last_session.json')
-        return _os_s.path.join(base, f'.last_session_{ws}.json')
+        return str(self.sm.session_path(ws))
 
     def _switch_workspace(self, new):
         """Persist the current workspace, activate `new`, and reload it."""
@@ -2512,14 +2494,8 @@ class Main_Menu(QMainWindow):
         if hasattr(self, '_refresh_status_bar'):
             self._refresh_status_bar()
         # Persist the choice so the next launch re-opens the same workspace.
-        import os as _os_ws
-        try:
-            with open(_os_ws.path.join(
-                    _os_ws.path.dirname(_os_ws.path.abspath(__file__)),
-                    '.workspace'), 'w', encoding='utf-8') as f:
-                f.write(new)
-        except Exception:
-            pass
+        # Delegates to SessionManager (P2.3).
+        self.sm.set_active_workspace(new)
         self.statusBar().showMessage(f"Workspace {new} loaded.", 4000)
 
     def _rebuild_workspace_menu(self):
@@ -2538,11 +2514,12 @@ class Main_Menu(QMainWindow):
         self.btn_workspace.setMenu(menu)
 
     def _save_session(self):
-        """Dump every input field's current value to a JSON file next to
-        the executable. Best-effort: any attribute that is missing or that
-        throws on read is silently skipped — partial sessions still reload
-        cleanly (missing keys fall back to the Shanghai preset)."""
-        import json as _j
+        """Dump every input field's current value via SessionManager (P2.3).
+
+        Best-effort: any attribute that is missing or that throws on read
+        is silently skipped — partial sessions still reload cleanly
+        (missing keys fall back to the Shanghai preset).
+        """
         payload = {'temp_unit': getattr(self, '_temp_unit', 'K')}
         lines = {}
         for name in self._SESSION_LINE_EDITS:
@@ -2584,25 +2561,18 @@ class Main_Menu(QMainWindow):
             payload['win_state'] = _b64.b64encode(st).decode('ascii')
         except Exception:
             pass
-        try:
-            with open(self._session_path(), 'w', encoding='utf-8') as f:
-                _j.dump(payload, f, indent=2)
-        except Exception:
-            pass  # persistence failure is never fatal
+        # SessionManager handles IO failure silently + stamps schema_version.
+        self.sm.save_session(payload, getattr(self, '_active_workspace', 'A'))
 
     def _restore_session(self):
         """Load values saved by `_save_session` on top of the Shanghai
         defaults. Silently no-ops if the file doesn't exist or is malformed.
+
+        Delegates IO to SessionManager (P2.3).
         """
-        import os as _os_s
-        import json as _j
-        path = self._session_path()
-        if not _os_s.path.exists(path):
-            return
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                payload = _j.load(f)
-        except Exception:
+        ws = getattr(self, '_active_workspace', 'A')
+        payload = self.sm.load_session(ws)
+        if payload is None:
             return
         # Apply temp_unit first so we can interpret text correctly. The JSON
         # stores text as the user saw it, so matching units is the safe path.
