@@ -1307,6 +1307,33 @@ class SIMPLESolver3D:
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self.dx, self.dy, self.dz
 
+        # Phase C — coarse-grid bootstrap (opt-in). Halves grid each axis,
+        # solves to loose tol (1e-3), prolongates (u,v,w,P) back as initial
+        # guess. Skipped on already-warm solvers (residuals non-empty).
+        if (getattr(self, 'use_coarse_bootstrap', False)
+                and not self.residuals):
+            try:
+                from .coarse_bootstrap_3d import bootstrap_simple_3d
+                _bs_info = bootstrap_simple_3d(
+                    self,
+                    max_iter_coarse=int(getattr(
+                        self, 'coarse_bootstrap_max_iter', 200)),
+                    tol_coarse=float(getattr(
+                        self, 'coarse_bootstrap_tol', 1e-3)),
+                    verbose=verbose,
+                )
+                self._coarse_bootstrap_info = _bs_info
+                if verbose and _bs_info.get('applied'):
+                    print(f"  3D coarse bootstrap: shape="
+                          f"{_bs_info['coarse_shape']}, iters="
+                          f"{_bs_info['coarse_iters']}, "
+                          f"res={_bs_info['coarse_residual']:.3e}")
+            except Exception as exc:   # robust: never block fine solve
+                self._coarse_bootstrap_info = {
+                    'applied': False, 'reason': f'exception:{exc}'}
+                if verbose:
+                    print(f"  3D coarse bootstrap skipped: {exc}")
+
         if self._pp_sparsity is None:
             self._pp_sparsity = _build_pp_sparsity_3d(Nx, Ny, Nz,
                                                         self.outlet_mask_ij)

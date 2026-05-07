@@ -101,6 +101,17 @@ def run_calculation_3d_inner(window):
         window._compute_progress = pct
     cfg['_progress_cb'] = _prog
     cfg['_cancel_check'] = lambda: bool(getattr(window, '_compute_cancel', False))
+    # Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
+    # Phase A defaults ON (zero-loss); Phase B/C opt-in until full-sweep
+    # validated. Set TPMSHX_PHASE_A=0 to disable A; TPMSHX_PHASE_B=1 / _C=1
+    # to enable B/C.
+    import os as _os
+    cfg.setdefault('use_adaptive_amg_tol',
+                    _os.getenv('TPMSHX_PHASE_A', '1') != '0')
+    cfg.setdefault('use_anderson',
+                    _os.getenv('TPMSHX_PHASE_B', '0') == '1')
+    cfg.setdefault('use_coarse_bootstrap',
+                    _os.getenv('TPMSHX_PHASE_C', '0') == '1')
     result = _run_3d_stack(cfg)
     # Tag extrap provenance — set by `_parse_inputs` when surrogate domain
     # guard downgraded to warn. Lets downstream (UI panel, export) flag the
@@ -1279,6 +1290,15 @@ def _run_3d_stack(cfg):
         eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
         P_ref_abs=P_ref_A, fluid_type='ideal_gas',
     )
+    # Phase A/B/C acceleration flags. Phase A on by default (zero-loss inner-
+    # tol scheduling); Phase B/C opt-in until full-sweep validated.
+    sA.use_adaptive_amg_tol = bool(cfg.get('use_adaptive_amg_tol', True))
+    sA.use_anderson = bool(cfg.get('use_anderson', False))
+    sA.anderson_m = int(cfg.get('anderson_m', 5))
+    sA.anderson_K = int(cfg.get('anderson_K', 3))
+    sA.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
+    sA.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
+    sA.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
     sA.inlet_frac = in_mask_2d
     sA.outlet_frac = out_mask_2d
     # Zoned ε → push to SIMPLE so its continuity ∇·(ε·ρ·u)=0 picks up the
@@ -1355,6 +1375,14 @@ def _run_3d_stack(cfg):
             eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
             P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
         )
+        # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
+        sB.use_adaptive_amg_tol = bool(cfg.get('use_adaptive_amg_tol', True))
+        sB.use_anderson = bool(cfg.get('use_anderson', False))
+        sB.anderson_m = int(cfg.get('anderson_m', 5))
+        sB.anderson_K = int(cfg.get('anderson_K', 3))
+        sB.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
+        sB.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
+        sB.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
         sB.inlet_frac = in_mask_B
         sB.outlet_frac = out_mask_B
         # Zoned ε for sB.
