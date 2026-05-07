@@ -23,12 +23,6 @@ from .matplotlib_canvas import MatplotlibCanvas
 from .theme import _build_styles, get_theme, get_theme_name
 
 
-def _m():
-    """Return the main module (lazy to avoid circular import at module load)."""
-    import main as _main
-    return _main
-
-
 _WORKFLOW_STEPS = (
     ('geom',     'GEOMETRY'),
     ('bc',       'BOUNDARY'),
@@ -150,8 +144,11 @@ def build_ui(window):
     Constructs the entire main window. Widgets are stored as attributes on
     `window` (e.g., `window.combo_tpms = QComboBox()`).
     """
-    m = _m()
-    _BG = m._BG
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    from .field_factory import default_factory
+    f = default_factory()
+    t = f.theme
+    _BG = t.style('BG')
 
     cw = window.centralWidget()
     cw.setStyleSheet(f"background:{_BG};")
@@ -223,7 +220,7 @@ def build_ui(window):
     ])
     combo_preset.setFixedHeight(32)
     combo_preset.setFixedWidth(190)
-    combo_preset.setStyleSheet(m._COMBO)
+    combo_preset.setStyleSheet(t.style('COMBO'))
     combo_preset.setToolTip("Load a canonical case configuration")
     combo_preset.currentIndexChanged.connect(window._on_preset_selected)
     window.combo_preset = combo_preset
@@ -322,7 +319,7 @@ def build_ui(window):
     btn_run = QPushButton("\u25b6  &Compute")
     btn_run.setFixedHeight(32)
     btn_run.setMinimumWidth(160)
-    btn_run.setStyleSheet(m._BTN_PRIMARY)
+    btn_run.setStyleSheet(t.style('BTN_PRIMARY'))
     btn_run.setToolTip("Run single-point compute (Ctrl+R)")
     btn_run.clicked.connect(window.run_calculation)
     window.btn_compute = btn_run
@@ -331,8 +328,7 @@ def build_ui(window):
     btn_export = QPushButton("&Export Results")
     btn_export.setFixedHeight(32)
     btn_export.setFixedWidth(120)
-    btn_export.setStyleSheet(
-        m._BTN_SECONDARY)
+    btn_export.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_export.setToolTip("Export results (CSV + NPZ) to file")
     btn_export.setEnabled(False)
     btn_export.clicked.connect(window._export_results)
@@ -371,9 +367,12 @@ def build_ui(window):
 
 def build_param_tabs(window):
     """Left-panel parameter groups — collapsible accordion layout."""
-    m = _m()
-    _BG = m._BG
-    _THEMES_local = m._THEMES
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    from .field_factory import default_factory
+    from .theme import _THEMES as _THEMES_local
+    f = default_factory()
+    t = f.theme
+    _BG = t.style('BG')
 
     # Canvas-tab styles: flat underline indicator instead of the older filled
     # pill. Active tab shows a 2px accent bar along the bottom edge; hover on
@@ -514,14 +513,17 @@ def switch_param_tab(window, index):
 
 def build_page_domain(window):
     """Ex-Main_Menu._build_page_domain(self) -> QScrollArea."""
-    m = _m()
-    _BG = m._BG
-    _T_NEUTRAL = m._T_NEUTRAL
-    _F_NEUTRAL = m._F_NEUTRAL
-    _COMBO = m._COMBO
-    _BTN_TPMS = m._BTN_TPMS
-    _LBL = m._LBL
-    _VAL = m._VAL
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    from .field_factory import default_factory
+    f = default_factory()
+    t = f.theme
+    _BG = t.style('BG')
+    _T_NEUTRAL = t.style('T_NEUTRAL')
+    _F_NEUTRAL = t.style('F_NEUTRAL')
+    _COMBO = t.style('COMBO')
+    _BTN_TPMS = t.style('BTN_TPMS')
+    _LBL = t.style('LBL')
+    _VAL = t.style('VAL')
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -574,7 +576,7 @@ def build_page_domain(window):
     window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.5")
     window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m\u00b7K)]", "16.0")
     btn_tpms = QPushButton("Compute TPMS &Geometry")
-    btn_tpms.setFixedHeight(28); btn_tpms.setStyleSheet(m._BTN_SECONDARY)
+    btn_tpms.setFixedHeight(28); btn_tpms.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_tpms.setToolTip("Compute porosity, specific area, hydraulic diameter, k_ss from current L_cell / t")
     btn_tpms.clicked.connect(window.compute_tpms)
     g0.addWidget(btn_tpms, 4, 0, 1, 2)
@@ -731,19 +733,25 @@ def build_page_domain(window):
 
 def build_page_fluids(window):
     """Ex-Main_Menu._build_page_fluids(self) -> QScrollArea."""
-    m = _m()
-    _BG = m._BG
-    _THEMES_local = m._THEMES
-    _T_A = m._T_A
-    _F_A = m._F_A
-    _T_B = m._T_B
-    _F_B = m._F_B
-    _T_NEUTRAL = m._T_NEUTRAL
-    _F_NEUTRAL = m._F_NEUTRAL
-    _COMBO = m._COMBO
-    _BTN_A = m._BTN_A
-    _BTN_B = m._BTN_B
-    _BTN_TPMS = m._BTN_TPMS
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    # _THEMES is the raw palette registry from ui.theme — pulled
+    # directly rather than through ThemeManager which only mirrors
+    # style strings.
+    from .field_factory import default_factory
+    from .theme import _THEMES as _THEMES_local
+    f = default_factory()
+    t = f.theme
+    _BG = t.style('BG')
+    _T_A = t.style('T_A')
+    _F_A = t.style('F_A')
+    _T_B = t.style('T_B')
+    _F_B = t.style('F_B')
+    _T_NEUTRAL = t.style('T_NEUTRAL')
+    _F_NEUTRAL = t.style('F_NEUTRAL')
+    _COMBO = t.style('COMBO')
+    _BTN_A = t.style('BTN_A')
+    _BTN_B = t.style('BTN_B')
+    _BTN_TPMS = t.style('BTN_TPMS')
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -805,7 +813,7 @@ def build_page_fluids(window):
     window._v_NuA  = res_row(window, g1, 7, "Nu")
     window._v_dPLA = res_row(window, g1, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_a = QPushButton("Auto-&fill A")
-    btn_a.setFixedHeight(28); btn_a.setStyleSheet(m._BTN_SECONDARY)
+    btn_a.setFixedHeight(28); btn_a.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_a.setToolTip("Compute Fluid A density / Reynolds / Nusselt / dP·dL from current state")
     btn_a.clicked.connect(window.auto_fill_fluid_a)
     g1.addWidget(btn_a, 10, 0, 1, 2)
@@ -850,7 +858,7 @@ def build_page_fluids(window):
     window._v_NuB  = res_row(window, g2b, 7, "Nu")
     window._v_dPLB = res_row(window, g2b, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
     btn_b = QPushButton("Auto-fill &B")
-    btn_b.setFixedHeight(28); btn_b.setStyleSheet(m._BTN_SECONDARY)
+    btn_b.setFixedHeight(28); btn_b.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_b.setToolTip("Compute Fluid B density / Reynolds / Nusselt / dP·dL from current state")
     btn_b.clicked.connect(window.auto_fill_fluid_b)
     g2b.addWidget(btn_b, 10, 0, 1, 2)
@@ -944,7 +952,7 @@ def build_page_fluids(window):
 
     # Preview button
     btn_preview = QPushButton("&Preview Layout")
-    btn_preview.setFixedHeight(28); btn_preview.setStyleSheet(m._BTN_SECONDARY)
+    btn_preview.setFixedHeight(28); btn_preview.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_preview.setToolTip("Draw domain + inlet/outlet geometry on the canvas")
     btn_preview.clicked.connect(window._draw_layout)
     lay.addWidget(btn_preview)
@@ -966,19 +974,17 @@ def build_page_zones(window):
     (config + table + Preview). NSGA-II trigger + status moved to
     build_page_optimization.
     """
-    m = _m()
-    _BG = m._BG
-    _THEMES_local = m._THEMES
-    _T_NEUTRAL = m._T_NEUTRAL
-    _F_NEUTRAL = m._F_NEUTRAL
-    _INP = m._INP
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    from .field_factory import default_factory
+    f = default_factory()
+    t = f.theme
     _t = get_theme()
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setStyleSheet("border:none; background:transparent;")
 
-    w = QWidget(); w.setStyleSheet(f"background:{_BG};")
+    w = QWidget(); w.setStyleSheet(f"background:{t.style('BG')};")
     lay = QVBoxLayout(w)
     lay.setSpacing(12); lay.setContentsMargins(6, 4, 8, 6)
 
@@ -990,7 +996,7 @@ def build_page_zones(window):
     _cz_lay = QVBoxLayout(sec_zone)
     _cz_lay.setContentsMargins(0, 4, 0, 0); _cz_lay.setSpacing(0)
     _cz_frame = QFrame()
-    _cz_frame.setStyleSheet(_F_NEUTRAL)
+    _cz_frame.setStyleSheet(t.style('F_NEUTRAL'))
     g_zone = QGridLayout(_cz_frame)
     g_zone.setContentsMargins(12, 10, 12, 10)
     g_zone.setVerticalSpacing(8); g_zone.setHorizontalSpacing(10)
@@ -1026,7 +1032,7 @@ def build_page_zones(window):
     window.combo_zone_axis = QComboBox()
     window.combo_zone_axis.addItems(["Along Y", "Along X", "Grid Y\u00d7X"])
     window.combo_zone_axis.setFixedHeight(32)
-    window.combo_zone_axis.setStyleSheet(_INP)
+    window.combo_zone_axis.setStyleSheet(t.style('INP'))
     window.combo_zone_axis.currentIndexChanged.connect(window._zone_mode_changed)
     g_zone.addWidget(window.chk_zones, 0, 0)
     g_zone.addWidget(window.combo_zone_axis, 0, 1)
@@ -1036,18 +1042,19 @@ def build_page_zones(window):
     nz_lay = QHBoxLayout(nz_row)
     nz_lay.setContentsMargins(0, 0, 0, 0); nz_lay.setSpacing(4)
     btn_add = QPushButton("+Row"); btn_rm = QPushButton("-Row")
+    _btn_tert = t.style('BTN_TERTIARY')
     for b in (btn_add, btn_rm):
         b.setFixedHeight(32); b.setMinimumWidth(48)
-        b.setStyleSheet(m._BTN_TERTIARY)
+        b.setStyleSheet(_btn_tert)
     btn_add.setToolTip("Add a row (split the last zone in half)")
     btn_rm.setToolTip("Remove the last row")
     btn_add.clicked.connect(window._zone_add_row)
     btn_rm.clicked.connect(window._zone_remove_row)
-    window.lbl_nx = QLabel("Col:"); window.lbl_nx.setStyleSheet(m._LBL)
+    window.lbl_nx = QLabel("Col:"); window.lbl_nx.setStyleSheet(t.style('LBL'))
     window.btn_add_x = QPushButton("+Col"); window.btn_rm_x = QPushButton("-Col")
     for b in (window.btn_add_x, window.btn_rm_x):
         b.setFixedHeight(32); b.setMinimumWidth(48)
-        b.setStyleSheet(m._BTN_TERTIARY)
+        b.setStyleSheet(_btn_tert)
     window.btn_add_x.setToolTip("Add a column (split the last column in half)")
     window.btn_rm_x.setToolTip("Remove the last column")
     window.btn_add_x.clicked.connect(window._zone_add_col)
@@ -1203,7 +1210,7 @@ def build_page_zones(window):
     # Optimize; clicking with no tab-switch felt like a broken button).
     btn_preview_z = QPushButton("&Preview Layout  ↗")
     btn_preview_z.setFixedHeight(28)
-    btn_preview_z.setStyleSheet(m._BTN_SECONDARY)
+    btn_preview_z.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_preview_z.setToolTip(
         "Render the zone configuration on the Layout tab and jump to it")
     def _preview_and_switch():
@@ -1224,18 +1231,17 @@ def build_page_optimization(window):
     """NSGA-II trigger + live status. Separate accordion group from Zone Layout
     so users can collapse/expand optimization UI independently of zone config.
     """
-    m = _m()
-    _BG = m._BG
-    _T_NEUTRAL = m._T_NEUTRAL
-    _F_NEUTRAL = m._F_NEUTRAL
-    _VAL = m._VAL
-    _BTN_LONG = m._BTN_LONG
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI rather
+    # than back-importing main module globals.
+    from .field_factory import default_factory
+    f = default_factory()
+    t = f.theme
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setStyleSheet("border:none; background:transparent;")
 
-    w = QWidget(); w.setStyleSheet(f"background:{_BG};")
+    w = QWidget(); w.setStyleSheet(f"background:{t.style('BG')};")
     lay = QVBoxLayout(w)
     lay.setSpacing(8); lay.setContentsMargins(4, 4, 6, 4)
 
@@ -1244,7 +1250,7 @@ def build_page_optimization(window):
     # it into a Cancel button mid-run.
     btn_opt = QPushButton("&Optimize Zones (NSGA-II)")
     btn_opt.setFixedHeight(32)
-    btn_opt.setStyleSheet(_BTN_LONG)
+    btn_opt.setStyleSheet(t.style('BTN_LONG'))
     btn_opt.setToolTip(
         "Launch NSGA-II Pareto search. Runs for minutes to hours.")
     btn_opt.clicked.connect(window._run_optimize)
@@ -1252,7 +1258,8 @@ def build_page_optimization(window):
     lay.addWidget(btn_opt)
 
     # Live status
-    g_opt, _ = section(window, lay, "  Optimization Status", _T_NEUTRAL, _F_NEUTRAL)
+    g_opt, _ = section(window, lay, "  Optimization Status",
+                        t.style('T_NEUTRAL'), t.style('F_NEUTRAL'))
     window._opt_status = QLabel("Idle")
     window._opt_status.setWordWrap(True)
     window._opt_status.setMinimumHeight(40)
@@ -1273,10 +1280,13 @@ def build_page_optimization(window):
 
 def build_canvas_area(window):
     """Ex-Main_Menu._build_canvas_area(self) -> QWidget."""
-    m = _m()
-    _BG = m._BG
-    _THEMES_local = m._THEMES
-    _BTN_TPMS = m._BTN_TPMS
+    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
+    from .field_factory import default_factory
+    from .theme import _THEMES as _THEMES_local
+    f = default_factory()
+    t = f.theme
+    _BG = t.style('BG')
+    _BTN_TPMS = t.style('BTN_TPMS')
     _t = get_theme()
 
     w = QWidget(); w.setStyleSheet(f"background:{_BG};")
@@ -1292,7 +1302,7 @@ def build_canvas_area(window):
     # Left-panel collapse toggle — chevron flips direction to reflect state.
     btn_toggle_left = QPushButton("‹")
     btn_toggle_left.setFixedSize(24, 28)
-    btn_toggle_left.setStyleSheet(m._BTN_TERTIARY)
+    btn_toggle_left.setStyleSheet(t.style('BTN_TERTIARY'))
     btn_toggle_left.setToolTip("Collapse parameter panel")
     btn_toggle_left.clicked.connect(window._toggle_left_panel)
     window.btn_toggle_left = btn_toggle_left
@@ -1394,7 +1404,7 @@ def build_canvas_area(window):
     btn_zoom_out = QPushButton("-")
     btn_reset_view = QPushButton("Reset View")
     for b in (btn_zoom_in, btn_zoom_out, btn_reset_view):
-        b.setFixedHeight(28); b.setStyleSheet(m._BTN_TERTIARY)
+        b.setFixedHeight(28); b.setStyleSheet(t.style('BTN_TERTIARY'))
     btn_zoom_in.setFixedWidth(32); btn_zoom_out.setFixedWidth(32)
     btn_zoom_in.setToolTip("Zoom current canvas card in (Ctrl+Wheel)")
     btn_zoom_out.setToolTip("Zoom current canvas card out (Ctrl+Wheel)")
@@ -1410,7 +1420,7 @@ def build_canvas_area(window):
     # since both affect canvas presentation rather than data.
     btn_canvas_cols = QPushButton("⊞")
     btn_canvas_cols.setFixedSize(32, 28)
-    btn_canvas_cols.setStyleSheet(m._BTN_TERTIARY)
+    btn_canvas_cols.setStyleSheet(t.style('BTN_TERTIARY'))
     btn_canvas_cols.setToolTip("Switch to two-column canvas layout")
     btn_canvas_cols.clicked.connect(lambda: toggle_canvas_cols(window))
     window.btn_canvas_cols = btn_canvas_cols
@@ -1418,7 +1428,7 @@ def build_canvas_area(window):
 
     btn_export_fig = QPushButton("Export &Figure")
     btn_export_fig.setFixedHeight(28)
-    btn_export_fig.setStyleSheet(m._BTN_SECONDARY)
+    btn_export_fig.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_export_fig.setToolTip("Save current canvas as PNG / SVG / PDF")
     btn_export_fig.setEnabled(False)
     btn_export_fig.clicked.connect(window._export_figure)
@@ -1767,7 +1777,7 @@ def build_canvas_area(window):
             btn_opt = QPushButton("▶  &Optimize Zones (NSGA-II)")
             btn_opt.setFixedHeight(36)
             btn_opt.setMinimumWidth(250)
-            btn_opt.setStyleSheet(m._BTN_LONG)
+            btn_opt.setStyleSheet(t.style('BTN_LONG'))
             btn_opt.setToolTip(
                 "Launch NSGA-II Pareto search (minutes to hours). "
                 "Progress + live Pareto render in this tab.")
@@ -1778,7 +1788,7 @@ def build_canvas_area(window):
             btn_opt_cancel = QPushButton("Cancel")
             btn_opt_cancel.setFixedHeight(36)
             btn_opt_cancel.setMinimumWidth(90)
-            btn_opt_cancel.setStyleSheet(m._BTN_TERTIARY)
+            btn_opt_cancel.setStyleSheet(t.style('BTN_TERTIARY'))
             btn_opt_cancel.setToolTip(
                 "Request graceful cancel of the running NSGA-II search")
             btn_opt_cancel.setEnabled(False)
