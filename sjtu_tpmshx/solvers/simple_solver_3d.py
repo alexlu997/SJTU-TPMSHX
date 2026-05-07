@@ -1233,13 +1233,33 @@ class SIMPLESolver3D:
         v_inlet_field stays fixed (velocity-inlet BC); mass flux at inlet
         floats with density. No-op for incompressible fluid_type.
 
-        Clipping policy (2026-05-06 fix #1): clip P_abs to [10 kPa, 1 MPa]
-        (physical HX envelope), derive ρ from ideal-gas. Do NOT clip ρ —
-        that decouples ρ from (P,T). See simple_solver.py:_update_density."""
+        Clipping policy (2026-05-06 fix #1, widened 2026-05-07 after UI
+        report 2): clip P_abs to [1 kPa, 10 MPa] — physical HX envelope
+        plus a generous transient margin so SIMPLE under-relaxation can
+        overshoot the steady-state P during early iterations without
+        engaging the clip and stalling momentum convergence at high u.
+        Original [10 kPa, 1 MPa] tripped on u=20 m/s + P_in=192 kPa
+        (Re~4500) — the Forchheimer branch's transient pressure peaks
+        exceeded 1 MPa during outer iter ramp-up, locking ρ to the
+        clipped value and bleeding momentum residuals.
+
+        Engagement counter `_p_clip_hits` tracks how often the clip
+        actually engaged so the caller can warn after a slow run.
+        Derive ρ from ideal-gas; no ρ clip (clipping ρ violates the gas
+        law and decouples it from (P,T))."""
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
-        np.clip(P_abs, 10.0e3, 1.0e6, out=P_abs)  # 10 kPa .. 1 MPa
+        # Diagnostic: count cells outside the envelope BEFORE clipping.
+        # Cheap (one mask + sum) compared to the clip itself.
+        try:
+            n_lo = int(np.count_nonzero(P_abs < 1.0e3))
+            n_hi = int(np.count_nonzero(P_abs > 10.0e6))
+            self._p_clip_hits = (
+                getattr(self, '_p_clip_hits', 0) + n_lo + n_hi)
+        except Exception:
+            pass
+        np.clip(P_abs, 1.0e3, 10.0e6, out=P_abs)  # 1 kPa .. 10 MPa
         rho_new = P_abs / (self.R_gas * self.T_field)
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new

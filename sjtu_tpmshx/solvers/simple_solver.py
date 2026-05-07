@@ -1086,7 +1086,18 @@ class SIMPLESolver:
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
-        np.clip(P_abs, 10.0e3, 1.0e6, out=P_abs)  # 10 kPa .. 1 MPa
+        # 2026-05-07: clip widened from [10 kPa, 1 MPa] to [1 kPa, 10 MPa]
+        # so SIMPLE transients on high-u cases (u>10 m/s, Forchheimer
+        # branch) don't trip the clip and stall outer convergence. See
+        # simple_solver_3d.py:_update_density for the full rationale.
+        try:
+            n_lo = int(np.count_nonzero(P_abs < 1.0e3))
+            n_hi = int(np.count_nonzero(P_abs > 10.0e6))
+            self._p_clip_hits = (
+                getattr(self, '_p_clip_hits', 0) + n_lo + n_hi)
+        except Exception:
+            pass
+        np.clip(P_abs, 1.0e3, 10.0e6, out=P_abs)  # 1 kPa .. 10 MPa
         rho_new = P_abs / (self.R_gas * self.T_field)
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new
