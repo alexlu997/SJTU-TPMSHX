@@ -4588,11 +4588,26 @@ class Main_Menu(QMainWindow):
         # ETA / status updater on a separate QTimer (orchestrator handles
         # the thread; this is a UI-only ticker that polls solver progress
         # + reports elapsed wall-clock + ETA).
+        #
+        # 2026-05-07 (UI report 2): hard budget bumped 600 s → 1800 s and
+        # ETA is now u-aware. The previous estimator (35k cells / 150 s)
+        # assumed Shanghai-typical low-Re cases; high-u runs (u > 10 m/s)
+        # take 5-10× longer on the Forchheimer branch and were hitting
+        # the 600 s cap mid-convergence.
         wd = QTimer(self)
         self._compute_3d_watchdog = wd
-        _hard_timeout_s = 600.0
+        _hard_timeout_s = 1800.0   # 30 min — generous for high-u + dense grids
         _ref_cells = 35000
         _ref_sec = 150.0
+        # u-aware multiplier: V&V validates u ≤ 10 m/s; above that, scale
+        # ETA by (u_max / 10)^2 (matches the run_calculation preflight
+        # warning so user sees consistent expectations).
+        try:
+            _u_max = max(float(self.le_uA.text()),
+                          float(self.le_uB.text()))
+        except (ValueError, AttributeError):
+            _u_max = 10.0
+        _u_factor = max(1.0, (_u_max / 10.0) ** 2)
 
         def _tick_3d():
             if not self.compute.is_running():
@@ -4606,14 +4621,16 @@ class Main_Menu(QMainWindow):
                 self.compute.cancel()
                 wd.stop()
                 return
-            eta_total = max(10.0, est_cells_r / _ref_cells * _ref_sec)
+            eta_total = max(10.0,
+                             est_cells_r / _ref_cells * _ref_sec * _u_factor)
             eta_remain = eta_total - elapsed
             from ui.fmt import duration as _fmt
             if eta_remain > 0:
-                eta_txt = f"ETA ~{_fmt(eta_remain)}"
+                eta_txt = f"ETA ~{_fmt(eta_remain)} (u-factor {_u_factor:.1f})"
             else:
                 over = elapsed - eta_total
-                eta_txt = f"past estimate by {_fmt(over)} — solver still running"
+                eta_txt = (f"past estimate by {_fmt(over)} — solver still "
+                           f"running (u-factor {_u_factor:.1f})")
             self.statusBar().showMessage(
                 f"Computing 3D… {_fmt(elapsed)} elapsed "
                 f"({est_cells_r:,} cells) • {eta_txt}")
