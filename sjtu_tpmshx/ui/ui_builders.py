@@ -2070,57 +2070,25 @@ def canvas_wheel_zoom(window, event, canvas, key):
 
 
 def section(window, parent_lay, title, title_style, frame_style):
-    """Ex-Main_Menu._section(self, parent_lay, title, title_style, frame_style).
-    Create a titled section. Returns (grid_layout, container_widget).
+    """Ex-Main_Menu._section. Phase 5: delegates to FieldFactory.
+
+    The ``window`` argument is unused — kept for backward compatibility
+    with every existing call site in ``build_page_*``. Returns
+    ``(grid_layout, container_widget)``.
     """
-    container = QWidget()
-    container.setStyleSheet("background:transparent;")
-    clay = QVBoxLayout(container)
-    # 8px gap above each 2nd-level section title; 0 between title and frame
-    clay.setContentsMargins(0, 8, 0, 0); clay.setSpacing(0)
-
-    t = QLabel(title)
-    t.setObjectName("secTitle")  # enables the #secTitle specificity override
-    t.setStyleSheet(title_style)
-    t.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    # Belt-and-suspenders: force the palette WindowText colour too. QSS
-    # sometimes loses to QPalette inheritance on certain Qt builds when the
-    # label is nested inside a QGroupBox whose stylesheet sets `color:…`;
-    # explicitly pinning the palette guarantees the text ends up visible.
-    from PySide6.QtGui import QPalette, QColor
-    from .theme import get_theme_name
-    _tt_fg = QColor("#020617") if get_theme_name() == 'light' else QColor("#F8FAFC")
-    _pal = t.palette()
-    _pal.setColor(QPalette.ColorRole.WindowText, _tt_fg)
-    _pal.setColor(QPalette.ColorRole.Text, _tt_fg)
-    t.setPalette(_pal)
-    clay.addWidget(t)
-
-    frame = QFrame(); frame.setStyleSheet(frame_style)
-    g = QGridLayout(frame)
-    # Field rhythm: inner pad 12/10/12/10, row gap 8, column gap 10
-    g.setContentsMargins(12, 10, 12, 10)
-    g.setVerticalSpacing(8); g.setHorizontalSpacing(10)
-    g.setColumnStretch(0, 3); g.setColumnStretch(1, 2)
-    clay.addWidget(frame)
-
-    parent_lay.addWidget(container)
-    return g, container
+    from .field_factory import default_factory
+    return default_factory().section(parent_lay, title,
+                                       title_style, frame_style)
 
 
 def row(window, g, row_idx, text, default):
-    """Ex-Main_Menu._row(self, g, row, text, default) -> QLineEdit.
-    Note: parameter `row` renamed to `row_idx` to avoid shadowing the function name.
-    """
-    m = _m()
-    _LBL = m._LBL
-    _INP = m._INP
+    """Ex-Main_Menu._row -> QLineEdit. Phase 5: delegates to FieldFactory.
 
-    lbl = QLabel(text); lbl.setTextFormat(Qt.TextFormat.RichText)
-    lbl.setStyleSheet(_LBL); lbl.setWordWrap(False)
-    le = QLineEdit(default); le.setStyleSheet(_INP)
-    g.addWidget(lbl, row_idx, 0); g.addWidget(le, row_idx, 1)
-    return le
+    Note: parameter `row` renamed to `row_idx` to avoid shadowing the
+    function name. ``window`` retained for call-site compatibility.
+    """
+    from .field_factory import default_factory
+    return default_factory().row(g, row_idx, text, default)
 
 
 def _computed_divider(g, row_idx, cols=2):
@@ -2243,28 +2211,12 @@ def _parse_unit_from_label(text):
 
 
 def res_row(window, g, row_idx, text, col=0):
-    """Label + computed-value row (value auto-switches empty/filled style)."""
-    m = _m()
-    _LBL = m._LBL
-    _VAL = m._VAL
-
-    lbl = QLabel(text); lbl.setTextFormat(Qt.TextFormat.RichText)
-    lbl.setStyleSheet(_LBL)
-    unit_hint, qty_name = _parse_unit_from_label(text)
-    val = _ResultLabel("\u2014", unit_hint=unit_hint, quantity_name=qty_name)
-    val.setProperty('valState', 'empty')
-    val.setStyleSheet(_VAL)
-    g.addWidget(lbl, row_idx, col); g.addWidget(val, row_idx, col + 1)
-    return val
+    """Label + computed-value row. Phase 5: delegates to FieldFactory."""
+    from .field_factory import default_factory
+    return default_factory().res_row(g, row_idx, text, col=col)
 
 
 def add_row(window, g, row_idx, text, widget):
-    """Ex-Main_Menu._add_row(self, g, row, text, widget).
-    Note: parameter `row` renamed to `row_idx` to avoid shadowing the function name.
-    """
-    m = _m()
-    _LBL = m._LBL
-
-    lbl = QLabel(text); lbl.setTextFormat(Qt.TextFormat.RichText)
-    lbl.setStyleSheet(_LBL)
-    g.addWidget(lbl, row_idx, 0); g.addWidget(widget, row_idx, 1)
+    """Ex-Main_Menu._add_row. Phase 5: delegates to FieldFactory."""
+    from .field_factory import default_factory
+    return default_factory().add_row(g, row_idx, text, widget)

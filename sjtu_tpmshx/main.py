@@ -215,6 +215,12 @@ class Main_Menu(QMainWindow):
         self.theme.bind_to_module(_sys_tm.modules[__name__])
         self.signals = SignalRouter(self)
 
+        # Phase 5: install a process-wide FieldFactory backed by the live
+        # ThemeManager so ui_builders helpers (section/row/res_row/add_row)
+        # build widgets through DI rather than module globals.
+        from ui.field_factory import FieldFactory, set_default_factory
+        set_default_factory(FieldFactory(self.theme))
+
         # Phase 1: solver lifecycle (refactor-p1-done).
         self.compute = ComputeOrchestrator(self)
         self.signals.connect(self.compute.started, self._on_orch_started,
