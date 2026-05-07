@@ -284,6 +284,9 @@ class Main_Menu(QMainWindow):
         # auto-suggest stomp the user-visible defaults.
         for le in (self.le_Nx, self.le_Ny, self.le_Nz):
             le.textEdited.connect(self._mark_grid_edited)
+            self.signals.adopt(le.textEdited, self._mark_grid_edited,
+                                tag=f'grid-edited-{le.objectName() or id(le)}',
+                                sender=le)
         self._setup_shortcuts()
         # PyVista/VTK context creation costs 1-2 s and was running 500 ms
         # after startup. Keep it lazy unless explicitly opted in for demos.
@@ -382,54 +385,66 @@ class Main_Menu(QMainWindow):
         self._apply_shanghai_defaults()
         self.statusBar().showMessage("Parameters reset to Shanghai Electric preset.", 5000)
 
-    def _setup_shortcuts(self):
+    def _track_shortcut(self, key, slot, tag):
+        """QShortcut + connect + SignalRouter.adopt — one call.
+
+        Phase 5 follow-up (Plan #4 connect-migration). Builds a
+        QShortcut parented on ``self`` (so its lifetime matches the
+        window's), wires ``slot``, and registers the connection with
+        ``self.signals`` so closeEvent's bulk disconnect covers it.
+        Returns the QShortcut for further configuration.
+        """
         from PySide6.QtGui import QShortcut, QKeySequence
-        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.run_calculation)
-        QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self._reset_defaults)
-        QShortcut(QKeySequence("Ctrl+1"), self).activated.connect(lambda: self._switch_tab('layout'))
-        QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(lambda: self._switch_tab('temp'))
-        QShortcut(QKeySequence("Ctrl+3"), self).activated.connect(lambda: self._switch_tab('pres'))
-        QShortcut(QKeySequence("Ctrl+4"), self).activated.connect(lambda: self._switch_tab('vel'))
-        QShortcut(QKeySequence("Ctrl+5"), self).activated.connect(lambda: self._switch_tab('3d'))
-        # Immersive 3D: F key when 3D tab active expands the 3D card and
-        # collapses the left parameter panel so the volume fills the screen.
-        # Second press restores the previous layout. Scoped to 3D tab so the
-        # F key doesn't collide with other focused widgets.
-        QShortcut(QKeySequence("F"), self).activated.connect(
-            self._toggle_3d_immersive)
-        QShortcut(QKeySequence("Ctrl+?"), self).activated.connect(
-            self._show_shortcuts)
-        QShortcut(QKeySequence("Ctrl+/"), self).activated.connect(
-            self._show_shortcuts)
-        # D12 — quick fluid preset: digit keys route to Fluid A combo.
+        sc = QShortcut(QKeySequence(key), self)
+        sc.activated.connect(slot)
+        self.signals.adopt(sc.activated, slot, tag=tag, sender=sc)
+        return sc
+
+    def _setup_shortcuts(self):
+        # Phase 5 follow-up: every shortcut routed through _track_shortcut
+        # so closeEvent's signals.disconnect_all() picks them up. Lambdas
+        # are bound to local names (not inline) so adopt() can hold them
+        # for later disconnect.
+        ts = self._track_shortcut
+        ts("Ctrl+R", self.run_calculation, tag='sc-run')
+        ts("Ctrl+Shift+R", self._reset_defaults, tag='sc-reset')
+        for key, name in (('Ctrl+1', 'layout'), ('Ctrl+2', 'temp'),
+                          ('Ctrl+3', 'pres'), ('Ctrl+4', 'vel'),
+                          ('Ctrl+5', '3d')):
+            ts(key, (lambda n=name: self._switch_tab(n)),
+                tag=f'sc-tab-{name}')
+        # Immersive 3D toggle (F key)
+        ts("F", self._toggle_3d_immersive, tag='sc-immersive')
+        ts("Ctrl+?", self._show_shortcuts, tag='sc-help-q')
+        ts("Ctrl+/", self._show_shortcuts, tag='sc-help-s')
+        # D12 — fluid quick-presets
         for digit, fluid in ((1, 'Air'), (2, 'Water'), (3, 'sCO₂')):
-            QShortcut(QKeySequence(f"Alt+{digit}"), self).activated.connect(
-                lambda f=fluid: self._keyboard_set_fluid('A', f))
-            QShortcut(QKeySequence(f"Alt+Shift+{digit}"), self).activated.connect(
-                lambda f=fluid: self._keyboard_set_fluid('B', f))
+            ts(f"Alt+{digit}",
+                (lambda f=fluid: self._keyboard_set_fluid('A', f)),
+                tag=f'sc-fluid-A-{digit}')
+            ts(f"Alt+Shift+{digit}",
+                (lambda f=fluid: self._keyboard_set_fluid('B', f)),
+                tag=f'sc-fluid-B-{digit}')
         # D13 — density cycle
-        QShortcut(QKeySequence("["), self).activated.connect(
-            lambda: self._cycle_density(-1))
-        QShortcut(QKeySequence("]"), self).activated.connect(
-            lambda: self._cycle_density(+1))
-        # D14 — Alt+↑/↓ scrub through recent runs
-        QShortcut(QKeySequence("Alt+Up"), self).activated.connect(
-            lambda: self._scrub_recent(-1))
-        QShortcut(QKeySequence("Alt+Down"), self).activated.connect(
-            lambda: self._scrub_recent(+1))
-        # D7 — Ctrl+D opens the overview dashboard dialog.
-        QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(
-            self._show_overview)
-        # Launch NSGA-II search without leaving the keyboard.
-        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(
-            self._run_optimize)
-        QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(
-            self._run_optimize)
-        # E18 — Ctrl+↑/↓ cycle through enabled tabs
-        QShortcut(QKeySequence("Ctrl+Up"), self).activated.connect(
-            lambda: self._cycle_tab(-1))
-        QShortcut(QKeySequence("Ctrl+Down"), self).activated.connect(
-            lambda: self._cycle_tab(+1))
+        ts("[", (lambda: self._cycle_density(-1)),
+            tag='sc-density-prev')
+        ts("]", (lambda: self._cycle_density(+1)),
+            tag='sc-density-next')
+        # D14 — Alt+↑/↓ scrub recent runs
+        ts("Alt+Up", (lambda: self._scrub_recent(-1)),
+            tag='sc-scrub-prev')
+        ts("Alt+Down", (lambda: self._scrub_recent(+1)),
+            tag='sc-scrub-next')
+        # D7 — Ctrl+D overview dashboard
+        ts("Ctrl+D", self._show_overview, tag='sc-overview')
+        # NSGA-II launch
+        ts("Ctrl+Return", self._run_optimize, tag='sc-opt-return')
+        ts("Ctrl+Enter", self._run_optimize, tag='sc-opt-enter')
+        # E18 — Ctrl+↑/↓ cycle tabs
+        ts("Ctrl+Up", (lambda: self._cycle_tab(-1)),
+            tag='sc-cycle-tab-prev')
+        ts("Ctrl+Down", (lambda: self._cycle_tab(+1)),
+            tag='sc-cycle-tab-next')
 
     def _export_results(self):
         """Export last compute results to CSV + optional NPZ."""
@@ -3093,11 +3108,17 @@ class Main_Menu(QMainWindow):
                     self._undo_stack.push(
                         _FieldEditCmd(le, prev, cur, self._undo_last, name))
             le.editingFinished.connect(_on_finished)
+            self.signals.adopt(le.editingFinished, _on_finished,
+                                tag=f'undo-edit-{name}', sender=le)
 
-        QShortcut(QKeySequence.StandardKey.Undo, self).activated.connect(
-            self._undo_stack.undo)
-        QShortcut(QKeySequence.StandardKey.Redo, self).activated.connect(
-            self._undo_stack.redo)
+        sc_u = QShortcut(QKeySequence.StandardKey.Undo, self)
+        sc_u.activated.connect(self._undo_stack.undo)
+        self.signals.adopt(sc_u.activated, self._undo_stack.undo,
+                            tag='sc-undo', sender=sc_u)
+        sc_r = QShortcut(QKeySequence.StandardKey.Redo, self)
+        sc_r.activated.connect(self._undo_stack.redo)
+        self.signals.adopt(sc_r.activated, self._undo_stack.redo,
+                            tag='sc-redo', sender=sc_r)
 
     _FIELD_HELP = {
         'le_L': (
@@ -3184,6 +3205,8 @@ class Main_Menu(QMainWindow):
             self._log_history.append(f"[{ts}] {txt}")
 
         self.statusBar().messageChanged.connect(_on_msg)
+        self.signals.adopt(self.statusBar().messageChanged, _on_msg,
+                            tag='statusbar-msg', sender=self.statusBar())
 
         btn = QPushButton("▲  Log")
         btn.setFixedHeight(18)
@@ -3195,6 +3218,8 @@ class Main_Menu(QMainWindow):
             "QPushButton:hover{color:" + get_theme()['fg'] + ";}")
         btn.setToolTip("Show recent status messages")
         btn.clicked.connect(self._show_status_log)
+        self.signals.adopt(btn.clicked, self._show_status_log,
+                            tag='btn-status-log', sender=btn)
         self.statusBar().addPermanentWidget(btn)
         self._btn_status_log = btn
 
