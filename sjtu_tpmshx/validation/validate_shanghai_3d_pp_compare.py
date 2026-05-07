@@ -54,6 +54,9 @@ warnings.filterwarnings('ignore')
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.streamfunction_solver_3d import StreamfunctionSolver3D
 import validation.validate_shanghai_3d_real as v3d
+from validation._provenance import write_csv_with_provenance
+
+_SCRIPT_REL = 'sjtu_tpmshx/validation/validate_shanghai_3d_pp_compare.py'
 
 
 # ---------------------------------------------------------------- factories
@@ -178,7 +181,8 @@ def main():
 
     # Save CSV
     out_csv = Path(__file__).parent / 'shanghai_3d_pp_compare.csv'
-    pd.DataFrame(rows).to_csv(out_csv, index=False, encoding='utf-8-sig')
+    write_csv_with_provenance(pd.DataFrame(rows), out_csv, _SCRIPT_REL,
+                              encoding='utf-8-sig')
     print(f"\nSaved: {out_csv}")
 
     # Summary per path

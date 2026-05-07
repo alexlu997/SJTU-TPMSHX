@@ -49,6 +49,9 @@ except Exception:
 warnings.filterwarnings('ignore')
 
 from validation.mms_3d_air_air import run_mms, L_DOM
+from validation._provenance import write_csv_with_provenance
+
+_SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a4_boundary.py'
 
 
 def _region_masks(Nx, Ny, Nz):
@@ -150,7 +153,7 @@ def main():
 
     df = pd.DataFrame(rows)
     out_csv = ROOT / args.out_csv
-    df.to_csv(out_csv, index=False)
+    write_csv_with_provenance(df, out_csv, _SCRIPT_REL)
     print(f"\nRaw written: {out_csv}")
 
     # Order fit per region per phase (L2)
@@ -173,7 +176,7 @@ def main():
                   f"{l2_max:>11.3e}")
     order_df = pd.DataFrame(order_rows)
     orders_csv = ROOT / args.orders_csv
-    order_df.to_csv(orders_csv, index=False)
+    write_csv_with_provenance(order_df, orders_csv, _SCRIPT_REL)
     print(f"\nOrders written: {orders_csv}")
 
     # Hard gates

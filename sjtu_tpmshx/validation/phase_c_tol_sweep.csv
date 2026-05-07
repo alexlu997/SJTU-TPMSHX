@@ -1,3 +1,6 @@
+# script: sjtu_tpmshx/validation/phase_c_tol_sweep.py
+# commit: d15be56
+# date:   2026-05-04T23:37:44+08:00
 case,grid,tol,Q_enth_A,T_A_out,elapsed
 T2,20,0.001,367.5525222236716,307.905355072739,12.475322484970093
 T2,20,1e-05,367.5525222236716,307.905355072739,12.29697036743164

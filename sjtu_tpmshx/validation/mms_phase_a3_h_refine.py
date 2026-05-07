@@ -37,6 +37,9 @@ except Exception:
 warnings.filterwarnings('ignore')
 
 from validation.mms_3d_air_air import run_mms, L_DOM
+from validation._provenance import write_csv_with_provenance
+
+_SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a3_h_refine.py'
 
 
 def fit_order(h_arr, err_arr):
@@ -108,7 +111,7 @@ def main():
 
     df = pd.DataFrame(rows)
     out_csv = ROOT / args.out_csv
-    df.to_csv(out_csv, index=False)
+    write_csv_with_provenance(df, out_csv, _SCRIPT_REL)
     print(f"Raw data written: {out_csv}")
 
     # Order fit
@@ -133,7 +136,7 @@ def main():
         print()
     order_df = pd.DataFrame(order_rows)
     orders_csv = ROOT / args.orders_csv
-    order_df.to_csv(orders_csv, index=False)
+    write_csv_with_provenance(order_df, orders_csv, _SCRIPT_REL)
     print(f"Orders written: {orders_csv}")
 
     # Hard gates
