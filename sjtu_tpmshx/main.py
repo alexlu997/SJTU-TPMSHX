@@ -608,6 +608,13 @@ class Main_Menu(QMainWindow):
         Auto-fill calls compute_tpms(), whose first exact geometry evaluation
         builds a 256^3 voxel grid. Doing that in the background keeps the
         first Auto-fill click from paying the full cold-cache cost.
+
+        Phase 5 follow-up (UI report #1, 2026-05-07): also pre-imports +
+        warms the D-F surrogate (joblib/sklearn RBF). First call to
+        ``df_fit.predict.predict_K_cF`` adds ~1-2 s on cold-cache because
+        joblib has to demand-load the .joblib model and sklearn pulls in
+        scipy. Doing that in the same background thread eliminates the
+        "Not Responding" flash when the user clicks Fluid Auto-fill.
         """
         from PySide6.QtCore import QTimer
 
@@ -622,9 +629,18 @@ class Main_Menu(QMainWindow):
             except Exception:
                 return
 
+            tpms_type, Lcell, t_mm, _ = args
+
             def _worker():
                 try:
                     tpms_geometry(*args)
+                except Exception:
+                    pass
+                # Warm the D-F surrogate by triggering one prediction.
+                # Loads joblib model + first sklearn import.
+                try:
+                    from df_fit.predict import predict_K_cF
+                    predict_K_cF(tpms_type, float(Lcell), float(t_mm), 0.4)
                 except Exception:
                     pass
 
@@ -818,11 +834,19 @@ class Main_Menu(QMainWindow):
             ('3d',     self.btn_tab_3d),
         ]
         drawn = getattr(self, '_drawn_tabs', set())
-        showed_any = False
-        # Batch show/hide under a single repaint: setUpdatesEnabled(False) on
-        # the scroll viewport suppresses N intermediate layout invalidations
-        # (one per card toggle). With 6 cards this alone cuts tab-switch lag
-        # from ~120 ms → <20 ms on refined 3D grids.
+        # Two-phase tab swap (UI report 2026-05-07 issue #4):
+        #   Phase 1 — hide all non-target cards + restyle ALL tab buttons.
+        #             These ops are cheap; finish them inside one repaint
+        #             batch so the user sees the button highlight + the
+        #             old card disappear immediately.
+        #   Phase 2 — defer the heavy `card.show()` for the target tab
+        #             (especially 3D, which spins up PyVista's OpenGL
+        #             context for ~50-100 ms). Using QTimer.singleShot(0)
+        #             yields one event-loop tick so the Phase-1 paint
+        #             flushes before the heavy work blocks the thread.
+        #
+        # Prior to this split the user saw the 3D button highlight but
+        # the Geometry card stayed visible until OpenGL came up.
         _scroll = getattr(self, '_canvas_scroll', None)
         _viewport = _scroll.viewport() if _scroll is not None else None
         if _viewport is not None:
@@ -830,37 +854,45 @@ class Main_Menu(QMainWindow):
         for key, btn in tabs:
             card = self._canvas_cards.get(key)
             if key == tab:
-                # D-plan: the Optimize tab always shows its card so the
-                # Launch button + status header are reachable before the
-                # first compute.  Other tabs still require results.
-                if card and (key == 'pareto'
-                             or getattr(self, '_has_results', False)
-                             or key in drawn):
-                    card.show()
-                    showed_any = True
-                elif key == '3d':
-                    # No 3D compute yet — hide card. _empty_state_label below
-                    # at line ~762 already covers the "Configure + Compute"
-                    # hint centrally; previously we also showed a status-bar
-                    # message here, which duplicated the central placeholder
-                    # for ~6s. Removed 2026-04-29 to de-duplicate.
-                    if card:
-                        card.hide()
                 btn.setStyleSheet(self._PTAB_ON)
             else:
-                if card: card.hide()
+                if card:
+                    card.hide()
                 if btn.isEnabled():
                     btn.setStyleSheet(self._PTAB_OFF)
                 else:
                     btn.setStyleSheet(self._PTAB_DISABLED)
-        # Toggle empty-state placeholder visibility based on whether any real
-        # card is on screen. Kept in sync here so draw-layout, Compute, or
-        # Pareto flows all hide the hint once their card lands.
-        if hasattr(self, '_empty_state_label'):
-            self._empty_state_label.setVisible(not showed_any)
-        self._hover_label.setText("")
         if _viewport is not None:
             _viewport.setUpdatesEnabled(True)
+        # Phase 1 flush — paint button + hides before heavy work.
+        try:
+            from PySide6.QtWidgets import QApplication as _QApp
+            _QApp.processEvents()
+        except Exception:
+            pass
+
+        # Phase 2 — defer target card.show() (may activate OpenGL).
+        target_card = self._canvas_cards.get(tab)
+        showed_any = False
+        if target_card and (tab == 'pareto'
+                            or getattr(self, '_has_results', False)
+                            or tab in drawn):
+            target_card.show()
+            showed_any = True
+        elif tab == '3d' and target_card:
+            target_card.hide()
+
+        if hasattr(self, '_empty_state_label'):
+            self._empty_state_label.setVisible(not showed_any)
+        # UI report 2026-05-07 issue #5: re-evaluate summary bar
+        # visibility against the new active tab (hides on Geometry).
+        if hasattr(self, '_result_summary_bar') \
+                and getattr(self, '_has_results', False):
+            try:
+                self._update_result_summary()
+            except Exception:
+                pass
+        self._hover_label.setText("")
 
     def _on_hover(self, event):
         """Show data value at mouse position on contour plots."""
@@ -3598,7 +3630,14 @@ class Main_Menu(QMainWindow):
                     "background:transparent; border:none; padding-left:4px;")
             except Exception:
                 _dl.setText('')
-        self._result_summary_bar.setVisible(shown_any)
+        # UI report 2026-05-07 issue #5: the headline summary chips (Q /
+        # ΔP A / ΔP B / T_out A / T_out B) are redundant with the detail
+        # result frame on the Geometry page (build_page_domain). Suppress
+        # the chip strip when the user is on the Geometry tab — it adds
+        # value as a persistent reminder on Temperature/Pressure/Velocity/
+        # 3D tabs where the inputs aren't visible.
+        on_geom = (getattr(self, '_active_tab', None) == 'layout')
+        self._result_summary_bar.setVisible(shown_any and not on_geom)
 
     def _drain_live_residuals(self):
         """Timer tick — push the Fluid A residual trail (log scale) into
@@ -3800,6 +3839,20 @@ class Main_Menu(QMainWindow):
             except Exception:
                 pass
 
+        # Flip the Compute button back to "▶ Compute" BEFORE running the
+        # plot finalisation — otherwise heavy 3D PyVista rendering or 2D
+        # matplotlib draw blocks the main thread for 1-2 s and the user
+        # sees stale "Cancel (Computing…)" label even after the solver
+        # has finished. The button repaint only flushes when the event
+        # loop ticks, so we let it tick first via processEvents().
+        # (UI report 2026-05-07 issues #2 + #3.)
+        self._end_compute_ui(success=True)
+        try:
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+        except Exception:
+            pass
+
         mode = self.compute.current_mode()
         if mode == '3d':
             from runs.run_calculation_3d import finalize_plots_3d
@@ -3811,8 +3864,11 @@ class Main_Menu(QMainWindow):
                 except Exception:
                     pass
                 _finalize_ok = True
-            finally:
-                self._end_compute_ui(success=_finalize_ok)
+            except Exception:
+                # If finalise crashes, walk the button text back to a
+                # benign state — _end_compute_ui already restored it but
+                # the flag must reflect failure for downstream gating.
+                self._end_compute_ui(success=False)
             if not _finalize_ok:
                 return
             self._has_results = True
@@ -3838,9 +3894,8 @@ class Main_Menu(QMainWindow):
                     pass
             return
 
-        # 2D mode (default)
+        # 2D mode (default) — _end_compute_ui already called above.
         self._finalize_plots()
-        self._end_compute_ui(success=True)
         self._has_results = True
         self._has_results_2d = True
         self._update_tab_visibility()
