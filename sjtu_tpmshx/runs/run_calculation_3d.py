@@ -1718,6 +1718,61 @@ def _run_3d_stack(cfg):
                         u_inlet=float(u_B),
                         n_dilate=int(cfg.get('chi_B_n_dilate', 3)),
                         n_smooth=int(cfg.get('chi_B_n_smooth', 2)))
+                # 2026-05-07 (UI report 2 follow-up): force χ_B=1 at the
+                # physical inlet/outlet pipe footprints. Without this,
+                # geometries with highly non-uniform throughput across
+                # the outlet patch (e.g. user's diagonal-flow case where
+                # mass concentrates in a few outlet cells) end up with
+                # χ_B≈0 over most of the outlet pipe, decoupling the
+                # outlet T_b from solid → reported Q_B inflated 2-3×.
+                # Inlet/outlet patches ARE the physical boundaries — they
+                # always participate, whatever the per-cell throughput.
+                if in_mask_B is not None and out_mask_B is not None and fB is not None:
+                    _dB = int(fB['dir'])
+                    # Lift 2D inlet/outlet patch masks to a 3D layer mask.
+                    # in_mask_B / out_mask_B shape depends on dir:
+                    #   dir 0/1 → (N_cross1, N_cross2) at i=0 / i=Nx-1
+                    #   dir 2/3 → (N_cross1, N_cross2) at j=0 / j=Ny-1
+                    #   dir 4/5 → (N_cross1, N_cross2) at k=0 / k=Nz-1
+                    # _build_partial_masks already accounts for is_reverse
+                    # (swaps in/out). Real-coord inlet face = solver j=0
+                    # face after solver-to-real perm.
+                    chi_pre = chi_B.copy()
+                    in_face_idx = {0: 0, 1: Nx-1,
+                                   2: 0, 3: Ny-1,
+                                   4: 0, 5: Nz-1}.get(_dB, 0)
+                    out_face_idx = {0: Nx-1, 1: 0,
+                                    2: Ny-1, 3: 0,
+                                    4: Nz-1, 5: 0}.get(_dB, Nx-1)
+                    # Apply 2D mask to the corresponding face slice.
+                    if _dB in (0, 1):
+                        # i-axis flow: 2D mask shape (Ny, Nz)
+                        if in_mask_B.shape == (Ny, Nz):
+                            chi_B[in_face_idx, :, :] = np.maximum(
+                                chi_B[in_face_idx, :, :], in_mask_B.astype(np.float64))
+                        if out_mask_B.shape == (Ny, Nz):
+                            chi_B[out_face_idx, :, :] = np.maximum(
+                                chi_B[out_face_idx, :, :], out_mask_B.astype(np.float64))
+                    elif _dB in (2, 3):
+                        # j-axis flow: 2D mask shape (Nx, Nz)
+                        if in_mask_B.shape == (Nx, Nz):
+                            chi_B[:, in_face_idx, :] = np.maximum(
+                                chi_B[:, in_face_idx, :], in_mask_B.astype(np.float64))
+                        if out_mask_B.shape == (Nx, Nz):
+                            chi_B[:, out_face_idx, :] = np.maximum(
+                                chi_B[:, out_face_idx, :], out_mask_B.astype(np.float64))
+                    elif _dB in (4, 5):
+                        # k-axis flow: 2D mask shape (Nx, Ny)
+                        if in_mask_B.shape == (Nx, Ny):
+                            chi_B[:, :, in_face_idx] = np.maximum(
+                                chi_B[:, :, in_face_idx], in_mask_B.astype(np.float64))
+                        if out_mask_B.shape == (Nx, Ny):
+                            chi_B[:, :, out_face_idx] = np.maximum(
+                                chi_B[:, :, out_face_idx], out_mask_B.astype(np.float64))
+                    if outer == 0:
+                        _diff = float(np.sum((chi_B > 0.5) & (chi_pre <= 0.5)))
+                        print(f"[χ_B] BC patch union added {_diff:.0f} active cells")
+
                 # Floor for stiffness: K_ffB·χ_floor keeps Tb-matrix diagonal
                 # non-zero even in pure ghost cells. Heat leak negligible at
                 # 1e-3 (1000× attenuation vs bulk K).
