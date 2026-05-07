@@ -486,6 +486,24 @@ def _build_fields(window, cfg):
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
+        # 2026-05-07: SIMPLESolver.__init__ silently expands the grid via
+        # `_aligned_grid` when `min(2, ...)` per-segment forces total > Nx
+        # (case: B partial inlet/outlet on x-axis with 4 break points).
+        # The override above swaps in the energy-solver's dx_arr (which
+        # is already length Nx), but `inlet_frac` / `outlet_frac` were
+        # computed from the longer aligned grid and now disagree with
+        # `s.Nx`. Rebuild them from the canonical dx_arr.
+        if len(s.dx_arr) != len(s.inlet_frac):
+            x_lo_e = np.concatenate(([0.0], np.cumsum(s.dx_arr[:-1])))
+            x_hi_e = np.cumsum(s.dx_arr)
+            s.inlet_frac = np.clip(
+                (np.minimum(x_hi_e, pipe_hi) - np.maximum(x_lo_e, pipe_lo))
+                / s.dx_arr, 0.0, 1.0)
+            s.inlet_mask = s.inlet_frac > 0.01
+            s.outlet_frac = np.clip(
+                (np.minimum(x_hi_e, out_hi) - np.maximum(x_lo_e, out_lo))
+                / s.dx_arr, 0.0, 1.0)
+            s.outlet_mask = s.outlet_frac > 0.01
         # Zoned ε push (#2 fix): if zone config gives spatial eps_arr, push to
         # SIMPLE so its continuity uses ∇·(ε·ρ·u)=0 instead of ∇·(ρ·u)=0.
         # Uniform ε leaves default (eps_field=eps everywhere) unchanged.
@@ -960,6 +978,14 @@ def _run_solvers(window, cfg, fields):
     Nx2, Ny2 = N_x * 2, N_y * 2
     energy_dx2 = _aligned_grid(Nx2, L, list(_x_breaks))
     energy_dy2 = _aligned_grid(Ny2, H, list(_y_breaks))
+    # 2026-05-07: `_aligned_grid` silently expands the cell count when
+    # `min(2, ...)` per segment forces total > N (case: B partial pipe
+    # with 4 break points on x). Read back the actual length so Nx2/Ny2
+    # match the returned dx/dy arrays — otherwise solve_full_domain
+    # receives mismatched (Nx2, Ny2) vs dx_arr/dy_arr shapes and
+    # `h_vB_arr * (Ts - Tb)` broadcasts the wrong way.
+    Nx2 = int(len(energy_dx2))
+    Ny2 = int(len(energy_dy2))
 
     # Interpolate fields from coarse to fine grid using actual coordinates
     from scipy.interpolate import RegularGridInterpolator
