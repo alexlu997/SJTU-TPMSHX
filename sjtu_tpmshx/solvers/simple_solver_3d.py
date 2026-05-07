@@ -862,11 +862,15 @@ def _build_pp_sparsity_3d(Nx, Ny, Nz, outlet_mask_ij):
 
 def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
                    Nx, Ny, Nz, dx, dy, dz, rho_field, sparsity,
-                   ml_cache, rebuild):
+                   ml_cache, rebuild, rtol_dyn=1e-5):
     """Assemble + solve the pressure-correction system using PyAMG SA.
 
     ml_cache : dict holding the reusable multilevel hierarchy. Rebuilt when
         `rebuild` is True or when no cached entry exists.
+    rtol_dyn : adaptive BiCGStab relative tolerance (Phase A acceleration).
+        Caller passes ~0.05 * outer_simple_residual so inner solve does not
+        over-solve while outer is still loose. Default 1e-5 reproduces legacy
+        fixed-tol behaviour.
     """
     N = Nx * Ny * Nz
     nnz = sparsity['nnz']
@@ -894,9 +898,11 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
             ml_cache['ml'] = ml
         from scipy.sparse.linalg import bicgstab as _bcg
         M = ml_cache['ml'].aspreconditioner(cycle='V')
-        # rtol=1e-8 was over-solving (outer SIMPLE tol=1e-3 only). Relaxed
-        # to 1e-5 → ~2-3x fewer V-cycles with no outer accuracy impact.
-        Pp_flat, info = _bcg(A, rhs, M=M, rtol=1e-5, maxiter=200)
+        # Phase A: adaptive rtol — caller schedules `rtol_dyn` ≈ 0.05 *
+        # outer_residual, clipped to [1e-7, 1e-3]. Early outer iters with
+        # res~1e-2 → inner rtol~5e-4 (~10× fewer V-cycles); late iters with
+        # res~1e-6 → inner rtol~5e-7 (matches legacy precision).
+        Pp_flat, info = _bcg(A, rhs, M=M, rtol=rtol_dyn, maxiter=200)
         if info != 0:
             # AMG-PCG failed; fall back to direct for robustness
             from scipy.sparse.linalg import spsolve
@@ -1317,6 +1323,19 @@ class SIMPLESolver3D:
             _sweep_v = _sweep_v_jit_df_3d
             _sweep_w = _sweep_w_jit_df_3d
 
+        # Phase B — Anderson acceleration on SIMPLE outer Picard map.
+        # Off-by-default for safety; opt-in via solver attribute set by caller.
+        use_anderson = getattr(self, 'use_anderson', False)
+        if use_anderson:
+            from .anderson_acceleration import (
+                AndersonSIMPLE, stack_state, unstack_state)
+            acc = AndersonSIMPLE(m=int(getattr(self, 'anderson_m', 5)),
+                                  K=int(getattr(self, 'anderson_K', 3)))
+            prev_x = stack_state(self.u, self.v, self.w, self.P)
+        else:
+            acc = None
+            prev_x = None
+
         for it in range(1, max_iter + 1):
             # Effective density for continuity: ε·ρ. Uniform ε → multiplicative
             # constant (no functional change). Zoned ε → captures macroscopic
@@ -1344,10 +1363,18 @@ class SIMPLESolver3D:
                       self.alpha_u, n_inner)
 
             rebuild = (it == 1) or (it % self.pyamg_rebuild_every == 0)
+            # Phase A — adaptive AMG inner tolerance. First iter (no residual
+            # history) uses loose 1e-3; thereafter follows outer mass residual.
+            if getattr(self, 'use_adaptive_amg_tol', True):
+                prev_res = self.residuals[-1] if self.residuals else 1.0
+                rtol_dyn = float(np.clip(0.05 * prev_res, 1e-7, 1e-3))
+            else:
+                rtol_dyn = 1e-5
             _solve_pp_amg(self.Pp, self.u, self.v, self.w,
                            self.d_u, self.d_v, self.d_w,
                            Nx, Ny, Nz, dx, dy, dz, rho_eps_field,
-                           self._pp_sparsity, self._ml_cache, rebuild)
+                           self._pp_sparsity, self._ml_cache, rebuild,
+                           rtol_dyn=rtol_dyn)
 
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                              self.d_u, self.d_v, self.d_w,
@@ -1358,6 +1385,57 @@ class SIMPLESolver3D:
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
                                      rho_eps_field)
+
+            # Phase B — Anderson step (every K outer iters, after warmup).
+            if acc is not None and it > 5:
+                gx_picard = stack_state(self.u, self.v, self.w, self.P)
+                acc.push(prev_x, gx_picard)
+                if it % acc.K == 0:
+                    x_anderson, applied = acc.candidate(gx_picard)
+                    if applied:
+                        u2, v2, w2, P2 = unstack_state(
+                            x_anderson, self.u, self.v, self.w, self.P)
+                        # Stash Picard state in case we need to roll back.
+                        u_picard = self.u.copy()
+                        v_picard = self.v.copy()
+                        w_picard = self.w.copy()
+                        P_picard = self.P.copy()
+                        self.u[:] = u2
+                        self.v[:] = v2
+                        self.w[:] = w2
+                        self.P[:] = P2
+                        # Re-project to mass-conserving manifold (extra PC).
+                        rho_eps_field2 = np.ascontiguousarray(
+                            self.rho_field * self.eps_field, dtype=np.float64)
+                        _solve_pp_amg(self.Pp, self.u, self.v, self.w,
+                                       self.d_u, self.d_v, self.d_w,
+                                       Nx, Ny, Nz, dx, dy, dz, rho_eps_field2,
+                                       self._pp_sparsity, self._ml_cache,
+                                       False, rtol_dyn=rtol_dyn)
+                        _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
+                                         self.d_u, self.d_v, self.d_w,
+                                         self.v_inlet_field, Nx, Ny, Nz,
+                                         self.alpha_p, self.rho_field,
+                                         self.outlet_mask_ij)
+                        self._update_density()
+                        res_anderson = _mass_res_jit_3d(
+                            self.u, self.v, self.w, Nx, Ny, Nz, dx, dy, dz,
+                            rho_eps_field2)
+                        if (not np.isfinite(res_anderson)
+                                or res_anderson > res):
+                            # Roll back to Picard state.
+                            self.u[:] = u_picard
+                            self.v[:] = v_picard
+                            self.w[:] = w_picard
+                            self.P[:] = P_picard
+                            self._update_density()
+                            acc.rolled_back_count += 1
+                        else:
+                            res = res_anderson
+                # Always update prev_x using the post-step (post-Anderson if
+                # accepted) state for the next iteration's diff.
+                prev_x = stack_state(self.u, self.v, self.w, self.P)
+
             self.residuals.append(res)
 
             if verbose and it % 50 == 0:
