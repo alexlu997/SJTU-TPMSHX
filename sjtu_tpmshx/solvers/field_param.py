@@ -37,9 +37,16 @@ DEFAULT_N_CTRL_X = 4
 DEFAULT_N_CTRL_Y = 4
 DEFAULT_SYMMETRIC_Y = True
 
-DEFAULT_L_BOUNDS = (3.0, 10.0)   # mm
-DEFAULT_T_BOUNDS = (0.2, 0.8)    # mm
-DEFAULT_RATIO_BOUNDS = (0.05, 0.25)   # t / L
+# Decision-vector bounds — pinned to the ConstDF-v1 surrogate's training
+# window. Outside this rectangle predict_K_cF clamps K to the 1e-8 floor
+# (no extrapolation), which collapses SIMPLE convergence and produces
+# 100% rejected designs. See df_fit/surrogate_domain.py for the same
+# limits enforced on the UI Compute path.
+DEFAULT_L_BOUNDS = (4.0, 8.0)    # mm
+DEFAULT_T_BOUNDS = (0.3, 0.5)    # mm
+# Manufacturability ratio: lower-bounded slightly below 0.3/8 = 0.0375 so
+# the corner (L=8, t=0.3) does not trip the penalty; upper-bounded loose.
+DEFAULT_RATIO_BOUNDS = (0.035, 0.20)   # t / L
 
 
 def decision_dim(n_ctrl_x: int = DEFAULT_N_CTRL_X,

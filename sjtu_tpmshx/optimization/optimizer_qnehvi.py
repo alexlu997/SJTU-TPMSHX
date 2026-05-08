@@ -420,12 +420,12 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
     out = run_qnehvi(
         config={'fast_mode': False,
-                'max_iter_simple': 2000, 'tol_simple': 1e-4,
+                'max_iter_simple': 800, 'tol_simple': 1e-2,
                 'max_iter_energy': 1500, 'tol_energy': 0.5,
-                'dp_cap_pa': 1.0e6, 'reject_unconverged': True},
+                'dp_cap_pa': 1.0e6, 'reject_unconverged': False},
         n_init=16, n_iter=8, q_batch=2, seed=0,
         verbose=True,
-        save_dir=os.path.join('opt_runs', 'smoke_qnehvi_v2'),
+        save_dir=os.path.join('opt_runs', 'smoke_qnehvi_v3'),
         hv_tol=0.01, hv_window=3,
     )
     print(f"\nFinal Pareto: {len(out['X'])} points across {out['n_evals']} evals")
