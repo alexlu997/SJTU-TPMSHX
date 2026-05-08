@@ -89,7 +89,7 @@ def _parse_inputs(window):
     _allow_extrap = bool(getattr(window, 'chk_allow_extrap', None)
                          and window.chk_allow_extrap.isChecked())
     try:
-        from optimization.optimizer import check_surrogate_domain_at_point
+        from df_fit.surrogate_domain import check_surrogate_domain_at_point
         _tpms = window.combo_tpms.currentText()
         _L = float(window.le_Lcell.text()); _t = float(window.le_t.text())
         _ks = float(window.le_ks.text())
