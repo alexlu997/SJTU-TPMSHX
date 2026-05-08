@@ -49,10 +49,11 @@ def _residual_correction_enabled() -> bool:
 # Backend: SurrogateV3
 # ==================================================================
 
-_CACHE: dict[str, object] = {}
+_CACHE: dict[str, "object"] = {}
 
 
-def _get_model(tpms_type: str):
+def _get_model(tpms_type: str) -> "object":
+    """Return cached SurrogateV3 instance for tpms_type. Lazy-loaded."""
     if tpms_type not in _CACHE:
         from .surrogate_v3 import SurrogateV3
         _CACHE[tpms_type] = SurrogateV3(tpms=tpms_type)

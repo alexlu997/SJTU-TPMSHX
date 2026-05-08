@@ -9,13 +9,20 @@ df_projection.py — 投影 2D 几何设计到 SIMPLE 1D K/c_F 数组 + master �
 
 对应报告：vault/reports/2026-04-17-shanghai-dP-error-analysis-CN.md §11-§12
 """
+from __future__ import annotations
+from typing import Any, List, Optional, Tuple
+
 import numpy as np
 from .tpms_calc import geometry as tpms_geometry
 from .simple_solver import build_wall_refined_1d
 
 
-def build_master_refined_grid(L_dom, H_dom, Nx_user, Ny_user,
-                               n_refine=8, first_cell=0.02e-3, growth=1.8):
+def build_master_refined_grid(L_dom: float, H_dom: float,
+                               Nx_user: int, Ny_user: int,
+                               n_refine: int = 8,
+                               first_cell: float = 0.02e-3,
+                               growth: float = 1.8
+                               ) -> Tuple[np.ndarray, np.ndarray, int, int]:
     """构造"主加密网格"：真实坐标 x/y 两端都加密，四面墙 BL 都解析。
 
     返回 (dx_arr, dy_arr, Nx_refined, Ny_refined)
@@ -35,8 +42,13 @@ def build_master_refined_grid(L_dom, H_dom, Nx_user, Ny_user,
     return dx_refined, dy_refined, len(dx_refined), len(dy_refined)
 
 
-def project_cells_to_streamwise_K_cF(grid_cells, tpms_type, k_s, Ny_sim, fluid,
-                                       streamwise_dx=None):
+def project_cells_to_streamwise_K_cF(grid_cells: List[dict],
+                                       tpms_type: str,
+                                       k_s: float,
+                                       Ny_sim: int,
+                                       fluid: str,
+                                       streamwise_dx: Optional[np.ndarray] = None
+                                       ) -> Tuple[np.ndarray, np.ndarray]:
     """Project 2D grid_cells onto streamwise axis for SIMPLE's 1D K/c_F arrays.
 
     For fluid A (+x streamwise): SIMPLE's y-axis maps to real x. For each SIMPLE
@@ -102,9 +114,16 @@ def project_cells_to_streamwise_K_cF(grid_cells, tpms_type, k_s, Ny_sim, fluid,
     return K_arr.astype(np.float64), cF_arr.astype(np.float64)
 
 
-def project_fields_to_streamwise_K_cF(L_field, t_field, tpms_type, k_s,
-                                       Nx_field, Ny_field, Ny_sim, fluid,
-                                       streamwise_dx=None):
+def project_fields_to_streamwise_K_cF(L_field: np.ndarray,
+                                       t_field: np.ndarray,
+                                       tpms_type: str,
+                                       k_s: float,
+                                       Nx_field: int,
+                                       Ny_field: int,
+                                       Ny_sim: int,
+                                       fluid: str,
+                                       streamwise_dx: Optional[np.ndarray] = None
+                                       ) -> Tuple[np.ndarray, np.ndarray]:
     """Project 2D sigmoid fields onto streamwise axis for SIMPLE's K/c_F arrays.
 
     L_field, t_field shape: (Nx_field, Ny_field) in real coords.
@@ -151,7 +170,14 @@ def project_fields_to_streamwise_K_cF(L_field, t_field, tpms_type, k_s,
     return K_arr.astype(np.float64), cF_arr.astype(np.float64)
 
 
-def override_simple_K_cF(sim, tpms_type, k_s, Ny_sim, grid_cells, L_field, t_field, fluid):
+def override_simple_K_cF(sim: Any,
+                          tpms_type: str,
+                          k_s: float,
+                          Ny_sim: int,
+                          grid_cells: Optional[List[dict]],
+                          L_field: Optional[np.ndarray],
+                          t_field: Optional[np.ndarray],
+                          fluid: str) -> None:
     """Project design geometry to streamwise axis, override sim._K_arr/_cF_arr.
 
     Reads sim.dy_arr (SIMPLE internal streamwise widths) to handle non-uniform
@@ -174,8 +200,13 @@ def override_simple_K_cF(sim, tpms_type, k_s, Ny_sim, grid_cells, L_field, t_fie
     sim._cF_arr[:] = cF_arr
 
 
-def build_master_refined_grid_3d(L_dom, H_dom, D_dom, Nx_user, Ny_user, Nz_user,
-                                   n_refine=8, first_cell=0.02e-3, growth=1.8):
+def build_master_refined_grid_3d(L_dom: float, H_dom: float, D_dom: float,
+                                   Nx_user: int, Ny_user: int, Nz_user: int,
+                                   n_refine: int = 8,
+                                   first_cell: float = 0.02e-3,
+                                   growth: float = 1.8
+                                   ) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
+                                              int, int, int]:
     """Six-wall tensor-product refined grid (3D).
 
     Returns (dx_arr, dy_arr, dz_arr, Nx_refined, Ny_refined, Nz_refined).
@@ -190,9 +221,16 @@ def build_master_refined_grid_3d(L_dom, H_dom, D_dom, Nx_user, Ny_user, Nz_user,
     return dx, dy, dz, len(dx), len(dy), len(dz)
 
 
-def project_fields_to_streamwise_K_cF_3d(L_field, t_field, eps_f_field,
-                                          tpms_type, Ny_sim, Nz_sim, fluid,
-                                          streamwise_dx=None, z_dx=None):
+def project_fields_to_streamwise_K_cF_3d(L_field: np.ndarray,
+                                          t_field: np.ndarray,
+                                          eps_f_field: np.ndarray,
+                                          tpms_type: str,
+                                          Ny_sim: int,
+                                          Nz_sim: int,
+                                          fluid: str,
+                                          streamwise_dx: Optional[np.ndarray] = None,
+                                          z_dx: Optional[np.ndarray] = None
+                                          ) -> Tuple[np.ndarray, np.ndarray]:
     """Project 3D sigmoid fields onto SIMPLE 3D (Ny_sim, Nz_sim) K / c_F arrays.
 
     Fluid A: +x streamwise. Mean over real y (axis 1) → (Nx, Nz) then resample to
@@ -254,7 +292,7 @@ def project_fields_to_streamwise_K_cF_3d(L_field, t_field, eps_f_field,
     return K_arr.astype(np.float64), cF_arr.astype(np.float64)
 
 
-def extract_dP_from_simple(s):
+def extract_dP_from_simple(s: Any) -> float:
     """Extract inlet/outlet-averaged dP from a converged SIMPLE instance.
 
     Uses the inlet_frac/outlet_frac weighting (same as validate_shanghai.py:273-276)
@@ -269,7 +307,7 @@ def extract_dP_from_simple(s):
                - np.average(s.P[mO, -1], weights=wA_out[mO]))
 
 
-def extract_dP_mass_flux_from_simple(s):
+def extract_dP_mass_flux_from_simple(s: Any) -> float:
     """Mass-flux-weighted inlet/outlet dP.
 
     Weights each face cell by ρ·|v| so high-mass-flux streams dominate the

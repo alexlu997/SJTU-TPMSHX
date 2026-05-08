@@ -10,16 +10,24 @@ returned for caller-side surfacing (UI watermarks, plot overlays, etc.).
 This file used to live in `optimization.optimizer` but was hoisted out when the
 patch-zoning optimizer was retired in favor of the continuous-field design.
 """
+from __future__ import annotations
+from typing import List, Tuple
 
 # ConstDF-v1 surrogate fitted window (Diamond + Gyroid)
-_SURROGATE_L_MM = (4.0, 8.0)         # unit cell size [mm]
-_SURROGATE_T_MM = (0.3, 0.5)         # wall thickness [mm]
-_SURROGATE_RE   = (400.0, 16000.0)   # Reynolds number ρ·u·D_h/μ
+_SURROGATE_L_MM: Tuple[float, float] = (4.0, 8.0)         # unit cell size [mm]
+_SURROGATE_T_MM: Tuple[float, float] = (0.3, 0.5)         # wall thickness [mm]
+_SURROGATE_RE:   Tuple[float, float] = (400.0, 16000.0)   # Re ρ·u·D_h/μ
 
 
-def check_surrogate_domain_at_point(tpms_type, L_mm, t_mm, k_s,
-                                    u, T, P=101325.0, side='A',
-                                    allow_extrap=False):
+def check_surrogate_domain_at_point(tpms_type: str,
+                                    L_mm: float,
+                                    t_mm: float,
+                                    k_s: float,
+                                    u: float,
+                                    T: float,
+                                    P: float = 101325.0,
+                                    side: str = 'A',
+                                    allow_extrap: bool = False) -> List[str]:
     """Point-form surrogate-domain check for the Compute path.
 
     Computes Re from (ρ(T,P), u, D_h(L_mm, t_mm), μ(T)) and verifies

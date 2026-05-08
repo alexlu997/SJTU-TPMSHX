@@ -70,7 +70,7 @@ class SurrogateV3:
         self.K_min = K_min
         self._build()
 
-    def _build(self):
+    def _build(self) -> None:
         """Load data, calibrate, build RBF interpolators."""
         # Load boundary effect coefficients
         alpha_df = pd.read_excel(
@@ -223,7 +223,7 @@ class SurrogateV3:
             return P_in
         return P_in - sqrt(P_out_sq)
 
-    def summary(self):
+    def summary(self) -> None:
         """Print model summary."""
         print(f"SurrogateV3 ({self.tpms})")
         print(f"  Geometries: {len(self.ref)}")

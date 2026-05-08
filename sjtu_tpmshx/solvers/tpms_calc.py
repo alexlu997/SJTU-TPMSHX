@@ -94,11 +94,14 @@ def air_conductivity(T_K: float) -> float:
 
 
 def air_density(T_K, P_Pa: float = 101325.0):
-    """Density of air via ideal gas law [kg/m³]. Supports scalar or array T_K."""
+    """Density of air via ideal gas law [kg/m³]. Accepts scalar or ndarray T_K;
+    return type matches input shape."""
     return P_Pa * M_air / (R * T_K)
 
 
 def air_cp(T_K):
+    """Specific heat capacity of air [J/(kg·K)] (250-1000 K, < 0.5% error).
+    Accepts scalar or ndarray T_K; return type matches input shape."""
     """Specific heat capacity of air at constant pressure [J/(kg·K)].
     Polynomial fit valid 250-1000K, error < 0.5%.
     Supports scalar or numpy array input.
@@ -418,7 +421,8 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
     }
 
 
-def adaptive_grid(L_domain, H_domain, D_h, alpha=0.4):
+def adaptive_grid(L_domain: float, H_domain: float,
+                  D_h: float, alpha: float = 0.4) -> tuple:
     """Compute grid dimensions for a target dx/D_h ratio.
 
     Parameters
