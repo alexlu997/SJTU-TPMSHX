@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sjtu_tpmshx.solvers.anderson_acceleration import (
+from solvers.anderson_acceleration import (
     AndersonSIMPLE, stack_state, unstack_state)
 
 

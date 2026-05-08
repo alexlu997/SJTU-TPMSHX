@@ -1,5 +1,9 @@
 """Zone configuration editor helpers.
 
+DEPRECATED for optimizer use — see solvers/zone_config.py for context.
+This module backs the UI's "Define zones" tab only. New code uses
+solvers.field_param.ContinuousFieldConfig.
+
 Extracted from main.py (Task B.5). All functions take `window` (Main_Menu
 instance) as first argument. Intra-module calls use top-level function
 names, not `window._method(...)`.

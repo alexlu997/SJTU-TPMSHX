@@ -1,6 +1,18 @@
 """
 zone_config.py — Zone-based domain partitioning for SJTU-TPMSHX
 
+DEPRECATED FOR OPTIMIZER USE
+============================
+The optimizer (`optimization/optimizer_qnehvi.py` + `evaluator.py`) now
+uses `solvers.field_param.ContinuousFieldConfig` (4×4 + Y-mirror = 16-D
+bicubic B-spline) for continuous-field optimization, which superseded
+the old patch-zoning NSGA-II workflow (2026-05-08 rewrite).
+
+This module is RETAINED ONLY for the UI Compute path's "Define zones"
+tab (`runs/run_calculation.py:_parse_inputs` reads window._zone_grid /
+window._build_zone_config). New optimization code MUST NOT import
+ZoneConfig — use ContinuousFieldConfig instead.
+
 Defines discrete zones along the y-axis, each with independent TPMS
 parameters (L, t). Computes per-zone properties and builds per-cell
 arrays for use in solvers.

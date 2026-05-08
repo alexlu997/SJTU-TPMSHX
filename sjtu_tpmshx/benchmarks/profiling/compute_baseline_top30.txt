@@ -1,0 +1,38 @@
+         73581 function calls in 0.759 seconds
+
+   Ordered by: cumulative time
+   List reduced from 188 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.759    0.759 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\optimization\evaluator.py:283(evaluate_design)
+        6    0.025    0.004    0.416    0.069 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:1157(solve)
+      120    0.003    0.000    0.364    0.003 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:553(_solve_pp_sparse_fast)
+      120    0.001    0.000    0.353    0.003 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\linalg\_dsolve\linsolve.py:134(spsolve)
+      120    0.341    0.003    0.341    0.003 {built-in method scipy.sparse.linalg._dsolve._superlu.gssv}
+        3    0.328    0.109    0.328    0.109 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\solve_full.py:331(solve_full_domain)
+        2    0.013    0.006    0.020    0.010 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:411(_build_pp_sparsity_pattern)
+      120    0.000    0.000    0.008    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_compressed.py:1063(sum_duplicates)
+      120    0.001    0.000    0.007    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_compressed.py:30(__init__)
+        1    0.005    0.005    0.007    0.007 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\field_param.py:238(build_grid_arrays)
+      120    0.004    0.000    0.005    0.000 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:1073(_update_density)
+        2    0.000    0.000    0.005    0.003 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\df_projection.py:154(override_simple_K_cF)
+        2    0.000    0.000    0.005    0.003 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\df_projection.py:105(project_fields_to_streamwise_K_cF)
+        2    0.000    0.000    0.005    0.002 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\df_fit\predict.py:72(predict_K_cF_vec)
+      119    0.000    0.000    0.005    0.000 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\df_fit\surrogate_v3.py:178(predict)
+      120    0.000    0.000    0.004    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_compressed.py:1110(sort_indices)
+      238    0.001    0.000    0.004    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\interpolate\_rbfinterp.py:449(__call__)
+      120    0.004    0.000    0.004    0.000 {built-in method scipy.sparse._sparsetools.csr_sort_indices}
+    20558    0.004    0.000    0.004    0.000 {method 'append' of 'list' objects}
+        1    0.000    0.000    0.004    0.004 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\optimization\evaluator.py:171(_build_simple_A)
+        1    0.000    0.000    0.003    0.003 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\optimization\evaluator.py:212(_build_simple_B)
+    20085    0.003    0.000    0.003    0.000 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:429(idx)
+      120    0.001    0.000    0.003    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_base.py:1525(_get_index_dtype)
+      120    0.001    0.000    0.002    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_sputils.py:264(get_index_dtype)
+     4182    0.002    0.000    0.002    0.000 {built-in method builtins.round}
+      240    0.001    0.000    0.002    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_compressed.py:1118(prune)
+      238    0.000    0.000    0.002    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\interpolate\_rbfinterp.py:375(_chunk_evaluator)
+      120    0.001    0.000    0.002    0.000 C:\Users\ALEX\AppData\Local\Programs\Python\Python312\Lib\site-packages\scipy\sparse\_compressed.py:166(check_format)
+      120    0.001    0.000    0.001    0.000 {built-in method scipy.sparse._sparsetools.csr_sum_duplicates}
+        2    0.001    0.000    0.001    0.001 D:\Postgraduate\均质化\SJTU-TPMSHX\sjtu_tpmshx\solvers\simple_solver.py:854(__init__)
+
+
