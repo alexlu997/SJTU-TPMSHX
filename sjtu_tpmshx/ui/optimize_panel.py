@@ -124,6 +124,11 @@ def _gather_cfg(window) -> dict:
     _get('le_PinA',   float, 'P_inA')
     _get('le_PinB',   float, 'P_inB')
 
+    # Material density — silently dropped in v1; the optimizer fell back to
+    # evaluator's hard-coded 2700 (aluminium) regardless of the UI setting
+    # (Shanghai's 304 SS at 7900 was being ignored).
+    _get('le_rho_s',  float, 'rho_s')
+
     if hasattr(window, '_temp_to_K'):
         try:
             cfg['T_inA'] = float(window._temp_to_K(window.le_TinA))
@@ -133,6 +138,33 @@ def _gather_cfg(window) -> dict:
 
     if hasattr(window, 'combo_tpms'):
         cfg['tpms_type'] = window.combo_tpms.currentText()
+
+    # Fluid type (air / water). The 2D evaluator currently runs both sides as
+    # air; we pass the values through so a future water-side evaluator (the
+    # Shanghai air-water case) can dispatch on these without another _gather_cfg
+    # change. For now the evaluator ignores them — but the UI no longer drops
+    # the user's selection silently.
+    if hasattr(window, 'combo_fluidA'):
+        try:
+            cfg['fluid_type_A'] = window.combo_fluidA.currentText().lower()
+        except Exception:
+            pass
+    if hasattr(window, 'combo_fluidB'):
+        try:
+            cfg['fluid_type_B'] = window.combo_fluidB.currentText().lower()
+        except Exception:
+            pass
+
+    # Surrogate extrapolation toggle — the Compute path's UI checkbox. When
+    # ticked the surrogate domain guard downgrades out-of-window inputs from
+    # ValueError to a warning (env var TPMSHX_ALLOW_EXTRAP=1 has the same
+    # effect). For optimization the bounds are pinned to the surrogate window
+    # so this rarely matters, but we propagate it for diagnostic consistency.
+    if hasattr(window, 'chk_allow_extrap'):
+        try:
+            cfg['allow_extrap'] = bool(window.chk_allow_extrap.isChecked())
+        except Exception:
+            pass
 
     return cfg
 
@@ -252,26 +284,311 @@ def _set_summary_banner(window, text: str, *, show: bool = True) -> None:
         pass
 
 
+# ─── P1: qNEHVI parameter dialog (modal, PySide6) ───────────────────
+
+
+def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
+    """Modal dialog asking for qNEHVI BO parameters before launch.
+
+    Cached on the window: the second call within a session reuses the
+    previous user values, so the dialog isn't a nuisance after the first
+    click. Returns None if the user clicks Cancel; otherwise a dict with
+    ``n_init, n_iter, q_batch, seed, n_rho_loops``.
+    """
+    try:
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QFormLayout, QSpinBox, QDialogButtonBox,
+            QLabel, QHBoxLayout, QFrame, QCheckBox,
+        )
+        from PySide6.QtCore import Qt
+    except Exception as e:
+        print(f"[optimize] dialog unavailable ({e}); using defaults")
+        return _qnehvi_param_defaults(window, cfg)
+
+    cached = getattr(window, '_opt_param_cache', None) or {}
+    n_init_init  = int(cached.get('n_init',  32))
+    n_iter_init  = int(cached.get('n_iter',  24))
+    q_batch_init = int(cached.get('q_batch', 2))
+    seed_init    = int(cached.get('seed',    42))
+    n_rho_init   = int(cfg.get('n_rho_loops', cached.get('n_rho_loops', 3)))
+
+    dlg = QDialog(window)
+    dlg.setWindowTitle("qNEHVI — Bayesian optimization parameters")
+    dlg.setModal(True)
+    lay = QVBoxLayout(dlg)
+
+    summary = QLabel(
+        f"Domain {cfg.get('L_domain'):.3f} × {cfg.get('H_domain'):.3f} m   "
+        f"TPMS {cfg.get('tpms_type', '?')}   "
+        f"u_A={cfg.get('u_A')}, u_B={cfg.get('u_B')}   "
+        f"T_inA={cfg.get('T_inA'):.0f} K, T_inB={cfg.get('T_inB'):.0f} K"
+    )
+    summary.setWordWrap(True)
+    summary.setStyleSheet("color:#666; font-size:9pt; padding:2px;")
+    lay.addWidget(summary)
+
+    line = QFrame(); line.setFrameShape(QFrame.Shape.HLine)
+    lay.addWidget(line)
+
+    form = QFormLayout()
+    form.setHorizontalSpacing(14); form.setVerticalSpacing(6)
+
+    sp_init = QSpinBox(); sp_init.setRange(4, 256); sp_init.setValue(n_init_init)
+    sp_init.setToolTip("Sobol initial samples (~2 × decision_dim recommended; 16-D → 32)")
+    form.addRow("n_init (Sobol)", sp_init)
+
+    sp_iter = QSpinBox(); sp_iter.setRange(0, 200); sp_iter.setValue(n_iter_init)
+    sp_iter.setToolTip("BO iterations after init. HV-plateau early-stop may shorten this.")
+    form.addRow("n_iter (BO)", sp_iter)
+
+    sp_batch = QSpinBox(); sp_batch.setRange(1, 8); sp_batch.setValue(q_batch_init)
+    sp_batch.setToolTip("Parallel candidates per BO iter; q=2 is a good Pareto-coverage default")
+    form.addRow("q_batch", sp_batch)
+
+    sp_seed = QSpinBox(); sp_seed.setRange(0, 9999); sp_seed.setValue(seed_init)
+    sp_seed.setToolTip("Random seed for Sobol + BoTorch (paper reproducibility)")
+    form.addRow("seed", sp_seed)
+
+    sp_rho = QSpinBox(); sp_rho.setRange(1, 8); sp_rho.setValue(n_rho_init)
+    sp_rho.setToolTip(
+        "Compressible ρ(T) outer loop iterations.\n"
+        "1 = isothermal-ρ fast path (Q/dP ~10 % off)\n"
+        "3 = matches the Shanghai validation baseline (default)\n"
+        "≥4 = tighter ρ convergence; not usually worth the cost")
+    form.addRow("n_rho_loops", sp_rho)
+
+    lay.addLayout(form)
+
+    # Eval count preview — recomputed on any spinbox change
+    preview = QLabel("")
+    preview.setStyleSheet("color:#999; font-size:9pt; font-style:italic;")
+    def _refresh_preview(*_):
+        total = sp_init.value() + sp_iter.value() * sp_batch.value()
+        # ~10 s per eval at n_rho=3 (warm; first eval ~30 s cold)
+        sec_est = total * (3 + 3 * sp_rho.value())
+        mn, sc = sec_est // 60, sec_est % 60
+        preview.setText(f"≈ {total} evals total · est. {mn} min {sc} s wall (varies with design)")
+    for sp in (sp_init, sp_iter, sp_batch, sp_rho):
+        sp.valueChanged.connect(_refresh_preview)
+    _refresh_preview()
+    lay.addWidget(preview)
+
+    btns = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    btns.accepted.connect(dlg.accept)
+    btns.rejected.connect(dlg.reject)
+    lay.addWidget(btns)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+
+    out = {
+        'n_init':       sp_init.value(),
+        'n_iter':       sp_iter.value(),
+        'q_batch':      sp_batch.value(),
+        'seed':         sp_seed.value(),
+        'n_rho_loops':  sp_rho.value(),
+    }
+    window._opt_param_cache = dict(out)
+    return out
+
+
+def _qnehvi_param_defaults(window, cfg: dict) -> dict:
+    """Headless fallback when the dialog can't be constructed (no Qt). Used
+    by tests + CLI-driven UI paths."""
+    return {
+        'n_init':      32, 'n_iter':  24, 'q_batch': 2,
+        'seed':        42,
+        'n_rho_loops': int(cfg.get('n_rho_loops', 3)),
+    }
+
+
+# ─── P2: hide legacy patch-zoning widgets on Optimize tab ───────────
+
+
+def _hide_legacy_zone_widgets(window) -> None:
+    """The 16-D continuous-field optimizer doesn't use zones. The chk_zones
+    checkbox + zone_table + 'Preview Layout' button are still in the panel
+    from the patch-zoning era — they confuse users who expect them to feed
+    the optimizer. Hide them on first visit; idempotent.
+    """
+    if getattr(window, '_legacy_zone_hidden', False):
+        return
+    for attr in ('chk_zones', 'zone_table', 'btn_preview_z'):
+        w = getattr(window, attr, None)
+        if w is None:
+            continue
+        try:
+            w.setVisible(False)
+        except Exception:
+            pass
+    window._legacy_zone_hidden = True
+
+
+# ─── P3: cosmetic — refresh button label + tooltips at first run ────
+
+
+def _refresh_button_text(window) -> None:
+    """Replace 'Optimize Zones (NSGA-II)' with the actual algorithm name +
+    tooltip. ui_builders constructs the widget before the rewrite landed
+    so the legacy text persists into runtime; we patch it here."""
+    btn = getattr(window, '_opt_btn', None)
+    if btn is not None:
+        try:
+            btn.setText("▶  Optimize (qNEHVI BO)")
+            btn.setToolTip(
+                "Launch qNEHVI Bayesian multi-objective Pareto search.\n"
+                "16-D continuous-field decision (4×4 control points + Y-mirror)\n"
+                "with compressible ρ(T) coupling. Runs ~30-60 min wall.")
+        except Exception:
+            pass
+    cancel = getattr(window, '_opt_cancel_btn', None)
+    if cancel is not None:
+        try:
+            cancel.setToolTip(
+                "Request graceful cancel of the running qNEHVI search\n"
+                "(stops at the next BO iteration boundary)")
+        except Exception:
+            pass
+
+
+# ─── P4: live preview of L(x,y), t(x,y) field heatmap ───────────────
+
+
+def show_field_preview(window, x_decision=None) -> None:
+    """Render L(x,y) and t(x,y) heatmaps for a decision vector.
+
+    If ``x_decision`` is None, defaults to the centre of the bounds
+    (uniform L = mean(L_bounds), t = mean(t_bounds)) so a click before any
+    optimization still produces a meaningful preview.
+
+    Drawn on ``window.canvas_layout`` if available (the dedicated 'Layout'
+    tab), otherwise falls back to ``canvas_pareto`` so users see something.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        _set_status(window, f"matplotlib unavailable ({e})")
+        return
+
+    from solvers.field_param import (
+        from_decision_vector, encode_decision_vector, uniform_field,
+        DEFAULT_L_BOUNDS, DEFAULT_T_BOUNDS,
+        DEFAULT_N_CTRL_X, DEFAULT_N_CTRL_Y, DEFAULT_SYMMETRIC_Y,
+    )
+    cfg = _gather_cfg(window)
+    L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
+    tpms = cfg.get('tpms_type', 'Diamond')
+    k_s  = float(cfg.get('k_s', 17.0))
+
+    if x_decision is None:
+        L_avg = 0.5 * sum(DEFAULT_L_BOUNDS)
+        t_avg = 0.5 * sum(DEFAULT_T_BOUNDS)
+        fc = uniform_field(L_avg, t_avg, tpms, k_s, L_dom, H_dom)
+    else:
+        fc = from_decision_vector(
+            np.asarray(x_decision, dtype=np.float64),
+            tpms_type=tpms, k_s=k_s,
+            L_domain=L_dom, H_domain=H_dom,
+            n_ctrl_x=DEFAULT_N_CTRL_X, n_ctrl_y=DEFAULT_N_CTRL_Y,
+            symmetric_y=DEFAULT_SYMMETRIC_Y,
+        )
+
+    Nx_p, Ny_p = 80, 40
+    L_field, t_field = fc.evaluate_grid(Nx_p, Ny_p)
+    extent_mm = [0, L_dom * 1e3, 0, H_dom * 1e3]
+
+    canvas = (getattr(window, 'canvas_layout', None)
+              or getattr(window, 'canvas_pareto', None))
+    if canvas is None:
+        print(f"[optimize] field preview (no canvas):")
+        print(f"  L: {L_field.min():.2f}–{L_field.max():.2f} mm "
+              f"(avg {L_field.mean():.2f})")
+        print(f"  t: {t_field.min():.3f}–{t_field.max():.3f} mm "
+              f"(avg {t_field.mean():.3f})")
+        return
+
+    fig = canvas.figure
+    fig.clear()
+    ax_L = fig.add_subplot(1, 2, 1)
+    im_L = ax_L.imshow(L_field.T, origin='lower', extent=extent_mm,
+                       aspect='auto', cmap='viridis')
+    ax_L.set_title(f"L(x, y)  [mm]  range [{L_field.min():.2f}, {L_field.max():.2f}]")
+    ax_L.set_xlabel("x [mm]"); ax_L.set_ylabel("y [mm]")
+    fig.colorbar(im_L, ax=ax_L, fraction=0.046, pad=0.04)
+
+    ax_t = fig.add_subplot(1, 2, 2)
+    im_t = ax_t.imshow(t_field.T, origin='lower', extent=extent_mm,
+                       aspect='auto', cmap='magma')
+    ax_t.set_title(f"t(x, y)  [mm]  range [{t_field.min():.3f}, {t_field.max():.3f}]")
+    ax_t.set_xlabel("x [mm]"); ax_t.set_ylabel("y [mm]")
+    fig.colorbar(im_t, ax=ax_t, fraction=0.046, pad=0.04)
+
+    fig.tight_layout()
+    canvas.draw()
+    _set_status(
+        window,
+        f"field preview: L ∈ [{L_field.min():.2f}, {L_field.max():.2f}] mm, "
+        f"t ∈ [{t_field.min():.3f}, {t_field.max():.3f}] mm")
+
+
+def _rewire_preview_button(window) -> None:
+    """Repurpose 'Preview Layout' (zone era) → 'Preview Field' (continuous
+    era). Replaces all signal handlers on btn_preview_z and updates the
+    label so it points at show_field_preview instead of the dead zone
+    layout drawer.
+    """
+    if getattr(window, '_field_preview_wired', False):
+        return
+    btn = getattr(window, 'btn_preview_z', None)
+    if btn is None:
+        return
+    try:
+        btn.clicked.disconnect()
+    except Exception:
+        pass
+    try:
+        btn.setText("&Preview Field  ↗")
+        btn.setToolTip(
+            "Render the current L(x, y) and t(x, y) field heatmaps "
+            "(or a uniform mid-bounds field if no design selected)")
+        btn.setVisible(True)            # un-hide after the legacy hide pass
+        btn.clicked.connect(lambda *_: show_field_preview(window))
+        window._field_preview_wired = True
+    except Exception as e:
+        print(f"[optimize] preview rewire failed: {e}")
+
+
 # ─── Public API (called by main.py) ─────────────────────────────────
 
 
 def run_optimize(window) -> None:
     """Kick off a qNEHVI optimization in a background thread."""
+    # First-call cleanup of the patch-zoning era UI artifacts and label
+    # refresh. Idempotent so repeated clicks don't re-invoke them.
+    _hide_legacy_zone_widgets(window)
+    _refresh_button_text(window)
+    _rewire_preview_button(window)
+
     if getattr(window, '_opt_worker', None) is not None and window._opt_worker.isRunning():
         _set_status(window, 'optimizer already running')
         return
 
     cfg = _gather_cfg(window)
 
-    # n_init / n_iter / q_batch sourced from window if present, else defaults
-    n_init  = int(getattr(window, 'opt_n_init',  None).text()) \
-              if hasattr(window, 'opt_n_init')  else 32
-    n_iter  = int(getattr(window, 'opt_n_iter',  None).text()) \
-              if hasattr(window, 'opt_n_iter')  else 24
-    q_batch = int(getattr(window, 'opt_q_batch', None).text()) \
-              if hasattr(window, 'opt_q_batch') else 2
-    seed    = int(getattr(window, 'opt_seed',    None).text()) \
-              if hasattr(window, 'opt_seed')    else 42
+    # qNEHVI parameter dialog — surfaces the four BO knobs that the v1 panel
+    # silently locked at compile-time defaults. Returns None on Cancel; the
+    # 'remember' choice is cached on the window for subsequent clicks.
+    params = _show_qnehvi_param_dialog(window, cfg)
+    if params is None:
+        _set_status(window, 'launch cancelled')
+        return
+    n_init  = int(params['n_init'])
+    n_iter  = int(params['n_iter'])
+    q_batch = int(params['q_batch'])
+    seed    = int(params['seed'])
+    cfg['n_rho_loops'] = int(params['n_rho_loops'])
 
     save_dir = os.path.join('opt_runs',
                              f"qnehvi_{time.strftime('%Y%m%d_%H%M%S')}")
