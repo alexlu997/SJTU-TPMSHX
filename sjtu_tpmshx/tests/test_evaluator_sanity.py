@@ -191,3 +191,49 @@ def test_log_dp_roundtrip_math():
         log_form = -np.log10(dP)
         dP_back = 10.0 ** (-log_form)
         assert abs(dP_back - dP) / dP < 1e-12
+
+
+# ─── Compressible outer-loop coupling (var-density ρ(T)) ────────────
+
+
+def test_compressible_outer_loop_changes_dp():
+    """n_rho_loops=3 must produce a materially different dP from
+    n_rho_loops=1 on a heated case, proving the ρ(T) feedback into SIMPLE
+    is wired and honors the project-level compressibility hard constraint
+    (memory: feedback_compressible_required.md → wiring 弃压缩 ⇒ dP +21pp).
+
+    Picks a deliberately large ΔT (T_inA=600 K, T_inB=300 K) so the
+    compressibility shift is unambiguous (≥ 5 % relative dP delta).
+    """
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
+    base = {**_FAST_CFG,
+            'T_inA': 600.0, 'T_inB': 300.0,
+            'reject_unconverged': False, 'penalty_enabled': False}
+    Q1_neg, dP1, _ = evaluate_design(x=None, cfg={**base, 'n_rho_loops': 1}, fc=fc)
+    Q3_neg, dP3, _ = evaluate_design(x=None, cfg={**base, 'n_rho_loops': 3}, fc=fc)
+    rel_ddP = abs(dP3 - dP1) / dP1
+    assert rel_ddP > 0.05, \
+        f"compressibility coupling not wired: |ΔdP|/dP = {rel_ddP:.3%} (expected > 5 %)"
+
+
+def test_compressible_outer_loop_isothermal_inlets_match_loop1():
+    """When T_inA == T_inB (no temperature gradient at the inlets), and the
+    energy solve produces a near-uniform field, the ρ(T) update should
+    converge to the inlet ρ on the first iteration → drho_max < 1 % → break.
+    Result should match n_rho_loops=1 within numerical noise.
+
+    This is the consistency check: extra outer iterations should not move
+    the solution when there's nothing to converge.
+    """
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
+    base = {**_FAST_CFG,
+            'T_inA': 300.0, 'T_inB': 300.0,    # zero ΔT
+            'reject_unconverged': False, 'penalty_enabled': False}
+    Q1_neg, dP1, _ = evaluate_design(x=None, cfg={**base, 'n_rho_loops': 1}, fc=fc)
+    Q3_neg, dP3, _ = evaluate_design(x=None, cfg={**base, 'n_rho_loops': 3}, fc=fc)
+    # Zero ΔT can still produce small Q/dP shifts due to iteration order; allow
+    # 5 % slack to absorb that without losing the regression-detection signal.
+    rel_dQ  = abs(Q3_neg - Q1_neg) / max(abs(Q1_neg), 1.0)
+    rel_ddP = abs(dP3 - dP1)       / max(dP1, 1.0)
+    assert rel_dQ  < 0.05, f"isothermal: ΔQ shift = {rel_dQ:.3%} > 5 %"
+    assert rel_ddP < 0.05, f"isothermal: ΔdP shift = {rel_ddP:.3%} > 5 %"

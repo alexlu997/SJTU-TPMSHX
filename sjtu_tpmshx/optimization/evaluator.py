@@ -110,8 +110,14 @@ DEFAULT_CONFIG: dict = {
                                     # override to 1e-5 explicitly.
     'max_iter_energy': 5000,
     'tol_energy':      0.5,        # K
-    'n_rho_loops':     1,          # 1 = isothermal-rho; >1 enables outer
-                                   # SIMPLE↔energy variable-density iteration.
+    'n_rho_loops':     3,          # 1 = isothermal-ρ fast path; >1 enables
+                                   # outer SIMPLE↔energy variable-density
+                                   # iteration. 3 is the ConstDF-v1 baseline
+                                   # used in validate_shanghai_3d_real and
+                                   # the retired patch-zoning evaluator;
+                                   # honors feedback_compressible_required.md.
+    'drho_tol':        0.01,       # converge outer loop when |Δρ|/ρ̄ < 1 %
+    'rho_relax':       0.7,        # under-relaxation on ρ updates (Picard)
 
     # Continuous-field parametrization
     'n_ctrl_x':    DEFAULT_N_CTRL_X,
@@ -351,18 +357,38 @@ def evaluate_design(x: np.ndarray,
                                      * cfg_full['rho_s'] * cell_area))
         return -1e-6, dp_cap, mass_rejected
 
-    # 4. Energy LTNE (single-pass; n_rho_loops=1 default).
+    # 4. Energy LTNE + variable-density outer coupling.
+    #
+    # n_rho_loops == 1   → isothermal-ρ fast path (single energy solve)
+    # n_rho_loops >  1   → after each energy solve, update ρ_A/B(T) via
+    #                       ideal-gas state law, push back into SIMPLE (with
+    #                       axis-swap for fluid A), re-solve SIMPLE warm-start,
+    #                       repeat until max relative ρ change < 1 % or the
+    #                       loop cap is hit. This honors the project's
+    #                       compressibility hard constraint (see
+    #                       feedback_compressible_required.md): the ideal-gas
+    #                       coupling is what holds the dP RMSRE at 17.83 % on
+    #                       Shanghai 3D; dropping it regressed dP to 38.88 %.
     n_rho_loops = max(1, int(cfg_full.get('n_rho_loops', 1)))
-    rcp_A = air_density(cfg_full['T_inA'], cfg_full['P_inA']) * air_cp(cfg_full['T_inA'])
-    rcp_B = air_density(cfg_full['T_inB'], cfg_full['P_inB']) * air_cp(cfg_full['T_inB'])
+    drho_tol    = float(cfg_full.get('drho_tol', 0.01))
+    rho_relax   = float(cfg_full.get('rho_relax', 0.7))
+
+    P_inA = float(cfg_full['P_inA']); P_inB = float(cfg_full['P_inB'])
+    T_inA = float(cfg_full['T_inA']); T_inB = float(cfg_full['T_inB'])
+
+    # Real-coord (Nx, Ny) ρ and ρ·cp fields seeded at inlet conditions.
+    rho_A_field = np.full((Nx, Ny), air_density(T_inA, P_inA), dtype=np.float64)
+    rho_B_field = np.full((Nx, Ny), air_density(T_inB, P_inB), dtype=np.float64)
+    rcp_A = rho_A_field * air_cp(T_inA)
+    rcp_B = rho_B_field * air_cp(T_inB)
 
     Ta = Tb = Ts = None
-    for _ in range(n_rho_loops):
+    for outer_it in range(n_rho_loops):
         ucA, vcA = _cellcentered_velocity_A(sA, Nx, Ny)
         ucB, vcB = _cellcentered_velocity_B(sB, Nx, Ny)
         Ta, Tb, Ts = solve_full_domain(
             L_dom, H_dom, Nx, Ny,
-            cfg_full['T_inA'], cfg_full['T_inB'],
+            T_inA, T_inB,
             arrays['K_ffA_arr'], arrays['K_ffB_arr'], arrays['K_ss_arr'],
             arrays['h_vA_arr'], arrays['h_vB_arr'],
             rcp_A, rcp_B,
@@ -372,9 +398,47 @@ def evaluate_design(x: np.ndarray,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_arr, dy_arr=dy_arr,
         )
-        # n_rho_loops>1 would re-solve SIMPLE with updated ρ(T) here; not yet
-        # implemented in the new evaluator. Add when compressibility coupling
-        # becomes a tuning concern.
+
+        if n_rho_loops == 1:
+            break
+
+        # Update ρ from new Ta/Tb (real coords). air_density takes (T, P)
+        # broadcastable arrays; here T is 2D and P is scalar.
+        rho_A_new = air_density(Ta, P_inA)
+        rho_B_new = air_density(Tb, P_inB)
+        drho_max = max(
+            float(np.max(np.abs(rho_A_new - rho_A_field)) /
+                  max(rho_A_field.mean(), 1e-12)),
+            float(np.max(np.abs(rho_B_new - rho_B_field)) /
+                  max(rho_B_field.mean(), 1e-12)),
+        )
+        if drho_max < drho_tol:
+            break  # converged
+        if outer_it == n_rho_loops - 1:
+            break  # last sweep — no point re-solving SIMPLE only to discard
+
+        # Under-relaxed update of ρ + ρ·cp fields.
+        rho_A_field = rho_relax * rho_A_new + (1.0 - rho_relax) * rho_A_field
+        rho_B_field = rho_relax * rho_B_new + (1.0 - rho_relax) * rho_B_field
+        rcp_A = (rho_relax * rho_A_new * air_cp(Ta)
+                 + (1.0 - rho_relax) * rcp_A)
+        rcp_B = (rho_relax * rho_B_new * air_cp(Tb)
+                 + (1.0 - rho_relax) * rcp_B)
+
+        # Push updated ρ + T into SIMPLE. SIMPLE A's internal grid is
+        # axis-swapped (SIMPLE-y = real-x), so transpose before assignment.
+        # update_T_field also refreshes mu_field / mu_eff_field via
+        # Sutherland so the D-F sweep stays consistent under non-iso flow.
+        sA.rho_field = np.ascontiguousarray(rho_A_field.T, dtype=np.float64)
+        sB.rho_field = np.ascontiguousarray(rho_B_field,   dtype=np.float64)
+        sA.update_T_field(np.ascontiguousarray(Ta.T,       dtype=np.float64))
+        sB.update_T_field(np.ascontiguousarray(Tb,         dtype=np.float64))
+
+        # Re-solve SIMPLE with warm-started u/v/P.
+        sA.solve(max_iter=cfg_full['max_iter_simple'],
+                 tol=cfg_full['tol_simple'], verbose=verbose)
+        sB.solve(max_iter=cfg_full['max_iter_simple'],
+                 tol=cfg_full['tol_simple'], verbose=verbose)
 
     # 5. Objectives
     Q_total = _enthalpy_q(arrays, Tb, Ts, dx_arr, dy_arr)
