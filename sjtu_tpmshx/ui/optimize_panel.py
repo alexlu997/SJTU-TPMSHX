@@ -29,6 +29,9 @@ from typing import Optional
 
 import numpy as np
 
+# Time module already imported above; alias for the closures below
+_time = time
+
 # Qt imports are kept lazy so this module can be imported by non-GUI tools
 # (CLI scripts, headless tests) without forcing a Qt dependency.
 
@@ -128,20 +131,86 @@ def _gather_cfg(window) -> dict:
 
 
 def _set_status(window, text: str) -> None:
-    """Push a one-line status onto whichever label the window exposes."""
-    for attr in ('lbl_opt_status', 'lbl_status', 'statusBar'):
-        target = getattr(window, attr, None)
-        if target is None:
-            continue
+    """Push a one-line status onto the Optimize tab status label.
+
+    Targets ``window._opt_status`` (built by ui_builders) when present, falls
+    back to the global status bar, then prints to stdout.
+    """
+    target = getattr(window, '_opt_status', None)
+    if target is not None and hasattr(target, 'setText'):
         try:
-            if callable(target):
-                target().showMessage(text)
-            elif hasattr(target, 'setText'):
-                target.setText(text)
+            target.setText(text)
+            return
+        except Exception:
+            pass
+    sb = getattr(window, 'statusBar', None)
+    if callable(sb):
+        try:
+            sb().showMessage(text)
             return
         except Exception:
             pass
     print(f"[optimize] {text}")
+
+
+def _set_kpi(window, gen=None, best_q=None, best_dp=None, eta=None) -> None:
+    """Update the Optimize tab KPI cards."""
+    if gen is not None:
+        lbl = getattr(window, '_opt_kpi_gen', None)
+        if lbl is not None:
+            try: lbl.setText(str(gen))
+            except Exception: pass
+    if best_q is not None:
+        lbl = getattr(window, '_opt_kpi_q', None)
+        if lbl is not None:
+            try: lbl.setText(f"{best_q:.0f}" if isinstance(best_q, (int, float)) else str(best_q))
+            except Exception: pass
+    if best_dp is not None:
+        lbl = getattr(window, '_opt_kpi_dp', None)
+        if lbl is not None:
+            try: lbl.setText(f"{best_dp:.0f}" if isinstance(best_dp, (int, float)) else str(best_dp))
+            except Exception: pass
+    if eta is not None:
+        lbl = getattr(window, '_opt_kpi_eta', None)
+        if lbl is not None:
+            try: lbl.setText(str(eta))
+            except Exception: pass
+
+
+def _set_progress_pct(window, pct: float) -> None:
+    pb = getattr(window, '_opt_progress', None)
+    if pb is None:
+        return
+    try:
+        pb.show()
+        pb.setValue(int(np.clip(pct, 0, 100)))
+    except Exception:
+        pass
+
+
+def _toggle_buttons(window, running: bool) -> None:
+    """Disable Launch / enable Cancel while running, opposite when idle."""
+    btn = getattr(window, '_opt_btn', None)
+    cancel = getattr(window, '_opt_cancel_btn', None)
+    try:
+        if btn is not None:    btn.setEnabled(not running)
+        if cancel is not None: cancel.setEnabled(running)
+    except Exception:
+        pass
+
+
+def _push_sparkline(window, value: float) -> None:
+    sl = getattr(window, '_opt_sparkline', None)
+    if sl is None:
+        return
+    for method in ('append', 'add', 'push'):
+        fn = getattr(sl, method, None)
+        if callable(fn):
+            try:
+                fn(float(value))
+                return
+            except Exception:
+                pass
 
 
 # ─── Public API (called by main.py) ─────────────────────────────────
@@ -170,17 +239,49 @@ def run_optimize(window) -> None:
 
     Worker = _make_worker_class()
     worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir)
+    window._opt_t_start = time.time()
+    window._opt_total_evals = n_init + n_iter * q_batch
 
     def _on_progress(count, total, best_Q):
-        _set_status(window,
-                    f"qNEHVI {count}/{total}  best Q = {best_Q:.0f} W/m")
+        # Phase derived from count: first n_init evals are Sobol init, after
+        # that we are inside the BO iteration loop.
+        if count <= n_init:
+            phase_label = f"Sobol {count}/{n_init}"
+        else:
+            it_done = (count - n_init) // max(1, q_batch)
+            phase_label = f"BO iter {it_done}/{n_iter}"
+        # ETA: extrapolate from elapsed × remaining/done
+        t_now = time.time()
+        elapsed = t_now - getattr(window, '_opt_t_start', t_now)
+        remaining = max(0, total - count)
+        if count > 0 and elapsed > 0:
+            eta_s = elapsed * remaining / count
+            eta_str = (f"{int(eta_s/60)}m{int(eta_s%60):02d}s"
+                       if eta_s >= 60 else f"{int(eta_s)}s")
+        else:
+            eta_str = "—"
+        _set_kpi(window, gen=phase_label, best_q=best_Q, eta=eta_str)
+        _set_progress_pct(window, 100.0 * count / max(1, total))
+        _set_status(window, f"qNEHVI {count}/{total}  best Q = {best_Q:.0f} W/m")
+        _push_sparkline(window, best_Q)
 
     def _on_done(res):
         window._last_opt_result = res
         window._last_opt_cfg = cfg
+        # Best Q + dP from the Pareto: highest Q point and lowest dP point
+        if len(res['F']) > 0:
+            Q_arr  = -res['F'][:, 0]
+            dP_arr =  res['F'][:, 1]
+            _set_kpi(window,
+                     gen=f"DONE ({res['n_evals']} evals)",
+                     best_q=float(Q_arr.max()),
+                     best_dp=float(dP_arr.min()),
+                     eta="✓")
+        _set_progress_pct(window, 100.0)
         _set_status(window,
                     f"qNEHVI DONE: {len(res['X'])} Pareto / {res['n_evals']} evals "
                     f"→ {res['save_dir']}")
+        _toggle_buttons(window, running=False)
         try:
             show_pareto(window, res)
         except Exception as e:
@@ -192,14 +293,21 @@ def run_optimize(window) -> None:
 
     def _on_error(msg):
         _set_status(window, f"qNEHVI ERROR: {msg}")
+        _set_kpi(window, gen="ERROR", eta="—")
+        _toggle_buttons(window, running=False)
         print(f"[optimize] worker error: {msg}")
 
     worker.progress_signal.connect(_on_progress)
     worker.finished_with_result.connect(_on_done)
     worker.error_signal.connect(_on_error)
     window._opt_worker = worker
+    _toggle_buttons(window, running=True)
+    _set_kpi(window, gen="starting", best_q="—", best_dp="—", eta="—")
+    _set_progress_pct(window, 0.0)
+    _set_status(window, f'qNEHVI running … {n_init} Sobol + {n_iter}×{q_batch} BO')
     worker.start()
-    _set_status(window, 'qNEHVI running …')
+    print(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
+          f"save_dir={save_dir}")
 
 
 def cancel_optimize(window) -> None:
