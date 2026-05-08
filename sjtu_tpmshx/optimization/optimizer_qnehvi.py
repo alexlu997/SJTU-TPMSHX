@@ -365,10 +365,16 @@ def run_qnehvi(config: Optional[dict] = None,
     progress['phase'] = 'done'
 
     if verbose:
+        # Y_pareto stores objectives in MAX form: column 0 = Q, column 1 =
+        # -log10(dP). Convert back to real Pa for the human-readable summary
+        # rather than printing log values (which previously surfaced as
+        # nonsense like "dP range [4, 4]").
+        Q_real  = Y_pareto[:, 0]
+        dP_real = np.power(10.0, -Y_pareto[:, 1])
         print(f"[qNEHVI] DONE — {len(X_pareto)} Pareto solutions across "
               f"{len(X_np)} total evaluations")
-        print(f"  Q range  [{Y_pareto[:, 0].min():.0f}, {Y_pareto[:, 0].max():.0f}] W/m")
-        print(f"  dP range [{(-Y_pareto[:, 1]).min():.0f}, {(-Y_pareto[:, 1]).max():.0f}] Pa")
+        print(f"  Q range  [{Q_real.min():.0f}, {Q_real.max():.0f}] W/m")
+        print(f"  dP range [{dP_real.min():.0f}, {dP_real.max():.0f}] Pa")
 
     _save_pareto_csv(os.path.join(save_dir, 'pareto_final.csv'), X_pareto, F_min)
     _save_pareto_csv(os.path.join(save_dir, 'history.csv'), X_np, F_hist_min)
