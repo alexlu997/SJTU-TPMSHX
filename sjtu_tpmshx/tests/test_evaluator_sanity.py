@@ -126,3 +126,68 @@ def test_decision_vector_path_matches_direct_fc():
     assert abs(dP1 - dP2) < 1e-6, \
         f"dP differs: direct={dP1}, via x={dP2}"
     assert abs(m1 - m2) < 1e-6
+
+
+# ─── v2 hardening: dp_cap + log-dP + HV early stop ──────────────────
+
+
+def test_dp_cap_caps_extreme_dp():
+    """When dp_cap is set below the natural dP for the design, the evaluator
+    must clamp the returned dP to the cap (rejected-design tag).
+
+    Decoupled from SIMPLE convergence: forces ``reject_unconverged=False`` and
+    sets ``dp_cap_pa`` to an absurdly low 100 Pa so the converged dP almost
+    certainly exceeds it. Validates the post-solve guard, not the
+    non-convergence branch.
+    """
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
+    cfg = {**_FAST_CFG,
+           'dp_cap_pa':           100.0,
+           'reject_unconverged':  False}
+    Q_neg, dP, _mass = evaluate_design(x=None, cfg=cfg, fc=fc)
+    assert dP == 100.0, f"expected dP clamped to 100, got {dP}"
+    assert abs(Q_neg) < 1.0, f"rejected design should report Q≈0, got Q_neg={Q_neg}"
+
+
+def test_dp_cap_passthrough_when_below():
+    """When dp_cap is comfortably above the natural dP, the evaluator must
+    return the unmodified dP. Sanity that the cap doesn't fire on healthy
+    designs."""
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
+    cfg_capped   = {**_FAST_CFG, 'dp_cap_pa': 1.0e7}   # 10 MPa cap (way above)
+    cfg_uncapped = {**_FAST_CFG, 'dp_cap_pa': 1.0e9}
+    _, dP_capped,   _ = evaluate_design(x=None, cfg=cfg_capped,   fc=fc)
+    _, dP_uncapped, _ = evaluate_design(x=None, cfg=cfg_uncapped, fc=fc)
+    assert abs(dP_capped - dP_uncapped) < 1e-6, \
+        f"natural dP should be unaffected by a non-binding cap"
+
+
+# ─── HV-plateau helper (pure-numeric, fast) ─────────────────────────
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize("hist,tol,window,expected", [
+    # Flat tail: 3 trailing relative deltas all < 1 % → trigger
+    ([1.00, 1.50, 1.51, 1.515, 1.518], 0.01, 3, True),
+    # Steady rise: relative deltas way above 1 % → no trigger
+    ([1.00, 1.50, 2.00, 3.00, 4.00],   0.01, 3, False),
+    # Insufficient history (< window+1 entries) → never triggers
+    ([1.00, 1.50],                     0.01, 3, False),
+    # Disable via tol=0
+    ([1.00, 1.00, 1.00, 1.00, 1.00],   0.0,  3, False),
+    # Tighter tol fails on small-but-nonzero gain
+    ([1.00, 1.10, 1.105, 1.110, 1.115], 0.001, 3, False),
+])
+def test_hv_plateau_detection(hist, tol, window, expected):
+    from optimization.optimizer_qnehvi import hv_plateau_detected
+    assert hv_plateau_detected(hist, tol, window) is expected
+
+
+@pytest.mark.fast
+def test_log_dp_roundtrip_math():
+    """Pure check of the log10 / 10**(-x) round-trip used by qnehvi to
+    transform dP into the GP's MAX-form objective and back."""
+    for dP in (1.0, 100.0, 12345.6, 1.0e6):
+        log_form = -np.log10(dP)
+        dP_back = 10.0 ** (-log_form)
+        assert abs(dP_back - dP) / dP < 1e-12

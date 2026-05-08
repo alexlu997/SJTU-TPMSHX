@@ -90,6 +90,21 @@ def _pareto_mask_max(Y: np.ndarray) -> np.ndarray:
     return mask
 
 
+def hv_plateau_detected(hv_hist: list, hv_tol: float, hv_window: int) -> bool:
+    """Return True iff the last ``hv_window`` relative HV deltas are all
+    below ``hv_tol``.
+
+    Used by the BO loop to short-circuit when the Pareto front stops
+    advancing materially. Pure-numeric helper exposed at module scope so it
+    can be unit-tested without spinning up a full optimization.
+    """
+    if len(hv_hist) < hv_window + 1:
+        return False
+    recent = np.asarray(hv_hist[-(hv_window + 1):], dtype=np.float64)
+    rel = (recent[1:] - recent[:-1]) / np.maximum(recent[:-1], 1e-12)
+    return bool(np.all(rel < hv_tol))
+
+
 def _save_pareto_csv(path: str, X: np.ndarray, F_min: np.ndarray) -> None:
     """Write CSV: cols = X dims + ['Q', 'dP'] (Q in W/m, dP in Pa, both
     positive)."""
@@ -110,7 +125,9 @@ def run_qnehvi(config: Optional[dict] = None,
                seed: int = 42,
                verbose: bool = True,
                save_dir: Optional[str] = None,
-               progress_cb=None) -> dict:
+               progress_cb=None,
+               hv_tol: float = 0.01,
+               hv_window: int = 3) -> dict:
     """qNEHVI Bayesian multi-objective optimization.
 
     Parameters
@@ -127,6 +144,11 @@ def run_qnehvi(config: Optional[dict] = None,
     save_dir : str — directory for CSV / config.json. Auto-named if None.
     progress_cb : callable(int, int, dict) — optional UI hook called as
         ``progress_cb(count, total, progress_dict)`` every q_batch evals.
+    hv_tol : float — relative HV change threshold for early-stop (default 0.01).
+        When the trailing ``hv_window`` iterations all show < hv_tol relative
+        gain, the loop exits. Set hv_tol=0 to disable.
+    hv_window : int — number of trailing iterations that must all be flat for
+        the early-stop to fire (default 3).
 
     Returns
     -------
@@ -189,9 +211,19 @@ def run_qnehvi(config: Optional[dict] = None,
     progress['phase']  = 'init'
     progress['cancel_requested'] = False
 
+    dp_cap = float(cfg.get('dp_cap_pa', 1.0e6))
+
     def _evaluate_batch(X_np: np.ndarray) -> np.ndarray:
-        """Evaluate a batch of decision vectors. Returns (B, 2) in MAX form
-        (Q, -dP)."""
+        """Evaluate a batch of decision vectors.
+
+        Returns (B, 2) in MAX form (Q, -log10(dP)). The log transform is the
+        critical hardening over the v1 evaluator: dP can span 4+ decades
+        between converged sweet-spots (~10^3 Pa) and rejected blowups
+        (dp_cap ~ 10^6 Pa). On the linear scale that compresses the GP's
+        useful resolution onto a sliver of the y-axis; on log10 the entire
+        objective range fits in [3, 6] and the ARD lengthscale identifies
+        meaningful dP gradients instead of being dominated by outliers.
+        """
         F = np.zeros((len(X_np), 2), dtype=np.float64)
         for i, x in enumerate(X_np):
             try:
@@ -203,9 +235,12 @@ def run_qnehvi(config: Optional[dict] = None,
                 # Punish failed evals; don't crash the whole loop
                 if verbose:
                     print(f"  [eval ERR] x_idx={i}: {e}")
-                Q, dP = -1e6, 1e9
-            F[i, 0] = Q          # maximize
-            F[i, 1] = -dP        # maximize (so flip sign)
+                Q, dP = 1e-6, dp_cap
+            # Clamp dP into [1, dp_cap] before log so the transform is
+            # always finite and the GP input distribution stays bounded.
+            dP_clamped = float(np.clip(dP, 1.0, dp_cap))
+            F[i, 0] = Q                                 # maximize Q
+            F[i, 1] = -np.log10(dP_clamped)             # maximize -log10(dP)
             progress['count'] += 1
             if Q > progress['best_Q']:
                 progress['best_Q'] = float(Q)
@@ -237,6 +272,7 @@ def run_qnehvi(config: Optional[dict] = None,
     progress['phase'] = 'optimize'
 
     # 5. BO loop
+    hv_hist: list = []
     for it in range(n_iter):
         if progress['cancel_requested']:
             if verbose:
@@ -291,6 +327,7 @@ def run_qnehvi(config: Optional[dict] = None,
         # 5d. Hypervolume tracking + checkpoint
         bd = DominatedPartitioning(ref_point=ref_point, Y=train_Y)
         hv = bd.compute_hypervolume().item()
+        hv_hist.append(float(hv))
         n_evals = train_X.shape[0]
         if verbose:
             print(f"[qNEHVI] iter {it+1:3d}/{n_iter}  "
@@ -300,16 +337,30 @@ def run_qnehvi(config: Optional[dict] = None,
         if (it + 1) % 5 == 0 or it == n_iter - 1:
             _save_current_pareto(train_X, train_Y, save_dir, it + 1)
 
-    # 6. Extract Pareto and pack output
+        # 5e. HV-plateau early stop. Production-quality termination criterion:
+        # if the front isn't moving meaningfully, more evals waste budget.
+        if hv_tol > 0.0 and hv_plateau_detected(hv_hist, hv_tol, hv_window):
+            if verbose:
+                print(f"[qNEHVI] HV plateau (rel < {hv_tol:.1%} for "
+                      f"{hv_window} iter) → early stop at iter {it+1}/{n_iter}")
+            break
+
+    # 6. Extract Pareto and pack output. train_Y stores (Q, -log10(dP)) in
+    # MAX form; convert back to (Q_neg, dP) min-form for caller / CSV output.
     Y_np = train_Y.numpy()
     X_np = train_X.numpy()
     mask = _pareto_mask_max(Y_np)
     X_pareto = X_np[mask]
     Y_pareto = Y_np[mask]
-    F_min = np.column_stack([-Y_pareto[:, 0], -Y_pareto[:, 1]])    # (Q_neg, dP)
+    F_min = np.column_stack([
+        -Y_pareto[:, 0],
+        np.power(10.0, -Y_pareto[:, 1]),
+    ])  # (Q_neg, dP)
 
-    # History in min form too
-    F_hist_min = np.column_stack([-Y_np[:, 0], -Y_np[:, 1]])
+    F_hist_min = np.column_stack([
+        -Y_np[:, 0],
+        np.power(10.0, -Y_np[:, 1]),
+    ])
 
     progress['phase'] = 'done'
 
@@ -334,11 +385,19 @@ def run_qnehvi(config: Optional[dict] = None,
 
 def _save_current_pareto(train_X: 'torch.Tensor', train_Y: 'torch.Tensor',
                           save_dir: str, step: int) -> None:
-    """Write Pareto checkpoint CSV for the current accumulated samples."""
+    """Write Pareto checkpoint CSV for the current accumulated samples.
+
+    train_Y stores objectives in MAX form (Q, -log10(dP)); we convert to
+    (Q_neg, dP) min-form before writing so CSV consumers see real Pa values
+    rather than logs.
+    """
     Y_np = train_Y.numpy()
     X_np = train_X.numpy()
     mask = _pareto_mask_max(Y_np)
-    F_min = np.column_stack([-Y_np[mask, 0], -Y_np[mask, 1]])
+    F_min = np.column_stack([
+        -Y_np[mask, 0],
+        np.power(10.0, -Y_np[mask, 1]),
+    ])
     _save_pareto_csv(os.path.join(save_dir, f'pareto_iter{step:04d}.csv'),
                       X_np[mask], F_min)
     _save_pareto_csv(os.path.join(save_dir, 'pareto_latest.csv'),
@@ -349,19 +408,28 @@ def _save_current_pareto(train_X: 'torch.Tensor', train_Y: 'torch.Tensor',
 
 
 if __name__ == '__main__':
-    """Tiny BO run on the default config (8 init + 4 iter × 2 = 16 evals).
+    """Smoke run: 16 init + 8 iter × 2 = 32 evals (~10–20 min wall).
 
-    At ~7s per evaluation that's ~2 minutes wall time. Mostly to verify that
-    BoTorch / GPyTorch are importable and the loop closes cleanly; not a
-    Pareto-quality benchmark.
+    Verifies (relative to the v1 smoke):
+      * dp_cap rejects blowups → no 17-MPa Pareto outliers
+      * log10-dP transform feeds the GP a bounded objective
+      * HV-plateau early-stop short-circuits when the front stops advancing
+      * SIMPLE 2000 iter @ tol 1e-4 lets unconverged designs honestly fail
+        rather than emit residual-dominated dP estimates
     """
     warnings.filterwarnings('ignore')
     out = run_qnehvi(
         config={'fast_mode': False,
-                'max_iter_simple': 800, 'tol_simple': 1e-3,
-                'max_iter_energy': 1500, 'tol_energy': 0.5},
-        n_init=8, n_iter=4, q_batch=2, seed=0,
+                'max_iter_simple': 2000, 'tol_simple': 1e-4,
+                'max_iter_energy': 1500, 'tol_energy': 0.5,
+                'dp_cap_pa': 1.0e6, 'reject_unconverged': True},
+        n_init=16, n_iter=8, q_batch=2, seed=0,
         verbose=True,
-        save_dir=os.path.join('opt_runs', 'smoke_qnehvi'),
+        save_dir=os.path.join('opt_runs', 'smoke_qnehvi_v2'),
+        hv_tol=0.01, hv_window=3,
     )
     print(f"\nFinal Pareto: {len(out['X'])} points across {out['n_evals']} evals")
+    if len(out['X']) > 0:
+        Q  = -out['F'][:, 0]; dP = out['F'][:, 1]
+        print(f"  Q range  [{Q.min():.0f}, {Q.max():.0f}] W/m")
+        print(f"  dP range [{dP.min():.0f}, {dP.max():.0f}] Pa")

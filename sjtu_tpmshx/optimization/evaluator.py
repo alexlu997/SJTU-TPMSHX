@@ -115,6 +115,20 @@ DEFAULT_CONFIG: dict = {
     # Manufacturability penalty added to dP objective
     'penalty_enabled':  True,
     'penalty_weight':   1.0,        # scales the raw penalty before adding to dP
+
+    # Pathological-design rejection (production hardening; v2)
+    'dp_cap_pa':            1.0e6,  # hard upper bound on dP. Designs that
+                                    # blow past this — usually unconverged
+                                    # SIMPLE residuals masquerading as dP —
+                                    # are tagged bad and returned at the cap
+                                    # so the BO surrogate sees a bounded
+                                    # input distribution (no 17-MPa outliers
+                                    # destroying GP lengthscale estimates).
+    'reject_unconverged':   True,   # When True, a SIMPLE solve that exits at
+                                    # max_iter without hitting tol returns at
+                                    # the cap with Q ≈ 0. Set False during
+                                    # diagnostics where the partial residual
+                                    # Q/dP estimates are still useful.
 }
 
 
@@ -302,10 +316,25 @@ def evaluate_design(x: np.ndarray,
     sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
     sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
 
-    sA.solve(max_iter=cfg_full['max_iter_simple'],
-             tol=cfg_full['tol_simple'], verbose=verbose)
-    sB.solve(max_iter=cfg_full['max_iter_simple'],
-             tol=cfg_full['tol_simple'], verbose=verbose)
+    sA_converged, _sA_iters = sA.solve(max_iter=cfg_full['max_iter_simple'],
+                                        tol=cfg_full['tol_simple'],
+                                        verbose=verbose)
+    sB_converged, _sB_iters = sB.solve(max_iter=cfg_full['max_iter_simple'],
+                                        tol=cfg_full['tol_simple'],
+                                        verbose=verbose)
+
+    # ── Reject pathological designs early ──
+    # Rationale: an unconverged SIMPLE leaves a non-zero mass-residual P field
+    # whose inlet–outlet spread reads as a multi-MPa "dP". Letting that into
+    # the GP destroys lengthscale estimation. Returning at the dp_cap (rather
+    # than 1e9) keeps the input distribution bounded — the GP learns "this
+    # part of design space is uniformly bad" instead of overshooting.
+    dp_cap = float(cfg_full.get('dp_cap_pa', 1.0e6))
+    if cfg_full.get('reject_unconverged', True) and not (sA_converged and sB_converged):
+        cell_area = dx_arr[:, None] * dy_arr[None, :]
+        mass_rejected = float(np.sum((1.0 - arrays['eps_arr'])
+                                     * cfg_full['rho_s'] * cell_area))
+        return -1e-6, dp_cap, mass_rejected
 
     # 4. Energy LTNE (single-pass; n_rho_loops=1 default).
     n_rho_loops = max(1, int(cfg_full.get('n_rho_loops', 1)))
@@ -345,7 +374,14 @@ def evaluate_design(x: np.ndarray,
     cell_area = dx_arr[:, None] * dy_arr[None, :]
     mass = float(np.sum((1.0 - arrays['eps_arr']) * cfg_full['rho_s'] * cell_area))
 
-    return -Q_total, dP_total + pen, mass
+    dP_objective = float(dP_total + pen)
+    # Final blowup guard: NaN, inf, or above the cap → tag bad. Even when
+    # SIMPLE converged, the pen term or a degenerate field can lift the
+    # objective above the cap; clamp so the GP input stays bounded.
+    if not np.isfinite(dP_objective) or dP_objective > dp_cap:
+        return -1e-6, dp_cap, mass
+
+    return -Q_total, dP_objective, mass
 
 
 # ─── Standalone smoke test ──────────────────────────────────────────
