@@ -560,7 +560,7 @@ def _parse_inputs(window):
     _allow_extrap = bool(getattr(window, 'chk_allow_extrap', None)
                          and window.chk_allow_extrap.isChecked())
     try:
-        from optimization.optimizer import check_surrogate_domain_at_point
+        from df_fit.surrogate_domain import check_surrogate_domain_at_point
         window._extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_A, T_inA, P_inA, side='A',
