@@ -1,0 +1,128 @@
+"""
+test_evaluator_sanity.py — End-to-end sanity for the continuous-field evaluator.
+
+Marked ``slow`` because each test invokes a full SIMPLE × 2 + LTNE solve
+(~5–10 s on default hardware). Run explicitly via::
+
+    pytest tests/test_evaluator_sanity.py -v -m slow
+
+or unconditionally::
+
+    pytest tests/test_evaluator_sanity.py -v
+"""
+
+from __future__ import annotations
+
+import warnings
+
+import numpy as np
+import pytest
+
+warnings.filterwarnings('ignore', category=UserWarning)
+
+from solvers.field_param import (
+    encode_decision_vector,
+    uniform_field,
+)
+from optimization.evaluator import evaluate_design
+
+
+# Lighter solver settings so the test suite stays fast (~10 s total)
+_FAST_CFG = {
+    'max_iter_simple': 800,
+    'tol_simple':      1e-3,
+    'max_iter_energy': 1500,
+    'tol_energy':      0.5,
+    'n_rho_loops':     1,
+}
+
+
+pytestmark = pytest.mark.slow
+
+
+# ─── Basic invariants on a single eval ──────────────────────────────
+
+
+def test_uniform_field_returns_positive_q_and_dp():
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0,
+                        L_domain=0.10, H_domain=0.05)
+    Q_neg, dP, mass = evaluate_design(x=None, cfg=_FAST_CFG, fc=fc)
+    Q = -Q_neg
+    # T_inA=350 > T_inB=300 → fluid A gives heat to fluid B → Q > 0
+    assert Q > 0.0, f"expected Q > 0, got {Q}"
+    assert dP > 0.0, f"expected dP > 0, got {dP}"
+    assert mass > 0.0, f"expected mass > 0, got {mass}"
+    # Sanity ranges (loose but catch obvious blowups)
+    assert 1e2 < Q < 1e6, f"Q={Q} W/m outside 1e2..1e6"
+    assert 1e2 < dP < 1e6, f"dP={dP} Pa outside 1e2..1e6"
+
+
+def test_no_penalty_on_uniform_field():
+    """Uniform L,t → manufacturability_penalty == 0 → dP unchanged by penalty."""
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0,
+                        L_domain=0.10, H_domain=0.05)
+    cfg_with    = {**_FAST_CFG, 'penalty_enabled': True}
+    cfg_without = {**_FAST_CFG, 'penalty_enabled': False}
+    Q1, dP1, _ = evaluate_design(x=None, cfg=cfg_with, fc=fc)
+    Q2, dP2, _ = evaluate_design(x=None, cfg=cfg_without, fc=fc)
+    assert abs(Q1 - Q2) < 1e-6
+    assert abs(dP1 - dP2) < 1e-6
+
+
+# ─── Field actually drives the result ───────────────────────────────
+
+
+def test_thicker_walls_increase_dP():
+    """t=0.5 mm should produce larger dP than t=0.3 mm at the same L."""
+    fc_thin  = uniform_field(6.0, 0.3, 'Diamond', 17.0, 0.10, 0.05)
+    fc_thick = uniform_field(6.0, 0.5, 'Diamond', 17.0, 0.10, 0.05)
+    _, dP_thin,  _ = evaluate_design(x=None, cfg=_FAST_CFG, fc=fc_thin)
+    _, dP_thick, _ = evaluate_design(x=None, cfg=_FAST_CFG, fc=fc_thick)
+    assert dP_thick > dP_thin, \
+        f"thicker walls should raise dP: thin={dP_thin}, thick={dP_thick}"
+
+
+def test_field_geometry_drives_outputs():
+    """Different geometries should produce materially different (Q, dP).
+
+    No sign assumption on Q vs t — at fixed *superficial* inlet velocity, the
+    inlet open-area shrinks with thicker walls, so the actual mass flow and
+    therefore Q can drop even as h_v rises locally. This test only asserts
+    that the evaluator is sensitive to the input geometry (≥ 5 % delta on at
+    least one objective) so we catch silent decoupling regressions.
+    """
+    fc_thin  = uniform_field(6.0, 0.3, 'Diamond', 17.0, 0.10, 0.05)
+    fc_thick = uniform_field(6.0, 0.5, 'Diamond', 17.0, 0.10, 0.05)
+    Q_thin_neg,  dP_thin,  _ = evaluate_design(x=None, cfg=_FAST_CFG, fc=fc_thin)
+    Q_thick_neg, dP_thick, _ = evaluate_design(x=None, cfg=_FAST_CFG, fc=fc_thick)
+    rel_dQ  = abs(Q_thick_neg - Q_thin_neg) / max(abs(Q_thin_neg),  1.0)
+    rel_dP  = abs(dP_thick    - dP_thin)    / max(abs(dP_thin),     1.0)
+    assert max(rel_dQ, rel_dP) > 0.05, \
+        f"evaluator insensitive to t: rel_dQ={rel_dQ:.4f}, rel_dP={rel_dP:.4f}"
+
+
+# ─── Decision-vector path matches direct fc path ────────────────────
+
+
+def test_decision_vector_path_matches_direct_fc():
+    """Encoding a uniform field to a 16-D decision vector and routing through
+    evaluate_design(x=...) must reproduce the direct-fc result bit-for-bit
+    (same SIMPLE seed and field)."""
+    fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
+    x = encode_decision_vector(fc.L_ctrl, fc.t_ctrl, symmetric_y=True)
+
+    cfg = {**_FAST_CFG,
+           'tpms_type':  'Diamond',
+           'k_s':         17.0,
+           'L_domain':    0.10,
+           'H_domain':    0.05,
+           'n_ctrl_x':    4, 'n_ctrl_y': 4, 'symmetric_y': True}
+
+    Q1_neg, dP1, m1 = evaluate_design(x=None, cfg=cfg, fc=fc)
+    Q2_neg, dP2, m2 = evaluate_design(x=x,    cfg=cfg, fc=None)
+
+    assert abs(Q1_neg - Q2_neg) < 1e-6, \
+        f"Q differs: direct={Q1_neg}, via x={Q2_neg}"
+    assert abs(dP1 - dP2) < 1e-6, \
+        f"dP differs: direct={dP1}, via x={dP2}"
+    assert abs(m1 - m2) < 1e-6
