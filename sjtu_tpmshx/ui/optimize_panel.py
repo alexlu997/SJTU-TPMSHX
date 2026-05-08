@@ -98,6 +98,14 @@ def _gather_cfg(window) -> dict:
             except (ValueError, AttributeError):
                 pass
 
+    # Geometry (m) — UI defaults match Shanghai's cross-flow HX
+    # (0.182 × 0.042 × 0.042 m³). Without these reads the optimizer would
+    # silently fall back to the evaluator's hard-coded 0.10 × 0.05 m generic
+    # case regardless of what the user typed in the Compute fields.
+    _get('le_L',      float, 'L_domain')
+    _get('le_H',      float, 'H_domain')
+    _get('le_Lz',     float, 'Lz')
+
     _get('le_Lcell',  float, 'L_avg_init')   # not used directly but useful seed
     _get('le_t',      float, 't_avg_init')
     _get('le_ks',     float, 'k_s')
