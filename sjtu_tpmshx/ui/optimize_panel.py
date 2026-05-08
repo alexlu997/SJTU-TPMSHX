@@ -41,13 +41,20 @@ _time = time
 
 def _make_worker_class():
     """Return a QThread subclass that runs the BO loop. Constructed at first
-    call to keep import-time cheap and avoid Qt at module import."""
-    from PyQt6.QtCore import QThread, pyqtSignal
+    call to keep import-time cheap and avoid Qt at module import.
+
+    The project is built on PySide6 (see main.py + controllers/*); the v1
+    panel was written against PyQt6 by mistake, which silently broke the
+    entire Optimize button — `from PyQt6.QtCore import ...` either raised
+    ImportError or, worse, succeeded but produced QObjects of the wrong
+    kind that won't bind to the host UI's signal/slot machinery.
+    """
+    from PySide6.QtCore import QThread, Signal
 
     class _OptimizeWorker(QThread):
-        finished_with_result = pyqtSignal(object)
-        progress_signal = pyqtSignal(int, int, float)  # count, total, best_Q
-        error_signal = pyqtSignal(str)
+        finished_with_result = Signal(object)
+        progress_signal = Signal(int, int, float)  # count, total, best_Q
+        error_signal = Signal(str)
 
         def __init__(self, cfg, n_init, n_iter, q_batch, seed, save_dir):
             super().__init__()
@@ -203,7 +210,8 @@ def _push_sparkline(window, value: float) -> None:
     sl = getattr(window, '_opt_sparkline', None)
     if sl is None:
         return
-    for method in ('append', 'add', 'push'):
+    # ui/sparkline.py:Sparkline.push(float) — exact API
+    for method in ('push', 'append', 'add'):
         fn = getattr(sl, method, None)
         if callable(fn):
             try:
@@ -211,6 +219,37 @@ def _push_sparkline(window, value: float) -> None:
                 return
             except Exception:
                 pass
+
+
+def _set_stage_pill(window, key: str, state: str) -> None:
+    """Update one of the three stage pills (config/running/result) to one of
+    the three theme states (idle/active/done). The styles are stored on the
+    window as a 3-tuple by ui_builders — we index it by state name.
+    """
+    pills = getattr(window, '_opt_stage_pills', None)
+    styles = getattr(window, '_opt_pill_styles', None)
+    if not pills or not styles:
+        return
+    pill = pills.get(key)
+    if pill is None:
+        return
+    state_idx = {'idle': 0, 'active': 1, 'done': 2}.get(state, 0)
+    try:
+        pill.setStyleSheet(styles[state_idx])
+    except Exception:
+        pass
+
+
+def _set_summary_banner(window, text: str, *, show: bool = True) -> None:
+    """Show / update the summary banner under the Optimize cards."""
+    banner = getattr(window, '_opt_summary_banner', None)
+    if banner is None:
+        return
+    try:
+        banner.setText(text)
+        banner.setVisible(show)
+    except Exception:
+        pass
 
 
 # ─── Public API (called by main.py) ─────────────────────────────────
@@ -304,10 +343,22 @@ def run_optimize(window) -> None:
     _toggle_buttons(window, running=True)
     _set_kpi(window, gen="starting", best_q="—", best_dp="—", eta="—")
     _set_progress_pct(window, 0.0)
+    _set_stage_pill(window, 'config',  'done')
+    _set_stage_pill(window, 'running', 'active')
+    _set_stage_pill(window, 'result',  'idle')
+    _set_summary_banner(window, "", show=False)
     _set_status(window, f'qNEHVI running … {n_init} Sobol + {n_iter}×{q_batch} BO')
     worker.start()
     print(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
           f"save_dir={save_dir}")
+    # Update the button label to match the actual algorithm in case the
+    # legacy "(NSGA-II)" wording is still on screen.
+    btn = getattr(window, '_opt_btn', None)
+    if btn is not None:
+        try:
+            btn.setText("▶  Optimize (qNEHVI BO)")
+        except Exception:
+            pass
 
 
 def cancel_optimize(window) -> None:
@@ -319,12 +370,22 @@ def cancel_optimize(window) -> None:
 
 def show_pareto(window, res: dict) -> None:
     """Plot the Pareto front (Q vs dP) on the window's matplotlib canvas
-    if available; print to stdout otherwise.
+    if available; print to stdout otherwise. Wires the matplotlib pick_event
+    to ``window._on_pareto_pick`` so clicking a point loads it back into the
+    Compute fields.
     """
     F_min = res['F']                  # (-Q, dP)  shape (P, 2)
     Q  = -F_min[:, 0]
     dP =  F_min[:, 1]
     F_hist = res.get('history_F')
+
+    # Hide the skeleton shimmer overlay built by ui_builders for the Pareto tab
+    skel = getattr(window, '_pareto_skeleton', None)
+    if skel is not None:
+        try:
+            skel.stop(); skel.hide()
+        except Exception:
+            pass
 
     canvas = getattr(window, 'canvas_pareto', None)
     if canvas is None:
@@ -354,6 +415,34 @@ def show_pareto(window, res: dict) -> None:
     # Cache the Pareto data on the window for click-pick decoding
     window._pareto_X = res['X']
     window._pareto_F = F_min
+
+    # Wire the pick_event to window._on_pareto_pick. mpl supports multiple
+    # cid registrations; if we already registered one previously, drop it
+    # before re-registering so duplicate clicks don't fire the handler twice.
+    prev_cid = getattr(window, '_pareto_pick_cid', None)
+    if prev_cid is not None:
+        try:
+            canvas.mpl_disconnect(prev_cid)
+        except Exception:
+            pass
+    handler = getattr(window, '_on_pareto_pick', None)
+    if callable(handler):
+        try:
+            window._pareto_pick_cid = canvas.mpl_connect('pick_event', handler)
+        except Exception as e:
+            print(f"[optimize] mpl_connect(pick_event) failed: {e}")
+
+    # Update stage pills: config (done), running (done), result (active)
+    _set_stage_pill(window, 'config',  'done')
+    _set_stage_pill(window, 'running', 'done')
+    _set_stage_pill(window, 'result',  'active')
+
+    # Update the summary banner
+    _set_summary_banner(
+        window,
+        f"DONE — {len(res['X'])} Pareto points | "
+        f"Q range [{Q.min():.0f}, {Q.max():.0f}] W/m | "
+        f"dP range [{dP.min():.0f}, {dP.max():.0f}] Pa")
 
 
 def reshow_pareto(window) -> None:
