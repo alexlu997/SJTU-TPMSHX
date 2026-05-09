@@ -502,13 +502,22 @@ def apply_mpl_theme():
     mpl.rcParams['axes.titlelocation'] = 'left'
     mpl.rcParams['axes.titlesize'] = 12
     # 2026-05-09 Phase 3 — bold by default + math italic rendering for
-    # symbols typed as $D_h$, $\rho_s$, $\mu_f$, etc. Mathtext stix-italic
-    # ensures the subscript renders italic (matches journal typography).
+    # symbols typed as $D_h$, $\rho_s$, $\mu_f$, etc.
+    # FIX 2026-05-09 — `mathtext.fontset='stixsans'` + global `font.weight=
+    # 'bold'` triggers an infinite glyph-fallback recursion in
+    # matplotlib._mathtext._get_glyph (RecursionError on every contour
+    # title containing `$T_a$`/`$T_b$`/`$T_s$`, the temperature panel
+    # finalize_plots draws). Reverted to the default `dejavusans` fontset
+    # which renders the same italic-subscript style without the bold-fallback
+    # bug. axes.labelweight stays 'bold' so axis labels stay heavy; we drop
+    # the global font.weight so plain (non-mathtext) text inherits matplotlib's
+    # default normal weight + we get crisp mathtext.
     mpl.rcParams['axes.labelweight'] = 'bold'
-    mpl.rcParams['font.weight'] = 'bold'
     mpl.rcParams['xtick.labelsize'] = 9
     mpl.rcParams['ytick.labelsize'] = 9
     mpl.rcParams['mathtext.default'] = 'it'   # italic letters in $...$
-    mpl.rcParams['mathtext.fontset'] = 'stixsans'
+    # Keep matplotlib default mathtext.fontset (dejavusans). DO NOT set
+    # mathtext.fontset='stixsans' here — it interacts catastrophically
+    # with bold global font weight on Windows.
     mpl.rcParams['legend.frameon'] = True
     mpl.rcParams['legend.framealpha'] = 0.9
