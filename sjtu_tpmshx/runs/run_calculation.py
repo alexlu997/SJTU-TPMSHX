@@ -1150,10 +1150,27 @@ def _run_solvers(window, cfg, fields):
     mA_out = simpA.outlet_frac.astype(np.float64) if simpA is not None else None
     mB_in  = simpB.inlet_frac.astype(np.float64)  if simpB is not None else None
     mB_out = simpB.outlet_frac.astype(np.float64) if simpB is not None else None
-    mA_in2  = np.repeat(mA_in,  2) if mA_in  is not None else None
-    mA_out2 = np.repeat(mA_out, 2) if mA_out is not None else None
-    mB_in2  = np.repeat(mB_in,  2) if mB_in  is not None else None
-    mB_out2 = np.repeat(mB_out, 2) if mB_out is not None else None
+    # 2026-05-09 — np.repeat(m, 2) breaks when Nx2 != 2*N_x (which happens
+    # whenever the master refined grid uses wall-refinement: e.g.
+    # 20 + 2 * n_refine = 40 + 14 = 54 cells, not 40). Resample masks via
+    # linear interpolation onto the actual fine-grid axis length so the
+    # _enthalpy_balance_2d face arithmetic gets matching shapes.
+    def _resample_1d(arr_src, n_dst):
+        if arr_src is None or len(arr_src) == n_dst:
+            return arr_src
+        x_src = np.linspace(0.0, 1.0, len(arr_src))
+        x_dst = np.linspace(0.0, 1.0, n_dst)
+        return np.interp(x_dst, x_src, arr_src).astype(np.float64)
+    Nx2_real, Ny2_real = (energy_dx2.size, energy_dy2.size)
+    # mA_in/out is along the cross-stream axis of A's enthalpy face; for
+    # dir_A in {0,1} (x-flow) the cross axis is real y → length Ny2_real.
+    # For dir_A in {2,3} (y-flow) the cross axis is real x → length Nx2_real.
+    _A_cross_n = Ny2_real if dir_A in (0, 1) else Nx2_real
+    _B_cross_n = Ny2_real if dir_B in (0, 1) else Nx2_real
+    mA_in2  = _resample_1d(mA_in,  _A_cross_n)
+    mA_out2 = _resample_1d(mA_out, _A_cross_n)
+    mB_in2  = _resample_1d(mB_in,  _B_cross_n)
+    mB_out2 = _resample_1d(mB_out, _B_cross_n)
 
     rho_cp_A_fld = (rho_cp_A if np.ndim(rho_cp_A) > 0
                     else np.full((N_x, N_y), rho_cp_A))
