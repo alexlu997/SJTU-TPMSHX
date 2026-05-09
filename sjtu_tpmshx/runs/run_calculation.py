@@ -1198,59 +1198,6 @@ def _run_solvers(window, cfg, fields):
                          if np.isfinite(v)]
         Q_total = max(_q_candidates) if _q_candidates else float('nan')
 
-        # 2026-05-09 — last-resort Q fallback. If both Richardson AND
-        # direct Q_*_fine return nan (unusual; typically caused by a nan
-        # cell on the inlet or outlet face that contaminates the
-        # mass-flux-weighted enthalpy integral, e.g. ConstDF-v1 K
-        # extrapolation producing local Brinkman blowup at a corner cell),
-        # fall back to the simplest possible 1D estimate:
-        #     Q ≈ m_dot_inlet · cp_inlet · (T_in − T_out_mean)
-        # using the inlet rho · u · A and outlet face mean T. Same
-        # convention the UI uses for T_OUT_A / T_OUT_B display, so the
-        # numbers are guaranteed consistent. This produces a
-        # plate-average Q rather than the cross-stream-resolved one,
-        # marked richardson_warn=True so the user knows.
-        if not np.isfinite(Q_total):
-            try:
-                # Outlet face mean T per side (matches T_OUT display).
-                if dir_A in (0, 1):
-                    Tout_A_face = Ta[-1 if dir_A == 0 else 0, :]
-                else:
-                    Tout_A_face = Ta[:, -1 if dir_A == 2 else 0]
-                if dir_B in (0, 1):
-                    Tout_B_face = Tb[-1 if dir_B == 0 else 0, :]
-                else:
-                    Tout_B_face = Tb[:, -1 if dir_B == 2 else 0]
-                Tout_A_face = Tout_A_face[np.isfinite(Tout_A_face)]
-                Tout_B_face = Tout_B_face[np.isfinite(Tout_B_face)]
-                T_out_A_mean = float(np.mean(Tout_A_face)) if Tout_A_face.size else float(T_inA)
-                T_out_B_mean = float(np.mean(Tout_B_face)) if Tout_B_face.size else float(T_inB)
-                rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
-                rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
-                cp_A_in  = float(_pA['cp'](T_inA))
-                cp_B_in  = float(_pB['cp'](T_inB))
-                # Inlet area per unit depth: cross-stream span of the
-                # inlet pipe. Use cfgA/B inlet width (in_w).
-                A_in_A = float(cfgA['in_w'])
-                A_in_B = float(cfgB['in_w'])
-                m_dot_A = rho_A_in * abs(u_A) * A_in_A
-                m_dot_B = rho_B_in * abs(u_B) * A_in_B
-                Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
-                Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
-                Q_total = max(Q_A_simple, Q_B_simple)
-                if np.isfinite(Q_total):
-                    warnings_list.append(
-                        f"Q_total computed via simple 1D fallback "
-                        f"(m_dot · cp · ΔT, plate-average) because the "
-                        f"cross-stream-resolved enthalpy integral hit nan "
-                        f"on one of the boundary faces. "
-                        f"Q_A_simple={Q_A_simple:.0f} W/m, "
-                        f"Q_B_simple={Q_B_simple:.0f} W/m. "
-                        f"Recommend tightening tol or refining grid for "
-                        f"production-grade Q.")
-                    richardson_warn = True
-            except Exception:
-                pass
         Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
         Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
         # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
@@ -1262,12 +1209,72 @@ def _run_solvers(window, cfg, fields):
             (np.isfinite(Q_coarse_max)
              and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
             or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
-    except Exception:
+    except Exception as _q_exc:
+        import traceback as _tb
+        _tb.print_exc()
+        print(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
+              f"falling through to 1D-mean fallback.")
         Q_A_fine = Q_B_fine = float('nan')
         Q_A_ext = Q_B_ext = float('nan')
         Q_fine_max = float('nan')
         Q_total = float('nan')
         richardson_warn = False
+
+    # 2026-05-09 — UNCONDITIONAL last-resort 1D fallback. Runs OUTSIDE the
+    # try/except above so an exception in the Richardson block doesn't
+    # short-circuit it. Computes
+    #     Q_A ≈ m_dot_A · cp_A · |T_inA − ⟨T_out_A⟩|
+    # using the same outlet-face mean convention the UI's T_OUT widget uses
+    # (np.mean over the outlet face with a finite-only filter). Q_total
+    # stays whatever Richardson / Q_*_fine produced when those are finite;
+    # if and only if Q_total is nan after the Richardson block, this
+    # bumps in. Guarantees Q_total is finite whenever T_OUT_A / T_OUT_B
+    # display finite (which is the same condition the UI advertises).
+    if not np.isfinite(Q_total):
+        try:
+            # Outlet face per side. dir_code: 0=+x 1=-x 2=+y 3=-y.
+            if dir_A == 0:    Tout_A_face = Ta[-1, :]
+            elif dir_A == 1:  Tout_A_face = Ta[0, :]
+            elif dir_A == 2:  Tout_A_face = Ta[:, -1]
+            else:             Tout_A_face = Ta[:, 0]
+            if dir_B == 0:    Tout_B_face = Tb[-1, :]
+            elif dir_B == 1:  Tout_B_face = Tb[0, :]
+            elif dir_B == 2:  Tout_B_face = Tb[:, -1]
+            else:             Tout_B_face = Tb[:, 0]
+            _Tout_A_finite = Tout_A_face[np.isfinite(Tout_A_face)]
+            _Tout_B_finite = Tout_B_face[np.isfinite(Tout_B_face)]
+            T_out_A_mean = (float(np.mean(_Tout_A_finite))
+                            if _Tout_A_finite.size else float(T_inA))
+            T_out_B_mean = (float(np.mean(_Tout_B_finite))
+                            if _Tout_B_finite.size else float(T_inB))
+            rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
+            rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
+            cp_A_in  = float(_pA['cp'](T_inA))
+            cp_B_in  = float(_pB['cp'](T_inB))
+            A_in_A = float(cfgA.get('in_w', H))
+            A_in_B = float(cfgB.get('in_w', L))
+            m_dot_A = rho_A_in * abs(u_A) * A_in_A
+            m_dot_B = rho_B_in * abs(u_B) * A_in_B
+            Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
+            Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
+            Q_total = max(Q_A_simple, Q_B_simple)
+            if np.isfinite(Q_total):
+                warnings_list.append(
+                    f"Q_total computed via 1D plate-average fallback "
+                    f"(m_dot · cp · |T_in − ⟨T_out⟩|) because the "
+                    f"cross-stream-resolved enthalpy integral was unavailable. "
+                    f"Q_A={Q_A_simple:.0f} W/m, Q_B={Q_B_simple:.0f} W/m. "
+                    f"Tighten tol or refine grid for production-grade Q.")
+                richardson_warn = True
+            print(f"[Q-calc] 1D fallback: Q_A={Q_A_simple:.1f}, "
+                  f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
+                  f"(T_out_A_mean={T_out_A_mean:.2f}K, "
+                  f"T_out_B_mean={T_out_B_mean:.2f}K)")
+        except Exception as _fb_exc:
+            import traceback as _tb2
+            _tb2.print_exc()
+            print(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
+                  f"Q_total stays nan.")
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
