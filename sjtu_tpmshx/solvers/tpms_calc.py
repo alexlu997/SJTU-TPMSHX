@@ -545,6 +545,15 @@ def compute(tpms_type: str,
     # Single-stream convention (post-refit 2026-04-26): pass ε_A (per-stream
     # void fraction; sheet HX splits ε equally between two fluid channels).
     eps_A = 0.5 * eps
+    # 2026-05-09 — route air through nu_from_Re() (not _nu_diamond / _nu_gyroid
+    # directly). nu_from_Re applies the ×1.28 _NU_ROUGHNESS_FACTOR
+    # (production, see memory project_nu_v3_cfd4_s8 — Shanghai Q RMSRE 2.02%
+    # only with ×1.28 applied). Direct calls to _nu_diamond / _nu_gyroid
+    # returned the smooth-wall Nu, which under-displayed Nu in the UI by 28%
+    # while the SIMPLE/LTNE runtime correctly used ×1.28 via nu_from_Re —
+    # cosmetic mismatch that confused users sanity-checking Nu vs Q.
+    # Water path already routes through nu_water_from_Re → nu_from_Re,
+    # so it picked up ×1.28 correctly; only the air branch was buggy.
     if fluid_type == 'water':
         # Pr-substitution onto the air-fit correlation (Reynolds analogy).
         # Pr_water = mu * cp / k_f. Falls back to nu_water_from_Re for
@@ -552,10 +561,8 @@ def compute(tpms_type: str,
         Pr_water = mu * cp_f / k_f
         Nu = nu_water_from_Re(tpms_type, Re, eps_A, L_cell_mm, D_h_mm,
                               Pr_water)
-    elif tpms_type == 'Diamond':
-        Nu = _nu_diamond(Re, eps_A, L_cell_mm, D_h_mm)
     else:
-        Nu = _nu_gyroid(Re, eps_A, L_cell_mm, D_h_mm)
+        Nu = nu_from_Re(tpms_type, Re, eps_A, L_cell_mm, D_h_mm)
 
     H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
 
