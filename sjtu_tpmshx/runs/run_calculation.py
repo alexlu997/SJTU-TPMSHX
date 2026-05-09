@@ -643,7 +643,13 @@ def _run_solvers(window, cfg, fields):
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
 
-    _MAX_COUPLING = 5
+    # 2026-05-09 — bump _MAX_COUPLING 5→10 default. The loop short-circuits
+    # once both drho_X and dT_X drop below their respective tolerances, so
+    # already-converged cases (most air-air on fitted-window geometries)
+    # still exit at iter 3-5 with no extra work. Cases that previously hit
+    # iter 5 with dT_B still bouncing (cross-flow + partial-BC inlet) now
+    # have headroom to settle without firing the "not converged" warning.
+    _MAX_COUPLING = 10
     _COUPLING_TOL = 0.01  # 1% relative change in rho
     _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
     _ALPHA_COUP = 0.7     # under-relaxation

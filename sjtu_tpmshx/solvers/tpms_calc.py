@@ -265,6 +265,42 @@ _NU_ROUGHNESS_FACTOR = 1.28
 #     fit. Removed in 2026-04-23 once Re conventions were aligned.
 #   - 2026-04-28: re-introduced with the above experimental-rough
 #     justification, and now physically meaningful.
+#
+# KNOWN LIMITATIONS — Re/geometry-independent scalar (paper disclosure):
+#   1. **Re-independent**: Roughness-driven Nu enhancement is physically
+#      Re-dependent (Bhatti-Shah 2010, Gnielinski rough-wall correction):
+#         laminar Re < 2000  : ε/D_h has minimal effect (φ ≈ 1.0)
+#         transition 2-4 k   : φ ramps as turbulent BL forms
+#         turbulent  Re > 4 k: φ asymptotes to ~1.2-1.4 at ε/D_h ≈ 1%
+#      A constant ×1.28 over-corrects in the laminar part of the fit
+#      window (Re ∈ [400, 2000]) and is roughly correct in turbulent.
+#      The Shanghai air-side dataset spans Re [526, 9981]; the residual
+#      RMSRE of 2.02% indicates the over/under-correction averages out
+#      across that distribution but does not validate the factor at
+#      individual operating points.
+#   2. **Geometry-independent**: same φ for Diamond + Gyroid + all
+#      (L, t). Wall curvature differs → equivalent sand-grain roughness
+#      differs → φ should vary by 5-10% across the design space. Not
+#      captured.
+#   3. **Decoupled from f / dP**: Reynolds analogy expects roughness
+#      affects friction f and Nu together via approximately
+#         Nu_rough/Nu_smooth ≈ (f_rough/f_smooth)^0.5
+#      Our dP path uses the ConstDF-v1 D-F surrogate which DOES not
+#      apply a smooth-vs-rough rescale, so the φ Nu correction is
+#      thermally one-sided. Acceptable when only Q is reported as
+#      production; flag when dP and Q are both production-grade.
+#   4. **Sa = 31 µm is global**: SLM Ra varies with strut orientation
+#      (~25 µm horizontal, ~50 µm vertical for typical Inconel 718).
+#      One value approximates a print-orientation-averaged effective
+#      roughness; per-cell anisotropy not captured.
+#
+# RECOMMENDED FUTURE WORK:
+#   Replace the scalar φ with a Re-dependent enhancement function:
+#       Nu_rough(Re, ε/D_h) = Nu_smooth(Re) · g(Re, ε/D_h)
+#   where g is fit from Bhatti-Shah / Nikuradse style correlations or
+#   re-fit directly on experimental data (skip smooth-wall CFD ground
+#   truth). Until then, restrict published Nu/Q claims to the Shanghai
+#   parameter window and document the φ scope in any methods section.
 
 
 def _nu_diamond(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:
