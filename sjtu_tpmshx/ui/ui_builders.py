@@ -1392,12 +1392,50 @@ def build_canvas_area(window):
                     lambda _c=False, k=_key: window._detach_canvas(k))
             menu.exec(_b.mapToGlobal(pos))
         _btn.customContextMenuRequested.connect(_open_ctx)
+    # 2026-05-09 Phase 4 — merge Temperature / Pressure / Velocity into a
+    # single "2D VIEW" toolbar entry with a field-selector combo, parallel
+    # to the existing "3D View" tab. The legacy buttons remain in `window.*`
+    # for backward compat (hotkeys, split view, _switch_tab routing) but are
+    # not added to the toolbar; the combo drives the same _switch_tab calls.
+    window.btn_tab_2d_view = _ShiftTabBtn("2D View")
+    window.btn_tab_2d_view.setFixedHeight(28)
+    window.btn_tab_2d_view.setStyleSheet(window._PTAB_DISABLED)
+    window.btn_tab_2d_view.setEnabled(False)
+    window.btn_tab_2d_view._shift_cb = (
+        lambda: window._split_with_current('2d_view'))
+    window.btn_tab_2d_view.setToolTip(
+        "2D field view (Temperature / Velocity / Pressure). "
+        "Pick the field with the dropdown next to it. "
+        "Shift+click to compare side-by-side.")
+    window.btn_tab_2d_view.clicked.connect(
+        lambda: window._switch_tab('2d_view'))
+
+    window.combo_2d_field = QComboBox()
+    window.combo_2d_field.addItems(["Temperature", "Velocity |U|", "Pressure"])
+    window.combo_2d_field.setFixedHeight(28)
+    window.combo_2d_field.setToolTip(
+        "Select which 2D field to display when '2D View' tab is active.")
+
+    def _on_2d_field_changed(_idx):
+        # Re-trigger the active tab so the canvas swap honors the new combo
+        # selection. The _switch_tab fast-path returns immediately when the
+        # active tab is unchanged, so we explicitly call with the resolved
+        # underlying tab key.
+        if getattr(window, '_active_tab', None) in ('temp', 'pres', 'vel',
+                                                     '2d_view'):
+            window._switch_tab('2d_view')
+    window.combo_2d_field.currentIndexChanged.connect(_on_2d_field_changed)
+
     toolbar.addWidget(window.btn_tab_layout)
-    toolbar.addWidget(window.btn_tab_temp)
-    toolbar.addWidget(window.btn_tab_pres)
-    toolbar.addWidget(window.btn_tab_vel)
+    toolbar.addWidget(window.btn_tab_2d_view)
+    toolbar.addWidget(window.combo_2d_field)
     toolbar.addWidget(window.btn_tab_pareto)
     toolbar.addWidget(window.btn_tab_3d)
+    # Legacy buttons retained in window.* but hidden from the toolbar so
+    # _split_with_current / hotkeys / _switch_tab routing still resolves them.
+    window.btn_tab_temp.hide()
+    window.btn_tab_pres.hide()
+    window.btn_tab_vel.hide()
     toolbar.addStretch()
 
     btn_zoom_in = QPushButton("+")

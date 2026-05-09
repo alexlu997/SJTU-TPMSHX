@@ -726,27 +726,34 @@ class Main_Menu(QMainWindow):
         is_3d = (hasattr(self, 'combo_dim')
                  and self.combo_dim.currentIndex() == 1)
         rules = {
-            'layout': True,
-            'temp':   (not is_3d) and getattr(self, '_has_results_2d', False),
-            'pres':   (not is_3d) and getattr(self, '_has_results_2d', False),
-            'vel':    (not is_3d) and getattr(self, '_has_results_2d', False),
-            '3d':     is_3d and getattr(self, '_has_results_3d', False),
+            'layout':  True,
+            'temp':    (not is_3d) and getattr(self, '_has_results_2d', False),
+            'pres':    (not is_3d) and getattr(self, '_has_results_2d', False),
+            'vel':     (not is_3d) and getattr(self, '_has_results_2d', False),
+            '3d':      is_3d and getattr(self, '_has_results_3d', False),
             # D-plan: Optimize tab is the entry point for NSGA-II — must be
             # reachable before any compute so the user can click Launch.
             # The Pareto plot stays empty until a run completes; the
             # launch/status/progress header is always shown.
-            'pareto': True,
+            'pareto':  True,
+            # 2026-05-09 Phase 4 — 2D View aggregator: enable iff at least
+            # one of the underlying field tabs is enabled (i.e., 2D mode +
+            # results computed).
+            '2d_view': (not is_3d) and getattr(self, '_has_results_2d', False),
         }
         btn_map = {
-            'layout': self.btn_tab_layout,
-            'temp':   self.btn_tab_temp,
-            'pres':   self.btn_tab_pres,
-            'vel':    self.btn_tab_vel,
-            '3d':     self.btn_tab_3d,
-            'pareto': self.btn_tab_pareto,
+            'layout':  self.btn_tab_layout,
+            'temp':    self.btn_tab_temp,
+            'pres':    self.btn_tab_pres,
+            'vel':     self.btn_tab_vel,
+            '3d':      self.btn_tab_3d,
+            'pareto':  self.btn_tab_pareto,
+            '2d_view': getattr(self, 'btn_tab_2d_view', None),
         }
         for key, enabled in rules.items():
             btn = btn_map[key]
+            if btn is None:
+                continue   # 2d_view button may not yet exist (early init)
             btn.setEnabled(enabled)
             if not enabled and key != 'layout':
                 btn.setStyleSheet(self._PTAB_DISABLED)
@@ -797,6 +804,31 @@ class Main_Menu(QMainWindow):
             "to single view.", 5000)
 
     def _switch_tab(self, tab: str):
+        # 2026-05-09 Phase 4 — '2d_view' is the merged Temperature/Velocity/
+        # Pressure tab. Resolve to the underlying card key based on the
+        # combo_2d_field selection. The legacy 'temp'/'pres'/'vel' keys
+        # still work directly (hotkeys, code-side routing) and reverse-sync
+        # the combo so the dropdown reflects the active field.
+        _combo = getattr(self, 'combo_2d_field', None)
+        _combo_label_map = {
+            'temp': "Temperature",
+            'vel':  "Velocity |U|",
+            'pres': "Pressure",
+        }
+        if tab == '2d_view':
+            sel = _combo.currentText() if _combo is not None else "Temperature"
+            tab = {
+                "Temperature":   'temp',
+                "Velocity |U|":  'vel',
+                "Pressure":      'pres',
+            }.get(sel, 'temp')
+        elif tab in _combo_label_map and _combo is not None:
+            target = _combo_label_map[tab]
+            if _combo.currentText() != target:
+                # Block the change-signal so we don't recurse via _switch_tab
+                _combo.blockSignals(True)
+                _combo.setCurrentText(target)
+                _combo.blockSignals(False)
         # Exiting split view — a plain tab click means "back to single".
         if getattr(self, '_split_tabs', None):
             self._split_tabs = None
@@ -804,12 +836,13 @@ class Main_Menu(QMainWindow):
             _relayout_canvas_cards(self, 1)
         # Reject clicks on hidden tabs (defensive — buttons are hidden anyway)
         btn_lookup = {
-            'layout': getattr(self, 'btn_tab_layout', None),
-            'temp':   getattr(self, 'btn_tab_temp', None),
-            'pres':   getattr(self, 'btn_tab_pres', None),
-            'vel':    getattr(self, 'btn_tab_vel', None),
-            '3d':     getattr(self, 'btn_tab_3d', None),
-            'pareto': getattr(self, 'btn_tab_pareto', None),
+            'layout':  getattr(self, 'btn_tab_layout', None),
+            'temp':    getattr(self, 'btn_tab_temp', None),
+            'pres':    getattr(self, 'btn_tab_pres', None),
+            'vel':     getattr(self, 'btn_tab_vel', None),
+            '3d':      getattr(self, 'btn_tab_3d', None),
+            'pareto':  getattr(self, 'btn_tab_pareto', None),
+            '2d_view': getattr(self, 'btn_tab_2d_view', None),
         }
         target_btn = btn_lookup.get(tab)
         if target_btn is not None and not target_btn.isEnabled() and tab != 'layout':
@@ -862,6 +895,16 @@ class Main_Menu(QMainWindow):
                     btn.setStyleSheet(self._PTAB_OFF)
                 else:
                     btn.setStyleSheet(self._PTAB_DISABLED)
+        # 2026-05-09 Phase 4 — keep the consolidated 2D View button styled
+        # ON whenever the active card is one of the underlying 2D fields.
+        _btn_2d = getattr(self, 'btn_tab_2d_view', None)
+        if _btn_2d is not None:
+            if tab in ('temp', 'pres', 'vel'):
+                _btn_2d.setStyleSheet(self._PTAB_ON)
+            elif _btn_2d.isEnabled():
+                _btn_2d.setStyleSheet(self._PTAB_OFF)
+            else:
+                _btn_2d.setStyleSheet(self._PTAB_DISABLED)
         if _viewport is not None:
             _viewport.setUpdatesEnabled(True)
         # Phase 1 flush — paint button + hides before heavy work.
