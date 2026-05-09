@@ -760,6 +760,12 @@ class Main_Menu(QMainWindow):
             card = self._canvas_cards.get(key)
             if card is not None and not enabled:
                 card.hide()
+        # 2026-05-09 fix #1 — keep combo_2d_field gated alongside the
+        # btn_tab_2d_view button so a disabled tab doesn't have a vivid
+        # field selector beside it (visual clash from screenshot review).
+        _combo = getattr(self, 'combo_2d_field', None)
+        if _combo is not None:
+            _combo.setEnabled(rules.get('2d_view', False))
         # Fall back to Layout if active tab just became disabled
         if not rules.get(getattr(self, '_active_tab', 'layout'), True):
             self._switch_tab('layout')

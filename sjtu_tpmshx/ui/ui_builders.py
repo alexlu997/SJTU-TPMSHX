@@ -393,11 +393,14 @@ def build_param_tabs(window):
         f"border-bottom:2px solid {_ts['tab_off_border']};}}"
         f"QPushButton:focus{{color:{_ts['fg']};"
         f"border-bottom:2px solid {_ts['inp_focus']};}}")
+    # ★ fix #3 (2026-05-09) — disabled tabs explicitly drop bold + use a dimmer
+    # foreground so the global QApplication Bold (Phase 3) doesn't make
+    # disabled and enabled tabs visually identical.
     window._PTAB_DISABLED = (
-        f"QPushButton{{color:{_ts['tab_disabled_fg']};"
+        f"QPushButton{{color:rgba(255,255,255,40);"
         "background:transparent; border:none;"
         "border-bottom:2px solid transparent;"
-        "font-size:9pt; font-weight:500; padding:6px 14px 4px 14px;}")
+        "font-size:9pt; font-weight:normal; padding:6px 14px 4px 14px;}")
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -1413,6 +1416,16 @@ def build_canvas_area(window):
     window.combo_2d_field = QComboBox()
     window.combo_2d_field.addItems(["Temperature", "Velocity |U|", "Pressure"])
     window.combo_2d_field.setFixedHeight(28)
+    window.combo_2d_field.setFixedWidth(120)            # ★ fix #4 (cap width)
+    window.combo_2d_field.setEnabled(False)             # ★ fix #1 (gate w/ btn)
+    # ★ fix #4 (thin 1px border, lighter weight, 9pt to match tab buttons)
+    window.combo_2d_field.setStyleSheet(
+        "QComboBox{padding:2px 6px; border:1px solid rgba(255,255,255,40);"
+        " border-radius:4px; font-weight:normal; font-size:9pt;}"
+        "QComboBox:hover{border-color:rgba(255,255,255,90);}"
+        "QComboBox:disabled{color:rgba(255,255,255,40);"
+        " border-color:rgba(255,255,255,15);}"
+    )
     window.combo_2d_field.setToolTip(
         "Select which 2D field to display when '2D View' tab is active.")
 
@@ -1426,9 +1439,24 @@ def build_canvas_area(window):
             window._switch_tab('2d_view')
     window.combo_2d_field.currentIndexChanged.connect(_on_2d_field_changed)
 
+    # ★ fix #2 — visually group [2D View | combo] as one cluster so the combo
+    # reads as the field selector for that tab (not for Optimize on its right).
+    # We use a thin 8-px QFrame wrapper with no background; the cluster has a
+    # tighter inner gap (2 px) than the toolbar default and lives in a single
+    # addWidget call so spacers don't separate them.
+    from PySide6.QtWidgets import QFrame, QHBoxLayout as _QHL
+    _2d_cluster = QFrame()
+    _2d_cluster.setStyleSheet(
+        "QFrame{background:transparent; border:none; padding:0px;}")
+    _cl_lay = _QHL(_2d_cluster)
+    _cl_lay.setContentsMargins(0, 0, 0, 0)
+    _cl_lay.setSpacing(2)
+    _cl_lay.addWidget(window.btn_tab_2d_view)
+    _cl_lay.addWidget(window.combo_2d_field)
+    window._2d_view_cluster = _2d_cluster
+
     toolbar.addWidget(window.btn_tab_layout)
-    toolbar.addWidget(window.btn_tab_2d_view)
-    toolbar.addWidget(window.combo_2d_field)
+    toolbar.addWidget(_2d_cluster)
     toolbar.addWidget(window.btn_tab_pareto)
     toolbar.addWidget(window.btn_tab_3d)
     # Legacy buttons retained in window.* but hidden from the toolbar so
