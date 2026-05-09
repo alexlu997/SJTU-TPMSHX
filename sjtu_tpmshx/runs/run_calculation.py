@@ -820,6 +820,15 @@ def _run_solvers(window, cfg, fields):
                                          u_mag_B, L_field_2d, t_field_2d,
                                          side_props=_pB, side_T_for_Pr=T_inB)
 
+        # 2026-05-09 (option B) — water-side stiffness: ρ·cp_water ~ 4100×
+        # ρ·cp_air, h_v_water ~ 2-3× h_v_air (Pr-substitution). solve_full_domain
+        # GS-smoother is air-fit and can NaN-blow up on raw water settings.
+        # Loosen tol + raise max_iter when ANY side is water; air-air case
+        # keeps the original tight settings.
+        _has_water = (_pA['name'] == 'water') or (_pB['name'] == 'water')
+        _e_max_iter = 12000 if _has_water else 5000
+        _e_tol      = 1.0   if _has_water else 0.5
+
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
         if zone_config is not None:
             Ta, Tb, Ts, e_info = solve_full_domain(
@@ -829,7 +838,7 @@ def _run_solvers(window, cfg, fields):
                 rho_cp_A, rho_cp_B,
                 za['eps_arr'], ucA, vcA, ucB, vcB,
                 dir_A, dir_B,
-                max_iter=5000, tol=0.5,
+                max_iter=_e_max_iter, tol=_e_tol,
                 progress_cb=_on_progress, return_info=True,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 dx_arr=energy_dx, dy_arr=energy_dy,
@@ -842,11 +851,29 @@ def _run_solvers(window, cfg, fields):
                 rho_cp_A, rho_cp_B,
                 eps, ucA, vcA, ucB, vcB,
                 dir_A, dir_B,
-                max_iter=5000, tol=0.5,
+                max_iter=_e_max_iter, tol=_e_tol,
                 progress_cb=_on_progress, return_info=True,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
                 dx_arr=energy_dx, dy_arr=energy_dy)
+
+        # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side
+        # stiffness (rho·cp 4100× + h_v 2-3× vs air). Replace nan with the
+        # per-side inlet T so finalize_plots can render velocity / pressure
+        # canvases (the user still wants those visible) instead of crashing
+        # on contourf(nan). Surface a warning so the user knows Q is unreliable.
+        _has_nan = (np.any(np.isnan(Ta)) or np.any(np.isnan(Tb))
+                    or np.any(np.isnan(Ts)))
+        if _has_nan:
+            warnings_list.append(
+                f"Energy solver produced NaN cells — replacing with inlet T "
+                f"so 2D View can render velocity/pressure. Q is unreliable. "
+                f"Cause: water-side LTNE stiffness (rho_cp_water/air = "
+                f"{(rho_cp_B if _pB['name']=='water' else rho_cp_A)/(rho_cp_A if _pB['name']=='water' else rho_cp_B):.0f}×). "
+                f"Recommend lumped ε-NTU validation for production water Q.")
+            Ta = np.where(np.isnan(Ta), T_inA, Ta)
+            Tb = np.where(np.isnan(Tb), T_inB, Tb)
+            Ts = np.where(np.isnan(Ts), 0.5 * (T_inA + T_inB), Ts)
 
         # Step 3: Update rho*cp and rho field from per-cell temperature AND
         # per-cell absolute pressure. Using the scalar inlet P here under-

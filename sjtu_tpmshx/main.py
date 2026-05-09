@@ -3952,7 +3952,20 @@ class Main_Menu(QMainWindow):
             return
 
         # 2D mode (default) — _end_compute_ui already called above.
-        self._finalize_plots()
+        # 2026-05-09 — wrap finalize_plots so a panel crash (e.g. NaN
+        # contourf, water-side LTNE divergence) does NOT block 2D View
+        # from unlocking. The user still benefits from valid velocity /
+        # pressure canvases even when one panel fails to render.
+        _finalize_ok = True
+        try:
+            self._finalize_plots()
+        except Exception as _fe:
+            _finalize_ok = False
+            import traceback
+            traceback.print_exc()
+            self.statusBar().showMessage(
+                f"Plot finalize failed: {_fe!r} — partial 2D View available.",
+                8000)
         self._has_results = True
         self._has_results_2d = True
         self._update_tab_visibility()
@@ -3960,7 +3973,8 @@ class Main_Menu(QMainWindow):
             if hasattr(self, _bname):
                 getattr(self, _bname).setEnabled(True)
         self._switch_tab('temp')
-        self.statusBar().showMessage("Done.", 5000)
+        if _finalize_ok:
+            self.statusBar().showMessage("Done.", 5000)
 
     def _on_orch_error(self, message, log_text):
         """Compute raised. Show error + drop stale results (mode-aware)."""
