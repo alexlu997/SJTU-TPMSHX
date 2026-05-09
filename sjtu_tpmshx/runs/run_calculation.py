@@ -865,12 +865,21 @@ def _run_solvers(window, cfg, fields):
         _has_nan = (np.any(np.isnan(Ta)) or np.any(np.isnan(Tb))
                     or np.any(np.isnan(Ts)))
         if _has_nan:
+            n_nan_a = int(np.sum(np.isnan(Ta)))
+            n_nan_b = int(np.sum(np.isnan(Tb)))
+            n_nan_s = int(np.sum(np.isnan(Ts)))
+            n_total = Ta.size
+            _cause = ("water-side LTNE stiffness (ρ·cp 4100× air)"
+                      if _has_water
+                      else "energy solver divergence (likely Nu/h_v "
+                           "extrapolation, partial-BC layer, or non-monotonic "
+                           "convection — check log)")
             warnings_list.append(
-                f"Energy solver produced NaN cells — replacing with inlet T "
-                f"so 2D View can render velocity/pressure. Q is unreliable. "
-                f"Cause: water-side LTNE stiffness (rho_cp_water/air = "
-                f"{(rho_cp_B if _pB['name']=='water' else rho_cp_A)/(rho_cp_A if _pB['name']=='water' else rho_cp_B):.0f}×). "
-                f"Recommend lumped ε-NTU validation for production water Q.")
+                f"Energy solver produced NaN cells "
+                f"(Ta {n_nan_a}/{n_total}, Tb {n_nan_b}/{n_total}, "
+                f"Ts {n_nan_s}/{n_total}) — replacing with inlet T so "
+                f"2D View can render velocity/pressure. "
+                f"Q value is unreliable. Cause: {_cause}.")
             Ta = np.where(np.isnan(Ta), T_inA, Ta)
             Tb = np.where(np.isnan(Tb), T_inB, Tb)
             Ts = np.where(np.isnan(Ts), 0.5 * (T_inA + T_inB), Ts)
