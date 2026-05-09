@@ -89,6 +89,13 @@ def _make_worker_class():
                             list(prog.get('hv_hist', [])),
                         )
 
+                # 2026-05-09 Phase 1 wiring fix — pass n_jobs so the BO
+                # inner-loop uses joblib q_batch parallel (≈ 2×–4× wall
+                # speedup on 12-core box). The UI worker had been calling
+                # run_qnehvi without n_jobs, defaulting to sequential 1.
+                # Cap at q_batch (joblib auto-clamps if smaller batch).
+                n_jobs_inner = max(1, min(int(self.q_batch),
+                                          int(self.cfg.get('n_jobs', 4))))
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
                     res = run_qnehvi(
@@ -98,6 +105,7 @@ def _make_worker_class():
                         verbose=True,
                         save_dir=self.save_dir,
                         progress_cb=_cb,
+                        n_jobs=n_jobs_inner,
                     )
                 self.finished_with_result.emit(res)
             except Exception as e:
