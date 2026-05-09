@@ -469,6 +469,16 @@ def apply_mpl_theme():
     """Set matplotlib rcParams to match active theme and favour fast
     redraws so hover + contour updates feel 144 Hz-smooth."""
     import matplotlib as mpl
+    import warnings as _warnings
+    # 2026-05-09 — suppress the matplotlib font_manager noise about
+    # individual glyphs (⚠ U+26A0, etc.) missing from the primary sans
+    # font; matplotlib still falls back through font.sans-serif and finds
+    # DejaVu Sans which has the glyph, but it emits a UserWarning per
+    # missing glyph that floods the terminal during finalize_plots.
+    _warnings.filterwarnings(
+        'ignore',
+        message=r'.*Glyph \d+ \(\\N\{.+\}\) missing from font.*',
+        category=UserWarning)
     t = get_theme()
     mpl.rcParams['figure.facecolor'] = t['fig_bg']
     mpl.rcParams['axes.facecolor'] = t['ax_bg']
@@ -489,9 +499,19 @@ def apply_mpl_theme():
     # in-app Hero KPI look so a standalone-exported figure shares the
     # tool's visual identity.
     mpl.rcParams['font.family'] = 'sans-serif'
+    # 2026-05-09 — append 'Segoe UI Symbol' / 'Segoe UI Emoji' as the last
+    # sans-serif fallback so matplotlib can resolve Unicode warning / arrow
+    # / box-drawing glyphs (e.g. U+26A0 ⚠) that the primary Segoe UI body
+    # font is missing. Without this, every contour with a "⚠ ConstDF-v1
+    # extrapolated …" annotation logged
+    #     UserWarning: Glyph 9888 (\N{WARNING SIGN}) missing from font(s)
+    #     Segoe UI.
+    # DejaVu Sans is the matplotlib-bundled fallback that DOES carry ⚠,
+    # so listing it explicitly ensures every Windows / Linux / Mac box
+    # ends with a valid glyph source.
     mpl.rcParams['font.sans-serif'] = [
         'Fira Sans', 'Inter', 'Segoe UI', 'Helvetica', 'Arial',
-        'DejaVu Sans']
+        'Segoe UI Symbol', 'Segoe UI Emoji', 'DejaVu Sans']
     mpl.rcParams['font.serif'] = [
         'Instrument Serif', 'Fraunces', 'EB Garamond',
         'Source Serif Pro', 'Georgia', 'DejaVu Serif']
