@@ -501,3 +501,14 @@ def apply_mpl_theme():
     # figure-caption style while keeping labels + ticks in sans.
     mpl.rcParams['axes.titlelocation'] = 'left'
     mpl.rcParams['axes.titlesize'] = 12
+    # 2026-05-09 Phase 3 — bold by default + math italic rendering for
+    # symbols typed as $D_h$, $\rho_s$, $\mu_f$, etc. Mathtext stix-italic
+    # ensures the subscript renders italic (matches journal typography).
+    mpl.rcParams['axes.labelweight'] = 'bold'
+    mpl.rcParams['font.weight'] = 'bold'
+    mpl.rcParams['xtick.labelsize'] = 9
+    mpl.rcParams['ytick.labelsize'] = 9
+    mpl.rcParams['mathtext.default'] = 'it'   # italic letters in $...$
+    mpl.rcParams['mathtext.fontset'] = 'stixsans'
+    mpl.rcParams['legend.frameon'] = True
+    mpl.rcParams['legend.framealpha'] = 0.9

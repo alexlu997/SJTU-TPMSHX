@@ -75,6 +75,10 @@ progress: dict = {
     'best_Q': -float('inf'),
     'phase': 'idle',                    # 'init' | 'optimize' | 'done'
     'cancel_requested': False,
+    # Hypervolume tracking (Phase 2 — live HV plot in optimize panel)
+    'hv':     0.0,                       # current iter HV
+    'hv_iter': 0,                        # iter index of last HV update
+    'hv_hist': [],                       # running HV history (per BO iter)
 }
 
 
@@ -238,6 +242,9 @@ def run_qnehvi(config: Optional[dict] = None,
     progress['best_Q'] = -float('inf')
     progress['phase']  = 'init'
     progress['cancel_requested'] = False
+    progress['hv'] = 0.0
+    progress['hv_iter'] = 0
+    progress['hv_hist'] = []
 
     dp_cap = float(cfg.get('dp_cap_pa', 1.0e6))
 
@@ -362,6 +369,17 @@ def run_qnehvi(config: Optional[dict] = None,
         bd = DominatedPartitioning(ref_point=ref_point, Y=train_Y)
         hv = bd.compute_hypervolume().item()
         hv_hist.append(float(hv))
+        # Phase 2 — expose HV trace for live UI plot. Also fire progress_cb
+        # one extra time per iter so the UI can refresh the HV overlay
+        # without depending on the next batch's eval cadence.
+        progress['hv'] = float(hv)
+        progress['hv_iter'] = int(it + 1)
+        progress['hv_hist'] = list(hv_hist)
+        if progress_cb is not None:
+            try:
+                progress_cb(progress['count'], progress['total'], progress)
+            except Exception:
+                pass
         n_evals = train_X.shape[0]
         if verbose:
             print(f"[qNEHVI] iter {it+1:3d}/{n_iter}  "

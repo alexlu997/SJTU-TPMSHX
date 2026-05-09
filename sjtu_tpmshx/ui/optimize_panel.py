@@ -54,6 +54,10 @@ def _make_worker_class():
     class _OptimizeWorker(QThread):
         finished_with_result = Signal(object)
         progress_signal = Signal(int, int, float)  # count, total, best_Q
+        # Phase 2 — separate HV signal fires once per BO iter (after the
+        # DominatedPartitioning HV update). iter_idx is 1-based; hv_hist is
+        # the full per-iter HV trace for the live plot.
+        hv_signal = Signal(int, float, list)        # iter_idx, hv, hv_hist
         error_signal = Signal(str)
 
         def __init__(self, cfg, n_init, n_iter, q_batch, seed, save_dir):
@@ -64,6 +68,7 @@ def _make_worker_class():
             self.q_batch = q_batch
             self.seed = seed
             self.save_dir = save_dir
+            self._last_hv_iter = 0
 
         def run(self):
             try:
@@ -72,6 +77,17 @@ def _make_worker_class():
                 def _cb(count, total, prog):
                     self.progress_signal.emit(int(count), int(total),
                                                float(prog['best_Q']))
+                    # Fire HV signal only when iter index advances (the BO
+                    # loop calls progress_cb once per eval AND once per iter
+                    # at the HV update; we deduplicate by iter index).
+                    hv_iter = int(prog.get('hv_iter', 0))
+                    if hv_iter > self._last_hv_iter:
+                        self._last_hv_iter = hv_iter
+                        self.hv_signal.emit(
+                            hv_iter,
+                            float(prog.get('hv', 0.0)),
+                            list(prog.get('hv_hist', [])),
+                        )
 
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
@@ -597,6 +613,9 @@ def run_optimize(window) -> None:
     worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir)
     window._opt_t_start = time.time()
     window._opt_total_evals = n_init + n_iter * q_batch
+    # Phase 2 — reset sparkline mode flag so each launch begins by tracking
+    # best_Q during Sobol init, then flips to HV mode on first BO iter.
+    window._opt_sl_is_hv = False
 
     def _on_progress(count, total, best_Q):
         # Phase derived from count: first n_init evals are Sobol init, after
@@ -619,7 +638,11 @@ def run_optimize(window) -> None:
         _set_kpi(window, gen=phase_label, best_q=best_Q, eta=eta_str)
         _set_progress_pct(window, 100.0 * count / max(1, total))
         _set_status(window, f"qNEHVI {count}/{total}  best Q = {best_Q:.0f} W/m")
-        _push_sparkline(window, best_Q)
+        # Push best_Q to sparkline only while still in Sobol init; once BO
+        # iters start, the HV signal takes over (more informative than
+        # best_Q which plateaus on greedy improvement).
+        if not getattr(window, '_opt_sl_is_hv', False):
+            _push_sparkline(window, best_Q)
 
     def _on_done(res):
         window._last_opt_result = res
@@ -653,7 +676,40 @@ def run_optimize(window) -> None:
         _toggle_buttons(window, running=False)
         print(f"[optimize] worker error: {msg}")
 
+    def _on_hv(iter_idx, hv, hv_hist):
+        # Phase 2 — push HV trace to the sparkline (preferred) or surface as
+        # status text. We push individual HV values so the sparkline's
+        # internal ring buffer renders the trace incrementally.
+        try:
+            sl = getattr(window, '_opt_sparkline', None)
+            if sl is not None:
+                # Switch sparkline mode the first time HV arrives so the
+                # user sees the HV trend, not the best_Q sparkline (which
+                # plateaus quickly and is less informative).
+                fn = (getattr(sl, 'set_mode', None)
+                      or getattr(sl, 'set_title', None))
+                if callable(fn) and not getattr(window, '_opt_sl_is_hv', False):
+                    try:
+                        fn('HV')
+                    except TypeError:
+                        pass
+                    window._opt_sl_is_hv = True
+                # The sparkline already has a push() API; the existing
+                # _push_sparkline helper handles it generically.
+                _push_sparkline(window, float(hv))
+        except Exception:
+            pass
+        # Also surface as status snippet so the user sees the HV value
+        # even if the sparkline is hidden.
+        try:
+            _set_status(window,
+                        f"qNEHVI iter {iter_idx} — HV = {hv:.3e}  "
+                        f"({len(hv_hist)} BO iters complete)")
+        except Exception:
+            pass
+
     worker.progress_signal.connect(_on_progress)
+    worker.hv_signal.connect(_on_hv)
     worker.finished_with_result.connect(_on_done)
     worker.error_signal.connect(_on_error)
     window._opt_worker = worker

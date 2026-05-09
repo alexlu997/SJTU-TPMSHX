@@ -4786,7 +4786,14 @@ class Main_Menu(QMainWindow):
 
 # ── Entry point ───────────────────────────────────────────────
 def _apply_app_font(app):
-    """Pick Fira Sans > Inter > Segoe UI for labels, Fira Code for numbers."""
+    """Pick Fira Sans > Inter > Segoe UI for labels, Fira Code for numbers.
+
+    2026-05-09 Phase 3: app-wide font weight is set to Bold so the entire
+    UI (labels, buttons, combos, dropdowns) shares one consistent weight.
+    Individual stylesheet rules can still override (e.g. theme.py uses
+    explicit ``font-weight:500`` for some labels), but the QApplication
+    default is now bold.
+    """
     from PySide6.QtGui import QFont, QFontDatabase
     candidates = [
         "Fira Sans", "Inter", "Inter Display",
@@ -4798,12 +4805,14 @@ def _apply_app_font(app):
     if chosen is None:
         print("[font] no sans-serif candidate found; system default")
         return None
-    app.setFont(QFont(chosen, 10))
+    qf = QFont(chosen, 10)
+    qf.setWeight(QFont.Weight.Bold)
+    app.setFont(qf)
     mono = next((n for n in ["Fira Code", "JetBrains Mono", "Consolas", "Courier New"]
                  if n in families), None)
     if mono:
         app._mono_font_family = mono
-    print(f"[font] using {chosen!r}")
+    print(f"[font] using {chosen!r} (Bold)")
     return chosen
 
 
