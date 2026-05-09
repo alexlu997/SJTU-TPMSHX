@@ -46,6 +46,26 @@ from solvers.field_param import (
 )
 
 
+# ─── Module-level worker for joblib (must be top-level for pickle) ─
+
+
+def _eval_worker(x: np.ndarray, cfg: dict, dp_cap: float) -> tuple:
+    """Standalone worker for joblib.Parallel evaluating one design.
+
+    Top-level so loky/multiprocessing can pickle it. Returns
+    (Q, dP_clamped, error_msg_or_None) — the loop converts to F[i] format.
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            Q_neg, dP, _mass = evaluate_design(x, cfg)
+        Q = float(-Q_neg)
+        dP_c = float(np.clip(dP, 1.0, dp_cap))
+        return (Q, dP_c, None)
+    except Exception as e:
+        return (1e-6, dp_cap, repr(e))
+
+
 # ─── Lightweight progress dict for UI consumption ───────────────────
 
 
@@ -127,7 +147,8 @@ def run_qnehvi(config: Optional[dict] = None,
                save_dir: Optional[str] = None,
                progress_cb=None,
                hv_tol: float = 0.01,
-               hv_window: int = 3) -> dict:
+               hv_window: int = 3,
+               n_jobs: int = 1) -> dict:
     """qNEHVI Bayesian multi-objective optimization.
 
     Parameters
@@ -149,6 +170,13 @@ def run_qnehvi(config: Optional[dict] = None,
         gain, the loop exits. Set hv_tol=0 to disable.
     hv_window : int — number of trailing iterations that must all be flat for
         the early-stop to fire (default 3).
+    n_jobs : int — joblib parallel workers for evaluating each batch of designs
+        (default 1 = sequential). Set to q_batch (typically 4) on a workstation
+        to overlap SIMPLE/LTNE solves across candidates. Workers are loky
+        processes; OMP/MKL threads inside each worker should be 1 to avoid
+        oversubscription (the parallel_runner sets this in the env before
+        spawning the BO subprocess; standalone callers should set
+        ``OMP_NUM_THREADS=1`` / ``MKL_NUM_THREADS=1`` themselves before import).
 
     Returns
     -------
@@ -223,24 +251,30 @@ def run_qnehvi(config: Optional[dict] = None,
         useful resolution onto a sliver of the y-axis; on log10 the entire
         objective range fits in [3, 6] and the ARD lengthscale identifies
         meaningful dP gradients instead of being dominated by outliers.
+
+        Parallel mode (n_jobs > 1): joblib.Parallel with the loky backend
+        runs B candidates concurrently. dp_cap clamping + the log transform
+        happen in the main process after collection so progress + best_Q
+        bookkeeping remains in one place. Workers must NOT modify the
+        global progress dict — they get pickled cfg copies.
         """
-        F = np.zeros((len(X_np), 2), dtype=np.float64)
-        for i, x in enumerate(X_np):
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    Q_neg, dP, _mass = evaluate_design(x, cfg)
-                Q = -Q_neg
-            except Exception as e:
-                # Punish failed evals; don't crash the whole loop
-                if verbose:
-                    print(f"  [eval ERR] x_idx={i}: {e}")
-                Q, dP = 1e-6, dp_cap
-            # Clamp dP into [1, dp_cap] before log so the transform is
-            # always finite and the GP input distribution stays bounded.
-            dP_clamped = float(np.clip(dP, 1.0, dp_cap))
+        B = len(X_np)
+        if n_jobs > 1 and B > 1:
+            from joblib import Parallel, delayed
+            results = Parallel(
+                n_jobs=min(n_jobs, B),
+                backend='loky',
+                inner_max_num_threads=1,
+            )(delayed(_eval_worker)(x, cfg, dp_cap) for x in X_np)
+        else:
+            results = [_eval_worker(x, cfg, dp_cap) for x in X_np]
+
+        F = np.zeros((B, 2), dtype=np.float64)
+        for i, (Q, dP_c, err) in enumerate(results):
+            if err is not None and verbose:
+                print(f"  [eval ERR] x_idx={i}: {err}")
             F[i, 0] = Q                                 # maximize Q
-            F[i, 1] = -np.log10(dP_clamped)             # maximize -log10(dP)
+            F[i, 1] = -np.log10(dP_c)                   # maximize -log10(dP)
             progress['count'] += 1
             if Q > progress['best_Q']:
                 progress['best_Q'] = float(Q)
