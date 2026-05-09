@@ -1181,14 +1181,33 @@ def _run_solvers(window, cfg, fields):
         # between the coarse and fine grids.
         Q_A_ext = (4.0 * abs(Q_A_fine)   - abs(Q_A_coarse)  ) / 3.0
         Q_B_ext = (4.0 * abs(Q_B_fine)   - abs(Q_B_coarse)  ) / 3.0
-        Q_total = max(Q_A_ext, Q_B_ext)
+        # 2026-05-09 — NaN-fallback: if either side's 2× refined solve
+        # NaN-blew up (e.g. ConstDF-v1 K extrapolation at t outside
+        # [0.3, 0.5] mm produces unphysical Brinkman coefficients on the
+        # finer grid), Richardson extrapolation propagates nan up to
+        # Q_total. Fall back to the directly-measured Q_fine value, which
+        # only depends on the user-grid Ta (already nan-guarded above).
+        # User still sees a finite Q in the UI; we set richardson_warn
+        # so the warning banner reflects degraded grid convergence.
+        if not np.isfinite(Q_A_ext):
+            Q_A_ext = abs(Q_A_fine) if np.isfinite(Q_A_fine) else float('nan')
+        if not np.isfinite(Q_B_ext):
+            Q_B_ext = abs(Q_B_fine) if np.isfinite(Q_B_fine) else float('nan')
+        # Robust max across (possibly nan) candidates: prefer finite values.
+        _q_candidates = [v for v in (Q_A_ext, Q_B_ext)
+                         if np.isfinite(v)]
+        Q_total = max(_q_candidates) if _q_candidates else float('nan')
         Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
         Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
         # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
         # assumption in doubt). Per-side unified metric: compare the side
-        # that dominates Q_total.
+        # that dominates Q_total. Also flag when Richardson fell back to
+        # the direct Q_fine (means the 2× refined solve was unreliable).
         _denom = max(Q_fine_max, 1e-12)
-        richardson_warn = abs(Q_fine_max - Q_coarse_max) / _denom > 0.10
+        richardson_warn = (
+            (np.isfinite(Q_coarse_max)
+             and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
+            or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
     except Exception:
         Q_A_fine = Q_B_fine = float('nan')
         Q_A_ext = Q_B_ext = float('nan')
