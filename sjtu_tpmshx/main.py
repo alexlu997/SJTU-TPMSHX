@@ -1185,11 +1185,19 @@ class Main_Menu(QMainWindow):
         }[fluid]
         try:
             T_K = self._temp_to_K(le_Tin)
+            # 2026-05-09 (option B) — route per-side fluid type through to
+            # tpms_compute so water side picks up water properties + the
+            # Pr-substitution Nu correlation. Falls back to 'air' if combo
+            # not present (legacy compute path).
+            from solvers.tpms_calc import parse_fluid_type
+            _combo = getattr(self, f'combo_fluid{fluid}', None)
+            _ftype = parse_fluid_type(_combo) if _combo is not None else 'air'
             r = tpms_compute(
                 self.combo_tpms.currentText(),
                 float(self.le_Lcell.text()), float(self.le_t.text()),
                 float(le_u.text()), T_K,
-                float(le_Pin.text()), float(self.le_ks.text()))
+                float(le_Pin.text()), float(self.le_ks.text()),
+                fluid_type=_ftype)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e)); return
 

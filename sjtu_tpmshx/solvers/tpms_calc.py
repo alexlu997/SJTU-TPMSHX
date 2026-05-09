@@ -180,7 +180,14 @@ def nu_water_gyroid_yan6(Re, Pr):
 
 # ── Fluid type validation ─────────────────────────────────────
 
-_SUPPORTED_FLUIDS = {'air'}
+# 2026-05-09 (option B) — water unblocked for the 2D Compute path. The
+# D-F surrogate (predict_K_cF) was fitted on air training data only, so the
+# per-cell K / c_F coefficients for water are NOT physically calibrated; the
+# water-side dP is a placeholder. Heat transfer is still rigorous via
+# nu_water_from_Re (Pr-substitution onto the air-fit Nu correlation, with
+# Yan [6] available for Gyroid). Treat water dP as engineering estimate;
+# water Q is publication-grade for Gyroid and engineering for Diamond.
+_SUPPORTED_FLUIDS = {'air', 'water'}
 
 
 def parse_fluid_type(combo):
@@ -199,10 +206,19 @@ def parse_fluid_type(combo):
 def validate_fluid_type(fluid_type: str, side: str) -> None:
     """Raise NotImplementedError for fluid types without fitted correlations.
 
-    Water and sCO2 ship as UI options but lack Nu / f-Re / D-F surrogate
-    correlations. Running the solver on them would produce numbers that
-    reuse air's Pr=0.72 and air-fitted closures — physically wrong.
-    Block at entry until correlations are fitted.
+    Air + water are supported (option B, 2026-05-09). sCO2 still blocks
+    pending a fitted Nu / f-Re / D-F surrogate.
+
+    For water:
+      * Properties: NIST-grade rho/mu/k (Vogel viscosity, < 2 % vs NIST 0–90 °C).
+      * Nu (heat transfer): nu_water_from_Re — Pr-substitution onto the
+        air-fit Diamond / Gyroid correlations (Reynolds analogy). Gyroid
+        case 1 also has nu_water_gyroid_yan6 (Yan 2024 [6]) for direct
+        cross-check.
+      * dP closure: predict_K_cF reuses the air-fit ConstDF-v1 K/c_F. NOT
+        physically calibrated for water; dP for water side is engineering
+        placeholder. Use validate_shanghai_lumped_dual_nu.py for Shanghai
+        air-water Q validation (the production paper baseline).
     """
     if fluid_type not in _SUPPORTED_FLUIDS:
         label = {'water': 'Water', 'sco2': 'sCO₂'}.get(fluid_type, fluid_type)
@@ -449,7 +465,8 @@ def compute(tpms_type: str,
             u: float,
             T_in_K: float,
             P_in_Pa: float,
-            k_s: float) -> dict:
+            k_s: float,
+            fluid_type: str = 'air') -> dict:
     """
     Compute all TPMS heat-transfer and fluid properties.
 
@@ -490,10 +507,19 @@ def compute(tpms_type: str,
     D_h_m = g['D_h']
     D_h_mm = D_h_m * 1000.0        # [mm]  (used in Nu correlation)
 
-    # ── Air properties at inlet conditions ────────────────────
-    mu  = air_viscosity(T_in_K)
-    k_f = air_conductivity(T_in_K)
-    rho = air_density(T_in_K, P_in_Pa)
+    # ── Fluid properties at inlet conditions ──────────────────
+    # 2026-05-09 — water dispatch added (option B). Water rho is taken
+    # incompressible (P_in_Pa ignored). Air uses ideal-gas density.
+    if fluid_type == 'water':
+        mu  = float(water_viscosity(T_in_K))
+        k_f = float(water_conductivity(T_in_K))
+        rho = float(water_density(T_in_K))
+        cp_f = float(water_cp(T_in_K))
+    else:
+        mu  = air_viscosity(T_in_K)
+        k_f = air_conductivity(T_in_K)
+        rho = air_density(T_in_K, P_in_Pa)
+        cp_f = air_cp(T_in_K)
 
     # ── Reynolds number ──────────────────────────────────────
     # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
@@ -519,7 +545,14 @@ def compute(tpms_type: str,
     # Single-stream convention (post-refit 2026-04-26): pass ε_A (per-stream
     # void fraction; sheet HX splits ε equally between two fluid channels).
     eps_A = 0.5 * eps
-    if tpms_type == 'Diamond':
+    if fluid_type == 'water':
+        # Pr-substitution onto the air-fit correlation (Reynolds analogy).
+        # Pr_water = mu * cp / k_f. Falls back to nu_water_from_Re for
+        # consistent dispatch over Diamond / Gyroid.
+        Pr_water = mu * cp_f / k_f
+        Nu = nu_water_from_Re(tpms_type, Re, eps_A, L_cell_mm, D_h_mm,
+                              Pr_water)
+    elif tpms_type == 'Diamond':
         Nu = _nu_diamond(Re, eps_A, L_cell_mm, D_h_mm)
     else:
         Nu = _nu_gyroid(Re, eps_A, L_cell_mm, D_h_mm)
@@ -541,8 +574,7 @@ def compute(tpms_type: str,
     # from experimental Nu vs Pe data and expose via compute_ext if needed.
     K_ff = eps * k_f
     if C_DISP > 0.0:
-        cp_val = air_cp(T_in_K)
-        K_ff = K_ff + C_DISP * rho * cp_val * abs(u) * D_h_m
+        K_ff = K_ff + C_DISP * rho * cp_f * abs(u) * D_h_m
     K_ss = CHI_S * (1.0 - eps) * k_s
 
     return {

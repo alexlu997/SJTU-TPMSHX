@@ -70,13 +70,16 @@ def _parse_inputs(window):
     warnings_list = []
 
     # Block unsupported fluids up-front (2D path currently hardcodes air_*
-    # in _run_solvers; running with water/sCO2 would silently give wrong
-    # numbers). Validate at entry for both sides.
+    # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
+    # still blocks. Per-side fluid type captured into cfg so _run_solvers
+    # picks the right property accessors.
     from solvers.tpms_calc import parse_fluid_type, validate_fluid_type
-    if hasattr(window, 'combo_fluidA'):
-        validate_fluid_type(parse_fluid_type(window.combo_fluidA), 'A')
-    if hasattr(window, 'combo_fluidB'):
-        validate_fluid_type(parse_fluid_type(window.combo_fluidB), 'B')
+    fluid_A = (parse_fluid_type(window.combo_fluidA)
+               if hasattr(window, 'combo_fluidA') else 'air')
+    fluid_B = (parse_fluid_type(window.combo_fluidB)
+               if hasattr(window, 'combo_fluidB') else 'air')
+    validate_fluid_type(fluid_A, 'A')
+    validate_fluid_type(fluid_B, 'B')
 
     # Surrogate training-domain guard for the UI Compute path (#10) —
     # previously only the optimizer did this; the Compute tab now also
@@ -252,6 +255,7 @@ def _parse_inputs(window):
         'Lcell': Lcell, 't_wall': t_wall, 'k_s': k_s,
         'eps': eps, 'r_h': r_h,
         'zone_config': zone_config, 'za': za, 'z_axis': z_axis,
+        'fluid_A': fluid_A, 'fluid_B': fluid_B,
         'warnings_list': warnings_list,
     }
     return cfg
@@ -420,7 +424,7 @@ def _build_fields(window, cfg):
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None):
+                    T_field_real=None, fluid_type='ideal_gas'):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -428,6 +432,10 @@ def _build_fields(window, cfg):
         SIMPLE.T_field via update_T_field so inner _update_density() uses
         local T (not stale scalar T_in_f). Required for compressible coupling
         consistency across outer iters.
+
+        fluid_type : 'ideal_gas' (default, air) or 'incompressible' (water).
+        Controls whether SIMPLE's _update_density runs ρ = P / (R·T) per
+        iter or treats ρ as fixed (water). Option B 2026-05-09.
         """
         d = cfg_fluid['dir']
         is_x = window._is_x_dir(d)
@@ -470,7 +478,8 @@ def _build_fields(window, cfg):
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs)
+                             P_ref_abs=P_in_abs,
+                             fluid_type=fluid_type)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = energy_dx.copy()
@@ -482,7 +491,8 @@ def _build_fields(window, cfg):
                              zone_config=zc_simple,
                              zone_arrays=z_arr if zc_simple is None else None,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs)
+                             P_ref_abs=P_in_abs,
+                             fluid_type=fluid_type)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
@@ -597,6 +607,8 @@ def _run_solvers(window, cfg, fields):
     eps = cfg['eps']
     zone_config = cfg['zone_config']; za = cfg['za']
     warnings_list = cfg['warnings_list']
+    fluid_A = cfg.get('fluid_A', 'air')
+    fluid_B = cfg.get('fluid_B', 'air')
 
     energy_dx = fields['energy_dx']; energy_dy = fields['energy_dy']
     _x_breaks = fields['_x_breaks']; _y_breaks = fields['_y_breaks']
@@ -608,6 +620,29 @@ def _run_solvers(window, cfg, fields):
     from solvers import tpms_calc as _tc
     from solvers.simple_solver import _aligned_grid
 
+    # 2026-05-09 (option B) — per-side fluid property accessors. Air uses
+    # ideal-gas density (T, P); water is incompressible so P is ignored.
+    # Returns (rho_fn, cp_fn, mu_fn, k_fn) — each accepts a scalar or
+    # ndarray T (K) and P (Pa, optional) with broadcast semantics.
+    def _props_for(fluid: str):
+        if fluid == 'water':
+            return dict(
+                rho=(lambda T, P=None: _tc.water_density(T)),
+                cp=_tc.water_cp,
+                mu=_tc.water_viscosity,
+                k=_tc.water_conductivity,
+                name='water',
+            )
+        return dict(
+            rho=(lambda T, P=101325.0: _tc.air_density(T, P)),
+            cp=_tc.air_cp,
+            mu=_tc.air_viscosity,
+            k=_tc.air_conductivity,
+            name='air',
+        )
+    _pA = _props_for(fluid_A)
+    _pB = _props_for(fluid_B)
+
     _MAX_COUPLING = 5
     _COUPLING_TOL = 0.01  # 1% relative change in rho
     _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
@@ -618,10 +653,25 @@ def _run_solvers(window, cfg, fields):
     # (laminar Hagen-Poiseuille limit, prevents Nu→0 non-physical extrapolation).
     _NU_LAM_FLOOR_2D = 4.36
 
+    def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm):
+        """Per-side Nu: water uses Pr-substitution onto air-fit correlation
+        (option B, 2026-05-09). Air uses native Nu correlation."""
+        if side_props['name'] == 'water':
+            mu_w = float(side_props['mu'](side_T_for_Pr))
+            k_w  = float(side_props['k'](side_T_for_Pr))
+            cp_w = float(side_props['cp'](side_T_for_Pr))
+            Pr_w = mu_w * cp_w / k_w
+            return _tc.nu_water_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm,
+                                        Pr_w)
+        return _tc.nu_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm)
+
     def _build_hv_local_2d(rho_scalar, mu_scalar, k_f_scalar,
-                            u_mag_field, L_mm_field, t_mm_field):
+                            u_mag_field, L_mm_field, t_mm_field,
+                            side_props=None, side_T_for_Pr=None):
         """Per-cell h_v = A_0 · max(Nu(Re_local), Nu_lam) · k_f / D_h.
-        L_mm_field, t_mm_field None → uniform Lcell, t_wall."""
+        L_mm_field, t_mm_field None → uniform Lcell, t_wall.
+        side_props (dict) + side_T_for_Pr (K) drive water Nu dispatch
+        when present; default None falls back to air Nu (legacy)."""
         Nx_l, Ny_l = u_mag_field.shape
         if L_mm_field is None:
             g_u = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
@@ -630,10 +680,15 @@ def _run_solvers(window, cfg, fields):
             out = np.empty((Nx_l, Ny_l), dtype=np.float64)
             for i in range(Nx_l):
                 for j in range(Ny_l):
-                    # single-stream: ε_f = ε/2 (post-refit 2026-04-26)
-                    nu_corr = _tc.nu_from_Re(tpms_type,
-                                              max(float(Re_loc[i, j]), 1.0),
-                                              eps_g / 2.0, Lcell, D_h * 1000.0)
+                    Re_ij = max(float(Re_loc[i, j]), 1.0)
+                    if side_props is not None:
+                        nu_corr = _nu_dispatch(side_props, side_T_for_Pr,
+                                                Re_ij, eps_g / 2.0, Lcell,
+                                                D_h * 1000.0)
+                    else:
+                        nu_corr = _tc.nu_from_Re(tpms_type, Re_ij,
+                                                  eps_g / 2.0, Lcell,
+                                                  D_h * 1000.0)
                     Nu_l = max(nu_corr, _NU_LAM_FLOOR_2D)
                     out[i, j] = A0 * Nu_l * k_f_scalar / D_h
             return out
@@ -644,9 +699,15 @@ def _run_solvers(window, cfg, fields):
                 g = tpms_geometry(tpms_type, L_ij, t_ij, k_s)
                 D_h_l = g['D_h']
                 Re_l = rho_scalar * (abs(float(u_mag_field[i, j])) + 1e-12) * D_h_l / mu_scalar
-                # single-stream: ε_f = ε/2
-                nu_corr = _tc.nu_from_Re(tpms_type, max(Re_l, 1.0),
-                                          g['epsilon'] / 2.0, L_ij, D_h_l * 1000.0)
+                Re_ij = max(Re_l, 1.0)
+                if side_props is not None:
+                    nu_corr = _nu_dispatch(side_props, side_T_for_Pr,
+                                            Re_ij, g['epsilon'] / 2.0,
+                                            L_ij, D_h_l * 1000.0)
+                else:
+                    nu_corr = _tc.nu_from_Re(tpms_type, Re_ij,
+                                              g['epsilon'] / 2.0,
+                                              L_ij, D_h_l * 1000.0)
                 Nu_l = max(nu_corr, _NU_LAM_FLOOR_2D)
                 out[i, j] = g['A_0'] * Nu_l * k_f_scalar / D_h_l
         return out
@@ -686,12 +747,12 @@ def _run_solvers(window, cfg, fields):
     ucA = vcA = ucB = vcB = None
     simpA = simpB = None
 
-    rho_cp_A = _tc.air_density(T_inA, P_inA_val) * _tc.air_cp(T_inA)
-    rho_cp_B = _tc.air_density(T_inB, P_inB_val) * _tc.air_cp(T_inB)
+    rho_cp_A = _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)
+    rho_cp_B = _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)
 
     # Variable density: 2D rho fields for SIMPLE (initialized uniform)
-    rho_A_field = np.full((N_x, N_y), _tc.air_density(T_inA, P_inA_val))
-    rho_B_field = np.full((N_x, N_y), _tc.air_density(T_inB, P_inB_val))
+    rho_A_field = np.full((N_x, N_y), _pA['rho'](T_inA, P_inA_val))
+    rho_B_field = np.full((N_x, N_y), _pB['rho'](T_inB, P_inB_val))
 
     for _coup_it in range(_MAX_COUPLING):
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
@@ -702,12 +763,19 @@ def _run_solvers(window, cfg, fields):
         _Tb_for_simpB = Tb if _coup_it > 0 else None
         with _warn.catch_warnings(record=True) as _caught:
             _warn.simplefilter("always")
+            # 2026-05-09 (option B) — water side runs incompressible SIMPLE
+            # so _update_density (ideal-gas P/RT update) is a no-op; ρ stays
+            # at the inlet value over the whole field.
+            _ftA = 'incompressible' if _pA['name'] == 'water' else 'ideal_gas'
+            _ftB = 'incompressible' if _pB['name'] == 'water' else 'ideal_gas'
             ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A,
                                             'Fluid A', P_inA_val,
-                                            T_field_real=_Ta_for_simpA)
+                                            T_field_real=_Ta_for_simpA,
+                                            fluid_type=_ftA)
             ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B,
                                             'Fluid B', P_inB_val,
-                                            T_field_real=_Tb_for_simpB)
+                                            T_field_real=_Tb_for_simpB,
+                                            fluid_type=_ftB)
         if _coup_it == 0:
             for w in _caught:
                 warnings_list.append(str(w.message))
@@ -738,17 +806,19 @@ def _run_solvers(window, cfg, fields):
         rho_B_scalar = float(rho_B_field.mean())
         mu_A_scalar = float(np.asarray(mu_A).mean()) if np.ndim(mu_A) else float(mu_A)
         mu_B_scalar = float(np.asarray(mu_B).mean()) if np.ndim(mu_B) else float(mu_B)
-        k_fA = float(_tc.air_conductivity(T_inA))
-        k_fB = float(_tc.air_conductivity(T_inB))
+        k_fA = float(_pA['k'](T_inA))
+        k_fB = float(_pB['k'](T_inB))
         # Zoned L/t fields (only if zone_config and grid mode); otherwise None
         L_field_2d = None; t_field_2d = None
         if zone_config is not None and za is not None:
             L_field_2d = za.get('L_mm_arr')
             t_field_2d = za.get('t_arr')
         h_vA_local = _build_hv_local_2d(rho_A_scalar, mu_A_scalar, k_fA,
-                                         u_mag_A, L_field_2d, t_field_2d)
+                                         u_mag_A, L_field_2d, t_field_2d,
+                                         side_props=_pA, side_T_for_Pr=T_inA)
         h_vB_local = _build_hv_local_2d(rho_B_scalar, mu_B_scalar, k_fB,
-                                         u_mag_B, L_field_2d, t_field_2d)
+                                         u_mag_B, L_field_2d, t_field_2d,
+                                         side_props=_pB, side_T_for_Pr=T_inB)
 
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
         if zone_config is not None:
@@ -796,17 +866,17 @@ def _run_solvers(window, cfg, fields):
             return np.ascontiguousarray(P_real)
         P_abs_A = _simp_P_abs_real(simpA, dir_A)
         P_abs_B = _simp_P_abs_real(simpB, dir_B)
-        rho_cp_A_new = _tc.air_density(Ta, P_abs_A) * _tc.air_cp(Ta)
-        rho_cp_B_new = _tc.air_density(Tb, P_abs_B) * _tc.air_cp(Tb)
-        rho_A_field_new = _tc.air_density(Ta, P_abs_A)
-        rho_B_field_new = _tc.air_density(Tb, P_abs_B)
+        rho_cp_A_new = _pA['rho'](Ta, P_abs_A) * _pA['cp'](Ta)
+        rho_cp_B_new = _pB['rho'](Tb, P_abs_B) * _pB['cp'](Tb)
+        rho_A_field_new = _pA['rho'](Ta, P_abs_A)
+        rho_B_field_new = _pB['rho'](Tb, P_abs_B)
 
         # Variable mu: build 2D viscosity field from per-cell Ta/Tb via
-        # Sutherland. Previously scalar domain-mean (marked "small effect");
-        # with local-P density now using the full field, local mu keeps the
-        # momentum balance consistent cell-by-cell.
-        mu_A = _tc.air_viscosity(Ta)
-        mu_B = _tc.air_viscosity(Tb)
+        # Sutherland (air) or Vogel (water). With local-P density now using
+        # the full field, local mu keeps the momentum balance consistent
+        # cell-by-cell.
+        mu_A = _pA['mu'](Ta)
+        mu_B = _pB['mu'](Tb)
         T_avg_A = float(Ta.mean()); T_avg_B = float(Tb.mean())
 
         # Convergence: mass-flux-weighted relative rho change.
@@ -1004,9 +1074,11 @@ def _run_solvers(window, cfg, fields):
     ucA2 = _interp2(ucA); vcA2 = _interp2(vcA)
     ucB2 = _interp2(ucB); vcB2 = _interp2(vcB)
     rcp_A2 = _interp2(rho_cp_A if np.ndim(rho_cp_A) > 0 else
-                       np.full((N_x, N_y), _tc.air_density(T_inA, P_inA_val) * _tc.air_cp(T_inA)))
+                       np.full((N_x, N_y),
+                               _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)))
     rcp_B2 = _interp2(rho_cp_B if np.ndim(rho_cp_B) > 0 else
-                       np.full((N_x, N_y), _tc.air_density(T_inB, P_inB_val) * _tc.air_cp(T_inB)))
+                       np.full((N_x, N_y),
+                               _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)))
     if za is not None and 'h_vB_arr' in za:
         h_vA2 = _interp2(za['h_vA_arr'])
         h_vB2 = _interp2(za['h_vB_arr'])
