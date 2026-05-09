@@ -1197,6 +1197,60 @@ def _run_solvers(window, cfg, fields):
         _q_candidates = [v for v in (Q_A_ext, Q_B_ext)
                          if np.isfinite(v)]
         Q_total = max(_q_candidates) if _q_candidates else float('nan')
+
+        # 2026-05-09 — last-resort Q fallback. If both Richardson AND
+        # direct Q_*_fine return nan (unusual; typically caused by a nan
+        # cell on the inlet or outlet face that contaminates the
+        # mass-flux-weighted enthalpy integral, e.g. ConstDF-v1 K
+        # extrapolation producing local Brinkman blowup at a corner cell),
+        # fall back to the simplest possible 1D estimate:
+        #     Q ≈ m_dot_inlet · cp_inlet · (T_in − T_out_mean)
+        # using the inlet rho · u · A and outlet face mean T. Same
+        # convention the UI uses for T_OUT_A / T_OUT_B display, so the
+        # numbers are guaranteed consistent. This produces a
+        # plate-average Q rather than the cross-stream-resolved one,
+        # marked richardson_warn=True so the user knows.
+        if not np.isfinite(Q_total):
+            try:
+                # Outlet face mean T per side (matches T_OUT display).
+                if dir_A in (0, 1):
+                    Tout_A_face = Ta[-1 if dir_A == 0 else 0, :]
+                else:
+                    Tout_A_face = Ta[:, -1 if dir_A == 2 else 0]
+                if dir_B in (0, 1):
+                    Tout_B_face = Tb[-1 if dir_B == 0 else 0, :]
+                else:
+                    Tout_B_face = Tb[:, -1 if dir_B == 2 else 0]
+                Tout_A_face = Tout_A_face[np.isfinite(Tout_A_face)]
+                Tout_B_face = Tout_B_face[np.isfinite(Tout_B_face)]
+                T_out_A_mean = float(np.mean(Tout_A_face)) if Tout_A_face.size else float(T_inA)
+                T_out_B_mean = float(np.mean(Tout_B_face)) if Tout_B_face.size else float(T_inB)
+                rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
+                rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
+                cp_A_in  = float(_pA['cp'](T_inA))
+                cp_B_in  = float(_pB['cp'](T_inB))
+                # Inlet area per unit depth: cross-stream span of the
+                # inlet pipe. Use cfgA/B inlet width (in_w).
+                A_in_A = float(cfgA['in_w'])
+                A_in_B = float(cfgB['in_w'])
+                m_dot_A = rho_A_in * abs(u_A) * A_in_A
+                m_dot_B = rho_B_in * abs(u_B) * A_in_B
+                Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
+                Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
+                Q_total = max(Q_A_simple, Q_B_simple)
+                if np.isfinite(Q_total):
+                    warnings_list.append(
+                        f"Q_total computed via simple 1D fallback "
+                        f"(m_dot · cp · ΔT, plate-average) because the "
+                        f"cross-stream-resolved enthalpy integral hit nan "
+                        f"on one of the boundary faces. "
+                        f"Q_A_simple={Q_A_simple:.0f} W/m, "
+                        f"Q_B_simple={Q_B_simple:.0f} W/m. "
+                        f"Recommend tightening tol or refining grid for "
+                        f"production-grade Q.")
+                    richardson_warn = True
+            except Exception:
+                pass
         Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
         Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
         # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
