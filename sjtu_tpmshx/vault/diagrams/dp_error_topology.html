@@ -289,11 +289,12 @@
     <div class="sub">where systematic Δp under-prediction comes from — and why 3D widens the gap.</div>
   </div>
   <div class="meta">
-    <div><span class="k">HEAD</span> · 87468e2</div>
+    <div><span class="k">HEAD</span> · b7eed49</div>
     <div><span class="k">DATE</span> · 2026-05-13</div>
     <div><span class="k">NU AIR</span> · v4.1 ×1.28</div>
     <div><span class="k">NU H₂O</span> · Yan [6] 2024</div>
     <div><span class="k">D-F</span> · ConstDF-v1</div>
+    <div><span class="k">ROUGH 3D</span> · Norris 1a (f×1.46)</div>
   </div>
 </header>
 
@@ -341,13 +342,22 @@
         <td><span class="tag tag-bad">audit</span></td>
       </tr>
       <tr>
-        <td><span class="lvl">3D Nz=10</span> · uniform · 20×10×10</td>
+        <td><span class="lvl">3D Nz=10</span> · uniform · 20×10×10 · <em style="color:#8a93a8">baseline</em></td>
         <td class="val-good">2.91 %</td>
         <td>-1.82 %</td>
         <td class="val-bad">44.74 %</td>
         <td class="val-bad">-42.57 %</td>
         <td>55.6 %</td>
-        <td><span class="tag tag-bad">audit</span></td>
+        <td><span class="tag tag-bad">superseded</span></td>
+      </tr>
+      <tr>
+        <td><span class="lvl">3D Nz=10 + Norris 1a</span> · <em style="color:#7fd1ae">production 2026-05-13</em></td>
+        <td class="val-good">3.61 %</td>
+        <td>-2.46 %</td>
+        <td class="val-warn">24.15 %</td>
+        <td class="val-warn">-14.54 %</td>
+        <td>51.8 %</td>
+        <td><span class="tag tag-good">production</span></td>
       </tr>
     </tbody>
   </table>
@@ -572,7 +582,7 @@
 
 <!-- 4. Conclusion -->
 <div class="closing">
-  Net reading: <strong>2D</strong> sits at <code>dP RMSRE 28.25 %</code> · all error sources <strong>identified + documented</strong>, the headline number lands in the paper's Limitations chapter without further work. <strong>3D</strong> Nz=10 sits at <code>dP RMSRE 44.74 %</code> with an additional 26-pp under-prediction beyond 2D · this gap is <strong>not</strong> attributable to entrance effects alone (Bernoulli K·ρu²/2 ≈ 580 Pa cannot bridge 99 kPa). The (g) z-redistribution mechanism explains direction-of-error and Nz-monotonicity but not magnitude · grid sweep + BC audit are required before trusting 3D dP for optimization.
+  Net reading <strong>(2026-05-13 audit)</strong>: <strong>2D</strong> sits at <code>dP RMSRE 28.25 %</code> · all error sources <strong>identified + documented</strong>, lands in paper Limitations without further work. <strong>3D baseline</strong> at <code>dP RMSRE 44.74 %</code> over-shot by ~ 16 pp vs 2D · K-factor analysis + xy/Nz grid sweep ruled out entrance effects and numerical residuals as primary sources. Root cause: the existing scalar <code>×1.28</code> air-side Nu enhancement is a <strong>Shanghai-fit 2D-planarisation-artefact compensator</strong>, not a roughness model; when the 2D artefact disappears in 3D, the friction tensor goes uncompensated. Norris (1971) Reynolds-analogy lifts <code>f × 1.46</code> directly from <code>1.28^(1/0.68)</code> — zero new parameter — and collapses 3D <code>dP RMSRE 44.74 → 24.15 %</code> with <code>Q RMSRE 2.91 → 3.61 %</code>. Adopted as 3D production closure on 2026-05-13. <em style="color:#8a93a8">(2D + Norris over-corrects catastrophically; lane separation is essential.)</em>
 </div>
 
 <footer>
