@@ -166,6 +166,8 @@ def evaluate_3d(x_decision: np.ndarray,
                 tol_simple: float = 1e-2,
                 max_iter_energy: int = 2000,
                 tol_energy: float = 0.5,
+                roughness_mode: str | None = None,
+                roughness_eps_um: float | None = None,
                 verbose: bool = True) -> dict:
     """Run the 3D evaluator on a single decision vector. Returns (Q_3D_W,
     dP_A_3D, dP_B_3D, dP_total_3D, mass_kg, info_dict).
@@ -204,6 +206,44 @@ def evaluate_3d(x_decision: np.ndarray,
         arrays['L_field'], arrays['t_field'], arrays['eps_f_arr'],
         tpms_type, Ny_sim=Ny, Nz_sim=Nz, fluid='B',
         streamwise_dx=dy_arr, z_dx=dz_arr)
+
+    # 2026-05-13 — air-side wall-roughness correction (Norris 1971 or
+    # Bhatti-Shah-Haaland). Resolve mode + ε from env if not passed in.
+    # Water side untouched (Yan [6] embeds AM roughness already).
+    if roughness_mode is None or roughness_eps_um is None:
+        from solvers.roughness import resolve_mode_from_env as _resolve
+        _env_mode, _env_eps = _resolve(default='baseline')
+        roughness_mode = roughness_mode or _env_mode
+        roughness_eps_um = roughness_eps_um if roughness_eps_um is not None else _env_eps
+    if roughness_mode != 'baseline':
+        from solvers.roughness import f_enhancement, nu_extra_factor
+        from solvers.tpms_calc import geometry as _tpms_geom
+        _g_case = _tpms_geom(tpms_type, float(fc.L_ctrl.mean()),
+                              float(fc.t_ctrl.mean()), k_s)
+        _D_h_m = _g_case['D_h']
+        _D_h_mm = _D_h_m * 1000.0
+        # Standalone case-Re using freestream A inlet props (mirror validate
+        # script). Independent of later SIMPLE init.
+        _rho_A_in = air_density(T_inA, P_inA)
+        _mu_A_in  = air_viscosity(T_inA)
+        Re_A_case = float(_rho_A_in * abs(u_A) * _D_h_m / _mu_A_in)
+        f_gain_A = float(f_enhancement(Re_A_case, roughness_mode,
+                                        eps_um=roughness_eps_um,
+                                        D_h_mm=_D_h_mm))
+        K_A = (K_A / f_gain_A).astype(np.float64, copy=False)
+        cF_A = (cF_A * f_gain_A).astype(np.float64, copy=False)
+        # bhatti_shah_1b overrides Nu × 1.28 baked into compute(); norris_1a
+        # leaves Nu unchanged (nu_extra_factor returns 1.0).
+        nu_extra_A = float(nu_extra_factor(Re_A_case, roughness_mode,
+                                            eps_um=roughness_eps_um,
+                                            D_h_mm=_D_h_mm))
+        if nu_extra_A != 1.0:
+            arrays['h_vA_arr'] = (arrays['h_vA_arr'] * nu_extra_A).astype(
+                np.float64, copy=False)
+        if verbose:
+            print(f"[3D rough] mode={roughness_mode} eps={roughness_eps_um} μm  "
+                  f"Re_A={Re_A_case:.0f}  f_gain_A={f_gain_A:.3f}  "
+                  f"nu_extra_A={nu_extra_A:.3f}")
 
     # 3. Build SIMPLE 3D for both fluids. Fluid A: +x streamwise → axis swap
     # so SIMPLE-y = real-x; Fluid B: -y streamwise → SIMPLE-y = real-y reversed.
