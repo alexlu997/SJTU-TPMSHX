@@ -15,11 +15,11 @@ correlations, and a ε-NTU lumped solver. Validated against the Shanghai
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (RBF over CFD micro-runs); dual Nusselt (air-side v4.1 ×1.28 / water-side Yan 2024) |
-| **2D solver** | SIMPLE Patankar, ideal-gas air, Brinkman–Forchheimer porous core |
-| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with 3D Pressure-Poisson (Helmholtz machine-eps mass conservation) |
+| **Closures** | Darcy–Forchheimer surrogate (RBF over CFD micro-runs); dual Nusselt (air-side v4.1 ×1.28 / water-side Yan 2024); 3D adds Norris-1a roughness consistency (f × 1.46), env-toggleable `solvers/roughness.py` |
+| **2D solver** | SIMPLE Patankar, ideal-gas air, Brinkman–Forchheimer porous core (no roughness lift — over-corrects there) |
+| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with 3D Pressure-Poisson (Helmholtz machine-eps mass conservation); Norris-1a roughness default |
 | **Lumped** | ε-NTU dual-Nu cross-flow, `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case (Q air RMSRE **1.71 %** lumped, **44.66 %** 3D dP) |
+| **Validation** | Shanghai 16-case (Q air RMSRE **1.71 %** lumped; 3D dP **24.15 %** with Norris-1a / 44.74 % baseline; 2D dP **28.25 %**) |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (p_obs ≈ 1.97), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer, 3-workspace session persistence, glassmorphism dark theme |
 

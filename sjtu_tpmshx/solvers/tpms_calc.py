@@ -301,6 +301,16 @@ _NU_ROUGHNESS_FACTOR = 1.28
 #   re-fit directly on experimental data (skip smooth-wall CFD ground
 #   truth). Until then, restrict published Nu/Q claims to the Shanghai
 #   parameter window and document the φ scope in any methods section.
+#
+# STATUS UPDATE 2026-05-13 (partial closure of limitation #3 above):
+#   `solvers/roughness.py` now provides a Norris (1971) consistency
+#   correction that pairs the Nu × 1.28 here with a matched f × 1.46 on
+#   the D-F friction (Brinkman + Forchheimer) so Reynolds analogy holds.
+#   The full Re-dep g(Re, ε/D_h) lives there under mode 'bhatti_shah_1b'.
+#   Active in 3D paths only (UI 3D + BO 3D + validate_shanghai_3d_real);
+#   2D over-corrects under Norris and stays at baseline. Production 3D
+#   mode = `norris_1a`. See memory project-roughness-norris-1a.
+#   ⚠ TEMPORARY per user 2026-05-13 — replacement candidates in memory.
 
 
 def _nu_diamond(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:

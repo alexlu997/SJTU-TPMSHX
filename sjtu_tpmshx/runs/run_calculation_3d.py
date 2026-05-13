@@ -1224,6 +1224,10 @@ def _run_3d_stack(cfg):
     fA = cfg['fluid_A_cfg']
     wall_refine = cfg.get('wall_refine_3d', False)
 
+    # 2026-05-13 — derive D_h locally so roughness helpers can compute Re.
+    _g_3d = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
+    D_h = _g_3d['D_h']
+
     # Grid: either uniform user spacing or 6-wall boundary-layer refinement.
     # Refined grid expands user N by ~+2×n_refine cells per axis (n_refine=8
     # each wall; first cell 0.02 mm, growth 1.8). Typical: user 20×10×5 →
