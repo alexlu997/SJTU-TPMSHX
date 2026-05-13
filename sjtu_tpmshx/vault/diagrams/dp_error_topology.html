@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TPMS HX · dP 误差源拓扑</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@300;400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* ─── Reset + base ─── */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; }
+  body {
+    background: #0a0d14;
+    color: #e8e6e3;
+    font-family: 'IBM Plex Mono', 'Noto Serif SC', monospace;
+    font-weight: 300;
+    line-height: 1.55;
+    min-height: 100vh;
+    padding: 0;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 20% 10%, rgba(122, 90, 200, 0.08), transparent 70%),
+      radial-gradient(ellipse 50% 35% at 80% 90%, rgba(224, 122, 95, 0.06), transparent 70%);
+    background-attachment: fixed;
+  }
+
+  /* film grain overlay */
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='2'/><feColorMatrix values='0 0 0 0 0.7 0 0 0 0 0.7 0 0 0 0 0.7 0 0 0 0.04 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.45;
+  }
+
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 60px 56px 120px; position: relative; z-index: 2; }
+
+  /* ─── Header ─── */
+  header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 40px;
+    border-bottom: 1px solid #1e2538;
+    padding-bottom: 32px;
+    margin-bottom: 56px;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: #6a7693;
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-family: 'EB Garamond', 'Noto Serif SC', serif;
+    font-weight: 400;
+    font-size: 3.6rem;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    color: #f5f3ef;
+  }
+  h1 em {
+    font-style: italic;
+    color: #c7a572;
+    font-weight: 400;
+  }
+  .sub {
+    color: #8a93a8;
+    font-size: 0.86rem;
+    margin-top: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .meta {
+    text-align: right;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: #6a7693;
+    line-height: 1.8;
+  }
+  .meta .k { color: #a8b1c8; }
+
+  /* ─── Section ─── */
+  section { margin-bottom: 72px; }
+  h2 {
+    font-family: 'EB Garamond', serif;
+    font-weight: 400;
+    font-style: italic;
+    font-size: 1.45rem;
+    color: #c7a572;
+    margin-bottom: 22px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  h2::before {
+    content: attr(data-num);
+    font-family: 'IBM Plex Mono', monospace;
+    font-style: normal;
+    font-size: 0.7rem;
+    color: #4a5575;
+    letter-spacing: 0.2em;
+    padding: 4px 10px;
+    border: 1px solid #1e2538;
+    border-radius: 2px;
+  }
+
+  /* ─── Baseline table ─── */
+  .baseline {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.86rem;
+  }
+  .baseline th, .baseline td {
+    padding: 14px 18px;
+    text-align: right;
+    border-bottom: 1px solid #1e2538;
+  }
+  .baseline th {
+    text-align: right;
+    color: #8a93a8;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-size: 0.7rem;
+    padding-bottom: 12px;
+    border-bottom-color: #2a3450;
+  }
+  .baseline th:first-child, .baseline td:first-child { text-align: left; }
+  .baseline tr:hover td { background: rgba(255,255,255,0.015); }
+  .baseline .lvl {
+    color: #f5f3ef;
+    font-weight: 500;
+  }
+  .baseline .tag {
+    display: inline-block;
+    font-size: 0.62rem;
+    padding: 2px 7px;
+    border-radius: 2px;
+    margin-left: 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+  .tag-good  { background: rgba(127,209,174,0.12); color: #7fd1ae; border: 1px solid rgba(127,209,174,0.3); }
+  .tag-warn  { background: rgba(245,200,120,0.10); color: #f5c878; border: 1px solid rgba(245,200,120,0.3); }
+  .tag-bad   { background: rgba(224,122,95,0.10);  color: #e07a5f; border: 1px solid rgba(224,122,95,0.3); }
+  .val-good { color: #7fd1ae; }
+  .val-warn { color: #f5c878; }
+  .val-bad  { color: #e07a5f; }
+  .val-na   { color: #4a5575; }
+
+  /* ─── Topology diagram ─── */
+  .topo-wrap {
+    background: linear-gradient(180deg, #0e131f 0%, #0b0f19 100%);
+    border: 1px solid #1e2538;
+    border-radius: 4px;
+    padding: 48px 32px;
+    position: relative;
+  }
+  .topo-wrap::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #c7a572 50%, transparent);
+    opacity: 0.4;
+  }
+  svg.topo { width: 100%; height: auto; display: block; }
+
+  /* SVG label text styling — fonts inherit but must declare in SVG */
+  .topo text { font-family: 'IBM Plex Mono', monospace; fill: #c2c8d8; }
+
+  /* ─── Source detail cards ─── */
+  .sources {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: linear-gradient(160deg, #131826 0%, #0d1119 100%);
+    border: 1px solid #1e2538;
+    border-radius: 4px;
+    padding: 26px 28px 28px;
+    position: relative;
+    transition: border-color 0.4s, transform 0.4s;
+  }
+  .card:hover {
+    border-color: #3a4565;
+    transform: translateY(-2px);
+  }
+  .card .src-id {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: #4a5575;
+    letter-spacing: 0.2em;
+    margin-bottom: 8px;
+  }
+  .card h3 {
+    font-family: 'EB Garamond', 'Noto Serif SC', serif;
+    font-weight: 400;
+    font-size: 1.32rem;
+    color: #f5f3ef;
+    margin-bottom: 14px;
+    line-height: 1.25;
+  }
+  .card .where {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.76rem;
+    color: #8a93a8;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #1e2538;
+  }
+  .where .k { color: #6a7693; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.66rem; align-self: center; }
+  .where .v { color: #c2c8d8; }
+  .card .desc { font-size: 0.85rem; color: #b0b8cd; line-height: 1.65; }
+  .card .mag {
+    position: absolute; top: 22px; right: 24px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 3px 9px;
+    border-radius: 2px;
+    letter-spacing: 0.05em;
+  }
+  .mag-major { background: rgba(224,122,95,0.12);  color: #e07a5f; }
+  .mag-mid   { background: rgba(245,200,120,0.12); color: #f5c878; }
+  .mag-minor { background: rgba(127,209,174,0.10); color: #7fd1ae; }
+
+  .card.shared { border-left: 3px solid #c7a572; }
+  .card.d2-only { border-left: 3px solid #6c8ec7; }
+  .card.d3-only { border-left: 3px solid #e07a5f; }
+
+  /* ─── Conclusion ─── */
+  .closing {
+    margin-top: 80px;
+    padding: 36px 40px;
+    border: 1px solid #2a3450;
+    border-radius: 4px;
+    background: linear-gradient(135deg, rgba(199,165,114,0.04), rgba(108,142,199,0.04));
+    font-family: 'EB Garamond', 'Noto Serif SC', serif;
+    font-size: 1.18rem;
+    line-height: 1.75;
+    color: #d4d9e6;
+    font-weight: 400;
+    font-style: italic;
+  }
+  .closing strong { color: #c7a572; font-style: normal; font-weight: 600; }
+  .closing code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85em;
+    font-style: normal;
+    color: #f5c878;
+    background: rgba(245,200,120,0.08);
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid #1e2538;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: #4a5575;
+    text-align: center;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* small screens */
+  @media (max-width: 880px) {
+    .wrap { padding: 40px 24px 80px; }
+    header { grid-template-columns: 1fr; }
+    .meta { text-align: left; }
+    h1 { font-size: 2.4rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <div class="eyebrow">SJTU TPMS-HX · validation diagnostics</div>
+    <h1>压降误差源 <em>拓扑</em><br>2D <em>vs</em> 3D · Shanghai 16-case</h1>
+    <div class="sub">where systematic Δp under-prediction comes from — and why 3D widens the gap.</div>
+  </div>
+  <div class="meta">
+    <div><span class="k">HEAD</span> · 87468e2</div>
+    <div><span class="k">DATE</span> · 2026-05-13</div>
+    <div><span class="k">NU AIR</span> · v4.1 ×1.28</div>
+    <div><span class="k">NU H₂O</span> · Yan [6] 2024</div>
+    <div><span class="k">D-F</span> · ConstDF-v1</div>
+  </div>
+</header>
+
+<!-- 1. Baseline -->
+<section>
+  <h2 data-num="01">实测对比基线 · validation snapshot</h2>
+  <table class="baseline">
+    <thead>
+      <tr>
+        <th>level / solver</th>
+        <th>Q RMSRE</th>
+        <th>Q bias</th>
+        <th>dP RMSRE</th>
+        <th>dP bias</th>
+        <th>dP max</th>
+        <th>verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="lvl">Lumped ε-NTU</span> · dual-Nu cross-flow</td>
+        <td class="val-good">1.71 %</td>
+        <td>-1.27 %</td>
+        <td class="val-na">n/a</td>
+        <td class="val-na">n/a</td>
+        <td class="val-na">n/a</td>
+        <td><span class="tag tag-good">paper</span></td>
+      </tr>
+      <tr>
+        <td><span class="lvl">2D SIMPLE</span> · wall-refined + LTNE</td>
+        <td class="val-good">2.94 %</td>
+        <td>-2.11 %</td>
+        <td class="val-warn">28.25 %</td>
+        <td class="val-warn">-16.66 %</td>
+        <td>55.7 %</td>
+        <td><span class="tag tag-warn">limit</span></td>
+      </tr>
+      <tr>
+        <td><span class="lvl">3D Nz=3</span> · uniform · 20×10×3</td>
+        <td class="val-good">2.85 %</td>
+        <td>-1.77 %</td>
+        <td class="val-bad">41.19 %</td>
+        <td class="val-bad">-38.95 %</td>
+        <td>48.4 %</td>
+        <td><span class="tag tag-bad">audit</span></td>
+      </tr>
+      <tr>
+        <td><span class="lvl">3D Nz=10</span> · uniform · 20×10×10</td>
+        <td class="val-good">2.91 %</td>
+        <td>-1.82 %</td>
+        <td class="val-bad">44.74 %</td>
+        <td class="val-bad">-42.57 %</td>
+        <td>55.6 %</td>
+        <td><span class="tag tag-bad">audit</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub" style="margin-top:14px">
+    Q 三档全 &lt; 3 % · publication-grade. dP 2D 28 % is "documented limit"; 3D 45 % needs root-cause audit before BO.
+  </div>
+</section>
+
+<!-- 2. Topology diagram -->
+<section>
+  <h2 data-num="02">误差源拓扑流 · contribution flow</h2>
+  <div class="topo-wrap">
+    <svg class="topo" viewBox="0 0 1200 540" xmlns="http://www.w3.org/2000/svg">
+      <!-- defs: gradients + markers -->
+      <defs>
+        <linearGradient id="g-shared" x1="0%" x2="100%">
+          <stop offset="0%"  stop-color="#c7a572" stop-opacity="0.7"/>
+          <stop offset="100%" stop-color="#c7a572" stop-opacity="0.15"/>
+        </linearGradient>
+        <linearGradient id="g-2d" x1="0%" x2="100%">
+          <stop offset="0%"  stop-color="#6c8ec7" stop-opacity="0.55"/>
+          <stop offset="100%" stop-color="#6c8ec7" stop-opacity="0.12"/>
+        </linearGradient>
+        <linearGradient id="g-3d" x1="0%" x2="100%">
+          <stop offset="0%"  stop-color="#e07a5f" stop-opacity="0.55"/>
+          <stop offset="100%" stop-color="#e07a5f" stop-opacity="0.12"/>
+        </linearGradient>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2c8d8"/>
+        </marker>
+        <marker id="arrow-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#c7a572"/>
+        </marker>
+      </defs>
+
+      <!-- column headers -->
+      <text x="100"  y="36" font-size="11" fill="#6a7693" letter-spacing="3">SOURCES</text>
+      <text x="500"  y="36" font-size="11" fill="#6a7693" letter-spacing="3">LANE</text>
+      <text x="960"  y="36" font-size="11" fill="#6a7693" letter-spacing="3">OBSERVED BIAS</text>
+
+      <!-- ─── shared sources (col 1) ─── -->
+      <g class="src-shared">
+        <rect x="40" y="70" width="280" height="56" rx="3" fill="#131826" stroke="#c7a572" stroke-width="1"/>
+        <text x="56" y="92" font-size="13" fill="#f5f3ef">(c) 入口效应缺建模</text>
+        <text x="56" y="112" font-size="10.5" fill="#8a93a8">4 半球过渡段 · K-factor unmodeled</text>
+        <text x="288" y="92" font-size="10" fill="#c7a572" text-anchor="end" font-weight="600">major</text>
+
+        <rect x="40" y="140" width="280" height="56" rx="3" fill="#131826" stroke="#c7a572" stroke-width="1"/>
+        <text x="56" y="162" font-size="13" fill="#f5f3ef">(a) t=0.6 mm 硬外推</text>
+        <text x="56" y="182" font-size="10.5" fill="#8a93a8">D-F train [0.3, 0.5] · Shanghai 唯一外推</text>
+        <text x="288" y="162" font-size="10" fill="#c7a572" text-anchor="end" font-weight="600">major</text>
+
+        <rect x="40" y="210" width="280" height="56" rx="3" fill="#131826" stroke="#c7a572" stroke-width="1"/>
+        <text x="56" y="232" font-size="13" fill="#f5f3ef">(b) Nu / D-F 拟合误差</text>
+        <text x="56" y="252" font-size="10.5" fill="#8a93a8">LOO Nu ~10% · D-F 13-17%</text>
+        <text x="288" y="232" font-size="10" fill="#f5c878" text-anchor="end" font-weight="600">mid</text>
+
+        <rect x="40" y="280" width="280" height="56" rx="3" fill="#131826" stroke="#c7a572" stroke-width="1"/>
+        <text x="56" y="302" font-size="13" fill="#f5f3ef">(f) ConstDF 等温 → 非等温</text>
+        <text x="56" y="322" font-size="10.5" fill="#8a93a8">cF train @ isothermal · application non-iso</text>
+        <text x="288" y="302" font-size="10" fill="#7fd1ae" text-anchor="end" font-weight="600">minor</text>
+      </g>
+
+      <!-- 2D-specific (col 1, lower) -->
+      <g class="src-2d">
+        <rect x="40" y="370" width="280" height="56" rx="3" fill="#131826" stroke="#6c8ec7" stroke-width="1"/>
+        <text x="56" y="392" font-size="13" fill="#f5f3ef">(d) 2D 平面化假设</text>
+        <text x="56" y="412" font-size="10.5" fill="#8a93a8">forced no-z flow → friction "虚高"</text>
+        <text x="288" y="392" font-size="10" fill="#6c8ec7" text-anchor="end" font-weight="600">2D only</text>
+      </g>
+
+      <!-- 3D-specific (col 1, lowest) -->
+      <g class="src-3d">
+        <rect x="40" y="440" width="280" height="56" rx="3" fill="#131826" stroke="#e07a5f" stroke-width="1"/>
+        <text x="56" y="462" font-size="13" fill="#f5f3ef">(g) z 方向流场再分布</text>
+        <text x="56" y="482" font-size="10.5" fill="#8a93a8">3D 物理"更真" → sim dP 更低</text>
+        <text x="288" y="462" font-size="10" fill="#e07a5f" text-anchor="end" font-weight="600">3D only</text>
+      </g>
+
+      <!-- ─── lane labels (col 2) ─── -->
+      <g>
+        <rect x="450" y="100" width="180" height="80" rx="3" fill="#0e131f" stroke="#6c8ec7" stroke-width="1"/>
+        <text x="540" y="130" font-size="18" fill="#6c8ec7" text-anchor="middle" font-style="italic" font-family="EB Garamond, serif">2D lane</text>
+        <text x="540" y="152" font-size="10" fill="#8a93a8" text-anchor="middle">wall-refined · LTNE 3-eq</text>
+        <text x="540" y="167" font-size="9.5" fill="#6a7693" text-anchor="middle">extract_dP_from_simple</text>
+
+        <rect x="450" y="380" width="180" height="80" rx="3" fill="#0e131f" stroke="#e07a5f" stroke-width="1"/>
+        <text x="540" y="410" font-size="18" fill="#e07a5f" text-anchor="middle" font-style="italic" font-family="EB Garamond, serif">3D lane</text>
+        <text x="540" y="432" font-size="10" fill="#8a93a8" text-anchor="middle">Nz=10 · SIMPLE 3D + LTNE 3D</text>
+        <text x="540" y="447" font-size="9.5" fill="#6a7693" text-anchor="middle">extract_dP_weighted</text>
+      </g>
+
+      <!-- ─── flow paths from sources → lanes ─── -->
+      <!-- shared (c) → both -->
+      <path d="M 320 98 C 380 98, 410 140, 450 140" stroke="url(#g-shared)" stroke-width="3" fill="none" marker-end="url(#arrow-warm)"/>
+      <path d="M 320 98 C 380 98, 410 420, 450 420" stroke="url(#g-shared)" stroke-width="3" fill="none" marker-end="url(#arrow-warm)"/>
+      <!-- shared (a) -->
+      <path d="M 320 168 C 380 168, 410 145, 450 145" stroke="url(#g-shared)" stroke-width="2.5" fill="none" marker-end="url(#arrow-warm)"/>
+      <path d="M 320 168 C 380 168, 410 425, 450 425" stroke="url(#g-shared)" stroke-width="2.5" fill="none" marker-end="url(#arrow-warm)"/>
+      <!-- shared (b) -->
+      <path d="M 320 238 C 380 238, 410 150, 450 150" stroke="url(#g-shared)" stroke-width="1.5" fill="none" marker-end="url(#arrow-warm)"/>
+      <path d="M 320 238 C 380 238, 410 430, 450 430" stroke="url(#g-shared)" stroke-width="1.5" fill="none" marker-end="url(#arrow-warm)"/>
+      <!-- shared (f) -->
+      <path d="M 320 308 C 380 308, 410 155, 450 155" stroke="url(#g-shared)" stroke-width="1" fill="none" marker-end="url(#arrow-warm)" stroke-dasharray="4 3"/>
+      <path d="M 320 308 C 380 308, 410 435, 450 435" stroke="url(#g-shared)" stroke-width="1" fill="none" marker-end="url(#arrow-warm)" stroke-dasharray="4 3"/>
+      <!-- 2D only (d) -->
+      <path d="M 320 398 C 380 398, 410 160, 450 160" stroke="url(#g-2d)" stroke-width="2" fill="none" marker-end="url(#arrow)" stroke-dasharray="2 3"/>
+      <!-- 3D only (g) -->
+      <path d="M 320 468 C 380 468, 410 440, 450 440" stroke="url(#g-3d)" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+      <!-- ─── lanes → bias (col 3) ─── -->
+      <path d="M 630 140 C 760 140, 800 195, 870 195" stroke="#6c8ec7" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+      <path d="M 630 420 C 760 420, 800 365, 870 365" stroke="#e07a5f" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+      <!-- ─── bias outcome boxes ─── -->
+      <g>
+        <rect x="870" y="155" width="290" height="84" rx="3" fill="#0e131f" stroke="#6c8ec7" stroke-width="1.4"/>
+        <text x="890" y="180" font-size="10" fill="#6a7693" letter-spacing="2">2D · DP BIAS</text>
+        <text x="890" y="216" font-size="34" fill="#6c8ec7" font-family="EB Garamond, serif" font-weight="600">−16.66 %</text>
+        <text x="1145" y="180" font-size="10" fill="#6a7693" text-anchor="end" letter-spacing="2">RMSRE 28.25%</text>
+
+        <rect x="870" y="325" width="290" height="84" rx="3" fill="#0e131f" stroke="#e07a5f" stroke-width="1.4"/>
+        <text x="890" y="350" font-size="10" fill="#6a7693" letter-spacing="2">3D · DP BIAS</text>
+        <text x="890" y="386" font-size="34" fill="#e07a5f" font-family="EB Garamond, serif" font-weight="600">−42.57 %</text>
+        <text x="1145" y="350" font-size="10" fill="#6a7693" text-anchor="end" letter-spacing="2">RMSRE 44.74%</text>
+      </g>
+
+      <!-- gap annotation -->
+      <line x1="1015" y1="239" x2="1015" y2="325" stroke="#c7a572" stroke-width="1" stroke-dasharray="2 2"/>
+      <text x="1025" y="285" font-size="11" fill="#c7a572" font-style="italic">+26 pp</text>
+      <text x="1025" y="300" font-size="9" fill="#8a93a8">3D 多偏低</text>
+    </svg>
+  </div>
+</section>
+
+<!-- 3. Source detail cards -->
+<section>
+  <h2 data-num="03">每个源 · what / where / how big</h2>
+  <div class="sources">
+
+    <div class="card shared">
+      <span class="mag mag-major">major</span>
+      <div class="src-id">(c) · SHARED · 2D + 3D</div>
+      <h3>入口效应缺建模<br><span style="font-size:0.78rem;color:#8a93a8;font-style:italic;font-family:'IBM Plex Mono',monospace;font-weight:300;letter-spacing:0.04em">unmodeled hemisphere transition</span></h3>
+      <div class="desc">
+        Shanghai exp dP measured pipe-to-pipe, includes 4-hemisphere transition entrance/exit form loss. Our D-F surrogate trained on periodic-BC CFD (developed flow only). Bernoulli ρu²/2 with K ≈ 3–4 yields ~ 580 Pa · insufficient alone to bridge ~ 99 kPa gap at case 16. Secondary flow + jet contraction likely amplify.
+      </div>
+      <div class="where">
+        <span class="k">where</span><span class="v">model dP = TPMS-only</span>
+        <span class="k">fix</span><span class="v">geometry extension (1-2 wk) · defer</span>
+        <span class="k">memory</span><span class="v">feedback_dp_gap_attribution</span>
+      </div>
+    </div>
+
+    <div class="card shared">
+      <span class="mag mag-major">major</span>
+      <div class="src-id">(a) · SHARED · 2D + 3D</div>
+      <h3>t = 0.6 mm 硬外推<br><span style="font-size:0.78rem;color:#8a93a8;font-style:italic;font-family:'IBM Plex Mono',monospace;font-weight:300;letter-spacing:0.04em">D-F extrapolation outside fit window</span></h3>
+      <div class="desc">
+        ConstDF-v1 trained on t ∈ [0.3, 0.5]. Shanghai prototype t = 0.6 mm is sole hard extrapolation (Re range fully interpolated). K / cF surrogate uncertainty grows outside window. UI watermark already flags.
+      </div>
+      <div class="where">
+        <span class="k">where</span><span class="v">df_fit/predict.py</span>
+        <span class="k">fix</span><span class="v">补 t ≥ 0.6 mm CFD · dead end (`feedback_surrogate_exploration`)</span>
+      </div>
+    </div>
+
+    <div class="card shared">
+      <span class="mag mag-mid">mid</span>
+      <div class="src-id">(b) · SHARED · 2D + 3D</div>
+      <h3>Nu / D-F 关联式拟合误差</h3>
+      <div class="desc">
+        In-sample LOO: Nu Diamond 10.05% / Gyroid 9.91% (v4.1 ×1.28); D-F Diamond 12.79% / Gyroid 16.95% (LOO). Constitutive residuals propagate into Q + dP linearly via h_v and K/cF.
+      </div>
+      <div class="where">
+        <span class="k">where</span><span class="v">tpms_calc.nu_from_Re · df_fit/predict</span>
+        <span class="k">fix</span><span class="v">expand training set · diminishing returns</span>
+      </div>
+    </div>
+
+    <div class="card shared">
+      <span class="mag mag-minor">minor</span>
+      <div class="src-id">(f) · SHARED · 2D + 3D</div>
+      <h3>ConstDF 等温训练 → 非等温应用</h3>
+      <div class="desc">
+        cF / K coefficients fitted on isothermal CFD; deployed in compressible non-isothermal SIMPLE with ρ(P,T) coupling. Memory `feedback_dp_closure` confirms isothermal only used in calibration + P_ref_abs seed; SIMPLE itself is non-isothermal. Residual systematic ≲ 1-2 pp.
+      </div>
+      <div class="where">
+        <span class="k">where</span><span class="v">solvers/df_projection · simple_solver</span>
+        <span class="k">status</span><span class="v">disclosed limit</span>
+      </div>
+    </div>
+
+    <div class="card d2-only">
+      <span class="mag mag-minor">2D only</span>
+      <div class="src-id">(d) · 2D LANE ONLY</div>
+      <h3>2D 平面化假设<br><span style="font-size:0.78rem;color:#8a93a8;font-style:italic;font-family:'IBM Plex Mono',monospace;font-weight:300;letter-spacing:0.04em">forced no-z momentum transport</span></h3>
+      <div class="desc">
+        2D solver imposes ∂/∂z = 0. Real flow can re-distribute in z, finding lower-resistance paths. Forced 2D ⇒ artificially higher predicted friction ⇒ smaller under-prediction of dP than 3D. Counter-intuitively, this benefits 2D's bias number.
+      </div>
+      <div class="where">
+        <span class="k">effect</span><span class="v">2D dP appears closer to exp than 3D (artefact)</span>
+        <span class="k">2D bias</span><span class="v">-16.66 %</span>
+      </div>
+    </div>
+
+    <div class="card d3-only">
+      <span class="mag mag-major">3D only</span>
+      <div class="src-id">(g) · 3D LANE ONLY</div>
+      <h3>z 方向流场再分布<br><span style="font-size:0.78rem;color:#8a93a8;font-style:italic;font-family:'IBM Plex Mono',monospace;font-weight:300;letter-spacing:0.04em">extra dP reduction from 3D physics</span></h3>
+      <div class="desc">
+        3D allows z-direction velocity components → flow re-distributes laterally → average local |v| reduces → Forchheimer cF·|v|·v drops → predicted dP drops further below exp. Worsens with finer Nz (3 → 10: −39 → −43 % bias). 3D 越"真"反而 dP 越欠预测.
+      </div>
+      <div class="where">
+        <span class="k">trend</span><span class="v">Nz=3 → 10: bias −39 → −43 %</span>
+        <span class="k">audit</span><span class="v">SIMPLESolver3D z-BC + grid sweep pending</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- 4. Conclusion -->
+<div class="closing">
+  Net reading: <strong>2D</strong> sits at <code>dP RMSRE 28.25 %</code> · all error sources <strong>identified + documented</strong>, the headline number lands in the paper's Limitations chapter without further work. <strong>3D</strong> Nz=10 sits at <code>dP RMSRE 44.74 %</code> with an additional 26-pp under-prediction beyond 2D · this gap is <strong>not</strong> attributable to entrance effects alone (Bernoulli K·ρu²/2 ≈ 580 Pa cannot bridge 99 kPa). The (g) z-redistribution mechanism explains direction-of-error and Nz-monotonicity but not magnitude · grid sweep + BC audit are required before trusting 3D dP for optimization.
+</div>
+
+<footer>
+  vault/diagrams/dp_error_topology.html · generated 2026-05-13 · SJTU TPMS-HX
+</footer>
+
+</div>
+</body>
+</html>

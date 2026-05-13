@@ -30,12 +30,16 @@ warnings.filterwarnings('ignore')
 from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp,
+    water_density, water_viscosity, water_conductivity, water_cp,
+    nu_water_gyroid_yan6,
     P_atm, Sa_mm, Pr,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.solve_full_3d import (solve_full_domain_3d,
                                      energy_balance_3d, mass_balance_3d)
 from df_fit.predict import predict_K_cF
+from solvers.roughness import (f_enhancement, nu_extra_factor,
+                                 apply_to_K_cF, resolve_mode_from_env)
 
 R_AIR = 287.05
 
@@ -55,17 +59,14 @@ MAX_OUTER = 4          # fewer than 2D's 8 for 3D speed; P1b exit OK
 OUTER_TOL = 0.5        # K
 ALPHA_T = 0.6
 
-# Water properties (mirror 2D)
-def water_rho(T_K):
-    T_C = T_K - 273.15
-    return 999.84 - 0.05 * T_C - 0.004 * T_C**2
-
-def water_mu(T_K):
-    T_C = T_K - 273.15
-    return 1.79e-3 * np.exp(-0.035 * T_C)
-
-def water_cp(T_K):
-    return 4182.0
+# Water properties — canonical NIST-grade funcs from tpms_calc.
+# 2026-05-13 audit fix: previously declared local water_rho/water_mu/water_cp
+# with the **old exponential viscosity** mu = 1.79e-3 · exp(-0.035 · T_C)
+# (40 °C off by -33 % vs NIST per memory `reference_water_viscosity_fix`).
+# Replaced by the Vogel form already in tpms_calc.water_viscosity which
+# matches NIST 0-90 °C to < 2 %. Aliases preserve call sites below.
+water_rho = water_density
+water_mu  = water_viscosity
 
 
 def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, eps=EPS, d_h=D_H,
@@ -176,31 +177,52 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
 
     eps_arr = np.full((Nx, Ny, Nz), EPS)
     K_ffA = np.full((Nx, Ny, Nz), EPS_A * air_conductivity(T_Ain_K))
-    K_ffB = np.full((Nx, Ny, Nz), EPS_A * 0.6)   # water k ~0.6 W/mK; ε_B = ε_A
+    K_ffB = np.full((Nx, Ny, Nz), EPS_A * water_conductivity(T_Bin_K))  # ε_B = ε_A
     K_ss = np.full((Nx, Ny, Nz), (1.0 - EPS) * K_S)
 
     # D-F coeffs from surrogate (per-stream void fraction ε_A)
     K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
+    # 2026-05-13 — roughness correction (Norris 1971 / Bhatti-Shah-Haaland) for
+    # air side only. Env-controlled; baseline preserves prior behavior. Water
+    # side (Yan [6] 2024) already embeds AM roughness, do NOT apply here.
+    _rough_mode, _rough_eps = resolve_mode_from_env()
+    if _rough_mode != 'baseline':
+        Re_A_case = rho_A * abs(u_A) * D_H / mu_A
+        _f_gain = f_enhancement(Re_A_case, _rough_mode,
+                                  eps_um=_rough_eps, D_h_mm=D_H * 1000.0)
+        K_pred, cF_pred = apply_to_K_cF(K_pred, cF_pred, _f_gain)
+        if ci == 0 and verbose:
+            print(f"  [roughness] mode={_rough_mode} eps={_rough_eps} μm  "
+                  f"Re_A=case1={Re_A_case:.0f}  f_gain={_f_gain:.3f}")
     K_A_arr = np.full((Nx, Nz), K_pred)         # SIMPLE A: (Ny_sA=Nx, Nz)
     cF_A_arr = np.full((Nx, Nz), cF_pred)
 
     # Inlet h_vA (uniform at inlet temperature)
     r_A = tpms_compute(TPMS, L_CELL, T_WALL, u_A, T_Ain_K, P_Ain, K_S)
     h_vA0 = A0 * r_A['H_sf']
+    # 2026-05-13 — for bhatti_shah_1b, override the scalar ×1.28 baked into
+    # tpms_compute() with Re-dep g_Nu(Re,ε)/1.28. Norris (1a) keeps Nu unchanged.
+    if _rough_mode != 'baseline':
+        _nu_extra = nu_extra_factor(rho_A * abs(u_A) * D_H / mu_A,
+                                     _rough_mode, eps_um=_rough_eps,
+                                     D_h_mm=D_H * 1000.0)
+        h_vA0 *= _nu_extra
     h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
 
-    # Physical h_vB (was hard-coded 1e10 perfect-sink hack — 2D fix
-    # `validate_shanghai_aligned.py v1.0.10` saved 15 pp dP error by
-    # replacing this with a real Nu calc; mirror it here).
-    # Air-fitted Nu correlation extrapolated to water Pr (single-stream
-    # eps_f = EPS_A). Same approximation used in 2D aligned script.
-    from solvers.tpms_calc import nu_from_Re
+    # Physical h_vB via Yan et al 2024 [6] gyroid water correlation
+    # (Nu = 0.471 · Re^0.627 · Pr^(1/3), valid Re 150-3000).
+    # 2026-05-13 audit fix: previously used `nu_from_Re` (air, ×1.28
+    # roughness) which inflated water Nu by ~ Pr^(1/3) factor missing
+    # and applied an air-only roughness multiplier; mirror the 2D
+    # validate_shanghai_aligned.py path (line 156).
     mu_B0 = water_mu(T_Bin_K)
-    k_B = 0.6                                          # water k ~0.6 W/mK
+    cp_B0 = float(water_cp(T_Bin_K))
+    k_B = float(water_conductivity(T_Bin_K))
+    Pr_B = float(mu_B0 * cp_B0 / k_B)
     m_water = float(df.iloc[ci, 7])
     u_B = m_water / (rho_B * A_FLOW)
     Re_B = rho_B * abs(u_B) * D_H / mu_B0
-    Nu_B = nu_from_Re(TPMS, Re_B, EPS_A, L_CELL, D_H * 1000.0)
+    Nu_B = float(nu_water_gyroid_yan6(max(Re_B, 1.0), Pr_B))
     H_sf_B = Nu_B * k_B / D_H
     h_vB0 = A0 * H_sf_B
     h_vB_field = np.full((Nx, Ny, Nz), h_vB0)

@@ -49,16 +49,24 @@ from solvers.field_param import (
 # ─── Module-level worker for joblib (must be top-level for pickle) ─
 
 
-def _eval_worker(x: np.ndarray, cfg: dict, dp_cap: float) -> tuple:
+def _eval_worker(x: np.ndarray, cfg: dict, dp_cap: float,
+                 evaluator_fn=None) -> tuple:
     """Standalone worker for joblib.Parallel evaluating one design.
 
     Top-level so loky/multiprocessing can pickle it. Returns
     (Q, dP_clamped, error_msg_or_None) — the loop converts to F[i] format.
+
+    ``evaluator_fn`` defaults to ``evaluate_design`` (2D). Pass
+    ``evaluate_design_3d`` from ``optimization.evaluator_3d`` to drive a 3D
+    BO loop with the same qNEHVI machinery. The function must have signature
+    ``(x, cfg) -> (Q_neg, dP, mass)`` matching the 2D contract.
     """
+    if evaluator_fn is None:
+        evaluator_fn = evaluate_design
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            Q_neg, dP, _mass = evaluate_design(x, cfg)
+            Q_neg, dP, _mass = evaluator_fn(x, cfg)
         Q = float(-Q_neg)
         dP_c = float(np.clip(dP, 1.0, dp_cap))
         return (Q, dP_c, None)
@@ -152,7 +160,8 @@ def run_qnehvi(config: Optional[dict] = None,
                progress_cb=None,
                hv_tol: float = 0.01,
                hv_window: int = 3,
-               n_jobs: int = 1) -> dict:
+               n_jobs: int = 1,
+               evaluator_fn=None) -> dict:
     """qNEHVI Bayesian multi-objective optimization.
 
     Parameters
@@ -272,9 +281,9 @@ def run_qnehvi(config: Optional[dict] = None,
                 n_jobs=min(n_jobs, B),
                 backend='loky',
                 inner_max_num_threads=1,
-            )(delayed(_eval_worker)(x, cfg, dp_cap) for x in X_np)
+            )(delayed(_eval_worker)(x, cfg, dp_cap, evaluator_fn) for x in X_np)
         else:
-            results = [_eval_worker(x, cfg, dp_cap) for x in X_np]
+            results = [_eval_worker(x, cfg, dp_cap, evaluator_fn) for x in X_np]
 
         F = np.zeros((B, 2), dtype=np.float64)
         for i, (Q, dP_c, err) in enumerate(results):
