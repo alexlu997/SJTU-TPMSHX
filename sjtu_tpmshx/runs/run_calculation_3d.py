@@ -33,6 +33,57 @@ from solvers.tpms_calc import (
     water_density, water_viscosity, water_conductivity, water_cp,
 )
 from df_fit.predict import predict_K_cF
+from solvers.roughness import (f_enhancement, nu_extra_factor,
+                                 resolve_mode_from_env)
+
+
+# 2026-05-13 — UI 3D production air-side wall-roughness correction. Default
+# 'norris_1a' (f×1.46 const, Nu unchanged ×1.28) matches the BO evaluator_3d
+# so UI Compute and Pareto sit in the same dP regime (Shanghai dP RMSRE
+# 44.74 → 24.15 %). Water side (Yan [6]) untouched. ⚠ TEMPORARY per user
+# 2026-05-13; replace with Bhatti-Shah LOOCV-ε / rough-wall CFD retrain when
+# paper revision or phase-B optimisation lands.
+_UI_ROUGH_MODE_DEFAULT = 'norris_1a'
+
+
+def _resolve_ui_roughness():
+    """Read mode + ε from env; default to norris_1a so UI matches BO."""
+    import os as _os
+    mode = _os.environ.get('TPMSHX_ROUGH_MODE', _UI_ROUGH_MODE_DEFAULT).strip().lower()
+    eps_um = float(_os.environ.get('TPMSHX_ROUGH_EPS_UM', '100'))
+    return mode, eps_um
+
+
+def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
+    """Scale K/cF arrays by f_enhancement for air; skip for water (Yan [6]
+    correlation already embeds AM roughness)."""
+    if fluid_type == 'water':
+        return K_arr, cF_arr
+    mode, eps_um = _resolve_ui_roughness()
+    if mode == 'baseline':
+        return K_arr, cF_arr
+    Re_loc = float(rho * abs(u) * D_h_m / max(mu, 1.0e-12))
+    f_gain = float(f_enhancement(Re_loc, mode,
+                                  eps_um=eps_um, D_h_mm=D_h_m * 1000.0))
+    return (K_arr / f_gain).astype(np.float64, copy=False), \
+           (cF_arr * f_gain).astype(np.float64, copy=False)
+
+
+def _apply_roughness_h_v(h_v_field, fluid_type, rho, mu, u, D_h_m):
+    """Multiply h_v by nu_extra_factor for air; skip for water. Norris 1a
+    returns 1.0 (Nu unchanged ×1.28), so this is a no-op for the default
+    mode; only bhatti_shah_1b actually rescales Nu."""
+    if fluid_type == 'water':
+        return h_v_field
+    mode, eps_um = _resolve_ui_roughness()
+    if mode == 'baseline':
+        return h_v_field
+    Re_loc = float(rho * abs(u) * D_h_m / max(mu, 1.0e-12))
+    nu_extra = float(nu_extra_factor(Re_loc, mode,
+                                      eps_um=eps_um, D_h_mm=D_h_m * 1000.0))
+    if nu_extra == 1.0:
+        return h_v_field
+    return (h_v_field * nu_extra).astype(np.float64, copy=False)
 
 
 # 2026-04-26: env var TPMSHX_SIMPLE_TOL overrides default SIMPLE pp tol for
@@ -1270,6 +1321,12 @@ def _run_3d_stack(cfg):
         K_A_arr = np.full((N_stream, N_cross2), K_pred)
         cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
 
+    # 2026-05-13 — apply UI roughness correction (norris_1a default) to K_A,
+    # cF_A. Air side only; water skipped (Yan [6] embeds AM roughness).
+    K_A_arr, cF_A_arr = _apply_roughness_KcF(
+        K_A_arr, cF_A_arr, cfg.get('fluid_type_A', 'air'),
+        rho_A, mu_A, u_A, D_h)
+
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream)
     G_A = rho_A * u_A
     # P² compressible seed: C = μG/K + cF·G² where G = ρu (mass flux, constant
@@ -1352,6 +1409,12 @@ def _run_3d_stack(cfg):
         perm_B = axis_map_B['solver_to_real_perm']
         K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred)
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred)
+        # 2026-05-13 — apply UI roughness correction to K_B / cF_B. Skip for
+        # water (Yan [6] correlation embeds AM roughness; double-counting
+        # would over-predict friction).
+        K_B_arr, cF_B_arr = _apply_roughness_KcF(
+            K_B_arr, cF_B_arr, fluid_type_B,
+            rho_B, mu_B, u_B, D_h)
         G_B = rho_B * u_B
         if is_water_B:
             C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
@@ -1578,9 +1641,13 @@ def _run_3d_stack(cfg):
     # after first outer iter when ucA/B are available).
     h_vA_field = _build_hv_field_3d(
         L_mm_field, t_field_3d, u_A, T_inA, P_inA, fluid_type_A)
+    h_vA_field = _apply_roughness_h_v(
+        h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
     if sB is not None:
         h_vB_field = _build_hv_field_3d(
             L_mm_field, t_field_3d, u_B_val, T_inB, P_inB, fluid_type_B)
+        h_vB_field = _apply_roughness_h_v(
+            h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
     else:
         # No B fluid solver → "no B fluid" should mean ZERO B-side coupling,
         # not "infinite reservoir at T_inB". The previous behaviour kept
@@ -1654,6 +1721,8 @@ def _run_3d_stack(cfg):
         u_stream_A = _stream_component(ucA, vcA, wcA, fA['dir'])
         h_vA_field = _build_hv_local_3d(
             L_mm_field, t_field_3d, u_stream_A, T_inA, P_inA, fluid_type_A)
+        h_vA_field = _apply_roughness_h_v(
+            h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
         # Pre-compute LTNE inlet masks (needed by χ_B block and LTNE solve)
         _ltne_mask_A = (out_mask_2d if fA['dir'] in (1, 3, 5) else in_mask_2d)
         _ltne_mask_B = None
@@ -1664,6 +1733,8 @@ def _run_3d_stack(cfg):
             u_stream_B = _stream_component(ucB, vcB, wcB, fB['dir'])
             h_vB_field = _build_hv_local_3d(
                 L_mm_field, t_field_3d, u_stream_B, T_inB, P_inB, fluid_type_B)
+            h_vB_field = _apply_roughness_h_v(
+                h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
             # ── partial-B closure dispatch ──
             # Three options selectable via cfg['partial_B_closure']:
             #   'none'                 — no correction (χ_B ≡ 1; legacy)
