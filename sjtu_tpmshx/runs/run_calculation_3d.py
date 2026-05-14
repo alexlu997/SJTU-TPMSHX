@@ -37,14 +37,11 @@ from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
 
-# ⚠ PROVISIONAL — 2026-05-13/14 UI 3D production air-side wall-roughness
-# correction. Default 'norris_1a' is a literature-anchored ANSATZ, not a TPMS
-# rough-wall correlation. See `solvers/roughness.py` module docstring for the
-# full Sa=31μm → ×1.28 → Norris analogy → ×1.46 derivation chain and the
-# two unverified assumptions (Shanghai-Sa-equals-our-Sa, Norris-n-applies-
-# to-TPMS). The Sa exploration track (bs_f_only mode + sensitivity sweep)
-# is kept SEPARATE from this production code per user 2026-05-14; do not
-# add explicit Sa parameters to UI / solver core paths.
+# ⚠ 2026-05-14 (revised): `norris_1a` is now a no-op for friction (f×1.0,
+# alias of `baseline`). The ×1.28 Nu factor in tpms_calc air-Gyroid is the
+# only roughness compensation; c_F was trained on real SLM dP so the friction
+# side already encodes Sa. See `solvers/roughness.py` module docstring for
+# the audit history (1.46 → 1.28 → 1.0).
 #
 # Why kept here despite being provisional: closes Shanghai 3D dP RMSRE
 # from 44.74 % (baseline) → 24.15 % (norris_1a) at Q-side cost ~ 0.7 pp.
@@ -60,6 +57,113 @@ def _resolve_ui_roughness():
     mode = _os.environ.get('TPMSHX_ROUGH_MODE', _UI_ROUGH_MODE_DEFAULT).strip().lower()
     eps_um = float(_os.environ.get('TPMSHX_ROUGH_EPS_UM', '100'))
     return mode, eps_um
+
+
+# ---------------------------------------------------------------------------
+# Face-flux helpers (module-level so they can be unit-tested independently)
+# ---------------------------------------------------------------------------
+def _face_flux_weights(solver, dir_code, face='real_outlet',
+                       eps_mode='ltne', chi_face=None,
+                       eps_f_per_side=None):
+    """Unified face-flux weight array for T_out, m_dot, Q_enth.
+
+    Parameters
+    ----------
+    solver : SIMPLESolver3D
+    dir_code : int — 0=+x,1=-x,2=+y,3=-y,4=+z,5=-z
+    face : 'real_inlet' or 'real_outlet'
+    eps_mode : 'ltne' (× eps_f) or 'physical' (no eps_f)
+    chi_face : optional 2D array — χ_B at this face for ghost suppression
+    eps_f_per_side : optional scalar fallback when solver has no eps_field
+
+    Returns
+    -------
+    w : 2D ndarray — face flux weights [kg/s] or eps_f·[kg/s].
+        sum(w) = effective mass flow through this face.
+    """
+    is_reverse = dir_code in (1, 3, 5)
+    if face == 'real_outlet':
+        # real outlet ≡ solver j=0 for reverse, j=-1 for forward
+        if is_reverse:
+            v_face = solver.v[:, 0, :]
+            rho_face = solver.rho_field[:, 0, :]
+            mask_face = getattr(solver, 'inlet_frac', None)
+            face_idx = 0
+        else:
+            v_face = solver.v[:, -1, :]
+            rho_face = solver.rho_field[:, -1, :]
+            mask_face = getattr(solver, 'outlet_frac', None)
+            face_idx = -1
+    else:  # real_inlet
+        if is_reverse:
+            v_face = solver.v[:, -1, :]
+            rho_face = solver.rho_field[:, -1, :]
+            mask_face = getattr(solver, 'outlet_frac', None)
+            face_idx = -1
+        else:
+            v_face = solver.v[:, 0, :]
+            rho_face = solver.rho_field[:, 0, :]
+            mask_face = getattr(solver, 'inlet_frac', None)
+            face_idx = 0
+    dx_sol = solver.dx[:, None]; dz_sol = solver.dz[None, :]
+    w = rho_face * np.abs(v_face) * dx_sol * dz_sol
+    if eps_mode == 'ltne':
+        eps_full = getattr(solver, 'eps_field', None)
+        if eps_full is not None:
+            w = w * (0.5 * np.asarray(eps_full[:, face_idx, :],
+                                      dtype=np.float64))
+        else:
+            if eps_f_per_side is None:
+                raise ValueError(
+                    "_face_flux_weights: eps_mode='ltne' requires either "
+                    "solver.eps_field or explicit eps_f_per_side")
+            w = w * float(eps_f_per_side)
+    if mask_face is not None:
+        w = w * np.asarray(mask_face, dtype=np.float64)
+    if chi_face is not None:
+        w = w * np.asarray(chi_face, dtype=np.float64)
+    return w
+
+
+def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
+                          chi_face=None):
+    """Mass-flux-weighted T average at the REAL outlet face.
+    Delegates to _face_flux_weights for consistent weighting.
+
+    Falls back to naive face mean when the effective mass flow drops below
+    1e-30 (e.g. no active outlet, fully blocked face). Mass-flux weights
+    naturally suppress stagnant warm cells where ρ·|v| ≈ 0.
+    """
+    try:
+        w = _face_flux_weights(solver, dir_code, face='real_outlet',
+                               eps_mode='ltne', chi_face=chi_face,
+                               eps_f_per_side=eps_f_scalar)
+        tot = float(np.sum(w))
+        if tot < 1e-30:
+            return float(np.mean(T_face))
+        return float(np.sum(T_face * w) / tot)
+    except Exception:
+        return float(np.mean(T_face))
+
+
+def _real_outlet_slice(T_field, dir_code):
+    if dir_code == 0:   return T_field[-1, :, :]
+    if dir_code == 1:   return T_field[0, :, :]
+    if dir_code == 2:   return T_field[:, -1, :]
+    if dir_code == 3:   return T_field[:, 0, :]
+    if dir_code == 4:   return T_field[:, :, -1]
+    return T_field[:, :, 0]
+
+
+def _simple_mass_flow(solver, dir_code, eps_f_per_side=None):
+    """LTNE-effective m_dot at REAL inlet face via _face_flux_weights."""
+    try:
+        w = _face_flux_weights(solver, dir_code, face='real_inlet',
+                               eps_mode='ltne',
+                               eps_f_per_side=eps_f_per_side)
+        return float(np.sum(w))
+    except Exception:
+        return 0.0
 
 
 def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
@@ -1758,6 +1862,17 @@ def _run_3d_stack(cfg):
             # into the active flow channel via ε_f·k_f·∇²Tb, inflating
             # T_B_out 4×. Per-cell approach cuts BOTH source and diffusion
             # path in pure ghost cells (h_vB → 0 AND K_ffB → 0).
+            # 2026-05-14: tried 'per_cell_chi_b' default but reverted —
+            # at Shanghai partial-B inlet u_B=0.15, χ_B mask was 90.5% active
+            # (Brinkman spread water to all cells, mass-flux threshold caught
+            # almost none as ghost) AND tightening `chi_B_kernel_threshold`
+            # to 0.30 broke discrete mass conservation (m_in 0.208 ≠ m_out
+            # 0.222 kg/s, 7% imbalance). Visual ghost-heating in T_B plots
+            # is a known-acceptable artefact: production Q reporting uses
+            # m_dot·cp·ΔT_face with χ_B-weighted T_out (not domain mean),
+            # so the LTNE-internal Q_solid_B figure remains physically
+            # correct. UI users should read inlet/outlet face values, not
+            # domain colour maps, until partial-B physics is re-examined.
             _closure = cfg.get('partial_B_closure', 'none')
             if _closure == 'm4_effective_area':
                 # Legacy 0D scalar — kept for regression comparison.
@@ -1796,6 +1911,12 @@ def _run_3d_stack(cfg):
                 elif _method == 'mass_flux_threshold':
                     # Method H8: auto-adaptive based on per-cell mass flux
                     # throughput. Geometry-independent (no u_ref tuning).
+                    # 2026-05-14: H8-tightened defaults (thr=0.20, n_dil=1)
+                    # were tried but reverted with the parent closure flip;
+                    # production default is now 'none' so this branch only
+                    # runs when explicitly requested via cfg. Original
+                    # permissive defaults (0.05, 2) restored for symmetry
+                    # with prior calibration scripts.
                     chi_B = _build_chi_B_mass_flux_threshold(
                         sB, axis_map_B, (Nx, Ny, Nz),
                         threshold_frac=float(cfg.get('chi_B_threshold_frac', 0.05)),
@@ -1872,7 +1993,11 @@ def _run_3d_stack(cfg):
         # where chi_B_field < chi_B_kernel_threshold, kernel skips Tb update
         # (leaves Tb at init = T_inB). Prevents stagnant cells from relaxing
         # to local Ts via h_v and leaking that hot value into mass flow via
-        # 1st-order upwind. Default threshold 0.0 = no kernel-level masking.
+        # 1st-order upwind. Default 0.0 = no kernel-level masking.
+        # 2026-05-14: 0.30 tightening was tested with the now-reverted
+        # 'per_cell_chi_b' default and broke discrete mass conservation
+        # (7% imbalance between m_in and m_out). Default restored to 0.0;
+        # tuning requires re-validation before re-enabling.
         _chi_B_kernel_thr = float(cfg.get('chi_B_kernel_threshold', 0.0))
 
         # MMS source fields (Air-Air V&V Phase A.1). Default None → no-op.
@@ -1881,10 +2006,16 @@ def _run_3d_stack(cfg):
         _mms_S_A = cfg.get('mms_S_A_field', None)
         _mms_S_B = cfg.get('mms_S_B_field', None)
         _mms_S_s = cfg.get('mms_S_s_field', None)
+        # 2026-05-14 fix: pass single-channel ε_A = ε_full/2 (== eps_f_arr)
+        # to the LTNE kernel. Previously passed full eps_arr, which the
+        # kernel doubled into the convective face flux (F = ε·ρcp·u·A) for
+        # both fluid A and B → systematic over-cooling of T_A. Diag run
+        # 2026-05-14 confirmed: ΔT_A 90 → 105°C, Q_enth_A 208 → 242 W
+        # (Q_exp 248 W) for Shanghai case 1.
         _ltne_result = solve_full_domain_3d(
             L, H, Lz, Nx, Ny, Nz, T_inA, T_inB,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
-            rho_cp_fA, rho_cp_fB, eps_arr,
+            rho_cp_fA, rho_cp_fB, eps_f_arr,
             ucA, vcA, wcA, ucB, vcB, wcB,
             dir_A=fA['dir'],
             dir_B=(fB['dir'] if fB is not None else 3),
@@ -2048,93 +2179,10 @@ def _run_3d_stack(cfg):
     # be divergence-free. T_out is a pipe-masked mean on the real outlet
     # face using Ta/Tb cell-centered values.
     #
-    def _face_flux_weights(solver, dir_code, face='real_outlet',
-                           eps_mode='ltne', chi_face=None):
-        """Unified face-flux weight array for T_out, m_dot, Q_enth.
-
-        Parameters
-        ----------
-        solver : SIMPLESolver3D
-        dir_code : int — 0=+x,1=-x,2=+y,3=-y,4=+z,5=-z
-        face : 'real_inlet' or 'real_outlet'
-        eps_mode : 'ltne' (× eps_f) or 'physical' (no eps_f)
-        chi_face : optional 2D array — χ_B at this face for ghost suppression
-
-        Returns
-        -------
-        w : 2D ndarray — face flux weights [kg/s] or eps_f·[kg/s].
-            sum(w) = effective mass flow through this face.
-        """
-        is_reverse = dir_code in (1, 3, 5)
-        if face == 'real_outlet':
-            # real outlet ≡ solver j=0 for reverse, j=-1 for forward
-            if is_reverse:
-                v_face = solver.v[:, 0, :]
-                rho_face = solver.rho_field[:, 0, :]
-                mask_face = getattr(solver, 'inlet_frac', None)
-                face_idx = 0
-            else:
-                v_face = solver.v[:, -1, :]
-                rho_face = solver.rho_field[:, -1, :]
-                mask_face = getattr(solver, 'outlet_frac', None)
-                face_idx = -1
-        else:  # real_inlet
-            if is_reverse:
-                v_face = solver.v[:, -1, :]
-                rho_face = solver.rho_field[:, -1, :]
-                mask_face = getattr(solver, 'outlet_frac', None)
-                face_idx = -1
-            else:
-                v_face = solver.v[:, 0, :]
-                rho_face = solver.rho_field[:, 0, :]
-                mask_face = getattr(solver, 'inlet_frac', None)
-                face_idx = 0
-        dx_sol = solver.dx[:, None]; dz_sol = solver.dz[None, :]
-        w = rho_face * np.abs(v_face) * dx_sol * dz_sol
-        if eps_mode == 'ltne':
-            eps_full = getattr(solver, 'eps_field', None)
-            if eps_full is not None:
-                w = w * (0.5 * np.asarray(eps_full[:, face_idx, :],
-                                          dtype=np.float64))
-            else:
-                w = w * eps_f_per_side  # closure: ε/2 scalar from outer scope
-        if mask_face is not None:
-            w = w * np.asarray(mask_face, dtype=np.float64)
-        if chi_face is not None:
-            w = w * np.asarray(chi_face, dtype=np.float64)
-        return w
-
-    def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
-                              chi_face=None):
-        """Mass-flux-weighted T average at the REAL outlet face.
-        Delegates to _face_flux_weights for consistent weighting.
-        """
-        try:
-            w = _face_flux_weights(solver, dir_code, face='real_outlet',
-                                   eps_mode='ltne', chi_face=chi_face)
-            tot = float(np.sum(w))
-            if tot < 1e-30:
-                return float(np.mean(T_face))
-            return float(np.sum(T_face * w) / tot)
-        except Exception:
-            return float(np.mean(T_face))
-
-    def _real_outlet_slice(T_field, dir_code):
-        if dir_code == 0:   return T_field[-1, :, :]
-        if dir_code == 1:   return T_field[0, :, :]
-        if dir_code == 2:   return T_field[:, -1, :]
-        if dir_code == 3:   return T_field[:, 0, :]
-        if dir_code == 4:   return T_field[:, :, -1]
-        return T_field[:, :, 0]
-
-    def _simple_mass_flow(solver, dir_code):
-        """LTNE-effective m_dot at REAL inlet face via _face_flux_weights."""
-        try:
-            w = _face_flux_weights(solver, dir_code, face='real_inlet',
-                                   eps_mode='ltne')
-            return float(np.sum(w))
-        except Exception:
-            return 0.0
+    # _face_flux_weights / _mass_weighted_T_out / _real_outlet_slice /
+    # _simple_mass_flow are now module-level (hoisted 2026-05-15) so they can
+    # be unit-tested for stagnant-cell suppression. `eps_f_per_side` is
+    # passed explicitly instead of captured by closure.
 
     # LTNE uses ε_A = ε_B = ε/2 per side (symmetric 2-fluid split). Metric
     # must mirror that so m_dot ≡ ∫ ε_A·ρ·u·dA matches the solver's
@@ -2142,7 +2190,7 @@ def _run_3d_stack(cfg):
     eps_f_per_side = 0.5 * float(eps)   # ε_A
 
     # Fluid A — unified face-flux weights for T_out and m_dot consistency
-    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'])
+    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side)
     T_A_out_face = _real_outlet_slice(Ta, fA['dir'])
     T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side)
     # T_A_out no-chi (diagnostic only)
@@ -2153,7 +2201,7 @@ def _run_3d_stack(cfg):
     Q_enthalpy_B = 0.0
     chi_B_out_face = None
     if sB is not None:
-        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'])
+        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'], eps_f_per_side=eps_f_per_side)
         T_B_out_face = _real_outlet_slice(Tb, fB['dir'])
         # χ_B at outlet face for ghost-B suppression
         if chi_B is not None:
