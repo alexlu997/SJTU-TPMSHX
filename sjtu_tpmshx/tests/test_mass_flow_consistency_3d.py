@@ -126,6 +126,106 @@ def test_uniform_box_bc_matches_inlet_integral():
     )
 
 
+def test_partial_mask_mass_flow_match_inlet_BC():
+    """Partial inlet/outlet mask reproducer for Shanghai case 1 2.04× anomaly.
+
+    Geometry mirrors `runs/diag_shanghai_flow_topology.py:_build_partial_B_masks`
+    (top-right inlet, bottom-left outlet, both 1/6 of the cross-stream extent).
+
+    Three possible outcomes (categorised in task 2b):
+      A: inlet and outlet ratios both ≈ 1 → solver kernel is fine; the diag
+         formula at `diag_shanghai_flow_topology.py:172-180` is what produces
+         the 2.04× number.
+      B: inlet ≈ 1 but outlet ≠ inlet → PPE drift triggered by asymmetric mask
+         (Category B per audit).
+      C: inlet ≈ 2× target → BC injection is multiplying by something
+         (possibly A_face/A_open re-scaling).
+    """
+    NX, NZ = 16, 8                 # cross-stream
+    NY = 16                        # streamwise (j-axis is SIMPLESolver3D's flow direction)
+    Lx, Ly, Lz = 0.04, 0.04, 0.04
+    eps = 0.5
+    rho = 1000.0                   # incompressible water-like
+    mu  = 1e-3
+    K   = 1e-9                     # tight enough to need pressure correction
+    cF  = 0.55
+    U_super = 0.05
+
+    # Top-half inlet, bottom-half outlet (50% open area, asymmetric mask)
+    in_mask  = np.zeros((NX, NZ), dtype=np.float64)
+    in_mask[NX // 2:, :] = 1.0
+    out_mask = np.zeros((NX, NZ), dtype=np.float64)
+    out_mask[:NX // 2, :] = 1.0
+    open_frac = float(in_mask.mean())   # 0.5
+
+    # v_inlet_field is the superficial velocity at face cells (zero on walls,
+    # U_super on open cells) — same convention as
+    # diag_shanghai_flow_topology.py line 99.
+    v_inlet_field = (in_mask * U_super).astype(np.float64)
+
+    K_arr  = np.full((NY, NZ), K,  dtype=np.float64)
+    cF_arr = np.full((NY, NZ), cF, dtype=np.float64)
+    sol = SIMPLESolver3D(
+        Lx=Lx, Ly=Ly, Lz=Lz,
+        Nx=NX, Ny=NY, Nz=NZ,
+        rho=rho, mu=mu, T_in=300.0,
+        v_inlet=v_inlet_field,
+        eps=eps,
+        K_arr=K_arr, cF_arr=cF_arr,
+        P_ref_abs=101325.0,
+        fluid_type='incompressible',
+    )
+    sol.inlet_frac = in_mask
+    sol.outlet_frac = out_mask
+
+    conv, it = sol.solve(max_iter=2000, tol=1e-6)
+    print(f"\n[partial-mask] converged={conv} iters={it}")
+
+    dx = sol.dx[:, None]
+    dz = sol.dz[None, :]
+    A_face = Lx * Lz
+    A_open = open_frac * A_face
+
+    # m_target_super: superficial mass flux through the OPEN portion of the
+    # inlet face (this is what the diag script writes as `m_dot_target`).
+    m_target_super = rho * U_super * A_open
+
+    m_in_face = float(np.sum(
+        sol.v[:, 0, :] * sol.rho_field[:, 0, :] * dx * dz * in_mask
+    ))
+    m_out_face = float(np.sum(
+        sol.v[:, -1, :] * sol.rho_field[:, -1, :] * dx * dz * out_mask
+    ))
+    # Unmasked outlet integral — exposes any v leaking through "wall" cells
+    m_out_unmasked = float(np.sum(
+        sol.v[:, -1, :] * sol.rho_field[:, -1, :] * dx * dz
+    ))
+
+    print(f"  partial-mask reproducer:")
+    print(f"    A_face          = {A_face:.6g}")
+    print(f"    A_open          = {A_open:.6g}  (open_frac={open_frac:.4f})")
+    print(f"    target (ρ·U_super·A_open):  {m_target_super:.6g}")
+    print(f"    actual inlet integral:      {m_in_face:.6g}")
+    print(f"    actual outlet integral:     {m_out_face:.6g}")
+    print(f"    outlet integral unmasked:   {m_out_unmasked:.6g}")
+    print(f"    inlet/target ratio:         "
+          f"{m_in_face / m_target_super:.4f}")
+    print(f"    outlet/target ratio:        "
+          f"{m_out_face / m_target_super:.4f}")
+    print(f"    outlet_unmask/target ratio: "
+          f"{m_out_unmasked / m_target_super:.4f}")
+
+    assert m_in_face == pytest.approx(m_target_super, rel=5e-3), (
+        f"BC-vs-integral mismatch (inlet): target={m_target_super:.6g} "
+        f"actual={m_in_face:.6g} ratio={m_in_face / m_target_super:.3f}"
+    )
+    assert m_in_face == pytest.approx(m_out_face, rel=1e-2), (
+        f"Conservation broken (masked): in={m_in_face:.6g} "
+        f"out={m_out_face:.6g} ratio={m_out_face / m_in_face:.3f}"
+    )
+
+
 if __name__ == '__main__':
     test_uniform_box_mass_conservation()
     test_uniform_box_bc_matches_inlet_integral()
+    test_partial_mask_mass_flow_match_inlet_BC()
