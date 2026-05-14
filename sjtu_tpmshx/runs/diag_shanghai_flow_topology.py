@@ -169,15 +169,24 @@ def main():
         p(f"  ✓ {f30:.1f}% in [25, 60]% at 30%-thr — healthy diagonal cross-flow")
 
     # Mass conservation check
-    A_face_inlet  = H_DOM * LZ                       # B inlet area (full top face, masked)
+    # B solver constructed as Lx=L_DOM, Ly=H_DOM, Lz=LZ; its inlet face is at
+    # j=0 spanning (Nx, Nz) = (NX, NZ) cells → area = L_DOM × LZ. Using H_DOM
+    # was an axis-swap bug (H_DOM is the cross-stream depth, not the inlet
+    # face width).
+    A_face_inlet  = L_DOM * LZ                       # B inlet face (top, X × Z)
     A_open_inlet  = float(in_mask_B.sum() / in_mask_B.size) * A_face_inlet
     m_dot_target  = rho_B0 * U_B * A_open_inlet
-    m_dot_actual_top = float(np.sum(sB.v[:, -1, :] * sB.rho_field[:, -1, :]
-                                    * (sB.dx[:, None] * sB.dz[None, :])
-                                    * in_mask_B))
+    # Integrate at j=0 (solver inlet face), where BC is pinned. The previous
+    # j=-1 + in_mask integration used the outlet face with the inlet mask;
+    # after mask harmonisation the full j=-1 face integral matches mass-cons.
+    m_dot_actual_inlet = float(np.sum(sB.v[:, 0, :] * sB.rho_field[:, 0, :]
+                                      * (sB.dx[:, None] * sB.dz[None, :])))
+    m_dot_actual_outlet = float(np.sum(sB.v[:, -1, :] * sB.rho_field[:, -1, :]
+                                       * (sB.dx[:, None] * sB.dz[None, :])))
     p(f"\n## Water mass flow consistency")
     p(f"  target m_dot (geometric inlet)  = {m_dot_target:.5f} kg/s")
-    p(f"  actual top-face inlet (masked)  = {m_dot_actual_top:.5f} kg/s")
+    p(f"  actual inlet (j=0, full face)   = {m_dot_actual_inlet:.5f} kg/s")
+    p(f"  actual outlet (j=Ny, full face) = {m_dot_actual_outlet:.5f} kg/s")
 
     # ── Plots ──
     k_mid = NZ // 2
