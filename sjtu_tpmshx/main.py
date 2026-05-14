@@ -1,5 +1,6 @@
 import sys
 import json
+import time as _time
 from pathlib import Path as _PathBoot
 
 # Make both import styles work regardless of launch mode:
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
+from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
 from ui.theme import (
     _THEMES, _build_styles, get_theme, get_theme_name, set_theme,
@@ -1895,15 +1897,11 @@ class Main_Menu(QMainWindow):
         except Exception:
             pass
         try:
-            hist = getattr(self, '_compute_times', {}) or {}
+            last = getattr(self, '_last_elapsed_s', None)
             mode = self._active_compute_mode()
-            last = None
-            if hist.get(mode):
-                last = hist[mode][-1]
             if last is None:
                 self._sb_clock.setText("⏱ —")
             else:
-                from ui.fmt import duration as _fmt_dur
                 self._sb_clock.setText(
                     f"⏱ {_fmt_dur(last)} · {mode.upper()}")
         except Exception:
@@ -3526,10 +3524,12 @@ class Main_Menu(QMainWindow):
         self._compute_cancel = False
         if hasattr(self, 'btn_compute'):
             self._btn_compute_text_saved = self.btn_compute.text()
-            eta = self._compute_eta_for_active_mode()
-            self.btn_compute.setText(
-                f"Cancel  (Computing… ETA ~{eta})" if eta else "Cancel  (Computing…)")
+            # ETA text removed 2026-05-14 — median-of-history misled when
+            # config changed. Live elapsed + iter counter via _tick_btn.
+            self._iter_label_now = None
+            self.btn_compute.setText("Cancel  ·  0.0s")
             self.btn_compute.setEnabled(True)
+            self._begin_btn_ticker()
             # Surgical disconnect of the *exact* current handler (run_calculation
             # or a stale Cancel handler from prior run). disconnect() with no
             # args was nuking *all* clicked slots, which let stray reconnects
@@ -3565,49 +3565,6 @@ class Main_Menu(QMainWindow):
         except Exception:
             pass
         return '2d'
-
-    def _compute_eta_for_active_mode(self):
-        """Return a human-readable ETA string ('12s', '2m05s') derived from
-        the median of the most recent successful runs in the same mode.
-        Returns '' when no history is available yet."""
-        import statistics as _stat
-        from ui.fmt import duration as _fmt_dur
-        mode = self._active_compute_mode()
-        hist = getattr(self, '_compute_times', {}).get(mode)
-        if not hist:
-            return ''
-        try:
-            med = _stat.median(hist)
-        except Exception:
-            return ''
-        return _fmt_dur(med)
-
-    def _record_compute_elapsed(self, elapsed, mode=None):
-        """Push `elapsed` (seconds) into the mode-specific history ring so
-        future clicks surface a usable ETA. Bounded maxlen keeps the median
-        responsive to the current workload rather than permanently anchored
-        to an old baseline."""
-        import collections as _col
-        if mode is None:
-            mode = self._active_compute_mode()
-        hist = getattr(self, '_compute_times', None)
-        if hist is None:
-            hist = self._compute_times = {
-                '2d': _col.deque(maxlen=7),
-                '3d': _col.deque(maxlen=5),
-                'poly': _col.deque(maxlen=5),
-            }
-        hist.setdefault(mode, _col.deque(maxlen=7))
-        hist[mode].append(float(elapsed))
-        # Refresh the button tooltip so a pre-compute hover shows the
-        # predicted duration without waiting for the next click.
-        if hasattr(self, 'btn_compute'):
-            eta = self._compute_eta_for_active_mode()
-            if eta:
-                self.btn_compute.setToolTip(
-                    f"Run single-point compute (Ctrl+R) — ETA ~{eta} "
-                    f"based on median of {len(hist[mode])} recent "
-                    f"{mode.upper()} runs")
 
     def _update_result_summary(self):
         """Mirror the headline numbers from the detail result labels into the
@@ -3696,6 +3653,35 @@ class Main_Menu(QMainWindow):
         on_geom = (getattr(self, '_active_tab', None) == 'layout')
         self._result_summary_bar.setVisible(shown_any and not on_geom)
 
+    def _begin_btn_ticker(self):
+        """500 ms ticker driving the Compute/Cancel button live text."""
+        from PySide6.QtCore import QTimer as _QT_btn
+        t = getattr(self, '_btn_ticker_timer', None)
+        if t is None:
+            t = _QT_btn(self)
+            t.setInterval(500)
+            t.timeout.connect(self._tick_btn)
+            self._btn_ticker_timer = t
+        t.start()
+
+    def _tick_btn(self):
+        """Refresh button text with `Cancel · <dur> [· iter k/N]`. The iter
+        suffix is omitted when the solver has not published a label
+        (e.g. 3D path before its coupling loop starts)."""
+        if not hasattr(self, 'btn_compute'):
+            return
+        t0 = getattr(self, '_compute_t0', None)
+        if t0 is None:
+            return
+        elapsed = _time.time() - t0
+        label = getattr(self, '_iter_label_now', None)
+        suffix = f"  ·  {label}" if label else ""
+        new_text = f"Cancel  ·  {_fmt_dur(elapsed)}{suffix}"
+        # Skip setText when nothing changed — saves Qt repaint churn at
+        # 500 ms tick when sub-second elapsed rounds to same string.
+        if self.btn_compute.text() != new_text:
+            self.btn_compute.setText(new_text)
+
     def _drain_live_residuals(self):
         """Timer tick — push the Fluid A residual trail (log scale) into
         the status-bar sparkline. Reads + clears any new samples from
@@ -3751,6 +3737,15 @@ class Main_Menu(QMainWindow):
                 pass
         self._compute_poll_timer = None
         self._compute_thread = None
+        # Stop the elapsed/iter button-text ticker (paired with
+        # _begin_btn_ticker). Idempotent — silently no-ops when absent.
+        bt = getattr(self, '_btn_ticker_timer', None)
+        if bt is not None:
+            try:
+                bt.stop()
+            except Exception:
+                pass
+        self._iter_label_now = None
         if hasattr(self, 'btn_compute'):
             self.btn_compute.setEnabled(True)
             self.btn_compute.setText(
@@ -3771,14 +3766,12 @@ class Main_Menu(QMainWindow):
             from PySide6.QtCore import QTimer as _QT
             _QT.singleShot(500, self.progress.hide)
             self._update_result_summary()
-            # Record the elapsed wall-clock so future clicks can surface
-            # an ETA next to the Compute button.
-            import time as _t_end
+            # Record the elapsed wall-clock for the status bar clock.
             t0 = getattr(self, '_compute_t0', None)
             elapsed = None
             if t0 is not None:
-                elapsed = _t_end.time() - t0
-                self._record_compute_elapsed(elapsed)
+                elapsed = _time.time() - t0
+                self._last_elapsed_s = elapsed
             self._refresh_status_bar()
             try:
                 from ui.ui_builders import refresh_workflow_breadcrumb
@@ -3805,11 +3798,7 @@ class Main_Menu(QMainWindow):
                         pulse_glow(chip, color='#22C55E',
                                     blur_peak=20, duration_ms=550)
                 if elapsed is not None:
-                    if elapsed < 60:
-                        dur = f"{elapsed:.1f}s"
-                    else:
-                        dur = f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
-                    toast(self, f"Compute done · {dur}", kind='success')
+                    toast(self, f"Compute done · {_fmt_dur(elapsed)}", kind='success')
                 else:
                     toast(self, "Compute done", kind='success')
                 # E4 — if user is still on Geometry tab, nudge them to
@@ -4108,11 +4097,9 @@ class Main_Menu(QMainWindow):
                 f"(u≤10 m/s validated). Forchheimer-dominated; expect "
                 f"{lo}–{hi}× runtime.",
                 15000)
-        # Mark the compute start so `_end_compute_ui` can push the wall
-        # clock into the ETA history ring. Set regardless of 2D/3D/poly
-        # branch — the 3D branch overwrites this with its own clock anyway.
-        import time as _t_run
-        self._compute_t0 = _t_run.time()
+        # Mark compute start so `_end_compute_ui` records elapsed for the
+        # status bar clock. 3D branch overwrites with its own clock.
+        self._compute_t0 = _time.time()
         # Polygon solver runs on main thread (has its own processEvents)
         if self.combo_shape.currentIndex() > 0:
             self._run_polygon_calculation()
@@ -4611,7 +4598,6 @@ class Main_Menu(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return
 
-        import time as _time
         self._compute_t0 = _time.time()
         # Cell count must reflect the actual refine setting — adding +16 per
         # axis unconditionally inflated the displayed grid by ~5x when refine

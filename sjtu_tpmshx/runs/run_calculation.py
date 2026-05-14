@@ -762,6 +762,9 @@ def _run_solvers(window, cfg, fields):
 
     for _coup_it in range(_MAX_COUPLING):
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
+        # Live iteration label for the UI button ticker (replaces the
+        # dropped ETA text). 2026-05-14.
+        window._iter_label_now = f"iter {_coup_it + 1}/{_MAX_COUPLING}"
 
         # Step 1: SIMPLE velocity with current rho field. Pass Ta/Tb after
         # first outer iter so SIMPLE _update_density uses local T (not stale T_in).
