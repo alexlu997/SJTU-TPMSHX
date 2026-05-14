@@ -1095,6 +1095,25 @@ class SIMPLESolver3D:
         self.outlet_frac = _build_outlet_frac_taper(
             self.Nx, self.Nz, n_taper=n_taper, min_frac=min_frac)
 
+    # ── outlet_frac ↔ outlet_mask_ij single-source-of-truth ──────────────
+    # The v-sweep gates wall cells via `outlet_frac > 0.5` (line ~434);
+    # `_correct_jit_3d` re-applies the BC via `outlet_mask_ij` (line ~964).
+    # Before this property the two gates could disagree (e.g. callers set
+    # `outlet_frac` to a partial mask but left `outlet_mask_ij` at default
+    # all-True), letting v leak through wall cells at j=Ny after the pressure
+    # correction. Now any write to `outlet_frac` rebuilds the boolean mask.
+    @property
+    def outlet_frac(self):
+        return self._outlet_frac
+
+    @outlet_frac.setter
+    def outlet_frac(self, value):
+        arr = np.ascontiguousarray(value, dtype=np.float64)
+        self._outlet_frac = arr
+        # Derive boolean wall/open mask: True = open (lets PPE/correction run),
+        # False = wall (pin v=0). Threshold mirrors v-sweep (`> 0.5`).
+        self.outlet_mask_ij = (arr > 0.5).astype(np.bool_)
+
     @staticmethod
     def extract_dP_weighted(s):
         """Pipe-weighted inlet-outlet dP — geometric open-area weights.
@@ -1218,12 +1237,15 @@ class SIMPLESolver3D:
         self.d_v = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
         self.d_w = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-        # Outlet: full-width pin at j=Ny-1 by default
-        self.outlet_mask_ij = np.ones((Nx, Nz), dtype=np.bool_)
+        # Outlet: full-width pin at j=Ny-1 by default. `outlet_mask_ij` is
+        # auto-derived from `outlet_frac` via the property setter below so it
+        # stays in sync; the v-sweep gates via `outlet_frac > 0.5` and the
+        # pressure-correction BC re-apply (`_correct_jit_3d`) gates via
+        # `outlet_mask_ij`. Single source of truth = `outlet_frac`.
         # outlet_frac (Nx, Nz) float — DEFAULT uniform 1.0 (no taper).
         # Caller can call `self.apply_outlet_taper()` to enable 8-cell corner
         # taper (mirror 2D pattern, used for Shanghai-type full-width validation).
-        self.outlet_frac = np.ones((Nx, Nz), dtype=np.float64)
+        self.outlet_frac = np.ones((Nx, Nz), dtype=np.float64)  # sets mask
         self.inlet_frac = np.ones((Nx, Nz), dtype=np.float64)
 
         # Inlet BC seed (may be non-uniform via v_inlet_field)
