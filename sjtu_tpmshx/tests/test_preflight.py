@@ -142,21 +142,28 @@ def test_clean_pass_no_dialog():
     print("test_clean_pass_no_dialog PASS")
 
 
-def test_t_in_swap_warns():
-    """T_inA < T_inB must emit a warning about B being the hot side."""
+def test_t_in_swap_infos():
+    """T_inA < T_inB must emit an info notice about B being the hot side.
+
+    Demoted from warning to info on 2026-05-14: Q is unsigned post-Option-C
+    so the reverse-ordering case is valid, not suspect. The notice still
+    surfaces so the user knows which side is hot.
+    """
     r = compute_preflight(
         L=0.182, H=0.042, Lz=0.042,
         Nx=30, Ny=20, Nz=5, is_3d=True,
         wall_refine_3d=True,
         fluid_A=_shanghai_A(), fluid_B=_shanghai_B_partial(),
         T_inA=300.0, T_inB=422.0)
-    assert any("hot side" in s and "T_inA" in s for s in r.warnings), r.warnings
-    print("test_t_in_swap_warns PASS")
+    assert any("hot side" in s and "T_inA" in s for s in r.info), r.info
+    # And specifically NOT in warnings (no blocking dialog).
+    assert not any("hot side" in s for s in r.warnings), r.warnings
+    print("test_t_in_swap_infos PASS")
 
 
 def test_t_in_normal_no_warn():
     """Canonical Shanghai ordering (hot A, cold B) must not trigger the
-    swap warning even when everything else is legal."""
+    swap notice even when everything else is legal."""
     r = compute_preflight(
         L=0.182, H=0.042, Lz=0.042,
         Nx=30, Ny=20, Nz=5, is_3d=True,
@@ -164,6 +171,7 @@ def test_t_in_normal_no_warn():
         fluid_A=_shanghai_A(), fluid_B=_shanghai_B_partial(),
         T_inA=422.0, T_inB=300.0)
     assert not any("hot side" in s for s in r.warnings), r.warnings
+    assert not any("hot side" in s for s in r.info), r.info
     print("test_t_in_normal_no_warn PASS")
 
 
@@ -177,6 +185,6 @@ if __name__ == '__main__':
     test_richardson_huge_grid_warns()
     test_stream_axis_too_coarse_warns()
     test_clean_pass_no_dialog()
-    test_t_in_swap_warns()
+    test_t_in_swap_infos()
     test_t_in_normal_no_warn()
     print("\nAll tests PASS")

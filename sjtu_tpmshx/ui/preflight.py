@@ -126,16 +126,15 @@ def compute_preflight(
     """Run the grid-legality checks. Returns findings; never raises."""
     out = Preflight()
 
-    # Sign-flip warning — when T_inA < T_inB the solid sits cooler than B
+    # Sign-flip notice — when T_inA < T_inB the solid sits cooler than B
     # and the legacy Q = ∑h_vB·(Ts−Tb) went negative. Post-Option-C Q_total
-    # is unsigned max(|Q_A|, |Q_B|), so the number looks right, but the
-    # user almost certainly misfilled or the flow direction is inverted.
-    # Surface it explicitly.
+    # is unsigned max(|Q_A|, |Q_B|), so the number is correct. Demoted from
+    # warning to info (2026-05-14) — the real bug is fixed; this is just a
+    # diagnostic so the user knows which side is hot without re-checking.
     if T_inA is not None and T_inB is not None and T_inA < T_inB - 1e-6:
-        out.warnings.append(
+        out.info.append(
             f"T_inA ({T_inA:.1f} K) < T_inB ({T_inB:.1f} K): B is the hot "
-            f"side. Q is reported as HX capacity max(|Q_A|,|Q_B|), unsigned. "
-            f"Check whether flow directions were intended.")
+            f"side. Q is reported as HX capacity max(|Q_A|,|Q_B|), unsigned.")
 
     # 2D wall refine only kicks in when BOTH fluid inlets/outlets are full
     # width along their cross-axis. Otherwise run_calculation.py falls back

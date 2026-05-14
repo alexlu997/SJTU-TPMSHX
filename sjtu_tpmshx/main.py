@@ -4086,12 +4086,14 @@ class Main_Menu(QMainWindow):
         # Richardson budget. Errors block, warnings prompt continue?.
         if not self._preflight_grid():
             return
-        # 2026-05-07: high-velocity warning (UI report 2). V&V Standard
+        # 2026-05-07: high-velocity notice (UI report 2). V&V Standard
         # Tier domain sweep validated u ≤ 10 m/s; above that, SIMPLE
         # outer iterations need ~5-10× the converge time on the
-        # Forchheimer branch. User saw 8000-cell 3D run hit 3m38s+ at
-        # u_A=20 / u_B=15. Surface this so they make the choice
-        # explicitly rather than blame the solver.
+        # Forchheimer branch. Demoted from blocking dialog to non-modal
+        # status-bar message on 2026-05-14 — user complained the modal
+        # interrupts every run when exploring off-domain configurations.
+        # The information remains transparent (paper V&V scope unchanged)
+        # but no longer steals focus.
         try:
             uA = float(self.le_uA.text())
             uB = float(self.le_uB.text())
@@ -4099,21 +4101,13 @@ class Main_Menu(QMainWindow):
             uA = uB = 0.0
         if uA > 10.0 or uB > 10.0:
             slow = max(uA, uB)
-            ans = QMessageBox.warning(
-                self, "High velocity outside V&V domain",
-                f"u_A = {uA:.1f}, u_B = {uB:.1f} m/s.\n\n"
-                f"V&V Standard Tier validates u ≤ 10 m/s. Above that\n"
-                f"the Forchheimer branch dominates and SIMPLE outer\n"
-                f"iterations slow by 5–10×.\n\n"
-                f"Current run may take "
-                f"{int(5 * (slow / 10) ** 2)}–"
-                f"{int(10 * (slow / 10) ** 2)}× the usual time.\n\n"
-                f"Continue? (Cancel to lower u and re-run.)",
-                QMessageBox.StandardButton.Ok
-                | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel)
-            if ans != QMessageBox.StandardButton.Ok:
-                return
+            lo = int(5 * (slow / 10) ** 2)
+            hi = int(10 * (slow / 10) ** 2)
+            self.statusBar().showMessage(
+                f"u_A={uA:.1f}, u_B={uB:.1f} m/s outside V&V domain "
+                f"(u≤10 m/s validated). Forchheimer-dominated; expect "
+                f"{lo}–{hi}× runtime.",
+                15000)
         # Mark the compute start so `_end_compute_ui` can push the wall
         # clock into the ETA history ring. Set regardless of 2D/3D/poly
         # branch — the 3D branch overwrites this with its own clock anyway.
