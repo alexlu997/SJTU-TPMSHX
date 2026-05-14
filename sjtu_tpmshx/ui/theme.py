@@ -345,16 +345,6 @@ def _build_styles(theme_name=None):
     _btn = (f"border-radius:{RADIUS_BTN}px; color:white; font-weight:bold;"
             f"font-size:{FONT_BTN}pt; padding:4px 10px;")
 
-    def _btn_style(rgb, brd):
-        return (f"QPushButton{{{_btn}"
-                f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                f"stop:0 rgba({rgb},210), stop:1 rgba({rgb},180));"
-                f"border:1px solid rgba({brd},160);}}"
-                f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                f"stop:0 rgba({rgb},235), stop:1 rgba({rgb},205));}}"
-                f"QPushButton:pressed{{background:rgba({rgb},250);"
-                f"border:1px solid rgba({brd},220);}}")
-
     # ── 4-tier button semantics (Primary/Secondary/Tertiary/Long-running) ──
     # `:focus` selector on every tier draws a thick accent ring when the user
     # lands on a button via Tab — a hard requirement for WCAG 2.4.7

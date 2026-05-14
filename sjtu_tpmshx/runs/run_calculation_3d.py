@@ -2048,25 +2048,6 @@ def _run_3d_stack(cfg):
     # be divergence-free. T_out is a pipe-masked mean on the real outlet
     # face using Ta/Tb cell-centered values.
     #
-    # Mask convention: `_build_partial_masks` swaps in↔out for reverse
-    # dirs (1/3/5) so sX.inlet_frac sits at SIMPLE's j=0 face.
-    # In REAL coords: reverse dir's real inlet is at the other face, so
-    # when we want a mask for the real outlet we must un-swap.
-    def _real_outlet_mask(solver, dir_code):
-        m_in = getattr(solver, 'inlet_frac', None)
-        m_out = getattr(solver, 'outlet_frac', None)
-        # real outlet mask
-        return (m_in if dir_code in (1, 3, 5) else m_out)
-
-    def _pipe_masked_mean(T_face, mask):
-        if mask is None:
-            return float(np.mean(T_face))
-        w = np.asarray(mask, dtype=np.float64)
-        tot = float(np.sum(w))
-        if tot < 1e-30:
-            return float(np.mean(T_face))
-        return float(np.sum(T_face * w) / tot)
-
     def _face_flux_weights(solver, dir_code, face='real_outlet',
                            eps_mode='ltne', chi_face=None):
         """Unified face-flux weight array for T_out, m_dot, Q_enth.

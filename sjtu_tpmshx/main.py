@@ -28,6 +28,10 @@ from PySide6.QtWidgets import (
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
 from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
+from ui.ui_constants import (
+    TOAST_MS_BRIEF, TOAST_MS_SHORT, TOAST_MS_MED,
+    VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
+)
 from ui.theme import (
     _THEMES, _build_styles, get_theme, get_theme_name, set_theme,
     apply_mpl_theme, get_density, set_density,
@@ -379,7 +383,7 @@ class Main_Menu(QMainWindow):
         """Reset all parameters to Shanghai Electric preset."""
         self._user_edited_grid = False
         self._apply_shanghai_defaults()
-        self.statusBar().showMessage("Parameters reset to Shanghai Electric preset.", 5000)
+        self.statusBar().showMessage("Parameters reset to Shanghai Electric preset.", TOAST_MS_MED)
 
     def _track_shortcut(self, key, slot, tag):
         """QShortcut + connect + SignalRouter.adopt — one call.
@@ -491,7 +495,7 @@ class Main_Menu(QMainWindow):
                 if save_dict:
                     import numpy as _np_exp
                     _np_exp.savez_compressed(npz_path, **save_dict)
-            self.statusBar().showMessage(f"Exported: {path}", 5000)
+            self.statusBar().showMessage(f"Exported: {path}", TOAST_MS_MED)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -601,7 +605,7 @@ class Main_Menu(QMainWindow):
                     f"3D viewer init deferred (will retry on first click): {e}",
                     5000)
                 return
-            self.statusBar().showMessage("3D viewer ready.", 2000)
+            self.statusBar().showMessage("3D viewer ready.", TOAST_MS_BRIEF)
         QTimer.singleShot(500, _preinit)
 
     def _schedule_tpms_geometry_prewarm(self):
@@ -666,10 +670,6 @@ class Main_Menu(QMainWindow):
     def _build_param_tabs(self) -> QWidget:
         from ui.ui_builders import build_param_tabs
         return build_param_tabs(self)
-
-    def _switch_param_tab(self, index):
-        from ui.ui_builders import switch_param_tab
-        return switch_param_tab(self, index)
 
     # ─────────────────────────────────────────────────────────
     #  Page 1 — Domain / TPMS / Material / Grid / Results
@@ -1053,10 +1053,6 @@ class Main_Menu(QMainWindow):
         from solvers.zone_editor import zone_mode_changed
         return zone_mode_changed(self, idx)
 
-    def _zone_is_grid(self):
-        from solvers.zone_editor import zone_is_grid
-        return zone_is_grid(self)
-
     def _zone_init_1d(self, n):
         from solvers.zone_editor import zone_init_1d
         return zone_init_1d(self, n)
@@ -1076,14 +1072,6 @@ class Main_Menu(QMainWindow):
     def _zone_remove_col(self):
         from solvers.zone_editor import zone_remove_col
         return zone_remove_col(self)
-
-    def _zone_rebuild_grid(self, ny=None):
-        from solvers.zone_editor import zone_rebuild_grid
-        return zone_rebuild_grid(self, ny)
-
-    def _zone_resize(self):
-        from solvers.zone_editor import zone_resize
-        return zone_resize(self)
 
     def _zone_axis(self):
         from solvers.zone_editor import zone_axis
@@ -1210,18 +1198,18 @@ class Main_Menu(QMainWindow):
         u_val = float(le_u.text())
         U_sf = u_val * r['epsilon']
 
-        # Re range check
+        # Re range check against Nu v4.1 calibration window.
         Re = r['Re']
         re_style = _VAL
         re_tag = ""
-        if Re < 600:
+        if Re < RE_NU_LO:
             re_style = _VAL_WARN
-            re_tag = "  (< 600!)"
-        elif Re > 30000:
+            re_tag = f"  (< {RE_NU_LO}!)"
+        elif Re > RE_NU_HI:
             re_style = _VAL_WARN
-            re_tag = "  (> 30000!)"
+            re_tag = f"  (> {RE_NU_HI}!)"
 
-        self.statusBar().showMessage(f"Fluid {fluid} filled.  Re={Re:.0f}{re_tag}  Nu={r['Nu']:.2f}  dP/L={r['dP_per_L']:.1f} Pa/m", 5000)
+        self.statusBar().showMessage(f"Fluid {fluid} filled.  Re={Re:.0f}{re_tag}  Nu={r['Nu']:.2f}  dP/L={r['dP_per_L']:.1f} Pa/m", TOAST_MS_MED)
         if fluid == 'A':
             self._mu_A, self._h_vA, self._K_ffA, self._rho_A = r['mu'], h_v_vol, r['K_ff'], r['rho']
             self._v_rhoA.setText(f"{r['rho']:.4f}")
@@ -1354,8 +1342,6 @@ class Main_Menu(QMainWindow):
         return combo.currentIndex()
 
     def _is_x_dir(self, d): return d in (0, 1)
-    def _is_y_dir(self, d): return d in (2, 3)
-    def _is_z_dir(self, d): return d in (4, 5)
 
     # Wall mapping moved to domain.validator.wall_for_dir (Phase 4 #4).
     # These shims keep call sites in main.py + ui/* working unchanged.
@@ -1729,7 +1715,7 @@ class Main_Menu(QMainWindow):
             dlg.close()
         except Exception:
             pass
-        self.statusBar().showMessage("3D view re-docked.", 3000)
+        self.statusBar().showMessage("3D view re-docked.", TOAST_MS_SHORT)
 
     # ─── D17 — generic any-canvas detach ─────────────────────────────
     _detached_canvases = {}
@@ -1795,7 +1781,7 @@ class Main_Menu(QMainWindow):
             dlg.close()
         except Exception:
             pass
-        self.statusBar().showMessage(f"{key} canvas re-docked.", 3000)
+        self.statusBar().showMessage(f"{key} canvas re-docked.", TOAST_MS_SHORT)
 
     # ─────────────────────────────────────────────────────────
     #  Status bar — persistent context strip (IDE-style)
@@ -1906,86 +1892,6 @@ class Main_Menu(QMainWindow):
                     f"⏱ {_fmt_dur(last)} · {mode.upper()}")
         except Exception:
             pass
-
-    # ─────────────────────────────────────────────────────────
-    #  Optimize tab — stage machine + KPI pump + summary banner
-    # ─────────────────────────────────────────────────────────
-    def _opt_set_stage(self, stage):
-        """Paint the stage strip so `stage` ('config'/'running'/'result')
-        reads as current, the preceding stages as done, and the rest as
-        idle. No-op if the UI is not yet built."""
-        pills = getattr(self, '_opt_stage_pills', None)
-        styles = getattr(self, '_opt_pill_styles', None)
-        if pills is None or styles is None:
-            return
-        idle, active, done = styles
-        order = ('config', 'running', 'result')
-        try:
-            cur_idx = order.index(stage)
-        except ValueError:
-            return
-        for i, key in enumerate(order):
-            pill = pills.get(key)
-            if pill is None:
-                continue
-            if i < cur_idx:
-                pill.setStyleSheet(done)
-            elif i == cur_idx:
-                pill.setStyleSheet(active)
-            else:
-                pill.setStyleSheet(idle)
-
-    def _opt_reset_panel(self):
-        """Clear every live widget in the Optimize header so a fresh run
-        starts from a clean slate (called at the top of run_optimize)."""
-        for attr, default in (('_opt_kpi_gen', '—'),
-                                 ('_opt_kpi_q',   '—'),
-                                 ('_opt_kpi_dp',  '—'),
-                                 ('_opt_kpi_eta', '—')):
-            w = getattr(self, attr, None)
-            if w is not None:
-                w.setText(default)
-        spark = getattr(self, '_opt_sparkline', None)
-        if spark is not None:
-            spark.clear_data()
-        banner = getattr(self, '_opt_summary_banner', None)
-        if banner is not None:
-            banner.hide()
-
-    def _opt_update_kpis(self, gen=None, gen_total=None,
-                          best_q=None, best_dp=None, eta=None):
-        """Update the hero KPI values from the poll tick. None → skip."""
-        if gen is not None and hasattr(self, '_opt_kpi_gen'):
-            txt = f"{gen}" + (f" / {gen_total}" if gen_total else "")
-            self._opt_kpi_gen.setText(txt)
-        if best_q is not None and hasattr(self, '_opt_kpi_q'):
-            self._opt_kpi_q.setText(f"{best_q:.1f}")
-            spark = getattr(self, '_opt_sparkline', None)
-            if spark is not None:
-                spark.push(float(best_q))
-        if best_dp is not None and hasattr(self, '_opt_kpi_dp'):
-            self._opt_kpi_dp.setText(f"{best_dp:.0f}")
-        if eta is not None and hasattr(self, '_opt_kpi_eta'):
-            self._opt_kpi_eta.setText(eta)
-
-    def _opt_show_summary(self, n_solutions, q_lo, q_hi, elapsed_s,
-                           extra_tag=""):
-        """Paint the green post-run banner at the top of the Optimize tab.
-        Called from show_pareto once the Pareto plot has data."""
-        banner = getattr(self, '_opt_summary_banner', None)
-        if banner is None:
-            return
-        if elapsed_s < 60:
-            dur = f"{int(elapsed_s)}s"
-        elif elapsed_s < 3600:
-            dur = f"{int(elapsed_s // 60)}m{int(elapsed_s % 60):02d}s"
-        else:
-            dur = f"{int(elapsed_s // 3600)}h{int((elapsed_s % 3600) // 60):02d}m"
-        tag = f"  ·  {extra_tag}" if extra_tag else ""
-        banner.setText(
-            f"  ✓  Done — {n_solutions} Pareto solutions  ·  "
-            f"Q ∈ [{q_lo:.0f}, {q_hi:.0f}] W/m  ·  {dur}{tag}")
-        banner.show()
 
     def _redraw_temp_if_ready(self):
         """Re-render the temperature tab using stored compute results.
@@ -2423,10 +2329,6 @@ class Main_Menu(QMainWindow):
     ]
     _SAVE_PRESET_LABEL = "— Save current as preset… —"
 
-    def _user_presets_path(self):
-        """Legacy shim — delegates to SessionManager.presets_path()."""
-        return str(self.sm.presets_path())
-
     def _load_user_presets(self):
         """Return the list of user-defined preset dicts (possibly empty).
 
@@ -2614,16 +2516,6 @@ class Main_Menu(QMainWindow):
     _SESSION_CHECKS = ('chk_zones', 'chk_wall_refine_3d')
 
     _WORKSPACES = ('A', 'B', 'C')
-
-    def _session_path(self, workspace=None):
-        """Legacy shim — delegates to SessionManager.session_path() (P2.3).
-
-        Workspaces let users park 2–3 independent parameter sets and flip
-        between them without losing state. Workspace A keeps the legacy
-        `.last_session.json` filename so existing users aren't reset.
-        """
-        ws = workspace or getattr(self, '_active_workspace', 'A')
-        return str(self.sm.session_path(ws))
 
     def _switch_workspace(self, new):
         """Persist the current workspace, activate `new`, and reload it."""
@@ -3773,11 +3665,6 @@ class Main_Menu(QMainWindow):
                 elapsed = _time.time() - t0
                 self._last_elapsed_s = elapsed
             self._refresh_status_bar()
-            try:
-                from ui.ui_builders import refresh_workflow_breadcrumb
-                refresh_workflow_breadcrumb(self)
-            except Exception:
-                pass
             # D8 — stamp provenance tooltip on every result label so users
             # can trace "where did this number come from" without guessing.
             self._stamp_result_provenance(elapsed or 0.0)
@@ -3963,7 +3850,7 @@ class Main_Menu(QMainWindow):
                 getattr(self, _bname).setEnabled(True)
         self._switch_tab('temp')
         if _finalize_ok:
-            self.statusBar().showMessage("Done.", 5000)
+            self.statusBar().showMessage("Done.", TOAST_MS_MED)
 
     def _on_orch_error(self, message, log_text):
         """Compute raised. Show error + drop stale results (mode-aware)."""
@@ -4047,7 +3934,7 @@ class Main_Menu(QMainWindow):
             return
 
         self._end_compute_ui(success=False)
-        self.statusBar().showMessage("Cancelled.", 3000)
+        self.statusBar().showMessage("Cancelled.", TOAST_MS_SHORT)
 
     def run_calculation(self):
         """Full-domain solve: SIMPLE velocity → coupled energy on L × H.
@@ -4088,14 +3975,14 @@ class Main_Menu(QMainWindow):
             uB = float(self.le_uB.text())
         except (ValueError, AttributeError):
             uA = uB = 0.0
-        if uA > 10.0 or uB > 10.0:
+        if uA > VV_VELOCITY_LIMIT_MS or uB > VV_VELOCITY_LIMIT_MS:
             slow = max(uA, uB)
-            lo = int(5 * (slow / 10) ** 2)
-            hi = int(10 * (slow / 10) ** 2)
+            lo = int(5 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
+            hi = int(10 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
             self.statusBar().showMessage(
                 f"u_A={uA:.1f}, u_B={uB:.1f} m/s outside V&V domain "
-                f"(u≤10 m/s validated). Forchheimer-dominated; expect "
-                f"{lo}–{hi}× runtime.",
+                f"(u≤{VV_VELOCITY_LIMIT_MS:.0f} m/s validated). "
+                f"Forchheimer-dominated; expect {lo}–{hi}× runtime.",
                 15000)
         # Mark compute start so `_end_compute_ui` records elapsed for the
         # status bar clock. 3D branch overwrites with its own clock.
@@ -4141,11 +4028,6 @@ class Main_Menu(QMainWindow):
         # Lifecycle now driven entirely by orchestrator signals; the legacy
         # threading.Thread + QTimer poll block is gone (~100 lines deleted).
         return
-
-    def _run_calculation_inner(self):
-        """Thin wrapper — delegates to run_calculation module (Task B.9)."""
-        from runs.run_calculation import run_calculation_inner
-        return run_calculation_inner(self)
 
     def _finalize_plots(self):
         """Thin wrapper — delegates to run_calculation module (Task B.9).
@@ -4377,7 +4259,7 @@ class Main_Menu(QMainWindow):
             except Exception:
                 pass
             dlg.accept()
-            self.statusBar().showMessage("Timeline cleared.", 3000)
+            self.statusBar().showMessage("Timeline cleared.", TOAST_MS_SHORT)
         btn_clear.clicked.connect(_clear)
         btn_close.clicked.connect(dlg.accept)
         btn_row.addWidget(btn_clear); btn_row.addWidget(btn_close)
@@ -4509,7 +4391,7 @@ class Main_Menu(QMainWindow):
         if hasattr(self, '_recent_runs'):
             self._recent_runs.clear()
         self._rebuild_recent_menu()
-        self.statusBar().showMessage("Recent runs cleared.", 3000)
+        self.statusBar().showMessage("Recent runs cleared.", TOAST_MS_SHORT)
 
     # ─────────────────────────────────────────────────────────
     #  3D compute pipeline (uniform MVP)
@@ -4545,7 +4427,7 @@ class Main_Menu(QMainWindow):
             placeholder.deleteLater()
         self._canvas_3d_placeholder = None
         self.canvas_3d = panel
-        self.statusBar().showMessage("3D view initialised.", 2000)
+        self.statusBar().showMessage("3D view initialised.", TOAST_MS_BRIEF)
 
     def _run_calculation_3d(self):
         """Threaded 3D solve → auto-switch to 3D View tab on success."""
@@ -4736,7 +4618,7 @@ class Main_Menu(QMainWindow):
         items = [name for name, key in all_items if key in drawn]
         tab_keys = [key for name, key in all_items if key in drawn]
         if not items:
-            self.statusBar().showMessage("No figures to export yet.", 3000)
+            self.statusBar().showMessage("No figures to export yet.", TOAST_MS_SHORT)
             return
         choice, ok = QInputDialog.getItem(
             self, "Export Figure", "Select figure to export:",

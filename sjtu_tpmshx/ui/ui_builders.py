@@ -20,99 +20,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor
 from .matplotlib_canvas import MatplotlibCanvas
-from .theme import _build_styles, get_theme, get_theme_name
-
-
-_WORKFLOW_STEPS = (
-    ('geom',     'GEOMETRY'),
-    ('bc',       'BOUNDARY'),
-    ('zones',    'ZONES'),
-    ('compute',  'COMPUTE'),
-    ('optimize', 'OPTIMIZE'),
-)
-
-
-def _build_workflow_breadcrumb(window, _t):
-    """Narrow horizontal strip — 5 stage pills with connector dashes.
-    Active + completed states refreshed by `refresh_workflow_breadcrumb`.
-    """
-    host = QWidget()
-    host.setFixedHeight(28)
-    host.setStyleSheet(f"background:{_t.get('surface_base', _t['bg'])};")
-    lay = QHBoxLayout(host)
-    lay.setContentsMargins(16, 2, 16, 2); lay.setSpacing(4)
-    lay.addStretch(1)
-
-    _sub = _t.get('sub_fg', _t['fg'])
-    _border = _t.get('border_subtle', _t['card_border'])
-    window._wf_pill_styles = {
-        'idle':   (f"QLabel{{color:{_sub}; font-size:8pt; font-weight:700;"
-                    f"letter-spacing:1.5px; background:transparent;"
-                    f"border:1px solid {_border}; border-radius:10px;"
-                    f"padding:2px 10px;}}"),
-        'active': (f"QLabel{{color:#FFFFFF; font-size:8pt; font-weight:700;"
-                    f"letter-spacing:1.5px;"
-                    f"background:{_t.get('accent_primary', '#3B82F6')};"
-                    f"border:1px solid {_t.get('accent_primary', '#3B82F6')};"
-                    f"border-radius:10px; padding:2px 10px;}}"),
-        'done':   (f"QLabel{{color:#FFFFFF; font-size:8pt; font-weight:700;"
-                    f"letter-spacing:1.5px;"
-                    f"background:{_t.get('accent_green', '#22C55E')};"
-                    f"border:1px solid {_t.get('accent_green', '#22C55E')};"
-                    f"border-radius:10px; padding:2px 10px;}}"),
-    }
-    window._wf_pills = {}
-    for i, (key, label) in enumerate(_WORKFLOW_STEPS):
-        pill = QLabel(label)
-        pill.setStyleSheet(window._wf_pill_styles['idle'])
-        window._wf_pills[key] = pill
-        lay.addWidget(pill)
-        if i < len(_WORKFLOW_STEPS) - 1:
-            dash = QLabel("——")
-            dash.setStyleSheet(
-                f"color:{_border}; background:transparent;"
-                "border:none; font-size:9pt; padding:0 2px;")
-            lay.addWidget(dash)
-    lay.addStretch(1)
-    window._wf_host = host
-    return host
-
-
-def refresh_workflow_breadcrumb(window):
-    """Set each step pill's visual state based on live window state."""
-    if not hasattr(window, '_wf_pills'):
-        return
-    styles = window._wf_pill_styles
-    states = {k: 'idle' for k, _ in _WORKFLOW_STEPS}
-    # Geometry always considered done once dims combo has a selection.
-    states['geom'] = 'done'
-    # Boundary done when fluid A + B combos + inlet temps populated.
-    try:
-        if (window.combo_fluidA.currentText()
-                and window.combo_fluidB.currentText()
-                and window.le_TinA.text().strip()
-                and window.le_TinB.text().strip()):
-            states['bc'] = 'done'
-    except Exception:
-        pass
-    # Zones done whenever chk_zones enabled AND rows present.
-    try:
-        if window.chk_zones.isChecked() and window.zone_table.rowCount() > 0:
-            states['zones'] = 'done'
-    except Exception:
-        pass
-    # Compute / Optimize from has-results flags.
-    if getattr(window, '_has_results', False):
-        states['compute'] = 'done'
-    if getattr(window, '_has_pareto', False):
-        states['optimize'] = 'done'
-    # Active pill = first non-done step.
-    for k, _ in _WORKFLOW_STEPS:
-        if states[k] != 'done':
-            states[k] = 'active'
-            break
-    for k, pill in window._wf_pills.items():
-        pill.setStyleSheet(styles.get(states[k], styles['idle']))
+from .theme import get_theme, get_theme_name
 
 
 def _on_dim_changed(window):
@@ -335,13 +243,6 @@ def build_ui(window):
     window.btn_export_results = btn_export
     header_row.addWidget(btn_export, 0)
     root.addWidget(header_widget, 0)
-
-    # E5 (removed per user request) — workflow breadcrumb strip used to
-    # show GEOMETRY → BOUNDARY → ZONES → COMPUTE → OPTIMIZE pills here,
-    # but the steps duplicated the left-panel collapsibles and the
-    # progress bar already covers compute state, so the strip was just
-    # noise. `refresh_workflow_breadcrumb` no-ops when `_wf_pills` isn't
-    # populated, so leaving the call sites alone is safe.
 
     # Splitter: 1px separator — narrow band that reads as a divider,
     # widens on hover for a grab affordance.

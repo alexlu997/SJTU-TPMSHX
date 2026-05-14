@@ -41,7 +41,11 @@ print(f"[Shanghai aligned] roughness mode = {_ROUGH_MODE}"
 R_AIR_VAL = 287.05
 
 # ── Match run_calculation.py constants ──
-_MAX_COUPLING = 5
+# Bumped 5→10 on 2026-05-14 to align with runs/run_calculation.py (Phase
+# bump 2026-05-09). Old baseline at 5 sometimes left B residual ~3e-3
+# instead of converging to 1e-3; unifying keeps validation in lock-step
+# with production.
+_MAX_COUPLING = 10
 _COUPLING_TOL = 0.01
 _DT_TOL_K     = 1.0
 _ALPHA_COUP   = 0.7
