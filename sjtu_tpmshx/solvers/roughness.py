@@ -1,6 +1,39 @@
 """solvers/roughness.py — Re-dep / scalar wall-roughness correction factors
 for air-side Nu and Darcy-Forchheimer friction.
 
+⚠⚠⚠  PROVISIONAL / EXPECTED-TO-CHANGE  ⚠⚠⚠
+══════════════════════════════════════════════════════════════════════════
+
+The default 3D production mode `norris_1a` is a **literature-anchored ansatz**,
+not a TPMS-fit closure. Its derivation chain (be aware before publishing):
+
+    1. 试验记录表 v3.1 AM SLM samples measured Sa ≈ 31 μm
+    2. Smooth-wall TPMS CFD trained ConstDF-v1 (K, c_F) and Nu_smooth
+    3. Comparing 试验记录表 experiments to Nu_smooth gave the empirical
+       ×1.28 Nu multiplier (encodes 31 μm roughness implicitly on Q-side)
+    4. Norris (1971) analogy Nu_r/Nu_sm = (f_r/f_sm)^0.68 inverted gives
+       f_r/f_sm = 1.28^(1/0.68) ≈ 1.46
+    5. That 1.46 is the `norris_1a` factor applied to K, c_F here
+
+The chain therefore inherits two implicit assumptions:
+    (a) The Shanghai prototype Sa is similar to our 试验记录表 Sa ≈ 31 μm
+        (the original ×1.28 already silently makes this assumption; `norris_1a`
+        does not introduce a new assumption — it makes the assumption symmetric
+        across Q and f sides.)
+    (b) The Norris exponent n = 0.68 fit for sand-roughened pipes transfers
+        to TPMS micro-channel topology at the REV scale.
+
+Both are unverified. Replacement is expected once either (i) a TPMS-specific
+rough-wall correlation becomes available, (ii) Shanghai Sa is independently
+measured, or (iii) the bs_f_only Sa-sensitivity track (kept separate from the
+production code per user 2026-05-14) produces a defensible alternative.
+
+Until then `norris_1a` is the default for 3D paths (UI, BO, verify) because
+it closes the Shanghai dP RMSRE from 44.74 % → 24.15 % at no Q cost. Treat
+the 1.46 number as **provisional** in any methodology section.
+
+══════════════════════════════════════════════════════════════════════════
+
 Three modes:
 
   ``baseline``      no f-side correction; air Nu stays ×1.28 (current production).

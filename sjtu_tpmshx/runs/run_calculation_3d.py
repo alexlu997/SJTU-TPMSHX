@@ -37,12 +37,20 @@ from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
 
-# 2026-05-13 — UI 3D production air-side wall-roughness correction. Default
-# 'norris_1a' (f×1.46 const, Nu unchanged ×1.28) matches the BO evaluator_3d
-# so UI Compute and Pareto sit in the same dP regime (Shanghai dP RMSRE
-# 44.74 → 24.15 %). Water side (Yan [6]) untouched. ⚠ TEMPORARY per user
-# 2026-05-13; replace with Bhatti-Shah LOOCV-ε / rough-wall CFD retrain when
-# paper revision or phase-B optimisation lands.
+# ⚠ PROVISIONAL — 2026-05-13/14 UI 3D production air-side wall-roughness
+# correction. Default 'norris_1a' is a literature-anchored ANSATZ, not a TPMS
+# rough-wall correlation. See `solvers/roughness.py` module docstring for the
+# full Sa=31μm → ×1.28 → Norris analogy → ×1.46 derivation chain and the
+# two unverified assumptions (Shanghai-Sa-equals-our-Sa, Norris-n-applies-
+# to-TPMS). The Sa exploration track (bs_f_only mode + sensitivity sweep)
+# is kept SEPARATE from this production code per user 2026-05-14; do not
+# add explicit Sa parameters to UI / solver core paths.
+#
+# Why kept here despite being provisional: closes Shanghai 3D dP RMSRE
+# from 44.74 % (baseline) → 24.15 % (norris_1a) at Q-side cost ~ 0.7 pp.
+# Expected to be replaced by a Sa-explicit closure once the bs_f_only
+# experimental track converges OR a TPMS-fit rough-wall correlation
+# becomes available.
 _UI_ROUGH_MODE_DEFAULT = 'norris_1a'
 
 

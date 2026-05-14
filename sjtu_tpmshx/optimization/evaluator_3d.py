@@ -54,11 +54,19 @@ DEFAULT_CONFIG_3D: dict = {
     'max_iter_energy': 1000,
     'tol_energy':      0.5,
 
-    # 2026-05-13 — wall-roughness correction for air side. Default norris_1a
-    # for 3D production: cuts Shanghai dP RMSRE 44.74% → 24.15% (bias −43% →
-    # −15%) with Q virtually unchanged (2.91% → 3.61%). Pareto-best over
-    # baseline + bhatti_shah_1b. See `solvers/roughness.py`.
-    # Water side (Yan [6]) already embeds AM roughness, untouched.
+    # ⚠ PROVISIONAL air-side roughness correction (2026-05-13/14).
+    # Default 'norris_1a' is a literature-anchored ANSATZ derived from the
+    # empirical ×1.28 Nu multiplier (which silently encodes 试验记录表
+    # Sa=31μm) via the Norris (1971) Reynolds analogy:
+    #     1.46 = 1.28 ** (1/0.68)
+    # The chain inherits two unverified assumptions (see solvers/roughness.py
+    # module docstring for the full derivation). Expected to be replaced
+    # once the Sa-exploration track (kept SEPARATE per user 2026-05-14)
+    # produces a defensible alternative or a TPMS-fit rough-wall correlation
+    # becomes available. Closes Shanghai dP 44.74% → 24.15% (bias −43% →
+    # −15%) with Q virtually unchanged (2.91% → 3.61%); Pareto-best over
+    # baseline + bhatti_shah_1b. Water side (Yan [6]) embeds AM roughness
+    # already and is untouched here.
     'roughness_mode':   'norris_1a',
     'roughness_eps_um': 100.0,        # only used by bhatti_shah_1b
 }
