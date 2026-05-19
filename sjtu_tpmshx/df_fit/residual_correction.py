@@ -232,10 +232,15 @@ def clear_cache() -> None:
 def predict_dP_compressible_corrected(tpms_type: str, L_mm: float, t_mm: float,
                                        eps_f: float, G: float, T: float,
                                        P_in: float, mu: float,
-                                       L: float) -> float:
+                                       L: float, strict: bool = False) -> float:
     """1D compressible D-F dP with residual correction.
 
-    Same signature as `predict.predict_dP_compressible`. Returns dP [Pa].
+    Same signature/contract as `predict.predict_dP_compressible`
+    (incl. the Codex #6 `strict` flag). Returns dP [Pa].
+
+    strict=False (default) → legacy P_in rescue on infeasible
+        (P_out²≤0), keeps any existing caller untouched.
+    strict=True → NaN on infeasible so callers can detect/exclude/count.
     """
     from .predict import predict_K_cF
 
@@ -243,7 +248,9 @@ def predict_dP_compressible_corrected(tpms_type: str, L_mm: float, t_mm: float,
     C = mu * G / K + c_F * G * G
     P_out_sq = P_in ** 2 - 2.0 * R_AIR * T * C * L
     if P_out_sq <= 0:
-        return float(P_in)
+        # Codex 3rd-pass P2a: was unconditional `return P_in` — symmetric
+        # with predict_dP_compressible now.
+        return float('nan') if strict else float(P_in)
     dP_baseline = float(P_in - sqrt(P_out_sq))
 
     # Compute Re for correction lookup

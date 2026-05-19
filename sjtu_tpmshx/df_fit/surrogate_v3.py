@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import sys
 import warnings
-from math import sqrt
+from math import isfinite, sqrt
 from pathlib import Path
 
 import numpy as np
@@ -200,7 +200,8 @@ class SurrogateV3:
 
     @staticmethod
     def predict_dP(K: float, c_F: float, G: float, T: float,
-                   P_in: float, mu: float, L: float) -> float:
+                   P_in: float, mu: float, L: float,
+                   strict: bool = False) -> float:
         """1D compressible isothermal D-F pressure drop.
 
         Parameters
@@ -220,7 +221,10 @@ class SurrogateV3:
         C = mu * G / K + c_F * G ** 2
         P_out_sq = P_in ** 2 - 2.0 * R_AIR * T * C * L
         if P_out_sq <= 0:
-            return P_in
+            # Physically infeasible (choked / over-driven): no real P_out.
+            # Codex #6: strict → NaN so callers can detect+exclude+count;
+            # default → legacy P_in rescue (optimizer value-path untouched).
+            return float('nan') if strict else P_in
         return P_in - sqrt(P_out_sq)
 
     def summary(self) -> None:
@@ -253,6 +257,8 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
     print(f"K = {K:.4e}, c_F = {c_F:.2f}")
 
     err_sq = 0.0
+    n_valid = 0
+    n_invalid = 0
     results = []
     for ci in range(16):
         m = float(sh.iloc[ci, 5])
@@ -262,13 +268,27 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
         G = m / A_FLOW
         mu = air_viscosity(T)
 
-        dP_pred = model.predict_dP(K, c_F, G, T, P_in, mu, L_DOM)
+        # Codex #6: strict → NaN on infeasible; exclude+count, never
+        # fold a rescued P_in into RMSRE.
+        dP_pred = model.predict_dP(K, c_F, G, T, P_in, mu, L_DOM,
+                                   strict=True)
+        if not isfinite(dP_pred):
+            n_invalid += 1
+            results.append(dict(case=ci + 1, dP_exp=dP_exp,
+                                dP_pred=float('nan'), err_pct=float('nan'),
+                                pressure_state_valid=False))
+            continue
         err = (dP_pred - dP_exp) / dP_exp
         err_sq += err ** 2
+        n_valid += 1
         results.append(dict(case=ci + 1, dP_exp=dP_exp,
-                            dP_pred=dP_pred, err_pct=err * 100))
+                            dP_pred=dP_pred, err_pct=err * 100,
+                            pressure_state_valid=True))
 
-    rmsre = sqrt(err_sq / 16) * 100
+    rmsre = (sqrt(err_sq / n_valid) * 100) if n_valid else float('nan')
+    if n_invalid:
+        print(f"  ⚠ {n_invalid}/16 cases infeasible (P_out²≤0) — "
+              f"excluded from RMSRE (computed over {n_valid} valid)")
     return rmsre, results
 
 
@@ -321,13 +341,22 @@ def eval_loo(model: SurrogateV3):
 
         C = mut * Gt / K_p + cF_p * Gt ** 2
         Psq = Pit ** 2 - 2 * R_AIR * Tt * C * Lct
-        dPp = Pit - np.sqrt(np.maximum(Psq, 0))
-        mape = float(np.mean(np.abs(dPp - dPt) / dPt) * 100)
+        # Codex #6: rows with Psq≤0 are infeasible — exclude them from the
+        # LOO MAPE instead of np.maximum(Psq,0)-rescuing into a fake dP.
+        _ok = Psq > 0
+        if not _ok.any():
+            mape = float('nan')
+        else:
+            dPp = Pit[_ok] - np.sqrt(Psq[_ok])
+            mape = float(np.mean(np.abs(dPp - dPt[_ok]) / dPt[_ok]) * 100)
+        if not _ok.all():
+            print(f"  ⚠ L={r.L_mm:.0f} t={r.t_mm:.1f}: "
+                  f"{int((~_ok).sum())}/{_ok.size} pts infeasible — excluded")
         mapes.append(mape)
         print(f"  L={r.L_mm:.0f} t={r.t_mm:.1f}: "
               f"K={K_p:.3e} cF={cF_p:.0f} MAPE={mape:.1f}%")
 
-    return float(np.mean(mapes))
+    return float(np.nanmean(mapes))  # Codex #6: skip fully-infeasible geoms
 
 
 # ==================================================================

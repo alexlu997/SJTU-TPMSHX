@@ -4,49 +4,49 @@ for air-side Nu and Darcy-Forchheimer friction.
 ⚠⚠⚠  PROVISIONAL / EXPECTED-TO-CHANGE  ⚠⚠⚠
 ══════════════════════════════════════════════════════════════════════════
 
-The default 3D production mode `norris_1a` is a **literature-anchored ansatz**,
-not a TPMS-fit closure. Its derivation chain (be aware before publishing):
+2026-05-14 revision — symmetric Nu/f roughness pairing REMOVED.
 
-    1. 试验记录表 v3.1 AM SLM samples measured Sa ≈ 31 μm
-    2. Smooth-wall TPMS CFD trained ConstDF-v1 (K, c_F) and Nu_smooth
-    3. Comparing 试验记录表 experiments to Nu_smooth gave the empirical
-       ×1.28 Nu multiplier (encodes 31 μm roughness implicitly on Q-side)
-    4. Norris (1971) analogy Nu_r/Nu_sm = (f_r/f_sm)^0.68 inverted gives
-       f_r/f_sm = 1.28^(1/0.68) ≈ 1.46
-    5. That 1.46 is the `norris_1a` factor applied to K, c_F here
+Derivation chain rebuilt after a second user audit:
 
-The chain therefore inherits two implicit assumptions:
-    (a) The Shanghai prototype Sa is similar to our 试验记录表 Sa ≈ 31 μm
-        (the original ×1.28 already silently makes this assumption; `norris_1a`
-        does not introduce a new assumption — it makes the assumption symmetric
-        across Q and f sides.)
-    (b) The Norris exponent n = 0.68 fit for sand-roughened pipes transfers
-        to TPMS micro-channel topology at the REV scale.
+    1. 试验记录表 v3.1 AM SLM samples measured Sa ≈ 31 μm.
+    2. ConstDF-v1 (K, c_F) was trained on the *real* SLM dP recorded
+       in 试验记录表; the fitted c_F therefore already encodes the
+       Sa-driven friction contribution implicitly.
+    3. The empirical ×1.28 Nu multiplier (baked into tpms_calc air-
+       Gyroid) was fit by comparing the same 试验记录表 Nu measurements
+       to the smooth-wall Nu correlation; it lives only on the Q side.
+    4. Applying *any* additional f-side multiplier therefore double-
+       counts the SLM roughness on friction. `norris_1a` previously
+       did this in two flavours (1.46 from Norris analogy, then 1.28
+       paired with Nu); both were physically wrong and have been
+       reverted to 1.0.
 
-Both are unverified. Replacement is expected once either (i) a TPMS-specific
-rough-wall correlation becomes available, (ii) Shanghai Sa is independently
-measured, or (iii) the bs_f_only Sa-sensitivity track (kept separate from the
-production code per user 2026-05-14) produces a defensible alternative.
+`norris_1a` is now a degenerate alias of `baseline` for friction.
+The mode label is retained so existing config files / UI presets
+keep parsing, but `f_enhancement('norris_1a') == 1.0`.
 
-Until then `norris_1a` is the default for 3D paths (UI, BO, verify) because
-it closes the Shanghai dP RMSRE from 44.74 % → 24.15 % at no Q cost. Treat
-the 1.46 number as **provisional** in any methodology section.
+The remaining 3D Shanghai dP gap (≈ 47 % baseline RMSRE) is therefore
+not a missing roughness multiplier — it is a closure gap from one or
+more of:
+    (a) t = 0.6 mm Shanghai geometry is *extrapolation* of the
+        ConstDF-v1 training (t ∈ {0.3, 0.4, 0.5}). Closing it needs
+        new smooth-wall CFD at t ≥ 0.55.
+    (b) Shanghai prototype Sa may differ from 试验记录表 Sa = 31 μm.
+        Closing it needs an independent Sa measurement plus a TPMS-
+        fit rough-wall correlation.
 
 ══════════════════════════════════════════════════════════════════════════
 
 Three modes:
 
-  ``baseline``      no f-side correction; air Nu stays ×1.28 (current production).
-                    For backward compat: this is what runs everywhere by default.
+  ``baseline``       no f-side correction; air Nu stays ×1.28 (production default).
 
-  ``norris_1a``     constant f × 1.46 multiplier on Brinkman + Forchheimer
-                    coefficients (K /= 1.46, cF *= 1.46). The 1.46 factor is
-                    pure Norris (1971) analogy from the existing ×1.28 Nu
-                    multiplier:
-                        Nu_r/Nu_sm = (f_r/f_sm)^0.68
-                        ⇒ f_r/f_sm = 1.28^(1/0.68) ≈ 1.46
-                    No new fitted parameter; no Shanghai information used.
-                    Nu stays ×1.28 (unchanged).
+  ``norris_1a``      equivalent to `baseline` for friction (multiplier = 1.0).
+                     Retained as an alias so older configs don't break.
+                     ⚠ Historical: earlier revisions applied f × 1.46 then
+                     f × 1.28; both were reverted on 2026-05-14 because the
+                     SLM dP used to train c_F already encodes Sa-driven
+                     friction → any extra multiplier double-counts roughness.
 
   ``bhatti_shah_1b`` Re-dependent g(Re, ε/D_h) for BOTH f and Nu via Haaland
                     explicit Colebrook-White friction:
@@ -106,7 +106,19 @@ def f_enhancement(Re, mode='baseline', eps_um=None, D_h_mm=None):
     if mode == 'baseline':
         return 1.0
     if mode == 'norris_1a':
-        return 1.46
+        # 2026-05-14 (2nd revision): friction multiplier set to 1.0
+        # (no f-side enhancement). The 试验记录表 SLM dP used to
+        # train ConstDF-v1 cF was already real experimental dP, so
+        # cF already encodes the Sa-driven friction. Applying any
+        # additional ×factor (the old 1.46 from Norris analogy or
+        # the intermediate 1.28 from Nu-symmetric pairing) double-
+        # counts the roughness on the f side. The ×1.28 stays only
+        # on the Nu side (baked into tpms_compute air-Gyroid), which
+        # is an empirical Shanghai-vs-Nu_smooth fit on the Q side.
+        # `norris_1a` thus degenerates to identical behaviour with
+        # `baseline` for friction; the mode label is retained for
+        # backward compatibility with config files.
+        return 1.0
     if mode == 'bhatti_shah_1b':
         if eps_um is None or D_h_mm is None:
             raise ValueError("bhatti_shah_1b needs eps_um + D_h_mm")

@@ -109,7 +109,7 @@ def predict_dP(tpms_type: str, L_mm: float, t_mm: float, eps_f: float,
 def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
                             eps_f: float, G: float, T: float,
                             P_in: float, mu: float,
-                            L: float) -> float:
+                            L: float, strict: bool = False) -> float:
     """1D compressible isothermal D-F pressure drop.
 
     P_out^2 = P_in^2 - 2*R*T*(mu*G/K + c_F*G^2)*L
@@ -130,7 +130,9 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
     C = mu * G / K + c_F * G ** 2
     P_out_sq = P_in ** 2 - 2.0 * R_AIR * T * C * L
     if P_out_sq <= 0:
-        return P_in
+        # Codex #6: infeasible (no real P_out). strict → NaN for
+        # detect+exclude+count; default → legacy P_in (optimizer untouched).
+        return float('nan') if strict else P_in
     dP_baseline = P_in - sqrt(P_out_sq)
 
     if not _residual_correction_enabled():

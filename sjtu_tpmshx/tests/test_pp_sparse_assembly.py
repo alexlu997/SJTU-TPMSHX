@@ -5,7 +5,7 @@ sparse matrices and solutions to the reference _solve_pp_sparse, across three
 representative grids drawn from the Shanghai Electric validation cases.
 
 Run with:
-    cd D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
+    cd D:/Postgraduate/Homogenize/SJTU-TPMSHX/sjtu_tpmshx
     python test_pp_sparse_assembly.py
 """
 

@@ -5,7 +5,7 @@ exceptions. Does NOT check specific widget behavior — just 'doesn't crash'.
 Runs with QT_QPA_PLATFORM=offscreen so it works headless.
 
 Run with:
-    cd D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
+    cd D:/Postgraduate/Homogenize/SJTU-TPMSHX/sjtu_tpmshx
     python test_main_smoke.py
 """
 import sys

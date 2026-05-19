@@ -65,7 +65,7 @@ if __name__ == '__main__':
 
     results = {}
     results['baseline'] = run_with_mode('baseline (no roughness)',  'baseline')
-    results['norris_1a'] = run_with_mode('norris_1a (f×1.46)',       'norris_1a')
+    results['norris_1a'] = run_with_mode('norris_1a (f×1.0 alias)',  'norris_1a')
     results['bs100']     = run_with_mode('bhatti_shah_1b ε=100',     'bhatti_shah_1b', 100)
     results['bs150']     = run_with_mode('bhatti_shah_1b ε=150',     'bhatti_shah_1b', 150)
 
@@ -93,11 +93,12 @@ if __name__ == '__main__':
         else:
             print(f"\n  [WARN] water-B dP_B differs by {dPB_diff:.0f} Pa - leak?", flush=True)
 
-    # Verification: norris_1a dP_A should be 1.46x baseline (within +- 0.15)
+    # Verification (2026-05-14 revised): norris_1a is now alias of
+    # baseline for friction → dP_A ratio should be ≈ 1.0.
     if results['baseline'] and results['norris_1a']:
         ratio = results['norris_1a']['dP_A'] / max(results['baseline']['dP_A'], 1.0)
-        print(f"\n  norris_1a / baseline dP_A ratio: {ratio:.3f}  (expect ~ 1.46)", flush=True)
-        if 1.3 < ratio < 1.8:
-            print(f"  [OK] norris_1a applied correctly", flush=True)
+        print(f"\n  norris_1a / baseline dP_A ratio: {ratio:.3f}  (expect ~ 1.00)", flush=True)
+        if 0.97 < ratio < 1.03:
+            print(f"  [OK] norris_1a == baseline for friction (as designed)", flush=True)
         else:
-            print(f"  [WARN] norris_1a ratio out of expected band", flush=True)
+            print(f"  [WARN] unexpected drift between norris_1a and baseline", flush=True)

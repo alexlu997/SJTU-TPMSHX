@@ -37,6 +37,7 @@ convention on both sides, so downstream Q calculations are consistent.
 """
 
 import functools
+import os
 import warnings
 import numpy as np
 from .tpms_geometry import compute_geometry as _tpms_geom
@@ -302,15 +303,18 @@ _NU_ROUGHNESS_FACTOR = 1.28
 #   truth). Until then, restrict published Nu/Q claims to the Shanghai
 #   parameter window and document the φ scope in any methods section.
 #
-# STATUS UPDATE 2026-05-13 (partial closure of limitation #3 above):
-#   `solvers/roughness.py` now provides a Norris (1971) consistency
-#   correction that pairs the Nu × 1.28 here with a matched f × 1.46 on
-#   the D-F friction (Brinkman + Forchheimer) so Reynolds analogy holds.
-#   The full Re-dep g(Re, ε/D_h) lives there under mode 'bhatti_shah_1b'.
+# STATUS UPDATE 2026-05-14 (limitation #3 above — current standing):
+#   `solvers/roughness.py` `norris_1a` mode is now a no-op for friction
+#   (multiplier 1.0). The ×1.28 Nu factor here is the ONLY roughness
+#   compensation; it lives on the Q side only because c_F is trained
+#   on real SLM dP (encodes Sa-driven friction implicitly — any f-side
+#   multiplier would double-count). Earlier 1.46 / 1.28 f-side revisions
+#   reverted on 2026-05-14.
+#   The full Re-dep g(Re, ε/D_h) still lives under mode 'bhatti_shah_1b'.
 #   Active in 3D paths only (UI 3D + BO 3D + validate_shanghai_3d_real);
 #   2D over-corrects under Norris and stays at baseline. Production 3D
-#   mode = `norris_1a`. See memory project-roughness-norris-1a.
-#   ⚠ TEMPORARY per user 2026-05-13 — replacement candidates in memory.
+#   mode = `norris_1a` (alias of baseline for f).
+#   ⚠ TEMPORARY per user 2026-05-14 — replacement candidates in memory.
 
 
 def _nu_diamond(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:
@@ -439,7 +443,7 @@ def _nu_gyroid(Re: float, eps_f: float, L_mm: float, D_h_mm: float) -> float:
 # set via environment variable or direct assignment for calibrated runs.
 # TODO: replace with numerical homogenisation from a unit-cell simulation
 # once the data are fitted (same path as ConstDF-v1 for K_ff).
-CHI_S = 1.0
+CHI_S = float(os.environ.get('TPMSHX_CHI_S', '1.0'))
 
 # Fluid-phase thermal dispersion coefficient. K_ff = ε·k_f + C_DISP·ρcp·|u|·D_h.
 # Zero default = pure molecular conduction (previous behaviour). Calibrate

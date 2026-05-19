@@ -1,7 +1,7 @@
 """Smoke tests for batch_runner: serial and parallel execution of simple cases.
 
 Run with:
-    cd D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
+    cd D:/Postgraduate/Homogenize/SJTU-TPMSHX/sjtu_tpmshx
     python test_batch_runner.py
 """
 

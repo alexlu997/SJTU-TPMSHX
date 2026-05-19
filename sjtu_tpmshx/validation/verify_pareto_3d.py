@@ -317,6 +317,9 @@ def evaluate_3d(x_decision: np.ndarray,
         if verbose:
             print(f"[3D] outer {outer_it+1}/{max_outer} … ", end='', flush=True)
         t0 = time.perf_counter()
+        # 2026-05-19 ε contract (Option A): pass FULL porosity. Kernel does
+        # the single halving (eps_f = 0.5*epsilon → ε_A). Pre-halving here
+        # double-halved to ε_full/4. K_ff arrays already use ε_A — untouched.
         Ta, Tb, Ts = solve_full_domain_3d(
             L_dom, H_dom, Lz, Nx, Ny, Nz, T_inA, T_inB,
             arrays['K_ffA_arr'], arrays['K_ffB_arr'], arrays['K_ss_arr'],
@@ -345,8 +348,16 @@ def evaluate_3d(x_decision: np.ndarray,
         if outer_it == max_outer - 1:
             break
 
-        # Var-density update on fluid A (matches retired evaluate_3d)
+        # Var-density update on fluid A (matches retired evaluate_3d).
+        # 2026-05-14 fix: also propagate Ta into SIMPLE.T_field so that
+        # `_update_density` inside the next sA.solve() uses real local T
+        # instead of stale T_in scalar. Without this, the manual
+        # rho_field/mu_field assignment below is silently overwritten on
+        # the first inner iter, breaking compressible T-ρ coupling.
+        # validate_shanghai_3d_real.py and run_calculation_3d.py have
+        # this propagation already; the BO evaluator was missing it.
         Ta_sA = Ta.transpose(1, 0, 2).copy()  # to SIMPLE A's internal layout
+        sA.update_T_field(Ta_sA)
         P_abs_sA = sA.P_ref_abs + sA.P
         rho_A_new = P_abs_sA / (R_AIR * Ta_sA)
         mu_A_new = air_viscosity(Ta_sA)

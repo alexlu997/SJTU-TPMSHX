@@ -287,6 +287,10 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
         if Ta is not None:
             h_vA_field = _compute_h_vA_field_3d(Ta, ucA_real, sA)
 
+        # 2026-05-19 ε contract (Option A): pass FULL porosity ε_full.
+        # The kernel internally does eps_f = 0.5*epsilon (single halving →
+        # ε_A = ε_full/2). Pre-halving here double-halved to ε_full/4.
+        # K_ffA/K_ffB are built with EPS_A (= ε_full/2) — correct, untouched.
         Ta, Tb, Ts = solve_full_domain_3d(
             L_DOM, H_DOM, LZ, Nx, Ny, Nz, T_Ain_K, T_Bin_K,
             K_ffA, K_ffB, K_ss,
@@ -338,9 +342,28 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
         sA.solve(max_iter=400, tol=1e-3, verbose=False)
 
     # ── Extract Q and dP ──
-    #   Q from air side temperature rise (2D convention)
-    T_A_out_sim = float(np.mean(Ta[-1, :, :]))  # j=Nx-1 = real x outlet
+    #   2026-05-19 (Codex #4): mass-flux-weighted outlet T (down-weights
+    #   stagnant corner cells) instead of plain arithmetic mean. Air is
+    #   near-plug so ρ≈const across the outlet plane → ρ·|u| weighting ≡
+    #   |u| weighting; weight by |ucA_real| at the real-x outlet plane.
+    #   Both reductions reported so the bias is visible.
+    #   Codex follow-up: recompute the outlet |u| weight from the FINAL
+    #   sA.v (post last sA.solve), not the loop-top `ucA_real` which is one
+    #   SIMPLE-solve stale when the outer loop exits by max-iter rather than
+    #   the converged-break. Same (Ny,Nx,Nz)->(Nx,Ny,Nz) transform as L281.
+    _vA_cc_f = 0.5 * (sA.v[:, :-1, :] + sA.v[:, 1:, :])      # (Ny,Nx,Nz)
+    _ucA_final = _vA_cc_f.transpose(1, 0, 2)                 # (Nx,Ny,Nz)
+    _Ta_out = Ta[-1, :, :]                    # real-x outlet plane
+    _w = np.abs(_ucA_final[-1, :, :])         # FINAL air outlet |u|
+    _wsum = float(_w.sum())
+    T_A_out_mw = (float((_Ta_out * _w).sum() / _wsum)
+                  if _wsum > 1e-30 else float(_Ta_out.mean()))
+    T_A_out_am = float(_Ta_out.mean())        # legacy arithmetic mean
+    T_A_out_sim = T_A_out_mw                  # primary: mass-flux weighted
     Q_sim = m_air * cp_A * (T_Ain_K - T_A_out_sim)
+    Q_sim_am = m_air * cp_A * (T_Ain_K - T_A_out_am)
+    Q_mw_am_rel = (abs(Q_sim - Q_sim_am) / abs(Q_sim_am) * 100.0
+                   if Q_sim_am != 0 else float('nan'))
 
     #   dP from SIMPLE A's converged P field; P2-a' uses pipe-weighted mean
     #   with outlet_frac taper to down-weight corner cells (mirror 2D).
@@ -367,10 +390,16 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
         'T_Ain_C': T_Ain_C, 'T_Bin_C': T_Bin_C,
         'dP_exp': dP_A_exp, 'dP_sim': dP_A_sim, 'err_dP%': err_dP,
         'Q_exp': Q_exp, 'Q_sim': Q_sim, 'err_Q%': err_Q,
+        'Q_sim_am': Q_sim_am, 'Q_mw_am_rel%': Q_mw_am_rel,
         'outer_iters': outer_iters,
         'Qs_A': ebal['Q_sA'], 'Qs_B': ebal['Q_sB'],
         'Q_net_rel': e_rel,
         'mass_rel_A': mbal_A['rel'],
+        # Codex #6: surface the SIMPLE P_abs-clip engagement (was silent).
+        # >0 means the [1 kPa, 10 MPa] clamp fired → compressible solution
+        # leaned on the clamp; flag the case as suspect, not silently OK.
+        'pressure_clip_hits': int(getattr(sA, '_p_clip_hits', 0)),
+        'pressure_state_valid': int(getattr(sA, '_p_clip_hits', 0)) == 0,
     }
 
 
@@ -391,7 +420,10 @@ def main():
                     help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
     args = ap.parse_args()
 
-    data_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+    data_path = (ROOT.parent / 'data' / 'raw_data'
+                 / '20260401-上海电气天然气加热器实验工况.xlsx')
+    if not data_path.exists():  # rename-proof legacy fallback
+        data_path = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)
 
@@ -418,10 +450,27 @@ def main():
               f"[Qnet_rel={r['Q_net_rel']:.2e} mA_rel={r['mass_rel_A']:.2e}]")
 
     # Summary statistics
-    err_dP = np.array([r['err_dP%'] for r in results])
-    err_Q = np.array([r['err_Q%'] for r in results])
+    # Codex #6 follow-up: RMSRE口径 must exclude pressure-invalid cases
+    # (compressible P_abs-clip fired → solution leaned on the clamp, the
+    # reported dP/Q is not a faithful prediction). Count + list them so the
+    # exclusion is auditable, never silent.
+    valid_mask = np.array([bool(r['pressure_state_valid']) for r in results])
+    n_total = len(results)
+    n_invalid = int((~valid_mask).sum())
+    invalid_cases = [results[i]['case'] for i in range(n_total) if not valid_mask[i]]
+
+    err_dP_all = np.array([r['err_dP%'] for r in results])
+    err_Q_all = np.array([r['err_Q%'] for r in results])
     # Re>600 filter via u_air (matches 2D convention)
     u_arr = np.array([r['u_air'] for r in results])
+
+    if valid_mask.any():
+        err_dP = err_dP_all[valid_mask]
+        err_Q = err_Q_all[valid_mask]
+    else:
+        # Degenerate: every case clipped. Fall back to all so the run still
+        # prints a number, but the n_invalid banner makes it un-trustable.
+        err_dP, err_Q = err_dP_all, err_Q_all
 
     rmsre_dP = float(np.sqrt(np.mean(err_dP ** 2)))
     rmsre_Q = float(np.sqrt(np.mean(err_Q ** 2)))
@@ -430,9 +479,14 @@ def main():
 
     print()
     print("=" * 70)
-    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 32.34%)")
+    print(f"  cases         : {n_total} total, {n_total - n_invalid} valid, "
+          f"{n_invalid} pressure-INVALID (clip fired)")
+    if n_invalid:
+        print(f"  invalid cases : {invalid_cases}  (EXCLUDED from RMSRE below)")
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 32.34%)  "
+          f"[over {len(err_dP)} valid]")
     print(f"  max|err_dP|   : {max_err_dP:.2f}%")
-    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%")
+    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  [over {len(err_Q)} valid]")
     print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.70%)")
     print("=" * 70)
 

@@ -56,7 +56,10 @@ A_FLOW = N_UNITS * 18.0565e-6
 
 def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
     """Run Shanghai case 8 (mid-Re) and return solver + Ta for visualisation."""
-    data_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+    data_path = (ROOT.parent / 'data' / 'raw_data'
+                 / '20260401-上海电气天然气加热器实验工况.xlsx')
+    if not data_path.exists():  # rename-proof legacy fallback
+        data_path = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)
 
@@ -120,6 +123,7 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
         vcA = np.zeros((Nx, Ny, Nz))
         wcA = np.zeros((Nx, Ny, Nz))
 
+        # 2026-05-19 ε contract (Option A): pass FULL ε; kernel halves once.
         Ta, Tb, Ts = solve_full_domain_3d(
             L_DOM, H_DOM, LZ, Nx, Ny, Nz, T_Ain_K, T_Bin_K,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
@@ -131,7 +135,12 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts, alpha_T=0.7)
 
         # Update SIMPLE A rho/mu
+        # 2026-05-14 fix: propagate Ta into SIMPLE.T_field so inner
+        # _update_density() uses real cell T instead of stale T_in.
+        # Without this, the manual rho_field assignment below is
+        # overwritten on the first inner iter → no T-ρ coupling.
         Ta_sA = Ta.transpose(1, 0, 2).copy()
+        sA.update_T_field(Ta_sA)
         P_abs = sA.P_ref_abs + sA.P
         rho_new = P_abs / (R_AIR * Ta_sA)
         sA.rho_field = np.ascontiguousarray(

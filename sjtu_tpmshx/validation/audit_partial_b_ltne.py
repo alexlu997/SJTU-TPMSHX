@@ -909,8 +909,8 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.out is None:
-        # ROOT = …/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
-        # parents[0]=SJTU-TPMSHX, parents[1]=均质化, parents[2]=Postgraduate
+        # ROOT = …/Postgraduate/Homogenize/SJTU-TPMSHX/sjtu_tpmshx
+        # parents[0]=SJTU-TPMSHX, parents[1]=Homogenize, parents[2]=Postgraduate
         proj_root = ROOT.parents[2]
         out_path = proj_root / 'vault' / 'reports' / '3d-solver' \
                             / '2026-05-04-partial-b-ltne-audit-CN.md'

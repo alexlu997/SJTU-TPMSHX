@@ -12,7 +12,7 @@ human-readable summary. Uses baseline from benchmark_a_baseline.json
 (captured in Task 1) for before/after comparison.
 
 Run with:
-    cd D:/Postgraduate/均质化/SJTU-TPMSHX/sjtu_tpmshx
+    cd D:/Postgraduate/Homogenize/SJTU-TPMSHX/sjtu_tpmshx
     python benchmark_a.py
 """
 import json

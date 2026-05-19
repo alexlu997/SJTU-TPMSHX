@@ -1487,7 +1487,7 @@ def _run_3d_stack(cfg):
                 sA.mu_field / sA.eps_field, dtype=np.float64)
     sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
     sA.outlet_frac = (sA.outlet_frac * out_mask_2d).astype(np.float64)
-    sA.outlet_mask_ij = sA.outlet_frac > 0.5
+    # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
     # A.solve() deferred — build B first then run both in parallel threads.
 
     # ── Fluid type validation ──
@@ -1576,7 +1576,7 @@ def _run_3d_stack(cfg):
                     sB.mu_field / sB.eps_field, dtype=np.float64)
         sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
         sB.outlet_frac = (sB.outlet_frac * out_mask_B).astype(np.float64)
-        sB.outlet_mask_ij = sB.outlet_frac > 0.5
+        # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
         # sB.solve deferred — dispatched with sA below in parallel threads.
         sB_info = dict(
             axis_map=axis_map_B,
@@ -2006,16 +2006,18 @@ def _run_3d_stack(cfg):
         _mms_S_A = cfg.get('mms_S_A_field', None)
         _mms_S_B = cfg.get('mms_S_B_field', None)
         _mms_S_s = cfg.get('mms_S_s_field', None)
-        # 2026-05-14 fix: pass single-channel ε_A = ε_full/2 (== eps_f_arr)
-        # to the LTNE kernel. Previously passed full eps_arr, which the
-        # kernel doubled into the convective face flux (F = ε·ρcp·u·A) for
-        # both fluid A and B → systematic over-cooling of T_A. Diag run
-        # 2026-05-14 confirmed: ΔT_A 90 → 105°C, Q_enth_A 208 → 242 W
-        # (Q_exp 248 W) for Shanghai case 1.
+        # 2026-05-19 ε contract (Option A — supersedes the wrong 2026-05-14
+        # "fix"): pass FULL porosity `eps_arr`. The kernel itself does
+        # eps_f = 0.5*epsilon (single halving → ε_A = ε_full/2). The
+        # 2026-05-14 change to `eps_f_arr` here double-halved ε to ε_full/4
+        # (the "ΔT_A 90→105°C" it celebrated was the BUG, not a fix —
+        # half the LTNE fluid heat capacity). K_ffA/K_ffB stay built from
+        # eps_f_arr (= ε_A, correct for diffusion); only the convective
+        # epsilon arg must be FULL ε.
         _ltne_result = solve_full_domain_3d(
             L, H, Lz, Nx, Ny, Nz, T_inA, T_inB,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
-            rho_cp_fA, rho_cp_fB, eps_f_arr,
+            rho_cp_fA, rho_cp_fB, eps_arr,
             ucA, vcA, wcA, ucB, vcB, wcB,
             dir_A=fA['dir'],
             dir_B=(fB['dir'] if fB is not None else 3),

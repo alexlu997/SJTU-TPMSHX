@@ -14,8 +14,12 @@ to validate — but h_vB is finite + physical (tpms_compute), not 1e10.
 """
 from __future__ import annotations
 import os, sys, warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
+
+_ROOT = Path(__file__).resolve().parents[1]   # .../sjtu_tpmshx
+_DATA = _ROOT.parent / 'data'                 # .../SJTU-TPMSHX/data
 
 sys.stdout.reconfigure(encoding='utf-8')
 warnings.filterwarnings('ignore')
@@ -74,8 +78,9 @@ print(f"[Shanghai aligned] D-F ConstDF-v1: K={K0:.3e} m², c_F={cF0:.3e} 1/m\n")
 
 def _apply_rough_to_simple(s, Re_case):
     """Scale SIMPLE internal K, cF arrays by f_enhancement for the current
-    case Re. Norris 1a: constant 1.46. Bhatti-Shah 1b: Re-dep Haaland.
-    Baseline: no-op."""
+    case Re. Norris 1a: 1.0 (alias of baseline since 2026-05-14 revert
+    — c_F already encodes 试验记录表 SLM friction). Bhatti-Shah 1b: Re-dep
+    Haaland. Baseline: no-op."""
     if _ROUGH_MODE == 'baseline':
         return
     f_gain = f_enhancement(Re_case, _ROUGH_MODE,
@@ -84,13 +89,21 @@ def _apply_rough_to_simple(s, Re_case):
     s._cF_arr = (s._cF_arr * f_gain).astype(np.float64, copy=False)
 
 
-def _run_simple_A(rho_field, mu_field, u_in, T_in, P_ref_abs_seed, Re_case=None):
+def _run_simple_A(rho_field, mu_field, u_in, T_in, P_ref_abs_seed,
+                    Re_case=None, T_field=None):
     """Build + solve SIMPLE for Fluid A (+x, full-width).
 
     Mirrors run_calculation.py._run_simple (closure) but with Shanghai-
     specific axis mapping baked in: Fluid A flows along real +x, so
     SIMPLE's streamwise axis (y) maps to real x, and SIMPLE's cross-
     stream axis (x) maps to real y.
+
+    T_field (optional, 2026-05-14 fix): solver-coord 2D T_field to
+    propagate the energy-equation T into SIMPLE before the first
+    `_update_density` call. Without this, the solver's internal
+    self.T_field stays at scalar T_in across every outer iter, so
+    the `rho_field` argument is overwritten by ρ(P, T_in) on the
+    first inner iter — breaking compressible T-ρ coupling.
     """
     s = SIMPLESolver(
         H_DOM, L_DOM, N_Y, N_X,
@@ -104,6 +117,8 @@ def _run_simple_A(rho_field, mu_field, u_in, T_in, P_ref_abs_seed, Re_case=None)
     )
     s.dx_arr = DY_REFINED.copy()
     s.dy_arr = DX_REFINED.copy()
+    if T_field is not None:
+        s.update_T_field(np.ascontiguousarray(T_field, dtype=np.float64))
     if Re_case is not None:
         _apply_rough_to_simple(s, Re_case)
     s.solve(max_iter=3000, tol=1e-4, verbose=False)
@@ -130,7 +145,9 @@ def _transform_simple_P_to_real(s):
 
 
 # ── Load Shanghai cases ──
-DATA_PATH = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx'
+DATA_PATH = _DATA / 'raw_data' / '20260401-上海电气天然气加热器实验工况.xlsx'
+if not DATA_PATH.exists():  # rename-proof legacy fallback
+    DATA_PATH = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
 df = pd.read_excel(DATA_PATH, engine='openpyxl', sheet_name='Sheet1',
                    header=None, skiprows=2)
 
@@ -223,9 +240,13 @@ for ci in range(16):
         # 1. SIMPLE with current rho / mu fields (transform to SIMPLE coords)
         rho_A_simple = _transform_rho_mu_to_simple_coords(rho_A_field_real)
         mu_A_simple  = _transform_rho_mu_to_simple_coords(mu_A_field_real)
+        # 2026-05-14: from iter 1 onward, propagate current Ta into SIMPLE
+        # so _update_density uses real cell T (not stale T_in).
+        T_A_simple = (_transform_rho_mu_to_simple_coords(Ta)
+                       if Ta is not None else None)
         ucA_real, vcA_real, sA = _run_simple_A(
             rho_A_simple, mu_A_simple, u_A, T_Ain_K, P_ref_abs_seed,
-            Re_case=_Re_A_case)
+            Re_case=_Re_A_case, T_field=T_A_simple)
 
         # 2. Energy solve with Tb prescribed
         Ta, Tb, Ts, e_info = solve_full_domain(
@@ -330,6 +351,6 @@ print(f"RMSRE_Q  = {np.sqrt(np.mean(err_q**2)):.2f}%   "
       f"mean_bias_Q  = {np.mean(err_q):+.2f}%   "
       f"max|err_Q|  = {np.max(np.abs(err_q)):.1f}%")
 
-out_path = r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\shanghai_validation_aligned.xlsx'
+out_path = _DATA / 'shanghai_validation_aligned.xlsx'
 out_df.to_excel(out_path, index=False, engine='openpyxl')
 print(f"\nSaved: {out_path}")

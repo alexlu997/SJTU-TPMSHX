@@ -142,7 +142,7 @@ def main():
                  / '20260401-上海电气天然气加热器实验工况.xlsx')
     if not data_path.exists():
         # Fallback to legacy hard-coded path (memory: hardcoded path audit)
-        data_path = Path(r'D:\Postgraduate\均质化\SJTU-TPMSHX\data\raw_data'
+        data_path = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data'
                          r'\20260401-上海电气天然气加热器实验工况.xlsx')
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)

@@ -70,12 +70,10 @@ def main() -> None:
         'reject_unconverged':  False,
         'penalty_enabled':     True,
 
-        # ⚠ PROVISIONAL — norris_1a is a literature-anchored ANSATZ derived
-        # from Sa=31μm-encoded ×1.28 via the Norris Reynolds analogy
-        # (f×1.46 = 1.28^(1/0.68)). See solvers/roughness.py module docstring
-        # for the full derivation chain + two unverified assumptions.
-        # Replacement expected — Sa exploration track kept separate.
-        # Net effect: Shanghai 3D dP RMSRE 44.74 → 24.15 % at no Q cost.
+        # 2026-05-14 (revised): norris_1a is alias of baseline for friction.
+        # ×1.28 Nu in tpms_calc is the only roughness compensation; c_F is
+        # already SLM-fit, so any f-side multiplier double-counts. See
+        # solvers/roughness.py docstring.
         'roughness_mode':      'norris_1a',
         'roughness_eps_um':    100.0,
     }
