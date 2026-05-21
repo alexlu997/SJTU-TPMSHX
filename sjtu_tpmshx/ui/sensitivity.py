@@ -87,6 +87,13 @@ class SensitivityDialog(QDialog):
         for cb in (self._combo_x, self._combo_y, self._combo_m):
             cb.setStyleSheet(_m._COMBO)
             cb.setFixedHeight(30)
+            # 2026-05-20 UI sweep (Tier 21): invalidate the cached sweep
+            # grid whenever an axis/metric selection changes. Without
+            # this, the heatmap kept showing the PREVIOUS sweep's data
+            # while the combos advertised new axes — clicking a cell
+            # then loaded parameters decoded against the stale axis
+            # mapping (wrong L_cell / t pushed into the main inputs).
+            cb.currentIndexChanged.connect(self._invalidate_grid)
 
         self._le_steps = QLineEdit("9")
         self._le_steps.setFixedWidth(56)
@@ -109,6 +116,10 @@ class SensitivityDialog(QDialog):
         btn_run.setStyleSheet(_m._BTN_PRIMARY)
         btn_run.clicked.connect(self._run_sweep)
         ctrl.addWidget(btn_run)
+        # Tier 24: keep a handle so _run_sweep can disable it during the
+        # synchronous N×N sweep (prevents re-entrant launches + signals
+        # "busy").
+        self._btn_run = btn_run
         root.addLayout(ctrl)
 
         # Heatmap canvas
@@ -132,6 +143,27 @@ class SensitivityDialog(QDialog):
         self._grid_params = None  # (X, Y, key_x, key_y, key_m)
         self._canvas.mpl_connect('button_press_event', self._on_click)
 
+    def _invalidate_grid(self, *_):
+        """Drop the cached sweep grid + clear the heatmap. Called when an
+        axis/metric combo changes so a stale grid cannot be clicked.
+        Added 2026-05-20 UI sweep (Tier 21)."""
+        if getattr(self, '_grid_params', None) is None:
+            return
+        self._grid_params = None
+        try:
+            fig = self._canvas.fig
+            fig.clear()
+            ax = fig.add_subplot(111)
+            t = get_theme()
+            ax.set_facecolor(t.get('ax_bg', '#fff'))
+            ax.text(0.5, 0.5, "Selection changed — click ‘Run sweep’.",
+                    ha='center', va='center', color=t.get('sub_fg', '#888'),
+                    fontsize=10, transform=ax.transAxes)
+            ax.set_xticks([]); ax.set_yticks([])
+            self._canvas.draw_idle()
+        except Exception:
+            pass
+
     def _collect_fixed_params(self):
         w = self._window
         try:
@@ -147,12 +179,26 @@ class SensitivityDialog(QDialog):
                 return float(wid.text())
             except Exception:
                 return default
+        # 2026-05-20 UI sweep (Tier 24): T_in MUST go through the main
+        # window's `_temp_to_K` so the K/°C header toggle is honoured.
+        # Previously it was read as a raw float — when the UI was in °C
+        # mode, a value like 148.85 °C was passed to the surrogate as
+        # 148.85 K, producing badly wrong thermophysical properties and
+        # dP across the whole sweep.
+        _le_tin = getattr(w, 'le_TinA', None)
+        if _le_tin is not None and hasattr(w, '_temp_to_K'):
+            try:
+                T_in = float(w._temp_to_K(_le_tin))
+            except Exception:
+                T_in = 422.0
+        else:
+            T_in = _read('le_TinA', 422.0)
         return {
             'tpms': tpms,
             'L_cell': _read('le_Lcell', 7.0),
             't':     _read('le_t', 0.5),
             'u_A':   _read('le_uA', 20.0),
-            'T_in':  _read('le_TinA', 422.0),
+            'T_in':  T_in,
             'P_in':  _read('le_PinA', 192362.0),
             'k_s':   _read('le_ks', 16.0),
         }
@@ -181,19 +227,55 @@ class SensitivityDialog(QDialog):
         ys = np.linspace(lo_y, hi_y, n)
         fixed = self._collect_fixed_params()
         grid = np.zeros((n, n))
-        for i, vx in enumerate(xs):
-            for j, vy in enumerate(ys):
-                args = dict(fixed)
-                args[key_x] = float(vx)
-                args[key_y] = float(vy)
+        # 2026-05-20 UI sweep (Tier 24):
+        #  (#5) disable the Run button + show a busy status while the
+        #       synchronous sweep runs, and pump the event loop once per
+        #       row so the window does not look frozen during the up-to
+        #       625 surrogate calls. (A full worker-thread port is the
+        #       longer-term fix; this keeps the UI responsive cheaply.)
+        #  (#4) collect failures so a swept grid full of NaN is not
+        #       presented as if it were valid — surface the count + the
+        #       first error message instead of silently plotting blanks.
+        from PySide6.QtWidgets import QApplication as _QApp
+        _btn = getattr(self, '_btn_run', None)
+        if _btn is not None:
+            try:
+                _btn.setEnabled(False)
+            except Exception:
+                pass
+        _fail_n = 0
+        _fail_msg = ""
+        try:
+            for i, vx in enumerate(xs):
+                for j, vy in enumerate(ys):
+                    args = dict(fixed)
+                    args[key_x] = float(vx)
+                    args[key_y] = float(vy)
+                    try:
+                        out = _eval_surrogate(
+                            args['tpms'], args['L_cell'], args['t'],
+                            args['u_A'], args['T_in'], args['P_in'],
+                            args['k_s'])
+                        grid[j, i] = out.get(key_m, 0.0)
+                    except Exception as _e:
+                        grid[j, i] = np.nan
+                        _fail_n += 1
+                        if not _fail_msg:
+                            _fail_msg = str(_e)
+                # Pump the event loop after each row so the dialog repaints
+                # and stays responsive on large N.
                 try:
-                    out = _eval_surrogate(
-                        args['tpms'], args['L_cell'], args['t'],
-                        args['u_A'], args['T_in'], args['P_in'],
-                        args['k_s'])
-                    grid[j, i] = out.get(key_m, 0.0)
+                    self._window.statusBar().showMessage(
+                        f"Sensitivity sweep … row {i + 1}/{n}", 2000)
+                    _QApp.processEvents()
                 except Exception:
-                    grid[j, i] = np.nan
+                    pass
+        finally:
+            if _btn is not None:
+                try:
+                    _btn.setEnabled(True)
+                except Exception:
+                    pass
 
         self._grid_params = {
             'xs': xs, 'ys': ys, 'grid': grid,
@@ -201,6 +283,14 @@ class SensitivityDialog(QDialog):
             'fixed': fixed,
         }
         self._plot()
+        # Surface sweep failures explicitly (#4).
+        if _fail_n:
+            try:
+                self._window.statusBar().showMessage(
+                    f"Sensitivity sweep: {_fail_n}/{n * n} points failed "
+                    f"(shown as blank cells). First error: {_fail_msg}", 10000)
+            except Exception:
+                pass
 
     def _plot(self):
         if self._grid_params is None:
@@ -259,6 +349,16 @@ class SensitivityDialog(QDialog):
         i = int(np.argmin(np.abs(xs - x_click)))
         j = int(np.argmin(np.abs(ys - y_click)))
         vx = float(xs[i]); vy = float(ys[j])
+        # 2026-05-20 UI sweep (Tier 24): a picked design changes the input
+        # fields, so the previous compute result is now stale. Invalidate
+        # it up front (same helper the preset / recent-run paths use), so
+        # the result tabs disable and the user is not left looking at the
+        # old plots beside the new inputs.
+        if hasattr(self._window, '_invalidate_results_for_preset_load'):
+            try:
+                self._window._invalidate_results_for_preset_load()
+            except Exception:
+                pass
         # Write the picked params into the matching left-panel fields.
         attr_map = {'L_cell': 'le_Lcell', 't': 'le_t', 'u_A': 'le_uA'}
         for key, val in ((gp['key_x'], vx), (gp['key_y'], vy)):
@@ -268,6 +368,13 @@ class SensitivityDialog(QDialog):
             le = getattr(self._window, attr, None)
             if le is not None:
                 le.setText(f"{val:.4g}")
+                # Emit editingFinished so the programmatic change is
+                # captured by the global Undo stack (which hooks that
+                # signal) — Ctrl+Z can then revert a Pareto/heatmap pick.
+                try:
+                    le.editingFinished.emit()
+                except Exception:
+                    pass
         self._window.statusBar().showMessage(
             f"Loaded {gp['key_x']}={vx:.3g}, {gp['key_y']}={vy:.3g}. "
             "Close this dialog and click Compute.", 6000)

@@ -143,6 +143,15 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
         lo = max(ctr - w / 2, low); hi = min(ctr + w / 2, high)
         if axis == 'x':
             return [(val, lo, 0), (val, hi, 0), (val, hi, Lzmm), (val, lo, Lzmm)]
+        if axis == 'z':
+            # 2026-05-20 UI sweep (Tier 24): z-normal face spans the full
+            # x-y plane at z = val. A z-flow inlet/outlet covers the whole
+            # face (the fractional ctr/w convention has no single
+            # cross-axis to map onto for a z-face), so draw the full
+            # rectangle. Prior to this, +z/-z fell through to the y-branch
+            # below and were drawn on the wrong face (and +z/-z degenerated
+            # to the same face).
+            return [(0, 0, val), (Lmm, 0, val), (Lmm, Hmm, val), (0, Hmm, val)]
         return [(lo, val, 0), (hi, val, 0), (hi, val, Lzmm), (lo, val, Lzmm)]
 
     INLET_COL = _t['inlet_color']
@@ -167,6 +176,23 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
                 fontweight='bold', ha='center'))
             drag_artists.append(ax.text(
                 out_face_val, out_ctr_mm, Lzmm + label_offset,
+                f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
+        elif d in (4, 5):
+            # 2026-05-20 UI sweep (Tier 24): +z (4) / -z (5) streamwise.
+            # Inlet/outlet are the full x-y faces at z=0 / z=Lzmm.
+            in_face_val = 0.0 if d == 4 else Lzmm
+            out_face_val = Lzmm if d == 4 else 0.0
+            _face_patch(_rect_face('z', in_face_val, 0, 0, 0, 0),
+                        INLET_COL, face_alpha)
+            _face_patch(_rect_face('z', out_face_val, 0, 0, 0, 0),
+                        OUTLET_COL, face_alpha)
+            drag_artists.append(ax.text(
+                Lmm * 0.5, Hmm * 0.5, in_face_val,
+                f'Inlet_{label_tag}', color=INLET_COL, fontsize=9,
+                fontweight='bold', ha='center'))
+            drag_artists.append(ax.text(
+                Lmm * 0.5, Hmm * 0.5, out_face_val,
                 f'Outlet_{label_tag}', color=OUTLET_COL, fontsize=9,
                 fontweight='bold', ha='center'))
         else:
@@ -345,9 +371,14 @@ def draw_layout_rect_3d(window, ax, L, H, Lz):
         canvas.mpl_connect('draw_event', _pin_dist_on_draw))
 
     # Aspect ratio (soft-stretch thin axes for visibility)
+    # 2026-05-20 UI sweep (Tier 22): guard against a zero/degenerate
+    # dimension. If the user has L/H/Lz = 0 in the fields (or a parse
+    # produced 0), `max_dim / min_dim` would ZeroDivisionError and abort
+    # the whole 3D layout draw. Skip the soft-stretch when any extent is
+    # non-positive — the box just renders at native aspect.
     max_dim = max(Lmm, Hmm, Lzmm)
     min_dim = min(Lmm, Hmm, Lzmm)
-    if max_dim / min_dim > 3.0:
+    if min_dim > 0 and max_dim / min_dim > 3.0:
         try:
             ax.set_box_aspect((
                 1.0,

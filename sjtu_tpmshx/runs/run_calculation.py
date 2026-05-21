@@ -1445,11 +1445,14 @@ def plot_temperature_3panel(window, r, _t):
         if 'T_s' in main_title:
             # T_s uses turbo to match fluid T_a/T_b + 3D volume — all physics
             # fields share the same modern-rainbow LUT for cross-plot parity.
-            kw = dict(levels=512, cmap='turbo')
+            # levels=128 (was 512): see 2026-05-20 UI sweep note in
+            # run_calculation_3d.py — 512 over-samples turbo's 256-colour
+            # LUT and quadruples contour triangulation cost.
+            kw = dict(levels=128, cmap='turbo')
             if vmin_s is not None:
                 kw.update(vmin=vmin_s, vmax=vmax_s)
         else:
-            kw = dict(levels=512, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
+            kw = dict(levels=128, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
         cf = ax.contourf(X, Y, field, **kw)
         cb = window.canvas_temp.fig.colorbar(cf, ax=ax, shrink=0.9,
                                               aspect=25, format="%.0f")
@@ -1588,7 +1591,7 @@ def finalize_plots(window):
         from matplotlib.colors import PowerNorm as _PowerNorm
         _vnorm = _PowerNorm(gamma=0.4, vmin=float(field.min()),
                             vmax=float(field.max()))
-        cf = ax.contourf(X, Y, field, levels=512, cmap='turbo', norm=_vnorm)
+        cf = ax.contourf(X, Y, field, levels=128, cmap='turbo', norm=_vnorm)
         cb = window.canvas_vel.fig.colorbar(cf, ax=ax, shrink=0.9,
                                              aspect=25, format="%.1f")
         cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)

@@ -19,11 +19,22 @@ def install_canvas_tools(window):
     The coord inspector's hover handler is kept untouched — this module
     overlays three additional visual affordances on top of that.
     """
+    # 2026-05-20 UI sweep (Tier 20): retain a strong reference to every
+    # binding on the window. Matplotlib's CallbackRegistry holds bound
+    # methods via WeakMethod, so without an external strong ref the
+    # `_CanvasToolsBinding` instance becomes GC-eligible the moment
+    # this function returns — crosshair / Alt-pin / Shift-probe then
+    # stop firing silently. Also gives `closeEvent` a hook for calling
+    # `disconnect()` on each binding during teardown.
+    bag = getattr(window, '_canvas_tool_bindings', None)
+    if bag is None:
+        bag = []
+        window._canvas_tool_bindings = bag
     for key in ('canvas_temp', 'canvas_pres', 'canvas_vel'):
         canvas = getattr(window, key, None)
         if canvas is None:
             continue
-        _CanvasToolsBinding(window, canvas, key)
+        bag.append(_CanvasToolsBinding(window, canvas, key))
 
 
 class _CanvasToolsBinding:
@@ -35,10 +46,35 @@ class _CanvasToolsBinding:
         self._pin_artists = []            # list of (ax, scatter, text)
         self._probe_state = None          # None or ('armed'|'dragging', x0,y0)
         self._probe_line_art = None
-        canvas.mpl_connect('motion_notify_event', self._on_motion)
-        canvas.mpl_connect('button_press_event', self._on_press)
-        canvas.mpl_connect('button_release_event', self._on_release)
-        canvas.mpl_connect('axes_leave_event', self._on_leave)
+        # 2026-05-20 UI sweep: store the connection ids so we can detach
+        # cleanly when the canvas is swapped (theme rebuild) or the
+        # window closes. Previously the bindings were attached and never
+        # detached — old handlers fired into orphaned `self._c` refs.
+        self._cids = [
+            canvas.mpl_connect('motion_notify_event', self._on_motion),
+            canvas.mpl_connect('button_press_event', self._on_press),
+            canvas.mpl_connect('button_release_event', self._on_release),
+            canvas.mpl_connect('axes_leave_event', self._on_leave),
+        ]
+        # 2026-05-20 UI sweep (Tier 19): throttle crosshair re-draws to
+        # ~30 Hz. The unguarded `draw_idle()` at the end of `_on_motion`
+        # was being called on every Qt motion event — at 144 Hz mouse
+        # polling that meant up to ~144 paint schedules per second per
+        # canvas, which interacted badly with the coord-inspector hover
+        # path that ALSO runs off motion_notify_event. draw_idle()
+        # coalesces internally, but the Python-side per-event work
+        # (axline set_xdata/set_ydata + visibility flips + the
+        # probe-drag logic) was still hot on the GUI thread.
+        self._last_motion_t = 0.0
+
+    def disconnect(self):
+        """Detach all matplotlib callbacks. Idempotent."""
+        for cid in self._cids:
+            try:
+                self._c.mpl_disconnect(cid)
+            except Exception:
+                pass
+        self._cids = []
 
     # ── Helpers ────────────────────────────────────────────────────
     def _ensure_crosshair(self, ax):
@@ -60,12 +96,23 @@ class _CanvasToolsBinding:
     def _on_motion(self, ev):
         if ev.inaxes is None or ev.xdata is None:
             return
+        # 30 Hz throttle — see __init__ note. Skip if last paint <33 ms
+        # ago AND we are not in the middle of a probe drag (drag previews
+        # want full responsiveness, so we let those bypass the gate).
+        from time import monotonic as _now
+        _is_dragging = bool(
+            self._probe_state and self._probe_state[0] == 'dragging')
+        if not _is_dragging:
+            _t = _now()
+            if _t - self._last_motion_t < 0.033:
+                return
+            self._last_motion_t = _t
         vline, hline = self._ensure_crosshair(ev.inaxes)
         vline.set_xdata([ev.xdata, ev.xdata])
         hline.set_ydata([ev.ydata, ev.ydata])
         vline.set_visible(True); hline.set_visible(True)
         # Probe-drag preview
-        if self._probe_state and self._probe_state[0] == 'dragging':
+        if _is_dragging:
             x0, y0 = self._probe_state[1], self._probe_state[2]
             if self._probe_line_art is None:
                 t = get_theme()
@@ -183,6 +230,15 @@ class _CanvasToolsBinding:
         from .matplotlib_canvas import MatplotlibCanvas
         t = get_theme()
         dlg = QDialog(self._w)
+        # 2026-05-20 UI sweep (Tier 19): the prior `dlg.exec()` made
+        # this a MODAL dialog, freezing the main window until the user
+        # closed the probe popup. Probing several locations in
+        # succession or interacting with another tab while a probe
+        # was open were both blocked. Switch to a non-modal show()
+        # with WA_DeleteOnClose so the figure is cleaned up on close,
+        # and retain a reference on the window so the dialog is not
+        # garbage-collected before the user dismisses it.
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.setWindowTitle(f"Line probe — {name}")
         dlg.resize(720, 460)
         v = QVBoxLayout(dlg)
@@ -210,4 +266,21 @@ class _CanvasToolsBinding:
         ax.grid(True, alpha=0.2, linewidth=0.5)
         c.fig.subplots_adjust(left=0.12, right=0.96, top=0.94, bottom=0.14)
         c.draw()
-        dlg.exec()
+        # Retain a strong reference on the window so the non-modal
+        # dialog (and its embedded MatplotlibCanvas) is not GC'd before
+        # the user closes it. WA_DeleteOnClose set above frees the
+        # widget on close.
+        _bag = getattr(self._w, '_probe_dialogs', None)
+        if _bag is None:
+            _bag = []
+            self._w._probe_dialogs = _bag
+        _bag.append(dlg)
+        # Drop the ref from the list once the dialog is destroyed so
+        # the list does not grow unbounded across many probes.
+        try:
+            dlg.destroyed.connect(lambda _o=None, _b=_bag, _d=dlg:
+                                   _b.remove(_d) if _d in _b else None)
+        except Exception:
+            pass
+        dlg.show()
+        dlg.raise_()

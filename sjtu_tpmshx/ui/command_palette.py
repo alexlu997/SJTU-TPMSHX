@@ -341,26 +341,50 @@ def build_actions(w) -> list[Action]:
             w._param_search.open_search,
             shortcut="Ctrl+F",
             keywords=("search", "find", "filter", "param"))
+    # 2026-05-20 UI sweep: dock toggle closures dereference `w.<dock>`
+    # lazily at call time. If the dock attribute is cleared / replaced
+    # between palette-registration and the user triggering the action,
+    # the closure would crash. Use `getattr` with a None guard inside
+    # the closure body instead of the freshly-captured reference.
     if hasattr(w, '_quick_sliders_dock'):
         def _tog_qs():
-            d = w._quick_sliders_dock
+            d = getattr(w, '_quick_sliders_dock', None)
+            if d is None:
+                return
             d.hide() if d.isVisible() else (d.show(), d.raise_())
         add("Toggle quick sliders", "Appearance", _tog_qs,
             keywords=("slider", "sweep", "quick", "dock"))
     if hasattr(w, '_bookmarks_dock'):
         def _tog_bm():
-            d = w._bookmarks_dock
+            d = getattr(w, '_bookmarks_dock', None)
+            if d is None:
+                return
             d.hide() if d.isVisible() else (d.show(), d.raise_())
         add("Toggle bookmarks ★", "Appearance", _tog_bm,
             keywords=("bookmark", "star", "favorite", "preset", "dock"))
     if hasattr(w, '_repl_dock'):
         def _tog_repl():
-            d = w._repl_dock
+            d = getattr(w, '_repl_dock', None)
+            if d is None:
+                return
             d.hide() if d.isVisible() else (d.show(), d.raise_())
         add("Toggle Python REPL", "Appearance", _tog_repl,
             keywords=("repl", "python", "console", "script", "dock"))
 
-    # Tabs
+    # Tabs — 2026-05-20 UI sweep (Tier 19): skip entries whose tab
+    # button is disabled (no results yet). Without this filter the
+    # palette listed e.g. "Show 3D View tab" before any compute had
+    # run; selecting it silently fell back to the Layout tab via
+    # `_update_tab_visibility`, leaving the user wondering why their
+    # pick had no effect.
+    _tab_btn_map = {
+        'layout': getattr(w, 'btn_tab_layout', None),
+        'temp':   getattr(w, 'btn_tab_temp', None),
+        'pres':   getattr(w, 'btn_tab_pres', None),
+        'vel':    getattr(w, 'btn_tab_vel', None),
+        '3d':     getattr(w, 'btn_tab_3d', None),
+        'pareto': getattr(w, 'btn_tab_pareto', None),
+    }
     for tab, key, desc in [
         ('layout', 'layout', 'Show Layout tab'),
         ('temp',   'temp',   'Show Temperature tab'),
@@ -369,6 +393,12 @@ def build_actions(w) -> list[Action]:
         ('3d',     '3d',     'Show 3D View tab'),
         ('pareto', 'pareto', 'Show Pareto tab'),
     ]:
+        _btn = _tab_btn_map.get(tab)
+        # `pareto` is always-on (entry point for NSGA-II), `layout`
+        # always-on (no results required). Skip the rest if disabled.
+        if tab not in ('layout', 'pareto') and _btn is not None \
+                and not _btn.isEnabled():
+            continue
         add(desc, "Tabs",
             (lambda t=tab: w._switch_tab(t)),
             keywords=(key, "tab", "view"))
@@ -422,16 +452,27 @@ def build_actions(w) -> list[Action]:
         add("Show quick tour", "Help", w._show_quick_tour,
             keywords=("onboarding", "guide"))
 
-    # 3D immersive / detach
-    add("Toggle 3D immersive mode", "3D",
-        (lambda: w._switch_tab('3d') or w._toggle_3d_immersive()),
-        shortcut="F", keywords=("immersive", "fullscreen"))
-    if getattr(w, '_3d_detached_window', None) is None:
-        add("Open 3D in new window", "3D", w._detach_3d_window,
-            keywords=("detach", "window", "multi-monitor"))
-    else:
-        add("Re-dock 3D panel", "3D", w._reattach_3d_window,
-            keywords=("redock", "reattach"))
+    # 3D immersive / detach — 2026-05-20 UI sweep (Tier 20): gate these
+    # 3D-specific entries on the 3D tab being enabled (results
+    # available) AND the panel being initialised. Listing them
+    # unconditionally surfaced no-op actions in the palette before any
+    # 3D compute had run — selecting one either silently bounced back
+    # to Layout (immersive toggle) or popped "Click the 3D tab first"
+    # (detach), neither of which is useful from a fuzzy-search UI.
+    _btn_3d_palette = getattr(w, 'btn_tab_3d', None)
+    _3d_tab_ready = (_btn_3d_palette is not None
+                     and _btn_3d_palette.isEnabled())
+    _3d_panel_ready = getattr(w, 'canvas_3d', None) is not None
+    if _3d_tab_ready and _3d_panel_ready:
+        add("Toggle 3D immersive mode", "3D",
+            (lambda: w._switch_tab('3d') or w._toggle_3d_immersive()),
+            shortcut="F", keywords=("immersive", "fullscreen"))
+        if getattr(w, '_3d_detached_window', None) is None:
+            add("Open 3D in new window", "3D", w._detach_3d_window,
+                keywords=("detach", "window", "multi-monitor"))
+        else:
+            add("Re-dock 3D panel", "3D", w._reattach_3d_window,
+                keywords=("redock", "reattach"))
 
     # Recent runs (top 5)
     recents = list(getattr(w, '_recent_runs', []) or [])[:5]

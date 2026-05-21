@@ -118,9 +118,18 @@ def eval_expr(text):
     except Exception:
         return None
     try:
-        return float(result)
+        val = float(result)
     except (TypeError, ValueError):
         return None
+    # 2026-05-20 UI sweep: block NaN / ±Inf from leaking into the
+    # LineEdit (e.g. user types `1/0`, `0**-1`, or `log(0)`). Without
+    # this the field would be silently overwritten with the literal
+    # text `inf` / `nan`, which the solver then sees as a parse failure
+    # at compute time.
+    import math
+    if not math.isfinite(val):
+        return None
+    return val
 
 
 def install_expression_eval(window):
@@ -147,6 +156,14 @@ def install_expression_eval(window):
             was = _le.blockSignals(True)
             _le.setText(fmt)
             _le.blockSignals(was)
+            # 2026-05-20 UI sweep (Tier 25): sync the undo baseline to the
+            # evaluated value. The undo slot recorded the raw expression
+            # text (e.g. "1+2") because it fired before this evaluator on
+            # the same editingFinished; without this, the user's next edit
+            # would undo back to the expression string instead of "3".
+            _ul = getattr(window, '_undo_last', None)
+            if _ul is not None:
+                _ul[_attr] = fmt
             try:
                 window.statusBar().showMessage(
                     f"{_attr}: {txt}  →  {fmt}", 3500)

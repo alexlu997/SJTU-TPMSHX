@@ -124,13 +124,19 @@ def _gather_cfg(window) -> dict:
     from optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
 
     cfg = dict(EVAL_DEFAULT)
+    # 2026-05-20 UI sweep (Tier 15, user re-audit): track which fields
+    # failed to parse so we can surface them in the status bar rather
+    # than silently using DEFAULT_CONFIG. Research-software anti-pattern:
+    # a typo in an optimizer input field used to produce "looks-normal"
+    # results that were actually run against the default geometry.
+    _parse_fails: list = []
 
     def _get(attr, cast=float, key=None):
         if hasattr(window, attr):
             try:
                 cfg[key or attr] = cast(getattr(window, attr).text())
             except (ValueError, AttributeError):
-                pass
+                _parse_fails.append((attr, key or attr))
 
     # Geometry (m) — UI defaults match Shanghai's cross-flow HX
     # (0.182 × 0.042 × 0.042 m³). Without these reads the optimizer would
@@ -189,6 +195,22 @@ def _gather_cfg(window) -> dict:
             cfg['allow_extrap'] = bool(window.chk_allow_extrap.isChecked())
         except Exception:
             pass
+
+    # Tier 15: surface parse failures so the user sees that defaults
+    # leaked in (avoids the silent "ran with wrong geometry" trap).
+    if _parse_fails:
+        _names = ', '.join(f"{a}→{k}" for a, k in _parse_fails)
+        try:
+            sb = window.statusBar()
+            sb.showMessage(
+                f"Optimizer cfg: {len(_parse_fails)} field(s) failed to parse "
+                f"— using DEFAULT_CONFIG values ({_names}). "
+                "Fix the highlighted Compute inputs to use your real geometry.",
+                12000)
+        except Exception:
+            pass
+        # Also log to stdout so it lands in the run journal.
+        print(f"[optimize] _gather_cfg fallbacks: {_names}")
 
     return cfg
 
@@ -595,30 +617,90 @@ def run_optimize(window) -> None:
     _refresh_button_text(window)
     _rewire_preview_button(window)
 
+    # 2026-05-20 UI sweep: atomic reentrance guard. The modal qNEHVI
+    # parameter dialog at `_show_qnehvi_param_dialog` runs a nested Qt
+    # event loop, during which the Launch button stays enabled (its
+    # `_toggle_buttons(running=True)` happens later, after worker.start).
+    # A fast double-click could therefore spawn two dialogs / two
+    # workers. `_opt_launching` is set synchronously on entry and cleared
+    # in `finally`, blocking the second click during the dialog window.
+    if getattr(window, '_opt_launching', False):
+        _set_status(window, 'launch already in progress')
+        return
     if getattr(window, '_opt_worker', None) is not None and window._opt_worker.isRunning():
         _set_status(window, 'optimizer already running')
         return
+    window._opt_launching = True
+    # Disable the Launch button explicitly so the modal dialog can't be
+    # bypassed by a fast double-click. Worker.start() further down still
+    # calls `_toggle_buttons(running=True)` for the full button matrix.
+    _btn_launch = getattr(window, '_opt_btn', None)
+    if _btn_launch is not None:
+        try:
+            _btn_launch.setEnabled(False)
+        except Exception:
+            pass
 
-    cfg = _gather_cfg(window)
+    # 2026-05-20 UI sweep (Tier 12, user re-audit): the synchronous
+    # path between here and `worker.start()` does several things that
+    # can raise — `_gather_cfg` parses line-edit text (ValueError on
+    # bad input), `int(params[...])` requires the dialog payload to
+    # have all keys, the `Worker(...)` constructor can fail. Before
+    # this guard any such exception left `_opt_launching=True` and
+    # the Launch button disabled forever, deadlocking the optimizer
+    # entry. The helper ensures the latch + button are restored on
+    # every exception path; the success path clears them just before
+    # `worker.start()` so this becomes a no-op there.
+    def _abort_launch(msg: str = '') -> None:
+        window._opt_launching = False
+        if _btn_launch is not None:
+            try:
+                _btn_launch.setEnabled(True)
+            except Exception:
+                pass
+        if msg:
+            try:
+                _set_status(window, msg)
+            except Exception:
+                pass
+
+    try:
+        cfg = _gather_cfg(window)
+    except Exception as _e:
+        _abort_launch(f"launch aborted — _gather_cfg failed: {_e}")
+        return
 
     # qNEHVI parameter dialog — surfaces the four BO knobs that the v1 panel
     # silently locked at compile-time defaults. Returns None on Cancel; the
     # 'remember' choice is cached on the window for subsequent clicks.
-    params = _show_qnehvi_param_dialog(window, cfg)
+    try:
+        params = _show_qnehvi_param_dialog(window, cfg)
+    except Exception as _e:
+        _abort_launch(f"launch aborted — param dialog failed: {_e}")
+        return
     if params is None:
         _set_status(window, 'launch cancelled')
+        _abort_launch()
         return
-    n_init  = int(params['n_init'])
-    n_iter  = int(params['n_iter'])
-    q_batch = int(params['q_batch'])
-    seed    = int(params['seed'])
-    cfg['n_rho_loops'] = int(params['n_rho_loops'])
+    try:
+        n_init  = int(params['n_init'])
+        n_iter  = int(params['n_iter'])
+        q_batch = int(params['q_batch'])
+        seed    = int(params['seed'])
+        cfg['n_rho_loops'] = int(params['n_rho_loops'])
+    except (KeyError, ValueError, TypeError) as _e:
+        _abort_launch(f"launch aborted — bad params payload: {_e}")
+        return
 
     save_dir = os.path.join('opt_runs',
                              f"qnehvi_{time.strftime('%Y%m%d_%H%M%S')}")
 
-    Worker = _make_worker_class()
-    worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir)
+    try:
+        Worker = _make_worker_class()
+        worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir)
+    except Exception as _e:
+        _abort_launch(f"launch aborted — worker construct failed: {_e}")
+        return
     window._opt_t_start = time.time()
     window._opt_total_evals = n_init + n_iter * q_batch
     # Phase 2 — reset sparkline mode flag so each launch begins by tracking
@@ -664,6 +746,16 @@ def run_optimize(window) -> None:
                      best_q=float(Q_arr.max()),
                      best_dp=float(dP_arr.min()),
                      eta="✓")
+        else:
+            # 2026-05-20 UI sweep: empty Pareto front used to leave KPI
+            # stuck at the "starting" placeholder. Surface a DONE state
+            # so the user knows the run finished (even if it produced no
+            # non-dominated points).
+            _set_kpi(window,
+                     gen=f"DONE ({res['n_evals']} evals)",
+                     best_q="—",
+                     best_dp="—",
+                     eta="✓")
         _set_progress_pct(window, 100.0)
         _set_status(window,
                     f"qNEHVI DONE: {len(res['X'])} Pareto / {res['n_evals']} evals "
@@ -680,8 +772,24 @@ def run_optimize(window) -> None:
 
     def _on_error(msg):
         _set_status(window, f"qNEHVI ERROR: {msg}")
-        _set_kpi(window, gen="ERROR", eta="—")
+        _set_kpi(window, gen="ERROR", best_q="—", best_dp="—", eta="—")
         _toggle_buttons(window, running=False)
+        # 2026-05-20 UI sweep: previously the error path only touched
+        # status + the GENERATION KPI cell, leaving stage pills frozen at
+        # `running:active`, the summary banner stale from the prior run,
+        # and the worker reference dangling. Mirror the success-path
+        # state reset so the user can see the failure and re-launch.
+        _set_stage_pill(window, 'config',  'done')
+        _set_stage_pill(window, 'running', 'idle')
+        _set_stage_pill(window, 'result',  'idle')
+        try:
+            _set_summary_banner(window, f"ERROR — {msg}", show=True)
+        except Exception:
+            pass
+        window._opt_worker = None
+        # Release the reentrance latch in case the error fires before
+        # worker.start() unblocked it (e.g. worker constructor raised).
+        window._opt_launching = False
         print(f"[optimize] worker error: {msg}")
 
     def _on_hv(iter_idx, hv, hv_hist):
@@ -716,20 +824,38 @@ def run_optimize(window) -> None:
         except Exception:
             pass
 
-    worker.progress_signal.connect(_on_progress)
-    worker.hv_signal.connect(_on_hv)
-    worker.finished_with_result.connect(_on_done)
-    worker.error_signal.connect(_on_error)
-    window._opt_worker = worker
-    _toggle_buttons(window, running=True)
-    _set_kpi(window, gen="starting", best_q="—", best_dp="—", eta="—")
-    _set_progress_pct(window, 0.0)
-    _set_stage_pill(window, 'config',  'done')
-    _set_stage_pill(window, 'running', 'active')
-    _set_stage_pill(window, 'result',  'idle')
-    _set_summary_banner(window, "", show=False)
-    _set_status(window, f'qNEHVI running … {n_init} Sobol + {n_iter}×{q_batch} BO')
-    worker.start()
+    try:
+        worker.progress_signal.connect(_on_progress)
+        worker.hv_signal.connect(_on_hv)
+        worker.finished_with_result.connect(_on_done)
+        worker.error_signal.connect(_on_error)
+        window._opt_worker = worker
+        _toggle_buttons(window, running=True)
+        _set_kpi(window, gen="starting", best_q="—", best_dp="—", eta="—")
+        _set_progress_pct(window, 0.0)
+        _set_stage_pill(window, 'config',  'done')
+        _set_stage_pill(window, 'running', 'active')
+        _set_stage_pill(window, 'result',  'idle')
+        _set_summary_banner(window, "", show=False)
+        _set_status(window,
+                    f'qNEHVI running … {n_init} Sobol + {n_iter}×{q_batch} BO')
+        worker.start()
+    except Exception as _e:
+        # Signal wiring / start failure — restore launch latch + button so
+        # the user can retry without an app restart.
+        try:
+            _toggle_buttons(window, running=False)
+        except Exception:
+            pass
+        window._opt_worker = None
+        _abort_launch(f"launch aborted — worker.start failed: {_e}")
+        return
+    # 2026-05-20 UI sweep: worker is now committed; release the reentrance
+    # latch so the next legitimate launch (after done/error) is unblocked.
+    # `_toggle_buttons(running=True)` above already disables the Launch
+    # button for the duration of the run, so this does not re-open the
+    # double-click window.
+    window._opt_launching = False
     print(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
           f"save_dir={save_dir}")
     # Update the button label to match the actual algorithm in case the
@@ -756,6 +882,51 @@ def show_pareto(window, res: dict) -> None:
     Compute fields.
     """
     F_min = res['F']                  # (-Q, dP)  shape (P, 2)
+
+    # 2026-05-20 UI sweep: empty Pareto front guard. Previously the
+    # closing banner's `Q.min() / Q.max()` would raise on an empty `F`,
+    # the outer try in `_on_done` would log "show_pareto failed", and
+    # the stage pills (already flipped to 'result:active' upstream) plus
+    # the summary banner would freeze mid-update. Surface an explicit
+    # "no Pareto points" state instead.
+    if F_min is None or len(F_min) == 0:
+        _set_stage_pill(window, 'config',  'done')
+        _set_stage_pill(window, 'running', 'done')
+        _set_stage_pill(window, 'result',  'idle')
+        try:
+            _set_summary_banner(
+                window, "DONE — no Pareto points returned", show=True)
+        except Exception:
+            pass
+        try:
+            _set_kpi(window, gen="DONE", best_q="—", best_dp="—", eta="✓")
+        except Exception:
+            pass
+        # 2026-05-20 UI sweep (Tier 13, user re-audit): the prior version
+        # of this early-return only updated pills/banner/KPI and left
+        # the previous run's Pareto plot + click handler + cached X/F
+        # in place. A subsequent click on the stale plot would call
+        # `on_pareto_pick` with the OLD `_pareto_X / _pareto_F`,
+        # silently loading a design from a different run. Tear them
+        # down so an empty result presents an empty UI surface.
+        _canvas = getattr(window, 'canvas_pareto', None)
+        if _canvas is not None:
+            try:
+                _canvas.figure.clear()
+                _canvas.draw_idle()
+            except Exception:
+                pass
+            _prev_cid = getattr(window, '_pareto_pick_cid', None)
+            if _prev_cid is not None:
+                try:
+                    _canvas.mpl_disconnect(_prev_cid)
+                except Exception:
+                    pass
+                window._pareto_pick_cid = None
+        window._pareto_X = None
+        window._pareto_F = None
+        return
+
     Q  = -F_min[:, 0]
     dP =  F_min[:, 1]
     F_hist = res.get('history_F')
@@ -845,7 +1016,14 @@ def on_pareto_pick(window, event) -> None:
     idx = int(event.ind[0])
     X = getattr(window, '_pareto_X', None)
     F = getattr(window, '_pareto_F', None)
-    if X is None or F is None or idx >= len(X):
+    # 2026-05-20 UI sweep (Tier 16, user re-audit): the prior gate
+    # only bounded `idx` against `len(X)`. The `order` array a few
+    # lines below has length `len(F)`, so a corrupted / mismatched
+    # cache (`len(F) < len(X)`) would still IndexError on `order[idx]`.
+    # Bound against the tighter of the two.
+    if X is None or F is None or len(X) == 0 or len(F) == 0:
+        return
+    if idx >= min(len(X), len(F)):
         return
 
     # The Pareto plot was drawn in dP-sorted order; map the click index back.
@@ -886,19 +1064,51 @@ def load_pareto_solution(window, x_decision: np.ndarray) -> None:
     from solvers.field_param import decode_decision_vector
 
     cfg_full = _gather_cfg(window)
-    L_ctrl, t_ctrl = decode_decision_vector(
-        np.asarray(x_decision, dtype=np.float64),
-        n_ctrl_x=cfg_full.get('n_ctrl_x', 4),
-        n_ctrl_y=cfg_full.get('n_ctrl_y', 4),
-        symmetric_y=cfg_full.get('symmetric_y', True),
-    )
+    # 2026-05-20 UI sweep: guard against a corrupt or mis-sized decision
+    # vector. Previously a wrong shape (e.g. a stale cached `_pareto_X`
+    # from a different `n_ctrl_x/y` setting) would crash inside
+    # `decode_decision_vector`. Surface a status-bar warning instead.
+    x_decision = np.asarray(x_decision, dtype=np.float64)
+    _ncx = int(cfg_full.get('n_ctrl_x', 4))
+    _ncy = int(cfg_full.get('n_ctrl_y', 4))
+    _sym = bool(cfg_full.get('symmetric_y', True))
+    _expected = _ncx * (_ncy // 2 if _sym else _ncy) * 2  # L_ctrl + t_ctrl flat
+    if x_decision.ndim != 1 or x_decision.size == 0:
+        _set_status(window,
+                    f"load Pareto: decision vector has bad shape "
+                    f"{x_decision.shape}, expected 1-D length ~{_expected}.")
+        return
+    try:
+        L_ctrl, t_ctrl = decode_decision_vector(
+            x_decision,
+            n_ctrl_x=_ncx,
+            n_ctrl_y=_ncy,
+            symmetric_y=_sym,
+        )
+    except Exception as _e:
+        _set_status(window,
+                    f"load Pareto: decode failed ({_e}). "
+                    "Check that the cached n_ctrl_x/y match the current cfg.")
+        return
     L_avg = float(L_ctrl.mean())
     t_avg = float(t_ctrl.mean())
 
+    # 2026-05-20 UI sweep (Tier 25): emit editingFinished after each
+    # programmatic setText so loading a Pareto design is a real, undoable
+    # edit (captured by the global undo stack + re-validated), instead of
+    # silently mutating le_Lcell/le_t outside the commit chain.
     if hasattr(window, 'le_Lcell'):
         window.le_Lcell.setText(f"{L_avg:.3f}")
+        try:
+            window.le_Lcell.editingFinished.emit()
+        except Exception:
+            pass
     if hasattr(window, 'le_t'):
         window.le_t.setText(f"{t_avg:.3f}")
+        try:
+            window.le_t.editingFinished.emit()
+        except Exception:
+            pass
 
     # Stash the full grid on the window so a Compute path could opt-in to the
     # heterogeneous design later.

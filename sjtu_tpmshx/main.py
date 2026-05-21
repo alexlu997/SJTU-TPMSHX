@@ -382,6 +382,12 @@ class Main_Menu(QMainWindow):
     def _reset_defaults(self):
         """Reset all parameters to Shanghai Electric preset."""
         self._user_edited_grid = False
+        # Tier 25: a reset changes every input, so the prior compute
+        # result is stale — invalidate it (disables result tabs + export,
+        # clears cached fields) before re-seeding defaults. Without this
+        # the old Temperature/Pressure/Velocity/3D plots stayed visible
+        # next to freshly-reset inputs.
+        self._invalidate_results_for_preset_load()
         self._apply_shanghai_defaults()
         self.statusBar().showMessage("Parameters reset to Shanghai Electric preset.", TOAST_MS_MED)
 
@@ -451,7 +457,15 @@ class Main_Menu(QMainWindow):
         import os, csv
         res_3d = getattr(self, '_result_3d', None)
         has_2d = getattr(self, '_has_results_2d', False)
-        has_3d = getattr(self, '_has_results_3d', False)
+        # 2026-05-20 UI sweep (Tier 14, user re-audit): previously this
+        # gate used `_has_results_3d`, which only goes True if the 3D
+        # PyVistaQt panel rendered successfully. When the solver
+        # succeeded but visualisation failed, the export button was
+        # enabled (gated on `_has_results`) yet clicking it landed on
+        # the "No Results" dialog because both `has_2d` and `has_3d`
+        # were False. Switch to a data-presence check: numerical results
+        # are exportable independent of whether the 3D scene rendered.
+        has_3d = res_3d is not None
         if not has_2d and not has_3d:
             QMessageBox.information(self, "No Results",
                 "Run Compute first to generate exportable results.")
@@ -584,6 +598,11 @@ class Main_Menu(QMainWindow):
         # `compute_tpms` call would auto-overwrite the preset values with
         # D_h-derived suggestions (e.g. 20/20/20 → 14/25/25).
         self._user_edited_grid = True
+        # Tier 25: snap the undo baseline to the just-written preset values
+        # so a later manual edit's Ctrl+Z stops at the preset state, not
+        # the values that preceded the preset load. Safe at init (the
+        # helper no-ops when `_undo_last` is not yet built).
+        self._resync_undo_baseline()
         self.statusBar().showMessage(
             "Loaded Shanghai Electric preset (3D, Gyroid L=7 t=0.6, 182×42×42 mm).",
             5000)
@@ -777,7 +796,20 @@ class Main_Menu(QMainWindow):
         No-op if the shifted tab is the one already active (user would
         end up pairing X with X, which is just a single view). The split
         view persists until any normal (non-shifted) tab click."""
+        # 2026-05-20 UI sweep (Tier 19): the 2D View tab button binds
+        # its Shift+click callback to `_split_with_current('2d_view')`,
+        # but the `_en` map below has no '2d_view' key — it lists the
+        # underlying field cards (temp/pres/vel) plus layout/pareto/3d.
+        # Without this resolve step the lookup returned None, `_en`
+        # returned False, and Shift+click on 2D View always surfaced
+        # the misleading "Split view requires both tabs to have data"
+        # status message. Resolve '2d_view' to whichever field card is
+        # currently selected by the 2D field combo.
+        if tab == '2d_view':
+            tab = self._resolve_2d_view_card()
         cur = getattr(self, '_active_tab', None)
+        if cur == '2d_view':
+            cur = self._resolve_2d_view_card()
         if cur is None or cur == tab:
             return
         # Both tabs must be enabled (e.g., can't split into temp before
@@ -810,6 +842,19 @@ class Main_Menu(QMainWindow):
         self.statusBar().showMessage(
             f"Split view: {cur} ↔ {tab}. Click any tab to return "
             "to single view.", 5000)
+
+    def _resolve_2d_view_card(self) -> str:
+        """Map the '2d_view' tab key onto the currently-selected underlying
+        field card ('temp'/'vel'/'pres'). Added 2026-05-20 UI sweep so
+        ``_split_with_current`` and other code paths share one resolver.
+        """
+        _combo = getattr(self, 'combo_2d_field', None)
+        sel = _combo.currentText() if _combo is not None else "Temperature"
+        return {
+            "Temperature":   'temp',
+            "Velocity |U|":  'vel',
+            "Pressure":      'pres',
+        }.get(sel, 'temp')
 
     def _switch_tab(self, tab: str):
         # 2026-05-09 Phase 4 — '2d_view' is the merged Temperature/Velocity/
@@ -947,6 +992,19 @@ class Main_Menu(QMainWindow):
 
     def _on_hover(self, event):
         """Show data value at mouse position on contour plots."""
+        # 2026-05-20 UI sweep (Tier 20): the unguarded `_on_hover`
+        # was the *real* hot-path. The Tier-19 canvas_tools throttle
+        # only governed the crosshair overlay; this label-updating
+        # handler also fired on every motion_notify_event and ran
+        # an axes scan + grid-index lookup + QLabel.setText + a
+        # coord_inspector update. At 144 Hz mouse polling that
+        # combined to >100 KB of churn per second of hover. Gate to
+        # ~30 Hz; the eye cannot read faster than that anyway.
+        from time import monotonic as _now_hover
+        _t_hover = _now_hover()
+        if _t_hover - getattr(self, '_last_hover_t', 0.0) < 0.033:
+            return
+        self._last_hover_t = _t_hover
         # Feed the dockable coord inspector first — it reads the full
         # compute-results stack, not just the single canvas field.
         inspector = getattr(self, '_coord_inspector', None)
@@ -975,8 +1033,19 @@ class Main_Menu(QMainWindow):
         i = max(0, min(i, Nx - 1))
         j = max(0, min(j, Ny - 1))
 
-        # Find which subplot the mouse is in
-        axes = [ax for row in canvas.axes for ax in row]
+        # Find which subplot the mouse is in. Cache the flattened axes
+        # list on the canvas so we do not rebuild it on every motion —
+        # the axes objects survive `fig.clear()` (clear destroys the
+        # axes children but a *new* clear/replot would update
+        # `canvas.axes` and invalidate the cache; we invalidate by
+        # comparing the id of `canvas.axes`).
+        _cache_key = id(canvas.axes)
+        _cached = getattr(canvas, '_axes_flat_cache', None)
+        if _cached is None or _cached[0] != _cache_key:
+            axes = [ax for row in canvas.axes for ax in row]
+            canvas._axes_flat_cache = (_cache_key, axes)
+        else:
+            axes = _cached[1]
         ax_idx = -1
         for k, ax in enumerate(axes):
             if event.inaxes is ax:
@@ -1147,7 +1216,14 @@ class Main_Menu(QMainWindow):
         return True
 
     def _update_tout(self, t_idx: int):
-        """Update outlet temperature display using actual flow directions."""
+        """Update outlet temperature display using actual flow directions.
+
+        2026-05-20 UI sweep: was displaying raw Kelvin even when the
+        user had toggled the header K/°C button to °C, producing a
+        value/unit mismatch (label says °C, number was 415.4 K).
+        Route through ``_set_temp_K`` so the displayed unit honours
+        ``self._temp_unit``.
+        """
         dir_A = self._dir_int(self.combo_dirA)
         dir_B = self._dir_int(self.combo_dirB)
         # Fluid A outlet
@@ -1155,13 +1231,16 @@ class Main_Menu(QMainWindow):
         elif dir_A == 1: ta = np.mean(self.T_fA[t_idx, 0, :])
         elif dir_A == 2: ta = np.mean(self.T_fA[t_idx, :, -1])
         else:            ta = np.mean(self.T_fA[t_idx, :, 0])
-        self._r_ToutA.setText(f"{ta:.2f}")
+        self._set_temp_K(self._r_ToutA, float(ta))
         # Fluid B outlet
         if dir_B == 0:   tb = np.mean(self.T_fB[t_idx, -1, :])
         elif dir_B == 1: tb = np.mean(self.T_fB[t_idx, 0, :])
         elif dir_B == 2: tb = np.mean(self.T_fB[t_idx, :, -1])
         else:            tb = np.mean(self.T_fB[t_idx, :, 0])
-        self._r_ToutB.setText(f"{tb:.2f}")
+        self._set_temp_K(self._r_ToutB, float(tb))
+        # Cache the raw K values so a later K/°C toggle can re-render
+        # without re-running the solver.
+        self._tout_K_cache = (float(ta), float(tb))
 
     # ─────────────────────────────────────────────────────────
     #  Auto-fill callbacks
@@ -1546,7 +1625,12 @@ class Main_Menu(QMainWindow):
         unit_display = "°C" if getattr(self, '_temp_unit', 'K') == 'C' else "K"
         # Swap the trailing " [K]"/" [°C]" on each label. The label text uses
         # QLabel rich-text HTML so we replace both variants.
-        for attr in ('_lbl_TinA_unit', '_lbl_TinB_unit', '_lbl_TsInit_unit'):
+        # 2026-05-20 UI sweep: extended the label list with the result-row
+        # outlet temperature labels (`_lbl_ToutA_unit`, `_lbl_ToutB_unit`)
+        # captured by ui_builders. Previously these stayed `[K]` after a
+        # K/°C toggle, mismatching the converted value.
+        for attr in ('_lbl_TinA_unit', '_lbl_TinB_unit', '_lbl_TsInit_unit',
+                     '_lbl_ToutA_unit', '_lbl_ToutB_unit'):
             lbl = getattr(self, attr, None)
             if lbl is None:
                 continue
@@ -1598,6 +1682,18 @@ class Main_Menu(QMainWindow):
                     pass
             self._temp_unit = 'K'
         self._sync_temp_unit_labels()
+        # 2026-05-20 UI sweep: re-render the cached outlet temperature
+        # results in the new unit so the result-row value follows the
+        # label suffix instead of staying as raw Kelvin from the last
+        # solve.
+        _tout_cache = getattr(self, '_tout_K_cache', None)
+        if _tout_cache is not None:
+            try:
+                ta_K, tb_K = _tout_cache
+                self._set_temp_K(self._r_ToutA, ta_K)
+                self._set_temp_K(self._r_ToutB, tb_K)
+            except Exception:
+                pass
         self.statusBar().showMessage(
             f"Temperature display switched to {self._temp_unit}.", 3000)
 
@@ -1638,6 +1734,15 @@ class Main_Menu(QMainWindow):
                 continue
             try:
                 le.setText(txt)
+                # Tier 25: keep the undo baseline in step with this
+                # programmatic write (fluid-type combo change). These
+                # fields are not the ones that re-fire fluid defaults
+                # (that's the combo), so refreshing the baseline here is
+                # safe and prevents a later manual edit's Ctrl+Z jumping
+                # back across the auto-applied defaults to a stale value.
+                ul = getattr(self, '_undo_last', None)
+                if ul is not None:
+                    ul[attr] = txt
             except Exception:
                 continue
         self.statusBar().showMessage(
@@ -1690,8 +1795,19 @@ class Main_Menu(QMainWindow):
 
         # Wire reattach on close instead of destroying the window, so the
         # OpenGL context lives inside a Qt object continuously.
+        # 2026-05-20 UI sweep (Tier 21): guard the reattach against the
+        # main-window-teardown path. The dialog is parented to `self`,
+        # so when the main window closes Qt also destroys this dialog
+        # and fires this override — at which point `self` is mid-destroy
+        # and `self.statusBar()` inside `_reattach_3d_window` would
+        # dereference a deleted C++ object. closeEvent (step 2) now
+        # neutralises the override before app teardown, but keep a
+        # try/except here as belt-and-braces.
         def _on_close(ev):
-            self._reattach_3d_window()
+            try:
+                self._reattach_3d_window()
+            except (RuntimeError, AttributeError):
+                pass
             ev.accept()
         dlg.closeEvent = _on_close
         dlg.show()
@@ -1758,7 +1874,11 @@ class Main_Menu(QMainWindow):
         self._detached_canvases[key] = dlg
 
         def _on_close(ev, _k=key):
-            self._reattach_canvas(_k)
+            # Tier 21: same dead-self guard as the 3D detach path.
+            try:
+                self._reattach_canvas(_k)
+            except (RuntimeError, AttributeError):
+                pass
             ev.accept()
         dlg.closeEvent = _on_close
         dlg.show()
@@ -2169,7 +2289,22 @@ class Main_Menu(QMainWindow):
         msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         msg.exec()
         if msg.clickedButton() is restart:
-            self._save_session()
+            # 2026-05-20 UI sweep (Tier 20): mirror the theme-restart
+            # save-guard so a session-write failure aborts execv
+            # instead of losing the user's pending edits.
+            _saved = False
+            try:
+                _saved = bool(self._save_session())
+            except Exception:
+                _saved = False
+            if not _saved:
+                QMessageBox.warning(
+                    self, "Accent change — session not saved",
+                    "The .accent file was written but persisting your "
+                    "current inputs to the session failed. Restart was "
+                    "cancelled to avoid losing pending edits. Save / "
+                    "copy any values you need, then relaunch manually.")
+                return
             import sys as _sys
             _os_ac.execv(_sys.executable, [_sys.executable] + _sys.argv)
 
@@ -2203,7 +2338,22 @@ class Main_Menu(QMainWindow):
         msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         msg.exec()
         if msg.clickedButton() is restart:
-            self._save_session()
+            # 2026-05-20 UI sweep (Tier 20): same save-guard as
+            # _toggle_theme / _pick_accent_color. Density change is
+            # cosmetic; losing the user's inputs to it is not.
+            _saved = False
+            try:
+                _saved = bool(self._save_session())
+            except Exception:
+                _saved = False
+            if not _saved:
+                QMessageBox.warning(
+                    self, "Density change — session not saved",
+                    "The .density file was written but persisting your "
+                    "current inputs to the session failed. Restart was "
+                    "cancelled to avoid losing pending edits. Save / "
+                    "copy any values you need, then relaunch manually.")
+                return
             import sys as _sys
             try:
                 _os_d.execv(_sys.executable, [_sys.executable] + _sys.argv)
@@ -2250,7 +2400,28 @@ class Main_Menu(QMainWindow):
         msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         msg.exec()
         if msg.clickedButton() is restart:
-            self._save_session()
+            # 2026-05-20 UI sweep (Tier 18): the prior code called
+            # `_save_session()` and then unconditionally invoked
+            # `os.execv`, which replaces the current process image. If
+            # the save IO failed (permission, disk full, locked file)
+            # the user's pending edits were lost the instant execv
+            # fired. Abort the restart on save failure and tell the
+            # user explicitly so they can save manually first.
+            _saved = False
+            try:
+                _saved = bool(self._save_session())
+            except Exception:
+                _saved = False
+            if not _saved:
+                QMessageBox.warning(
+                    self, "Theme switch — session not saved",
+                    "The theme change is queued (the .theme file is "
+                    "written) but persisting your current inputs to "
+                    "the session file failed. Restart was cancelled to "
+                    "avoid losing pending edits. Please relaunch the "
+                    "app manually once you have saved or copied any "
+                    "values you need.")
+                return
             import sys as _sys
             # os.execv replaces the current process image, so the new app
             # starts with a clean QApplication and the .theme file we just
@@ -2361,12 +2532,95 @@ class Main_Menu(QMainWindow):
         combo.addItem(self._SAVE_PRESET_LABEL)
         combo.blockSignals(blocker)
 
+    def _resync_undo_baseline(self):
+        """Reset the undo baseline (`_undo_last`) to the CURRENT text of
+        every session line-edit.
+
+        2026-05-20 UI sweep (Tier 25). The global undo stack records a
+        field edit by comparing `editingFinished` text against
+        `_undo_last`. A programmatic batch-write (preset / Reset /
+        workspace switch / Shanghai defaults / session restore) rewrites
+        many fields via `setText` WITHOUT emitting `editingFinished`, so
+        `_undo_last` stayed at the pre-write values. The next manual edit
+        then pushed an undo command whose "old" value was the
+        pre-programmatic text — Ctrl+Z would jump back across the entire
+        preset load to a stale value. Treat these batch writes as undo
+        checkpoints: after the write, snap the baseline to the new text
+        so undo reverts to the post-preset state, not before it.
+        """
+        ul = getattr(self, '_undo_last', None)
+        if ul is None:
+            return
+        for _nm in self._SESSION_LINE_EDITS:
+            _le = getattr(self, _nm, None)
+            if _le is not None:
+                try:
+                    ul[_nm] = _le.text()
+                except Exception:
+                    pass
+
+    def _invalidate_results_for_preset_load(self):
+        """Drop every cached compute artefact so a freshly-loaded preset
+        cannot show the previous run's plots next to its new inputs.
+
+        Added 2026-05-20 UI sweep (Tier 18). Called from
+        ``_apply_user_preset`` — covers both the explicit Load Preset
+        path and the Recent-run click path (which routes through the
+        same helper).
+        """
+        # 2D-mode result flags + cached fields.
+        self._has_results_2d = False
+        self.T_fA = self.T_fB = self.T_s = None
+        # 3D-mode result flags + cached fields.
+        self._has_results_3d = False
+        self._result_3d = None
+        self._tout_K_cache = None
+        # Aggregate flag + draw tracker — keep in lock-step with the two
+        # mode-specific flags above.
+        self._has_results = False
+        self._drawn_tabs = set()
+        # Reset the outlet temperature display so a stale value can't be
+        # mistaken for the post-preset result.
+        for attr in ('_r_ToutA', '_r_ToutB', '_r_dP_A', '_r_dP_B', '_r_Q'):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.setText("—")  # em dash
+                except Exception:
+                    pass
+        # Refresh tab visibility so the result tabs (Temp/Pres/Vel/3D)
+        # disable now that there are no results to show.
+        try:
+            self._update_tab_visibility()
+        except Exception:
+            pass
+        # Disable the export buttons — there is nothing to export.
+        for _bname in ('btn_export_results', 'btn_export_figure'):
+            _b = getattr(self, _bname, None)
+            if _b is not None:
+                try:
+                    _b.setEnabled(False)
+                except Exception:
+                    pass
+
     def _apply_user_preset(self, preset):
         """Apply a saved preset payload (shape matches _save_session output).
 
         Widget names are filtered through the SESSION allow-lists so a tampered
         or malicious share-link cannot address arbitrary window attributes.
+
+        2026-05-20 UI sweep (Tier 18): also invalidate compute-result
+        caches up front. Prior to this, loading a preset (or clicking a
+        Recent run via ``_load_recent_run`` which delegates here) only
+        rewrote the input fields. The result flags / drawn tabs / cached
+        3D result dict / 2D T_fA/T_fB/T_s arrays all survived, so the
+        Temperature/Velocity/Pressure/3D tabs remained ENABLED and the
+        canvas still showed the PREVIOUS compute's plots next to the
+        freshly-loaded parameters. Easy to read as "preset applied",
+        miss that the visible result is stale, then quote a number from
+        the old compute as if it were the new design's.
         """
+        self._invalidate_results_for_preset_load()
         unit = preset.get('temp_unit', 'K')
         if unit in ('K', 'C'):
             self._temp_unit = unit
@@ -2449,6 +2703,12 @@ class Main_Menu(QMainWindow):
                 self._active_preset_name = name
                 if hasattr(self, '_refresh_status_bar'):
                     self._refresh_status_bar()
+                # Tier 25: builtin presets rewrite inputs via
+                # _apply_shanghai_defaults, which does NOT route through
+                # _apply_user_preset (where the Tier-18 invalidate lives).
+                # Invalidate here so stale result tabs/plots/export from a
+                # prior compute don't survive a builtin-preset switch.
+                self._invalidate_results_for_preset_load()
                 if name == "Shanghai (3D Gyroid)":
                     self._apply_shanghai_defaults()
                 elif name == "Shanghai (2D Gyroid)":
@@ -2529,6 +2789,11 @@ class Main_Menu(QMainWindow):
         except Exception:
             pass
         self._active_workspace = new
+        # Tier 25: a workspace switch reloads a completely different input
+        # set, so the current compute result belongs to the OLD workspace.
+        # Invalidate it before re-seeding so the new workspace doesn't open
+        # showing the previous workspace's result tabs / plots / export.
+        self._invalidate_results_for_preset_load()
         try:
             self._apply_shanghai_defaults()
             self._restore_session()
@@ -2540,8 +2805,22 @@ class Main_Menu(QMainWindow):
             self._refresh_status_bar()
         # Persist the choice so the next launch re-opens the same workspace.
         # Delegates to SessionManager (P2.3).
-        self.sm.set_active_workspace(new)
-        self.statusBar().showMessage(f"Workspace {new} loaded.", 4000)
+        # 2026-05-20 UI sweep (Tier 18): SessionManager.set_active_workspace
+        # returns False on IO failure. Previously this return was ignored,
+        # so a marker-write failure silently reverted the next launch to
+        # workspace 'A'. Surface the failure to the status bar so the
+        # user knows to re-pick the workspace after restart.
+        _wrote = False
+        try:
+            _wrote = bool(self.sm.set_active_workspace(new))
+        except Exception:
+            _wrote = False
+        if _wrote:
+            self.statusBar().showMessage(f"Workspace {new} loaded.", 4000)
+        else:
+            self.statusBar().showMessage(
+                f"Workspace {new} loaded — but writing the active-workspace "
+                f"marker failed; next launch may default to 'A'.", 8000)
 
     def _rebuild_workspace_menu(self):
         """Refresh the header Workspace ▾ menu to reflect the active tab."""
@@ -2607,7 +2886,12 @@ class Main_Menu(QMainWindow):
         except Exception:
             pass
         # SessionManager handles IO failure silently + stamps schema_version.
-        self.sm.save_session(payload, getattr(self, '_active_workspace', 'A'))
+        # 2026-05-20 UI sweep (Tier 18): return SessionManager's bool so
+        # callers (notably _toggle_theme's restart path) can abort on a
+        # silent IO failure instead of execv'ing into a process that has
+        # lost the user's pending edits.
+        return bool(self.sm.save_session(
+            payload, getattr(self, '_active_workspace', 'A')))
 
     def _restore_session(self):
         """Load values saved by `_save_session` on top of the Shanghai
@@ -2751,16 +3035,88 @@ class Main_Menu(QMainWindow):
                 except Exception:
                     pass
             _QT_msg.singleShot(800, _flash)
+        # Tier 25: the restore above rewrote every field via setText with
+        # no editingFinished — snap the undo baseline to the restored
+        # state so the user's first manual edit undoes to what they see,
+        # not to the construction-time defaults.
+        self._resync_undo_baseline()
 
     def closeEvent(self, event):
-        # Persist session first — the legacy contract expected this.
+        """Single close-event handler — covers all three concerns:
+
+        1. Persist session (legacy contract — was lost when a duplicate
+           closeEvent at L4399 silently shadowed this one prior to the
+           2026-05-20 UI sweep merge).
+        2. Tear down PyVistaQt GL context before Qt destroys the widgets
+           (moved here from the deleted L4399 dup).
+        3. Bulk-disconnect router-tracked signal connections (Phase 3
+           2026-05-06 #4 — belt-and-braces against bound-method slots
+           that close over ``self`` and outlive C++ widget destruction).
+        """
+        # 1. Persist session first — `_save_session` failure used to be a
+        #    silent pass; now surface to statusBar so users know.
         try:
             self._save_session()
+        except Exception as _e_save:
+            try:
+                self.statusBar().showMessage(
+                    f"Warning: session save failed — {_e_save}", 6000)
+            except Exception:
+                pass
+        # 2. Cooperative compute cancel — flips the worker's cancel
+        #    token so its next epoch-boundary check breaks out cleanly.
+        #    Non-blocking: the solver may still complete (e.g. inner JIT
+        #    loops can't be interrupted), but the signals it emits after
+        #    we disconnect below land on dropped connections and never
+        #    reach this (about-to-be-destroyed) window. Added 2026-05-20
+        #    UI sweep to close the window-teardown-vs-worker race.
+        try:
+            if getattr(self, 'compute', None) is not None:
+                self.compute.cancel()
         except Exception:
             pass
-        # Phase 3 (2026-05-06 #4): bulk-disconnect router-tracked signal
-        # connections. Belt-and-braces against bound-method slots that
-        # close over ``self`` and outlive the C++ widget destruction.
+        # 2b. Neutralise any floating/detached canvas windows BEFORE Qt
+        #     tears them down. Each was given a closeEvent override that
+        #     calls _reattach_* → self.statusBar(); firing that during
+        #     main-window destruction dereferences a half-dead C++
+        #     object. Replace the override with a plain accept and close
+        #     them now. Added 2026-05-20 UI sweep (Tier 21).
+        _dw3d = getattr(self, '_3d_detached_window', None)
+        if _dw3d is not None:
+            try:
+                _dw3d.closeEvent = lambda ev: ev.accept()
+                _dw3d.close()
+            except Exception:
+                pass
+            self._3d_detached_window = None
+        for _k, _dw in list(getattr(self, '_detached_canvases', {}).items()):
+            if _dw is not None:
+                try:
+                    _dw.closeEvent = lambda ev: ev.accept()
+                    _dw.close()
+                except Exception:
+                    pass
+        try:
+            self._detached_canvases = {}
+        except Exception:
+            pass
+        # 3. Detach canvas-tools mpl_connect handlers (crosshair / pin /
+        #    line probe). Added 2026-05-20 UI sweep Tier 20 — pairs with
+        #    the binding-retention list installed by install_canvas_tools.
+        for _b in list(getattr(self, '_canvas_tool_bindings', []) or []):
+            try:
+                _b.disconnect()
+            except Exception:
+                pass
+        # 4. PyVistaQt GL context teardown — must happen before Qt
+        #    destroys child widgets, otherwise vtkRenderWindow leaks.
+        panel = getattr(self, 'canvas_3d', None)
+        if panel is not None:
+            try:
+                panel.cleanup()
+            except Exception:
+                pass
+        # 5. Bulk-disconnect router-tracked signal connections.
         try:
             if getattr(self, 'signals', None) is not None:
                 self.signals.disconnect_all()
@@ -3052,17 +3408,30 @@ class Main_Menu(QMainWindow):
                 self._cache = cache
                 self._name = name
 
-            def undo(self):
+            def _apply(self, value):
+                # blockSignals(True) during setText prevents the editing-
+                # Finished slot (_on_finished) from pushing a *new* undo
+                # command for this programmatic change. We then update the
+                # baseline cache to `value` and re-emit editingFinished
+                # ourselves — because the cache now equals the field text,
+                # _on_finished sees no diff and does NOT re-push, while the
+                # OTHER editingFinished consumers (validator, edge-combo
+                # refresh on L/H, quick-slider sync) still run. Tier 25:
+                # fixes undo/redo silently bypassing that dependent logic.
                 self._le.blockSignals(True)
-                self._le.setText(self._old)
+                self._le.setText(value)
                 self._le.blockSignals(False)
-                self._cache[self._name] = self._old
+                self._cache[self._name] = value
+                try:
+                    self._le.editingFinished.emit()
+                except Exception:
+                    pass
+
+            def undo(self):
+                self._apply(self._old)
 
             def redo(self):
-                self._le.blockSignals(True)
-                self._le.setText(self._new)
-                self._le.blockSignals(False)
-                self._cache[self._name] = self._new
+                self._apply(self._new)
 
         self._undo_stack = QUndoStack(self)
         self._undo_stack.setUndoLimit(200)
@@ -3344,7 +3713,7 @@ class Main_Menu(QMainWindow):
                 val, unit_txt, family, target_unit=target_unit,
                 temp_unit=getattr(self, '_temp_unit', 'K'))
 
-        def _on_commit(le=None, fam=None, target=None):
+        def _on_commit(le=None, fam=None, target=None, attr=None):
             def _cb():
                 txt = le.text().strip()
                 if not txt:
@@ -3373,6 +3742,15 @@ class Main_Menu(QMainWindow):
                 was = le.blockSignals(True)
                 le.setText(fmt)
                 le.blockSignals(was)
+                # Tier 25: keep the undo baseline in step with the rewrite.
+                # The undo slot recorded the RAW pre-conversion text (e.g.
+                # "5mm") because it ran before this parser on the same
+                # editingFinished. Snap `_undo_last` to the converted value
+                # so the user's next manual edit undoes to "5", not "5mm".
+                if attr is not None:
+                    ul = getattr(self, '_undo_last', None)
+                    if ul is not None:
+                        ul[attr] = fmt
                 self.statusBar().showMessage(
                     f"Converted {raw} {unit_txt} → {fmt} "
                     f"({target or fam})", 4000)
@@ -3382,7 +3760,7 @@ class Main_Menu(QMainWindow):
             le = getattr(self, attr, None)
             if le is None:
                 continue
-            cb = _on_commit(le, fam, target)
+            cb = _on_commit(le, fam, target, attr)
             le.editingFinished.connect(cb)
             self.signals.adopt(le.editingFinished, cb,
                                 tag=f'unit-parser-{attr}', sender=le)
@@ -3790,8 +4168,17 @@ class Main_Menu(QMainWindow):
         if mode == '3d':
             from runs.run_calculation_3d import finalize_plots_3d
             _finalize_ok = False
+            _3d_vis_ok = False
             try:
-                finalize_plots_3d(self)
+                # 2026-05-20 UI sweep: finalize_plots_3d now returns a bool
+                # indicating whether the embedded PyVistaQt panel was
+                # populated. Previously it returned None and all visualisation
+                # failures were silently swallowed inside the function,
+                # producing a "status bar says done but canvas is blank"
+                # mismatch. We gate `_has_results_3d` + tab auto-switch on
+                # the returned flag so the user is no longer routed to an
+                # empty 3D tab.
+                _3d_vis_ok = bool(finalize_plots_3d(self))
                 try:
                     self._push_recent_run()
                 except Exception:
@@ -3805,24 +4192,39 @@ class Main_Menu(QMainWindow):
             if not _finalize_ok:
                 return
             self._has_results = True
-            self._has_results_3d = True
+            # Only mark the 3D View tab as ready if the PyVistaQt panel
+            # actually populated. Otherwise leave the flag False so the
+            # tab stays disabled and the user is not silently switched
+            # to a blank canvas.
+            self._has_results_3d = _3d_vis_ok
             for _bname in ('btn_export_results', 'btn_export_figure'):
                 if hasattr(self, _bname):
                     getattr(self, _bname).setEnabled(True)
             drawn = getattr(self, '_drawn_tabs', set())
-            drawn.add('3d')
+            if _3d_vis_ok:
+                drawn.add('3d')
             if getattr(self, '_rendered_3d_slices', False):
                 for k in ('temp', 'pres', 'vel'):
                     drawn.add(k)
             self._drawn_tabs = drawn
             self._update_tab_visibility()
-            self._switch_tab('3d')
+            if _3d_vis_ok:
+                self._switch_tab('3d')
             res = getattr(self, '_result_3d', {})
             if res:
                 try:
-                    self.statusBar().showMessage(
-                        f"3D done — Q={res.get('Q', 0):.1f} W  "
-                        f"dP={res.get('dP', 0):.0f} Pa", 6000)
+                    if _3d_vis_ok:
+                        self.statusBar().showMessage(
+                            f"3D done — Q={res.get('Q', 0):.1f} W  "
+                            f"dP={res.get('dP', 0):.0f} Pa", 6000)
+                    else:
+                        # Solver succeeded but visualisation did not —
+                        # surface explicitly so the user knows numbers
+                        # are valid but the rendered canvas is not.
+                        self.statusBar().showMessage(
+                            f"3D solve done (Q={res.get('Q', 0):.1f} W  "
+                            f"dP={res.get('dP', 0):.0f} Pa) — visualisation "
+                            f"failed; check console.", 10000)
                 except Exception:
                     pass
             return
@@ -4396,38 +4798,51 @@ class Main_Menu(QMainWindow):
     # ─────────────────────────────────────────────────────────
     #  3D compute pipeline (uniform MVP)
     # ─────────────────────────────────────────────────────────
-    def closeEvent(self, event):
-        """Tear down PyVistaQt GL context before Qt destroys the widgets."""
-        panel = getattr(self, 'canvas_3d', None)
-        if panel is not None:
-            try:
-                panel.cleanup()
-            except Exception:
-                pass
-        super().closeEvent(event)
+    # NB: the duplicate `closeEvent` that used to live here (silently
+    # shadowing the canonical handler at L2755 above) was merged into the
+    # single handler on 2026-05-20. The PyVistaQt GL-context teardown
+    # logic now sits in step (2) of that handler.
 
     def _lazy_init_3d_panel(self):
-        """Create PyVistaQt panel on first 3D tab click. ~1-2 s hit amortised."""
+        """Create PyVistaQt panel on first 3D tab click. ~1-2 s hit amortised.
+
+        2026-05-20 UI sweep: added reentrance + already-init guards.
+        Previously a rapid double-click on the 3D tab (or a tab switch
+        while ``ThreeDVisPanel()`` was mid-construction) could spawn a
+        second ``ThreeDVisPanel`` whose ``replaceWidget`` call no-op'd
+        (placeholder already cleared by the first call), leaving the
+        first real panel orphaned in the layout while ``self.canvas_3d``
+        pointed at the second instance — a leaked VTK GL context plus a
+        layout-stale widget.
+        """
         if getattr(self, '_vis3d_import_error', None):
             return      # Offscreen / disabled — leave placeholder
+        if getattr(self, 'canvas_3d', None) is not None:
+            return      # Already initialised by a prior call.
+        if getattr(self, '_lazy_init_3d_running', False):
+            return      # In flight on another (nested) event loop call.
+        self._lazy_init_3d_running = True
         try:
-            from ui.panel_vis_3d import ThreeDVisPanel
-            panel = ThreeDVisPanel()
-        except Exception as e:
-            self._vis3d_import_error = str(e)
-            return
-        # Swap placeholder → real panel in the card layout
-        card = self._canvas_cards.get('3d')
-        if card is None:
-            return
-        placeholder = getattr(self, '_canvas_3d_placeholder', None)
-        lay = card.layout()
-        if placeholder is not None and lay is not None:
-            lay.replaceWidget(placeholder, panel)
-            placeholder.deleteLater()
-        self._canvas_3d_placeholder = None
-        self.canvas_3d = panel
-        self.statusBar().showMessage("3D view initialised.", TOAST_MS_BRIEF)
+            try:
+                from ui.panel_vis_3d import ThreeDVisPanel
+                panel = ThreeDVisPanel()
+            except Exception as e:
+                self._vis3d_import_error = str(e)
+                return
+            # Swap placeholder → real panel in the card layout
+            card = self._canvas_cards.get('3d')
+            if card is None:
+                return
+            placeholder = getattr(self, '_canvas_3d_placeholder', None)
+            lay = card.layout()
+            if placeholder is not None and lay is not None:
+                lay.replaceWidget(placeholder, panel)
+                placeholder.deleteLater()
+            self._canvas_3d_placeholder = None
+            self.canvas_3d = panel
+            self.statusBar().showMessage("3D view initialised.", TOAST_MS_BRIEF)
+        finally:
+            self._lazy_init_3d_running = False
 
     def _run_calculation_3d(self):
         """Threaded 3D solve → auto-switch to 3D View tab on success."""
@@ -4446,6 +4861,13 @@ class Main_Menu(QMainWindow):
         # finalize_plots_3d creates/populates the panel after the solve.
 
         # Large-grid warning (wall-refine expands cells ~6-9x)
+        # 2026-05-20 UI sweep (Tier 22): pre-initialise Nx_u/Ny_u/Nz_u
+        # BEFORE the try. Previously they were only assigned inside the
+        # try; a parse failure (empty field, stray unit text) left the
+        # `except` branch setting only `est_cells=0`, and the
+        # `if Nz_u < 2:` check below then raised NameError on an
+        # undefined local — turning a bad-input case into a hard crash.
+        Nx_u = Ny_u = Nz_u = 0
         try:
             Nx_u = int(self.le_Nx.text()); Ny_u = int(self.le_Ny.text())
             Nz_u = int(self.le_Nz.text())

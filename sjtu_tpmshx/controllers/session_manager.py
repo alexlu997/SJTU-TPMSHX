@@ -131,24 +131,54 @@ class SessionManager(QObject):
         self.session_loaded.emit(workspace, payload)
         return payload
 
+    def _atomic_write_json(self, path: Path, data: Any) -> bool:
+        """Write JSON to ``path`` atomically.
+
+        2026-05-20 UI sweep: previously the JSON dump went straight to the
+        final path; a process crash mid-write (Qt segfault during compute
+        teardown, power loss, or OOM kill) left the file half-written and
+        unparseable on next launch — workspaces silently reverted to the
+        baked-in defaults. Now we write to ``<path>.tmp`` first, fsync the
+        bytes, then ``os.replace`` for a same-filesystem atomic swap.
+        """
+        tmp = path.with_suffix(path.suffix + '.tmp')
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except (OSError, AttributeError):
+                    # fsync may fail on some virtual filesystems and is
+                    # not available on every platform — tolerate it.
+                    pass
+            os.replace(tmp, path)
+            return True
+        except OSError:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            return False
+
     def save_session(self, payload: Dict[str, Any],
                      workspace: str = 'A') -> bool:
         """Write payload to disk. Returns True on success, False on IO error.
 
-        Adds schema_version stamp before writing.
+        Adds schema_version stamp before writing. Uses atomic
+        write-to-temp + os.replace so a crash mid-write does not corrupt
+        the prior session file.
         """
         if not isinstance(payload, dict):
             raise TypeError(f"payload must be dict, got {type(payload).__name__}")
         out = dict(payload)
         out['schema_version'] = SCHEMA_VERSION
         path = self.session_path(workspace)
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(out, f, indent=2)
+        if self._atomic_write_json(path, out):
             self.session_saved.emit(workspace)
             return True
-        except OSError:
-            return False
+        return False
 
     # ------------------------------------------------------------------ presets
 
@@ -168,18 +198,20 @@ class SessionManager(QObject):
             return []
 
     def save_user_presets(self, presets: List[Dict[str, Any]]) -> bool:
-        """Persist preset list. Returns True on success."""
+        """Persist preset list. Returns True on success.
+
+        Uses atomic write so a crash mid-save does not erase the user's
+        preset library.
+        """
         if not isinstance(presets, list):
             raise TypeError(
                 f"presets must be list, got {type(presets).__name__}")
-        try:
-            with open(self.presets_path(), 'w', encoding='utf-8') as f:
-                json.dump({'schema_version': SCHEMA_VERSION,
-                           'presets': presets}, f, indent=2)
+        if self._atomic_write_json(
+                self.presets_path(),
+                {'schema_version': SCHEMA_VERSION, 'presets': presets}):
             self.presets_changed.emit()
             return True
-        except OSError:
-            return False
+        return False
 
     # ------------------------------------------------------------------ workspace
 
@@ -195,17 +227,35 @@ class SessionManager(QObject):
         return content if content in self.VALID_WORKSPACES else 'A'
 
     def set_active_workspace(self, workspace: str) -> bool:
-        """Persist active workspace marker. Returns True on success."""
+        """Persist active workspace marker. Returns True on success.
+
+        2026-05-20 UI sweep: single-char marker now also uses
+        write-tmp-then-rename so a power loss does not strand the
+        workspace at the legacy 'A' default.
+        """
         if workspace not in self.VALID_WORKSPACES:
             raise ValueError(
                 f"unknown workspace: {workspace!r} "
                 f"(expected one of {self.VALID_WORKSPACES})")
+        path = self.workspace_marker_path()
+        tmp = path.with_suffix(path.suffix + '.tmp')
         try:
-            self.workspace_marker_path().write_text(
-                workspace, encoding='utf-8')
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(workspace)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except (OSError, AttributeError):
+                    pass
+            os.replace(tmp, path)
             self.workspace_changed.emit(workspace)
             return True
         except OSError:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
             return False
 
     # ------------------------------------------------------------------ misc

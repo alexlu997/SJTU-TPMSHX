@@ -116,9 +116,12 @@ class MatplotlibCanvas(FigureCanvas):
                     y = np.linspace(0, Nyf * dy * 1000, Nyf)
                     Y, X = np.meshgrid(y, x)
                     if r < 2:  # fluid
-                        kw = dict(levels=512, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
+                        # levels=128 (was 512) — 2026-05-20 UI sweep perf
+                        # fix; 512 over-sampled turbo's 256-colour LUT
+                        # and ~4× the triangulation cost per panel.
+                        kw = dict(levels=128, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
                     else:      # solid — unified turbo for cross-field parity
-                        kw = dict(levels=512, cmap='turbo')
+                        kw = dict(levels=128, cmap='turbo')
                     try:
                         cf = ax.contourf(X, Y, field, **kw)
                         cb = self.fig.colorbar(cf, ax=ax, shrink=0.8, aspect=15, format="%.0f")
@@ -227,7 +230,7 @@ class MatplotlibCanvas(FigureCanvas):
         ]
         for ax, (field, main_title, subtitle) in zip(axes_p, p_data):
             ax.set_facecolor(_t['ax_bg'])
-            cf = ax.contourf(X, Y, field, levels=512, cmap="turbo")
+            cf = ax.contourf(X, Y, field, levels=128, cmap="turbo")
             cb = self.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format="%.0f")
             cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
             cb.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=7))

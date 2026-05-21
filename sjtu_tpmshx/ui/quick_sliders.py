@@ -90,7 +90,15 @@ class QuickSliders(QDockWidget):
         def _on_slider(v, _le=le, _lbl=val_label, _s=scale):
             real = v / _s
             txt = f"{real:.3g}"
+            # 2026-05-20 UI sweep: setText emits editingFinished/textEdited
+            # on some Qt platforms when called inside a value-changed
+            # slot, which then bounces back to _on_edit and re-positions
+            # the slider — visible as a 1-pixel jitter on drag. Block
+            # signals around the setText to keep the slider→LE direction
+            # purely one-way.
+            _was = _le.blockSignals(True)
             _le.setText(txt)
+            _le.blockSignals(_was)
             _lbl.setText(txt)
 
         # Sync LineEdit → slider on editingFinished. If user types a value
@@ -125,6 +133,18 @@ class QuickSliders(QDockWidget):
 
         slider.valueChanged.connect(_on_slider)
         le.editingFinished.connect(_on_edit)
+        # 2026-05-20 UI sweep (Tier 20): emit the LineEdit's
+        # editingFinished on slider release so the global Undo stack
+        # (main.py:_install_undo_stack, which hooks editingFinished)
+        # picks up the slider-driven change. Without this, dragging a
+        # slider quietly bypassed the undo log because the in-slot
+        # `_le.setText` is wrapped in `blockSignals(True)`.
+        def _on_slider_released(_le=le):
+            try:
+                _le.editingFinished.emit()
+            except Exception:
+                pass
+        slider.sliderReleased.connect(_on_slider_released)
         # Seed slider from current field value.
         try:
             v = float(le.text())

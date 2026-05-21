@@ -257,14 +257,44 @@ def evaluate_3d(x_decision: np.ndarray,
     G_A = rho_A0 * u_A
     C_A = mu_A0 * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
     P_out_sq_A = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_A * L_dom
-    P_ref_A = float(np.sqrt(max(P_out_sq_A, 1.0e4)))
 
     K_mean_B = float(np.mean(K_B))
     cF_mean_B = float(np.mean(cF_B))
     G_B = rho_B0 * u_B
     C_B = mu_B0 * G_B / max(K_mean_B, 1e-16) + cF_mean_B * G_B * G_B
     P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * H_dom
-    P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
+
+    # 2026-05-20 UI sweep (Tier 17, user re-audit): strict-mode contract
+    # from `tests/test_pressure_invalid_flag.py`. The compressible D-F
+    # seed `P_out² = P_in² − 2RT·C·L` can go non-positive when C·L is
+    # large (choked / over-driven duty). Solver paths legitimately
+    # apply a `max(..., 1e4)` rescue floor so the optimizer value-path
+    # is undisturbed (`test_predict_dP_default_returns_P_in_unchanged`),
+    # but a *validation* tool must surface infeasibility — silently
+    # papering over it with a finite plausible P_ref hides physically
+    # impossible Pareto picks. Return NaN + an explicit `invalid` flag
+    # so the caller can detect, exclude, and count them per
+    # `test_predict_dP_strict_returns_nan_on_infeasible`.
+    if P_out_sq_A <= 0.0 or P_out_sq_B <= 0.0:
+        if verbose:
+            print(f"[3D verify] INFEASIBLE — P_out²_A={P_out_sq_A:.3e} Pa², "
+                  f"P_out²_B={P_out_sq_B:.3e} Pa². Returning NaN per strict "
+                  "validation contract.")
+        return {
+            'Q_3D_W':         float('nan'),
+            'dP_A_Pa':        float('nan'),
+            'dP_B_Pa':        float('nan'),
+            'dP_total_Pa':    float('nan'),
+            'mass_kg':        float('nan'),
+            'Lz_m':           Lz,
+            'grid':           (Nx, Ny, Nz),
+            'invalid':        True,
+            'invalid_reason': ('P_out² ≤ 0 on the 1D D-F seed — operating '
+                               f'point is choked (A={P_out_sq_A:.3e}, '
+                               f'B={P_out_sq_B:.3e}).'),
+        }
+    P_ref_A = float(np.sqrt(P_out_sq_A))
+    P_ref_B = float(np.sqrt(P_out_sq_B))
 
     sA = SIMPLESolver3D(
         Lx=H_dom, Ly=L_dom, Lz=Lz, Nx=Ny, Ny=Nx, Nz=Nz,

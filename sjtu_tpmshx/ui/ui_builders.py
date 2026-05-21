@@ -610,6 +610,20 @@ def build_page_domain(window):
         rg.addWidget(h, 0, c * 2, 1, 2)
     window._r_ToutA = res_row(window, rg, 1, "<i>T</i><sub>out</sub> [K]", 0)
     window._r_ToutB = res_row(window, rg, 1, "<i>T</i><sub>out</sub> [K]", 2)
+    # 2026-05-20 UI sweep: capture the row's label widget so the K/°C
+    # toggle path (`_sync_temp_unit_labels` in main.py) can rewrite the
+    # `[K]` suffix when the user flips the header K/°C button. Prior to
+    # this the suffix stayed `[K]` regardless of unit, leaving a stale
+    # label next to the value.
+    try:
+        _lbl_ToutA_item = rg.itemAtPosition(1, 0)
+        _lbl_ToutB_item = rg.itemAtPosition(1, 2)
+        if _lbl_ToutA_item is not None:
+            window._lbl_ToutA_unit = _lbl_ToutA_item.widget()
+        if _lbl_ToutB_item is not None:
+            window._lbl_ToutB_unit = _lbl_ToutB_item.widget()
+    except Exception:
+        pass
     window._r_dP_A  = res_row(window, rg, 2, "\u0394<i>P</i><sub>total</sub> [Pa]", 0)
     window._r_dP_B  = res_row(window, rg, 2, "\u0394<i>P</i><sub>total</sub> [Pa]", 2)
     window._r_Q     = res_row(window, rg, 3, "<i>Q</i><sub>total</sub> [W/m]", 0)

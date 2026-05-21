@@ -514,6 +514,11 @@ def solve_full_domain(L, H, Nx, Ny,
     converged = False
     q_rel_tol = min(tol * 2e-3, 1e-3)
     T_abs_tol = 0.01  # K between chunks
+    # 2026-05-20 code-bug sweep (Tier 23): pre-init `chg` so the
+    # `return_info` path (L551 `float(chg)`) cannot hit NameError when
+    # the while loop never executes (max_iter <= 0). solve_full_3d.py
+    # already guards this; mirror it here.
+    chg = 0.0
 
     while done < max_iter:
         n = min(chunk, max_iter - done)

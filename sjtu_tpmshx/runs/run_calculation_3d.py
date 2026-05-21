@@ -318,11 +318,27 @@ def _store_3d_result_labels(window, result):
                 pass
 
 
-def finalize_plots_3d(window):
-    """Push 3D fields into the embedded panel + mid-z slices to 2D canvases."""
+def finalize_plots_3d(window) -> bool:
+    """Push 3D fields into the embedded panel + mid-z slices to 2D canvases.
+
+    Returns
+    -------
+    bool
+        True iff the embedded PyVistaQt panel was successfully populated.
+        False means the 3D solve completed but visualisation failed
+        (panel init exception, ``set_fields`` exception, or offscreen
+        mode without a panel). The caller should NOT auto-switch to the
+        3D tab in that case.
+
+        Added 2026-05-20 UI sweep: prior to this, the function swallowed
+        all visualisation exceptions (only ``print`` + ``traceback``),
+        and ``main.py`` unconditionally marked ``_has_results_3d=True``
+        and switched to the 3D tab, leading to the "status bar says
+        done but canvas is blank" failure mode.
+    """
     res = getattr(window, '_result_3d', None)
     if res is None:
-        return
+        return False
     _store_3d_result_labels(window, res)
     # Skeleton placeholder retires once real 3D data lands.
     sk = getattr(window, '_3d_skeleton', None)
@@ -330,14 +346,22 @@ def finalize_plots_3d(window):
         try: sk.stop()
         except Exception: pass
 
+    _3d_vis_ok = True
+
     # ── 1. PyVistaQt 3D panel ──
     panel = getattr(window, 'canvas_3d', None)
     if panel is None and hasattr(window, '_lazy_init_3d_panel'):
         try:
             window._lazy_init_3d_panel()
             panel = getattr(window, 'canvas_3d', None)
-        except Exception:
+        except Exception as _e_lazy:
             panel = None
+            print(f"[3D vis] _lazy_init_3d_panel failed: {_e_lazy}")
+    if panel is None:
+        # Either lazy init failed, or offscreen mode left the placeholder
+        # in place. Either way, the 3D visualisation cannot be displayed
+        # and the caller must not switch the user to a blank tab.
+        _3d_vis_ok = False
     if panel is not None:
         try:
             P_B_kPa = None
@@ -388,6 +412,7 @@ def finalize_plots_3d(window):
         except Exception as e:
             import traceback; traceback.print_exc()
             print(f"[3D vis] set_fields failed: {e}")
+            _3d_vis_ok = False
 
     # ── 2. 2D canvases: auto mid-z slice (keeps Temperature/Pressure/Velocity
     #       tabs relevant under 3D mode) ──
@@ -396,6 +421,8 @@ def finalize_plots_3d(window):
     if _os_3d_fin.environ.get('TPMSHX_EAGER_3D_SLICES', '0') == '1':
         _render_2d_slices_from_3d(window, res)
         window._rendered_3d_slices = True
+
+    return _3d_vis_ok
 
 
 def _render_2d_slices_from_3d(window, res):
@@ -578,7 +605,11 @@ def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
     if p_max_kpa - p_min_kpa < 1e-12:
         p_max_kpa = p_min_kpa + 1.0
     for ax, (p, tag, dp) in zip(axes, P_data):
-        cf = ax.contourf(X, Y, p / 1000.0, levels=512, cmap='turbo',
+        # levels=128 (was 512) — 2026-05-20 UI sweep perf fix. Turbo
+        # has 256 distinct quantised colours so 512 contour levels were
+        # already over-sampling; the extra levels just multiplied
+        # triangulation cost (~4× slower per panel) for no visible gain.
+        cf = ax.contourf(X, Y, p / 1000.0, levels=128, cmap='turbo',
                           vmin=p_min_kpa, vmax=p_max_kpa)
         cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.1f')
         cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
@@ -618,7 +649,7 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
     if vmax_v <= 0.0:
         vmax_v = 1.0
     for ax, vmag, (u, v, w, tag) in zip(axes, vmags, V_data):
-        cf = ax.contourf(X, Y, vmag, levels=512, cmap='turbo',
+        cf = ax.contourf(X, Y, vmag, levels=128, cmap='turbo',
                           vmin=0.0, vmax=vmax_v)
         cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.2f')
         cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])

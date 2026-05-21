@@ -104,10 +104,16 @@ class ZoneHandleManager:
                 pass
         # Enforce monotonic ordering with neighbours.
         pct = max(prev_start_val + 1.0, min(99.0, pct))
-        if end_item is not None:
-            end_item.setText(f"{pct:.1f}")
-        if next_start is not None:
-            next_start.setText(f"{pct:.1f}")
+        # 2026-05-20 UI sweep (Tier 19): writing the table cells on every
+        # mouse-motion event triggered the table's `cellChanged` signal
+        # chain (validation re-runs, stylesheet recompute, table model
+        # repaint) on each pixel of drag — visibly stutters on smaller
+        # GPUs. Defer the table writes to `_on_release` and stash the
+        # pending value here; only the handle artist + guide line move
+        # live during drag.
+        self._drag_pending_pct = pct
+        self._drag_pending_end_item = end_item
+        self._drag_pending_next_start = next_start
         # Live preview: just move the handle + guide line, skip full redraw
         # so dragging stays smooth.
         y_new = new_f * self._Hmm
@@ -121,6 +127,33 @@ class ZoneHandleManager:
     def _on_release(self, event):
         if self._drag_row is None:
             return
+        # Tier 19: flush deferred table writes here so the cellChanged
+        # validator runs exactly once per drag, not once per pixel.
+        # Block signals on the table object while we apply both cells,
+        # then re-emit once via a final cellChanged on the end row.
+        _pct = getattr(self, '_drag_pending_pct', None)
+        _end_item = getattr(self, '_drag_pending_end_item', None)
+        _next_start = getattr(self, '_drag_pending_next_start', None)
+        if _pct is not None and (_end_item is not None or _next_start is not None):
+            _table = getattr(self._w, 'zone_table', None)
+            _blocker = _table.blockSignals(True) if _table is not None else False
+            try:
+                if _end_item is not None:
+                    _end_item.setText(f"{_pct:.1f}")
+                if _next_start is not None:
+                    _next_start.setText(f"{_pct:.1f}")
+            finally:
+                if _table is not None:
+                    _table.blockSignals(_blocker)
+            # Re-emit cellChanged once at release so the validator runs.
+            if _table is not None and _end_item is not None:
+                try:
+                    _table.cellChanged.emit(_end_item.row(), _end_item.column())
+                except Exception:
+                    pass
+        self._drag_pending_pct = None
+        self._drag_pending_end_item = None
+        self._drag_pending_next_start = None
         self._drag_row = None
         # Final redraw picks up the fully-styled zone rectangles + labels.
         try:

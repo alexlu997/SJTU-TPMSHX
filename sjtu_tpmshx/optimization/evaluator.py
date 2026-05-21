@@ -351,7 +351,14 @@ def evaluate_design(x: np.ndarray,
     # than 1e9) keeps the input distribution bounded — the GP learns "this
     # part of design space is uniformly bad" instead of overshooting.
     dp_cap = float(cfg_full.get('dp_cap_pa', 1.0e6))
-    if cfg_full.get('reject_unconverged', True) and not (sA_converged and sB_converged):
+    # 2026-05-20 code-bug sweep (Tier 23): the `.get` fallback was `True`,
+    # contradicting DEFAULT_CONFIG['reject_unconverged'] = False. With a
+    # fully-merged cfg the key is always present (so the fallback is
+    # dead), but a caller passing a partial cfg dict would silently flip
+    # to reject-on-unconverged — the OPPOSITE of the documented default.
+    # Align the fallback with DEFAULT_CONFIG so both sources of truth
+    # agree.
+    if cfg_full.get('reject_unconverged', False) and not (sA_converged and sB_converged):
         cell_area = dx_arr[:, None] * dy_arr[None, :]
         mass_rejected = float(np.sum((1.0 - arrays['eps_arr'])
                                      * cfg_full['rho_s'] * cell_area))

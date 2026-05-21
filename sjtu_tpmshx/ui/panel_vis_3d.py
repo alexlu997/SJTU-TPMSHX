@@ -545,14 +545,22 @@ class ThreeDVisPanel(QWidget):
         for fkey in FIELD_ORDER:
             if fkey in self._arrays:
                 self.combo_field.addItem(FIELD_META[fkey]['label'], userData=fkey)
-        # Restore previous field selection if still available, else first item
+        # Restore previous field selection if still available, else first item.
+        # 2026-05-20 UI sweep: two guards added —
+        #   (a) only assign `self._field = prev_field` when `findData()` returns
+        #       a real index (>=0); previously the assignment ran even after a
+        #       findData miss, leaving `_field` stale relative to the combo.
+        #   (b) fall back to "Ta" if `itemData(0)` returns None (empty combo),
+        #       otherwise downstream `FIELD_META[self._field]` lookups KeyError.
+        _picked = None
         if prev_field in self._arrays:
             idx = self.combo_field.findData(prev_field)
             if idx >= 0:
                 self.combo_field.setCurrentIndex(idx)
-            self._field = prev_field
-        else:
-            self._field = self.combo_field.itemData(0)
+                _picked = prev_field
+        if _picked is None:
+            _picked = self.combo_field.itemData(0) or "Ta"
+        self._field = _picked
         self.combo_field.blockSignals(False)
 
         # Enable controls
@@ -625,7 +633,16 @@ class ThreeDVisPanel(QWidget):
         pl.render()
 
     def cleanup(self):
-        """Release GL context + close outstanding matplotlib popups."""
+        """Release GL context + close outstanding matplotlib popups.
+
+        2026-05-20 UI sweep (Tier 21): idempotent — guard against a
+        double cleanup() (e.g. closeEvent runs it, then PyVistaQt's own
+        teardown runs again). A second `plotter.close()` on an already
+        closed QtInteractor can raise inside VTK.
+        """
+        if getattr(self, '_cleaned_up', False):
+            return
+        self._cleaned_up = True
         for dlg in list(self._popup_dialogs):
             try:
                 dlg.close()
@@ -769,7 +786,15 @@ class ThreeDVisPanel(QWidget):
     def _on_field_changed(self, idx):
         if idx < 0 or self._grid is None:
             return
-        self._field = self.combo_field.itemData(idx)
+        # 2026-05-20 UI sweep: itemData(idx) can return None if the combo
+        # is mid-rebuild (e.g. set_fields re-populating items) or stale
+        # vs `_arrays`. Skip silently rather than poisoning `self._field`
+        # with None and crashing downstream `FIELD_META[None]` lookups.
+        _new_field = self.combo_field.itemData(idx)
+        if _new_field is None or _new_field not in self._arrays \
+                or _new_field not in FIELD_META:
+            return
+        self._field = _new_field
         # Batch volume + slice actor mutations into a single GPU flush.
         # Without this, switching fields triggers 2-3 sequential pl.render()
         # calls (visible stutter on 100×40×30 grids — user pain point).
@@ -1176,6 +1201,14 @@ class ThreeDVisPanel(QWidget):
                 pl.remove_scalar_bar(FIELD_META[fkey]['title'])
             except Exception:
                 pass
+        # 2026-05-20 UI sweep: guard against `self._field` being a stale
+        # / unknown key (race between field-combo rebuild and external
+        # callers of `_rebuild_volume`). Also clear `_volume_actor`
+        # ahead of `add_volume` so an exception below does not leave a
+        # dangling reference to the just-removed actor.
+        if self._field not in FIELD_META:
+            return
+        self._volume_actor = None
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
         # Opacity ramp:
@@ -1220,8 +1253,16 @@ class ThreeDVisPanel(QWidget):
                 min_cell = min(float(self._dx_mm.min()),
                                float(self._dy_mm.min()),
                                float(self._dz_mm.min()))
+                # 2026-05-20 UI sweep (Tier 19): was `min_cell * 0.25`,
+                # which super-samples each voxel ~4× along the ray. On
+                # 100×40×30 grids that quadrupled GPU work for no
+                # perceptible quality gain (turbo's 256-entry LUT
+                # already quantises the result). Drop to one ray sample
+                # per cell — matches VTK's auto-adjust default. The
+                # `0.01` floor prevents zero-distance pathologies on
+                # degenerate grids.
                 vol_mapper.SetAutoAdjustSampleDistances(False)
-                vol_mapper.SetSampleDistance(max(0.01, min_cell * 0.25))
+                vol_mapper.SetSampleDistance(max(0.01, min_cell))
             except Exception:
                 pass
             # Scalar bar — responsive placement + theme mono font. Narrow
@@ -1296,6 +1337,17 @@ class ThreeDVisPanel(QWidget):
         except Exception as e:
             self.status.setText(f"Slice failed: {e}")
             return
+        # 2026-05-20 UI sweep (Tier 19): mirror the FIELD_META guard
+        # already present in `_rebuild_volume` so a stale / unknown
+        # `_field` (combo mid-rebuild, external caller) does not
+        # KeyError mid-slice and leak a partially-built actor.
+        if self._field not in FIELD_META:
+            try:
+                self.status.setText(
+                    "Slice skipped: unknown field selection.")
+            except Exception:
+                pass
+            return
         meta = FIELD_META[self._field]
         pl.add_mesh(
             slc, scalars=self._field, cmap=meta['cmap'],
@@ -1312,7 +1364,18 @@ class ThreeDVisPanel(QWidget):
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
+        # 2026-05-20 UI sweep: guard against the field combo being empty or
+        # the user racing field selection between Apply-slice click and the
+        # popup spawn. Previously `self._arrays[key]` / `FIELD_META[key]`
+        # could KeyError or None-deref and crash the dialog mid-construction.
         key = self._field
+        if key is None or key not in self._arrays or key not in FIELD_META:
+            try:
+                self.status.setText(
+                    "No valid field selected for slice popup.")
+            except Exception:
+                pass
+            return
         field = self._arrays[key]
         idx = self._slice_index(axis, coord_mm)
         if axis == 'x':
@@ -1432,6 +1495,12 @@ class ThreeDVisPanel(QWidget):
 
     def _update_status(self):
         if self._grid is None or self._field is None:
+            return
+        # 2026-05-20 UI sweep (Tier 19): consistent FIELD_META guard
+        # across all render-status paths. Without this, a transient
+        # unknown `_field` (combo race / external set) crashed status
+        # rebuilds and left the status bar stuck on a stale message.
+        if self._field not in FIELD_META:
             return
         lo, hi = self._global_clim.get(self._field, (0.0, 1.0))
         Lx, Ly, Lz = self._L_mm

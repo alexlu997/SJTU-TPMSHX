@@ -46,6 +46,20 @@ docs/superpowers/
 
 # Per-machine UI state (auto-generated at runtime, never shared)
 sjtu_tpmshx/.last_session.json
+sjtu_tpmshx/.last_session_*.json   # workspace B/C session slots
+sjtu_tpmshx/.workspace             # active-workspace marker
+sjtu_tpmshx/.session_timeline.jsonl
 sjtu_tpmshx/.theme
+sjtu_tpmshx/.density
+sjtu_tpmshx/.accent
 sjtu_tpmshx/.first_run_done
 sjtu_tpmshx/.user_presets.json
+
+# Regeneratable optimizer run outputs + generated inputs
+sjtu_tpmshx/opt_runs/
+sjtu_tpmshx/nTop_inputs/
+
+# Agent / tooling scratch (per-machine, not project content)
+sjtu_tpmshx/.agents/
+sjtu_tpmshx/.claude/
+sjtu_tpmshx/skills-lock.json

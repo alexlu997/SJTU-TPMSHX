@@ -22,8 +22,24 @@ class Sparkline(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
     def push(self, value):
-        """Append one sample and trigger a repaint."""
-        self._data.append(float(value))
+        """Append one sample and trigger a repaint.
+
+        2026-05-20 UI sweep (Tier 24): harden the public API at the
+        entry point. Previously `float(value)` was unguarded, so a
+        `None`, empty string, or other non-numeric push raised
+        TypeError/ValueError into the caller's slot. The paint-time
+        filter (added Tier 21) caught non-finite values once stored,
+        but could not protect callers from an exception here. Reject
+        non-numeric / non-finite samples silently instead.
+        """
+        import math
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(v):
+            return
+        self._data.append(v)
         if len(self._data) > 500:  # cap memory
             self._data = self._data[-500:]
         self.update()
@@ -50,7 +66,23 @@ class Sparkline(QWidget):
             p.end()
             return
 
-        vals = self._data
+        # 2026-05-20 UI sweep (Tier 21): drop non-finite samples before
+        # min/max. A single NaN/inf pushed onto the sparkline (e.g. an
+        # ETA or HV value that went non-finite on a degenerate run)
+        # would otherwise poison vmin/vmax and produce NaN painter
+        # coordinates — silent on most platforms, a hard paint error on
+        # some. Fall back to the empty-state rule if nothing finite is
+        # left.
+        import math as _math_sl
+        vals = [v for v in self._data if _math_sl.isfinite(v)]
+        if len(vals) < 2:
+            pen = QPen(QColor(t.get('border_subtle', '#888')))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidthF(1.2)
+            p.setPen(pen)
+            p.drawLine(pad, h - pad - 1, w - pad, h - pad - 1)
+            p.end()
+            return
         vmin = min(vals); vmax = max(vals)
         rng = (vmax - vmin) or max(1.0, abs(vmax))
 
