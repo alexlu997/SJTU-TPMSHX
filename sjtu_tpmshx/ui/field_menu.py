@@ -60,7 +60,15 @@ def _attach_context_menu(window, le, attr):
             sub = menu.addMenu("Recent values")
             for v in hist:
                 a = sub.addAction(v)
-                a.triggered.connect(lambda _c=False, val=v: le.setText(val))
+                # 2026-05-20 UI sweep (Tier 25): emit editingFinished after
+                # the programmatic setText so this counts as a real edit —
+                # captured by the global undo stack, re-validated, and
+                # routed through the unit/expr parsers, exactly like a
+                # manual commit. Without the emit the value landed silently
+                # and Ctrl+Z could not revert it.
+                a.triggered.connect(
+                    lambda _c=False, val=v, _le=le:
+                    (_le.setText(val), _le.editingFinished.emit()))
 
         menu.exec(le.mapToGlobal(event.pos()))
         event.accept()
@@ -118,6 +126,12 @@ def _revert_field_to_default(window, le, attr):
         except Exception:
             pass
     le.setText(val)
+    # Tier 25: emit editingFinished so Revert is a real, undoable edit
+    # (same rationale as the Recent-values handler above).
+    try:
+        le.editingFinished.emit()
+    except Exception:
+        pass
     window.statusBar().showMessage(
         f"{attr} reverted to Shanghai default ({val}).", 4000)
 
