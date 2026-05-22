@@ -204,13 +204,18 @@ def _simple_tol_default():
     return float(os.environ.get('TPMSHX_SIMPLE_TOL', '1e-5'))
 
 
-def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None):
+def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
+                             cancel_check=None):
     """Run SIMPLE A and SIMPLE B concurrently on two OS threads.
 
     `SIMPLESolver3D.solve` spends its wall-clock inside Numba njit kernels
     and PyAMG/BiCGStab (both release the GIL), so pure Python threading
     delivers real parallelism. Fluid A and Fluid B use independent instances
     (own matrix, ml_cache, arrays) — no shared mutable state.
+
+    `cancel_check` (optional callable -> bool) is forwarded to both solves so
+    each thread breaks its SIMPLE loop early on cancel; after the join the
+    caller raises if cancellation was requested (point 4).
 
     Raises the first worker's exception (if any) after both threads finish.
     """
@@ -222,13 +227,15 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None):
 
     def _solve_A():
         try:
-            sA.solve(max_iter=max_iter, tol=tol, verbose=False)
+            sA.solve(max_iter=max_iter, tol=tol, verbose=False,
+                     cancel_check=cancel_check)
         except Exception as e:
             err[0] = e
 
     def _solve_B():
         try:
-            sB.solve(max_iter=max_iter, tol=tol, verbose=False)
+            sB.solve(max_iter=max_iter, tol=tol, verbose=False,
+                     cancel_check=cancel_check)
         except Exception as e:
             err[1] = e
 
@@ -241,6 +248,10 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None):
         raise err[0]
     if err[1] is not None:
         raise err[1]
+    # Both threads may have broken early on cancel; surface it as the same
+    # InterruptedError the outer loop uses so the worker treats it as a cancel.
+    if cancel_check is not None and cancel_check():
+        raise InterruptedError("compute cancelled by user")
 
 
 R_AIR = 287.05
@@ -1615,14 +1626,15 @@ def _run_3d_stack(cfg):
             G_B=G_B, T_inB=T_inB,
         )
         # ── Parallel SIMPLE A + B solve (threads, njit releases GIL) ──
-        _run_two_simple_parallel(sA, sB)
+        _run_two_simple_parallel(sA, sB, cancel_check=cfg.get('_cancel_check'))
         # LTNE fluid B velocity: full vector remapped to real coordinates.
         ucB, vcB, wcB = _solver_velocity_to_real(
             sB, axis_map_B, (Nx, Ny, Nz))
         Tb_presc = None  # let LTNE solve Tb from convection
     else:
         # No B: run A alone (serial)
-        sA.solve(max_iter=2000, tol=_simple_tol_default(), verbose=False)
+        sA.solve(max_iter=2000, tol=_simple_tol_default(), verbose=False,
+                 cancel_check=cfg.get('_cancel_check'))
         ucB = np.zeros((Nx, Ny, Nz))
         vcB = np.zeros((Nx, Ny, Nz))
         wcB = np.zeros((Nx, Ny, Nz))
@@ -2065,8 +2077,11 @@ def _run_3d_stack(cfg):
             mms_S_A_field=_mms_S_A,
             mms_S_B_field=_mms_S_B,
             mms_S_s_field=_mms_S_s,
+            cancel_check=_cancel_check,
             return_info=True)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
+        if _cancel_check is not None and _cancel_check():
+            raise InterruptedError("compute cancelled by user")
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))
@@ -2108,7 +2123,8 @@ def _run_3d_stack(cfg):
         # ρ/μ change is small (α_T=0.6 under-relaxation), so 150 iter is plenty
         # for the residual to re-sink to 1e-3. Saves ~50% of SIMPLE work in
         # outer iters 1-2.
-        sA.solve(max_iter=600, tol=_simple_tol_default(), verbose=False)
+        sA.solve(max_iter=600, tol=_simple_tol_default(), verbose=False,
+                 cancel_check=_cancel_check)
 
         # Refresh fluid-property fields using the *local* T field, keeping
         # the spatial structure built by the zoned-geometry pass up-front
@@ -2166,7 +2182,8 @@ def _run_3d_stack(cfg):
                 sB.P_ref_abs = float(np.sqrt(max(P_out_sq_B_new, 1.0e4)))
 
             sB.update_T_field(Tb_sB)
-            sB.solve(max_iter=600, tol=_simple_tol_default(), verbose=False)
+            sB.solve(max_iter=600, tol=_simple_tol_default(), verbose=False,
+                     cancel_check=_cancel_check)
 
             # rho_cp_fB already refreshed above (P0/P1/P2 block)
 

@@ -4441,6 +4441,14 @@ class Main_Menu(QMainWindow):
             out = finalize_plots(self)
         finally:
             self.setUpdatesEnabled(True)
+        # 2026-05-22 (UI report point 1): finalize_plots renders the
+        # temp/pres/vel canvases but never recorded them in _drawn_tabs, so
+        # Export Figure's picker only listed "Geometry" after a 2D compute.
+        # Mark them here (mirrors the 3D path's drawn.add at main.py ~4207).
+        # layout/pareto are marked by their own draw routines.
+        drawn = getattr(self, '_drawn_tabs', set())
+        drawn.update({'temp', 'pres', 'vel'})
+        self._drawn_tabs = drawn
         self._push_recent_run()
         return out
 

@@ -1305,7 +1305,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           chi_B_kernel_threshold=0.0,
                           mms_S_A_field=None,
                           mms_S_B_field=None,
-                          mms_S_s_field=None):
+                          mms_S_s_field=None,
+                          cancel_check=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
 
     Shape contracts
@@ -1592,6 +1593,10 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
+        # Cooperative cancel (point 4): bail between GS chunks so a long LTNE
+        # solve aborts promptly instead of waiting out all max_iter sweeps.
+        if cancel_check is not None and cancel_check():
+            break
 
         # Convergence: AND of (relative ΔQ_B) and (max |ΔT*|). Q-only
         # could flag converged while Ta/Ts drifted — especially when Tb
