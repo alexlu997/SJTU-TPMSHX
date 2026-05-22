@@ -328,6 +328,11 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     return max_chg
 
 
+# Diagnostic-only convergence trace (point 0 quantify, 2026-05-22) — mirrors
+# solve_full_3d._CONV_TRACE. None in production → zero overhead.
+_CONV_TRACE = None
+
+
 def solve_full_domain(L, H, Nx, Ny,
                       T_inA, T_inB,
                       K_ffA, K_ffB, K_ss,
@@ -539,6 +544,13 @@ def solve_full_domain(L, H, Nx, Ny,
         dTa_max = float(np.max(np.abs(Ta - Ta_prev)))
         dTb_max = float(np.max(np.abs(Tb - Tb_prev)))
         dTs_max = float(np.max(np.abs(Ts - Ts_prev)))
+        if _CONV_TRACE is not None:
+            _rc = (abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
+                   if (done >= chunk and Q_prev != 0.0) else float('nan'))
+            _CONV_TRACE.append((done, _rc,
+                                max(dTa_max, dTb_max, dTs_max),
+                                float(np.mean(np.abs(Tb - Tb_prev))),
+                                Q_cur))
         if done >= chunk and Q_prev != 0.0:
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
             T_ok = (dTa_max < T_abs_tol and dTb_max < T_abs_tol

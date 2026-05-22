@@ -33,39 +33,39 @@ from solvers.solve_full import solve_full_domain as _solve_full_2d
 # SOU limiter — three axes
 # ---------------------------------------------------------------------------
 
+@njit(cache=True, fastmath=True, inline='always')
+def _va_limit(gu, gd):
+    """minmod slope limiter (signed). Returns 0 at extrema (gu*gd<=0), else
+    the smaller-magnitude gradient with gu's sign. Factored into a helper
+    (2026-05-22) so the SOU stencils read cleanly; behaviour is identical to
+    the original inline minmod."""
+    if gu * gd <= 0.0:
+        return 0.0
+    m = abs(gu) if abs(gu) < abs(gd) else abs(gd)
+    return m if gu > 0.0 else -m
+
+
 @njit(cache=True, fastmath=True)
 def _sou_corr_x_3d(T, i, j, k, Nx, u_loc, Fx):
     if u_loc >= 0:
         phi_w = 0.0
         if i > 1:
-            gu = T[i-1, j, k] - T[i-2, j, k]
-            gd = T[i, j, k] - T[i-1, j, k]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = _va_limit(T[i-1, j, k] - T[i-2, j, k],
+                              T[i, j, k] - T[i-1, j, k])
         phi_e = 0.0
         if i < Nx - 1 and i > 0:
-            gu = T[i, j, k] - T[i-1, j, k]
-            gd = T[i+1, j, k] - T[i, j, k]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = _va_limit(T[i, j, k] - T[i-1, j, k],
+                              T[i+1, j, k] - T[i, j, k])
         return 0.5 * Fx * (phi_w - phi_e)
     else:
         phi_e = 0.0
         if i < Nx - 2:
-            gu = T[i+1, j, k] - T[i+2, j, k]
-            gd = T[i, j, k] - T[i+1, j, k]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = _va_limit(T[i+1, j, k] - T[i+2, j, k],
+                              T[i, j, k] - T[i+1, j, k])
         phi_w = 0.0
         if i > 0 and i < Nx - 1:
-            gu = T[i, j, k] - T[i+1, j, k]
-            gd = T[i-1, j, k] - T[i, j, k]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = _va_limit(T[i, j, k] - T[i+1, j, k],
+                              T[i-1, j, k] - T[i, j, k])
         return 0.5 * Fx * (phi_e - phi_w)
 
 
@@ -74,34 +74,22 @@ def _sou_corr_y_3d(T, i, j, k, Ny, v_loc, Fy):
     if v_loc >= 0:
         phi_s = 0.0
         if j > 1:
-            gu = T[i, j-1, k] - T[i, j-2, k]
-            gd = T[i, j, k] - T[i, j-1, k]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = _va_limit(T[i, j-1, k] - T[i, j-2, k],
+                              T[i, j, k] - T[i, j-1, k])
         phi_n = 0.0
         if j < Ny - 1 and j > 0:
-            gu = T[i, j, k] - T[i, j-1, k]
-            gd = T[i, j+1, k] - T[i, j, k]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = _va_limit(T[i, j, k] - T[i, j-1, k],
+                              T[i, j+1, k] - T[i, j, k])
         return 0.5 * Fy * (phi_s - phi_n)
     else:
         phi_n = 0.0
         if j < Ny - 2:
-            gu = T[i, j+1, k] - T[i, j+2, k]
-            gd = T[i, j, k] - T[i, j+1, k]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = _va_limit(T[i, j+1, k] - T[i, j+2, k],
+                              T[i, j, k] - T[i, j+1, k])
         phi_s = 0.0
         if j > 0 and j < Ny - 1:
-            gu = T[i, j, k] - T[i, j+1, k]
-            gd = T[i, j-1, k] - T[i, j, k]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = _va_limit(T[i, j, k] - T[i, j+1, k],
+                              T[i, j-1, k] - T[i, j, k])
         return 0.5 * Fy * (phi_n - phi_s)
 
 
@@ -110,34 +98,22 @@ def _sou_corr_z_3d(T, i, j, k, Nz, w_loc, Fz):
     if w_loc >= 0:
         phi_b = 0.0
         if k > 1:
-            gu = T[i, j, k-1] - T[i, j, k-2]
-            gd = T[i, j, k] - T[i, j, k-1]
-            if gu * gd > 0:
-                phi_b = min(abs(gu), abs(gd))
-                if gu < 0: phi_b = -phi_b
+            phi_b = _va_limit(T[i, j, k-1] - T[i, j, k-2],
+                              T[i, j, k] - T[i, j, k-1])
         phi_t = 0.0
         if k < Nz - 1 and k > 0:
-            gu = T[i, j, k] - T[i, j, k-1]
-            gd = T[i, j, k+1] - T[i, j, k]
-            if gu * gd > 0:
-                phi_t = min(abs(gu), abs(gd))
-                if gu < 0: phi_t = -phi_t
+            phi_t = _va_limit(T[i, j, k] - T[i, j, k-1],
+                              T[i, j, k+1] - T[i, j, k])
         return 0.5 * Fz * (phi_b - phi_t)
     else:
         phi_t = 0.0
         if k < Nz - 2:
-            gu = T[i, j, k+1] - T[i, j, k+2]
-            gd = T[i, j, k] - T[i, j, k+1]
-            if gu * gd > 0:
-                phi_t = min(abs(gu), abs(gd))
-                if gu < 0: phi_t = -phi_t
+            phi_t = _va_limit(T[i, j, k+1] - T[i, j, k+2],
+                              T[i, j, k] - T[i, j, k+1])
         phi_b = 0.0
         if k > 0 and k < Nz - 1:
-            gu = T[i, j, k] - T[i, j, k+1]
-            gd = T[i, j, k-1] - T[i, j, k]
-            if gu * gd > 0:
-                phi_b = min(abs(gu), abs(gd))
-                if gu < 0: phi_b = -phi_b
+            phi_b = _va_limit(T[i, j, k] - T[i, j, k+1],
+                              T[i, j, k-1] - T[i, j, k])
         return 0.5 * Fz * (phi_t - phi_b)
 
 
@@ -1280,6 +1256,13 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
     return Ta3, Tb3, Ts3
 
 
+# Diagnostic-only convergence trace (point 0 quantify, 2026-05-22). When set
+# to a list, the LTNE loop appends per-chunk (done, rel_chg, max|ΔT|, mean|ΔT|,
+# Q_B) so a caller can tell slow-but-converging from stalled/oscillating.
+# None in production → zero overhead, no behaviour change.
+_CONV_TRACE = None
+
+
 def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           T_inA, T_inB,
                           K_ffA, K_ffB, K_ss,
@@ -1606,6 +1589,13 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         dTa_max = float(np.max(np.abs(Ta - Ta_prev)))
         dTb_max = float(np.max(np.abs(Tb - Tb_prev)))
         dTs_max = float(np.max(np.abs(Ts - Ts_prev)))
+        if _CONV_TRACE is not None:
+            _rc = (abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
+                   if (done >= chunk and Q_prev != 0.0) else float('nan'))
+            _CONV_TRACE.append((done, _rc,
+                                max(dTa_max, dTb_max, dTs_max),
+                                float(np.mean(np.abs(Tb - Tb_prev))),
+                                Q_cur))
         if done >= chunk and Q_prev != 0.0:
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
             # Strict convergence (2026-04-24 FV hardening): drop the T_abs_tol

@@ -2068,8 +2068,16 @@ def _run_3d_stack(cfg):
             inlet_mask_A=_ltne_mask_A,
             inlet_mask_B=_ltne_mask_B,
             Tb_prescribed=Tb_presc, max_iter=_ltne_max_iter, tol=1e-5,
-            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts, alpha_T=0.7,
-            ufA=ufA, vfA=vfA, wfA=wfA,
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            alpha_T=float(cfg.get('ltne_alpha_T', 0.7)),
+            # force_cc_ltne: drop face velocities so the LTNE uses the cc
+            # (non-stag) advection chunk — same scheme as the V&V'd 2D solver.
+            # The face (stag) chunk's SOU uses a cc-reconstructed flux magnitude
+            # inconsistent with its face base fluxes, which limit-cycles the
+            # deferred correction for stiff low-Re water (point-0 root cause).
+            ufA=(None if cfg.get('force_cc_ltne', True) else ufA),
+            vfA=(None if cfg.get('force_cc_ltne', True) else vfA),
+            wfA=(None if cfg.get('force_cc_ltne', True) else wfA),
             ufB=ufB, vfB=vfB, wfB=wfB,
             face_centered=_face_centered,
             chi_B_field=chi_B,
