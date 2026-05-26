@@ -2,8 +2,9 @@
 from __future__ import annotations
 from .sizing import size_fixed_cell, Design, RHO_S
 
+# t=0.6 超出闭合训练域 {0.3,0.4,0.5} (外推, 低置信; K 外插可能触底钳值), 但按需纳入默认枚举。
 NODES = {"topo": ["Diamond", "Gyroid"],
-         "l": [4.0, 5.0, 6.0, 8.0], "t": [0.3, 0.4, 0.5]}
+         "l": [4.0, 5.0, 6.0, 8.0], "t": [0.3, 0.4, 0.5, 0.6]}
 
 def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S):
     nd = nodes or NODES

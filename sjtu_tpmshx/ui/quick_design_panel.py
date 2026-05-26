@@ -36,7 +36,7 @@ def _gather_inputs(window) -> dict:
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
             "l": _flist(txt("le_qd_l", "5,6,7,8")),
-            "t": _flist(txt("le_qd_t", "0.4,0.5")),
+            "t": _flist(txt("le_qd_t", "0.3,0.4,0.5,0.6")),
         },
         "cell": (cur("combo_qd_cell_topo", "Diamond"),
                  float(txt("le_qd_cell_l", "7") or 7),
@@ -237,11 +237,11 @@ def build_quick_design_dialog(parent=None):
     le_l.setToolTip("胞元尺寸 l (mm) 列表，逗号分隔")
     auto_form.addRow("l 列表 (mm):", le_l)
 
-    le_t = QLineEdit("0.4,0.5")
-    le_t.setToolTip("壁厚 t (mm) 列表，逗号分隔")
+    le_t = QLineEdit("0.3,0.4,0.5,0.6")
+    le_t.setToolTip("壁厚 t (mm) 列表，逗号分隔。注: 训练域 t∈{0.3,0.4,0.5}; t=0.6 为外推, 低置信")
     auto_form.addRow("t 列表 (mm):", le_t)
 
-    chk_refine = QCheckBox("warm-start 精细化最优解")
+    chk_refine = QCheckBox("warm-start")
     auto_form.addRow("精细化:", chk_refine)
 
     root.addWidget(auto_group)
