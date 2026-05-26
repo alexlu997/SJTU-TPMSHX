@@ -35,7 +35,7 @@ def _gather_inputs(window) -> dict:
         "refine": chk("chk_qd_refine"),
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
-            "l": _flist(txt("le_qd_l", "5,6,7,8")),
+            "l": _flist(txt("le_qd_l", "4,5,6,7,8")),
             "t": _flist(txt("le_qd_t", "0.3,0.4,0.5,0.6")),
         },
         "cell": (cur("combo_qd_cell_topo", "Diamond"),
@@ -65,19 +65,20 @@ def _make_worker_class():
                 if p["mode"] == "fixed":
                     topo, l, t = p["cell"]
                     d = size_fixed_cell(cases, topo, l, t, p["arrangement"], rho_s=p["rho_s"])
-                    feas = [d] if d.feasible else []
-                    best = d if d.feasible else None
+                    results = [d]; best = d if d.feasible else None
                 else:
-                    feas, best = enumerate_select(cases, p["arrangement"], p["nodes"],
-                                                  rho_s=p["rho_s"], n_jobs=-1)  # 全核并行
+                    results, best = enumerate_select(cases, p["arrangement"], p["nodes"],
+                                                     rho_s=p["rho_s"], n_jobs=-1)  # 全核并行
                     if p["refine"] and best is not None:
                         from design.optimize import warm_start_joint
                         ref = warm_start_joint(cases, best, p["arrangement"], rho_s=p["rho_s"])
                         if ref is not best and ref.feasible:
-                            feas = list(feas) + [ref]
+                            results = list(results) + [ref]
                             if ref.V < best.V:
                                 best = ref
-                self.finished_with_result.emit({"feasible": feas, "best": best, "params": p})
+                feas = [d for d in results if d.feasible]   # enumerate 返全部 → 过滤可行
+                self.finished_with_result.emit({"feasible": feas, "all": results,
+                                                "best": best, "params": p})
             except Exception as e:
                 self.error_signal.emit(f"{type(e).__name__}: {e}")
 
@@ -234,8 +235,8 @@ def build_quick_design_dialog(parent=None):
     le_topo.setToolTip("拓扑列表，逗号分隔")
     auto_form.addRow("拓扑 (topo):", le_topo)
 
-    le_l = QLineEdit("5,6,7,8")
-    le_l.setToolTip("胞元尺寸 l (mm) 列表，逗号分隔")
+    le_l = QLineEdit("4,5,6,7,8")
+    le_l.setToolTip("胞元尺寸 l (mm) 列表，逗号分隔 (默认 5 节点; 4/5/6/8 在训练域, 7 内插)")
     auto_form.addRow("l 列表 (mm):", le_l)
 
     le_t = QLineEdit("0.3,0.4,0.5,0.6")
@@ -291,37 +292,21 @@ def build_quick_design_dialog(parent=None):
         if last is None:
             dlg._qd_status.setText("无结果可导出")
             return
-        feas = last.get("feasible", [])
-        if not feas:
-            dlg._qd_status.setText("无可行件可导出")
+        results = last.get("all") or last.get("feasible", [])
+        if not results:
+            dlg._qd_status.setText("无结果可导出")
             return
         path, _ = QFileDialog.getSaveFileName(
-            dlg, "导出可行设计", "quick_design_results.xlsx",
+            dlg, "导出设计结果 (双 sheet)", "quick_design_results.xlsx",
             "Excel (*.xlsx)")
         if not path:
             return
         try:
-            import pandas as pd
-            from design.select import pareto_tags
-            tags_map = pareto_tags(feas)
-            rows = []
-            for d in sorted(feas, key=lambda x: x.V):
-                rows.append({
-                    "topo": d.topo,
-                    "l": d.l,
-                    "t": d.t,
-                    "W_mm": round(d.s * 1e3, 1),
-                    "H_mm": round(d.s * 1e3, 1),
-                    "Lx_mm": round(d.Lx * 1e3, 1),
-                    "V_L": round(d.V * 1e3, 4),
-                    "weight_kg": round(d.weight, 4),
-                    "dP_hot": round(getattr(d, "dP_hot_max", 0), 4),
-                    "dP_cold": round(getattr(d, "dP_cold_max", 0), 4),
-                    "T_out_hot_max": round(getattr(d, "T_out_hot_max", float("nan")), 2),
-                    "tags": ",".join(tags_map.get(id(d), [])),
-                })
-            pd.DataFrame(rows).to_excel(path, index=False, engine="openpyxl")
-            dlg._qd_status.setText(f"已导出 {len(rows)} 条 → {path}")
+            from design.report import write_xlsx          # CLI/UI 共用双 sheet
+            n_total, n_feas, n_det = write_xlsx(path, results)
+            dlg._qd_status.setText(
+                f"已导出 → {path}  (构型汇总 {n_total}/可行 {n_feas} · "
+                f"工况明细 {n_det} 行)")
         except Exception as exc:
             dlg._qd_status.setText(f"导出失败: {exc}")
 

@@ -34,34 +34,29 @@ def run(argv=None) -> int:
     a = ap.parse_args(argv)
     cases = load_cases(a.xlsx)
 
-    rows = []
     if a.mode == "fixed":
         topo, l, t = _parse_cell(a.cell)
         d = size_fixed_cell(cases, topo, l, t, a.arrangement, rho_s=a.rho_s)
-        cand, tags = [d] if d.feasible else [], {}
+        results, best = [d], (d if d.feasible else None)
     else:
         nodes = _parse_nodes(a.nodes) if a.nodes else None
-        cand, best = enumerate_select(cases, a.arrangement, nodes,
-                                      rho_s=a.rho_s, n_jobs=a.jobs)
+        results, best = enumerate_select(cases, a.arrangement, nodes,
+                                         rho_s=a.rho_s, n_jobs=a.jobs)
         if a.refine and best is not None:           # Stage B warm-start 精修
             from .optimize import warm_start_joint
             ref = warm_start_joint(cases, best, a.arrangement, rho_s=a.rho_s)
             if ref is not best:
-                cand.append(ref)
-        tags = pareto_tags(cand)
-    for d in cand:
-        rows.append(dict(topo=d.topo, l=d.l, t=d.t,
-                         W_mm=d.s*1e3, H_mm=d.s*1e3, Lx_mm=d.Lx*1e3,
-                         V_L=d.V*1e3, weight_kg=d.weight,
-                         dP_hot=d.dP_hot_max, dP_cold=d.dP_cold_max,
-                         T_out_hot_max=d.T_out_hot_max,
-                         tags=",".join(tags.get(id(d), []))))
-    if not rows:
-        print("INFEASIBLE: 无单模块可行件 (≤450mm)", file=sys.stderr)
-        return 0
-    df = pd.DataFrame(rows).sort_values("V_L")
-    df.to_excel(a.out, index=False)
-    print(df.to_string(index=False))
+                results = results + [ref]
+    from .report import write_xlsx, cid          # 双 sheet 写入器 (CLI/UI 共用)
+    n_total, n_feas, n_det = write_xlsx(a.out, results)
+    print(f"[written] {a.out}  构型 {n_total} (可行 {n_feas}) × 工况 {len(cases)} "
+          f"→ 工况明细 {n_det} 行 (sheet: 构型汇总 / 工况明细)")
+    if best is not None:
+        print(f"best (min-V): {cid(best)}  "
+              f"{best.s*1e3:.1f}×{best.s*1e3:.1f}×{best.Lx*1e3:.1f}mm  "
+              f"V={best.V*1e3:.3f}L  wt={best.weight:.3f}kg")
+    else:
+        print("无可行构型 (全部 >450mm 或 dP 超限)", file=sys.stderr)
     return 0
 
 if __name__ == "__main__":

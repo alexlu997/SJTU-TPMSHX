@@ -2,9 +2,11 @@
 from __future__ import annotations
 from .sizing import size_fixed_cell, Design, RHO_S
 
-# t=0.6 超出闭合训练域 {0.3,0.4,0.5} (外推, 低置信; K 外插可能触底钳值), 但按需纳入默认枚举。
+# 默认枚举网格 = 2 拓扑 × 5 l × 4 t = 40 构型。
+# l=7 / t=0.6 超出闭合训练节点 ({l 4,5,6,8} / {t .3,.4,.5}) → 内插/外推, 低置信
+# (K/Nu 外插可能触底钳值), 但用户数据集按需纳入 (D-7-5/D-6-4 已用)。
 NODES = {"topo": ["Diamond", "Gyroid"],
-         "l": [4.0, 5.0, 6.0, 8.0], "t": [0.3, 0.4, 0.5, 0.6]}
+         "l": [4.0, 5.0, 6.0, 7.0, 8.0], "t": [0.3, 0.4, 0.5, 0.6]}
 
 def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S, n_jobs=1):
     """枚举 {拓扑×l×t}, 各跑 size_fixed_cell, 取可行件 + min-V best。
@@ -22,13 +24,14 @@ def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S, n_jobs
         results = Parallel(n_jobs=n_jobs, backend="loky")(
             delayed(size_fixed_cell)(cases, topo, l, t, arrangement, rho_s=rho_s)
             for topo, l, t in combos)
-    feasible: list[Design] = [d for d in results if d.feasible]
+    feasible = [d for d in results if d.feasible]
     best = min(feasible, key=lambda d: d.V) if feasible else None
-    return feasible, best
+    return results, best          # results = 全部候选 (含不可行, 供汇总表 40 行)
 
-def pareto_tags(feasible) -> dict:
-    """对每件标记其所属"某目标最优"tag。"""
+def pareto_tags(designs) -> dict:
+    """对每件标记其所属"某目标最优"tag (仅在可行件中比, 避免不可行件 V=0 误选)。"""
     tags: dict = {}
+    feasible = [d for d in designs if getattr(d, "feasible", False)]
     if not feasible:
         return tags
     for key, name in [(lambda d: d.V, "min-V"),

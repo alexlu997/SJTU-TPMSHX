@@ -2,7 +2,7 @@
 单模块 ≤ 450mm。叉流冷侧迎风 = Lx·s (随 Lx 变) → 冷侧 dP 紧时须加厚 Lx,
 不能只取冷却最小值 (否则薄板憋水, 误报不可行)。逆流冷侧迎风 = s² (与 Lx 无关)。"""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from solvers.tpms_calc import geometry as tpms_geometry
 from .fluids import fluid_props
@@ -58,6 +58,7 @@ class Design:
     V: float = 0.0; weight: float = 0.0
     dP_hot_max: float = 0.0; dP_cold_max: float = 0.0
     T_out_hot_max: float = 0.0; reason: str = ""
+    percase: list = field(default_factory=list)   # 每工况明细 @ 定尺几何 (供工况明细表)
 
 def _cool_proxy(case) -> float:
     """0-D 冷却难度代理 (无解): 所需效能 × 热侧流量 (越大越难冷→需更长 Lx)。"""
@@ -135,10 +136,19 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S) -> Desi
     Lx_star = _min_Lx_for_dP(cases, topo, l, t, s_star, arrangement, Lx_floor)
     if Lx_star is None:
         return Design(False, reason="dP>lim@final")     # 全K冷却长度下两侧 dP 无法同时达标
-    dPh = max(dP_fracs(c, topo, l, t, s_star, Lx_star, arrangement)[0] for c in cases)
-    dPc = max(dP_fracs(c, topo, l, t, s_star, Lx_star, arrangement)[1] for c in cases)
-    Tout_max = max(forward(c, topo, l, t, s_star, Lx_star, arrangement).T_out_hot
-                   for c in cases)                      # 报告 (各工况已 ≤ 各自目标)
+    # 全 K 工况终验 (一次 forward/工况, 既出 percase 明细又汇总; 不再重复 dP_fracs)
+    percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
+    for c in cases:
+        r = forward(c, topo, l, t, s_star, Lx_star, arrangement)
+        percase.append(dict(
+            case=c.case, hot_fluid=c.hot_fluid, cold_fluid=c.cold_fluid,
+            T_air_out=r.T_out_hot, T_cold_out=r.T_out_cold, Q_W=r.Q_hot,
+            dP_hot_frac=r.dP_hot_frac, dP_hot_pa=r.dP_hot_frac * c.P_in_h,
+            dP_cold_frac=r.dP_cold_frac, dP_cold_pa=r.dP_cold_frac * c.P_in_c,
+            Re_hot=r.Re_hot, Re_cold=r.Re_cold))
+        dPh = max(dPh, r.dP_hot_frac); dPc = max(dPc, r.dP_cold_frac)
+        Tout_max = max(Tout_max, r.T_out_hot)
     V = s_star * s_star * Lx_star
     return Design(True, topo, l, t, s_star, Lx_star, arrangement,
-                  V, (1.0 - EPS) * V * rho_s, dPh, dPc, Tout_max, reason="")
+                  V, (1.0 - EPS) * V * rho_s, dPh, dPc, Tout_max, reason="",
+                  percase=percase)
