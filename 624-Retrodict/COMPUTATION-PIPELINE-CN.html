@@ -4,6 +4,9 @@
 <meta charset='UTF-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>TPMS 逆向定尺 — 计算流程规格</title>
+<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css'>
+<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js'></script>
+<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js' onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});"></script>
 <style>
  body{font:15px/1.7 'Segoe UI',-apple-system,Roboto,'Microsoft YaHei',sans-serif;
       max-width:1000px;margin:32px auto;padding:0 22px;color:#1a1a1a;background:#fff}
@@ -165,7 +168,7 @@ dP_limit  ← dP_spec − Δp_margin  (如 5%→2.9%, 留 ~2pp dP 余量)
 <ul><li><code>fixed</code> = baseline: 固定 (拓扑, l, t), 只定外形 (s, Lx)。</li><li><code>auto</code> = 优化: 枚举 {拓扑 × l × t} 节点, 各定外形, 取 Pareto (min-V / min-重量 / min-dP)。</li><li><code>--refine</code>: 对 auto 最优件做连续 (l, t) warm-start 精修 (Nelder-Mead, 训练凸包内); 不优于节点最优则回退。</li></ul>
 <p><strong>前向</strong> = LTNE (§2 path B, 双流股都解, plug 速度)。<strong>叉流</strong> A 沿 +x / B 沿 +y, 塌 Nz=1 走 2D 内核 (垂直流股, 稳定快, 能量 gap ~1.5%)。<strong>逆流</strong> B 沿 −x: 两股同轴反向在无欠松弛的 2D 内核会极限环 (水出口在两态跳, gap 7-33% 不收敛) → 改用 <strong>Nz=2 路由到支持 α 的 3D 内核 + 低 α(0.3) 欠松弛</strong> → 稳定 gap ~0.4%。(注: 2D 内核 <code>solve_full_domain</code> 本身未加欠松弛/未修 = YAGNI; 谁直接调 2D 内核跑同轴逆流仍会极限环。)</p>
 <p><strong>dP 按流体分派</strong> (§1.5 闭合, 同一 K/c_F 几何渗透率, 仅密度处理不同):</p>
-<ul><li>air (可压) → 理想气体积分 <code>P_out² = P_in² − 2·R·T·(μG/K + c_F·G²)·L</code>。</li><li>water (不可压) → <code>ΔP = (μ·u/K + ρ·c_F·u²)·L</code> (常数 ρ)。<strong>勿对水用可压式</strong> — 其内嵌 ρ=P/(R_air·T) 会把水密度算成 ~2 而非 ~988, dP 偏大 ~450× → 恒不可行。</li></ul>
+<ul><li>air (可压) → 理想气体积分 $P_{\text{out}}^2 = P_{\text{in}}^2 - 2RT\left(\tfrac{\mu G}{K}+c_F G^2\right)L$。</li><li>water (不可压) → $\Delta P = \left(\tfrac{\mu u}{K}+\rho\,c_F\,u^2\right)L$ (常数 ρ)。<strong>勿对水用可压式</strong> — 其内嵌 ρ=P/(R_air·T) 会把水密度算成 ~2 而非 ~988, dP 偏大 ~450× → 恒不可行。</li></ul>
 <p><strong>迎风面积</strong> (开口流通 = ε_A × 毛迎风, 决定质量通量 G 与孔隙速度 u, 进而 dP):</p>
 <table><thead><tr><th>流股</th><th>流向</th><th>迎风面</th><th>毛面积</th><th>流程</th></tr></thead><tbody><tr><td>空气</td><td>±x</td><td>y–z</td><td>s²</td><td>Lx</td></tr><tr><td>水 (叉流)</td><td>+y</td><td>x–z</td><td>Lx·s</td><td>s</td></tr><tr><td>水 (逆流)</td><td>−x</td><td>y–z</td><td>s²</td><td>Lx</td></tr></tbody></table>
 <blockquote class='warn'>⚠ 叉流冷侧迎风 = Lx·s (含 Lx): 薄板 Lx≪s → 水进口是窄缝 → 高流速高 dP, 是真实物理, 非 artifact。</blockquote>
