@@ -1097,6 +1097,16 @@ class Main_Menu(QMainWindow):
         return load_pareto_solution(self, x)
 
     # ─────────────────────────────────────────────────────────
+    #  Quick-design tool (Phase 2 Task 4)
+    # ─────────────────────────────────────────────────────────
+    def _open_quick_design(self):
+        from ui.quick_design_panel import build_quick_design_dialog
+        if getattr(self, "_qd_dialog", None) is None:
+            self._qd_dialog = build_quick_design_dialog(self)
+        self._qd_dialog.show()
+        self._qd_dialog.raise_()
+
+    # ─────────────────────────────────────────────────────────
     #  Layout helpers
     # ─────────────────────────────────────────────────────────
     def _section(self, parent_lay, title, title_style, frame_style):

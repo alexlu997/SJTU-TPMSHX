@@ -221,6 +221,16 @@ def build_ui(window):
     btn_reset.clicked.connect(window._reset_defaults)
     header_row.addWidget(btn_reset, 0)
     header_row.addSpacing(6)
+    # Quick-design tool \u2014 opens a standalone sizing dialog (Phase 2 Task 4).
+    btn_qd = QPushButton("\U0001f4d0  \u5feb\u901f\u8bbe\u8ba1")
+    btn_qd.setFixedHeight(32)
+    btn_qd.setMinimumWidth(110)
+    btn_qd.setStyleSheet(_hdr_btn_qss)
+    btn_qd.setToolTip("\u6253\u5f00\u5feb\u901f\u8bbe\u8ba1\u5de5\u5177 \u2014 \u81ea\u52a8\u9009\u578b\u5e76\u8f93\u51fa\u53ef\u884c\u4ef6\u6e05\u5355")
+    btn_qd.clicked.connect(window._open_quick_design)
+    window.btn_quick_design = btn_qd
+    header_row.addWidget(btn_qd, 0)
+    header_row.addSpacing(6)
     # Single-action Compute button. Optimize lives in the left
     # Optimization panel + Ctrl+K command palette, so no duplicate entry
     # here — keeps the header tidy and drops the split-arrow affordance.
