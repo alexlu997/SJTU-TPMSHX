@@ -6,7 +6,7 @@ import numpy as np
 
 from solvers.tpms_calc import geometry as tpms_geometry
 from solvers.solve_full_3d import solve_full_domain_3d
-from df_fit.predict import predict_dP_compressible
+from df_fit.predict import predict_dP_compressible, predict_dP
 from .fluids import fluid_props, fluid_nu
 
 K_STEEL = 16.0
@@ -32,17 +32,33 @@ def _hvol(fluid, topo, l, t, A0, D_h, eps_A, mdot, span1, span2, T, P):
     Nu = fluid_nu(fluid, topo, Re, eps_A, l, D_h * 1e3)
     return A0 * Nu * p.k / D_h, Re, u, p
 
+def _dp_one(fluid, topo, l, t, eps_A, mdot, A_flow, T, P, props, L_chan):
+    """单股压损 [Pa]。air→可压缩理想气体 D-F (predict_dP_compressible);
+    water/不可压→不可压 D-F (predict_dP)。两者共用同一 K/c_F 几何闭合, 仅密度处理不同:
+    可压版内嵌 ρ=P/(R_AIR·T) (气体专用), 不可压版传入常数 ρ。A_flow=开口迎风面积 ε_A·迎风。"""
+    G = mdot / A_flow                              # 质量通量 [kg/(m²·s)]
+    if fluid == "air":
+        return predict_dP_compressible(topo, l, t, eps_A, G, T, P, props.mu, L_chan)
+    u = G / props.rho                              # 孔隙内速度
+    return predict_dP(topo, l, t, eps_A, u, props.rho, props.mu, L_chan)
+
 def dP_fracs(case, topo, l, t, s, Lx, arrangement="cross"):
-    """两侧归一化前压损分数 (纯解析 D-F, 不触发 LTNE 解)。返回 (dP_h_frac, dP_c_frac)。"""
+    """两侧归一化前压损分数 (纯解析 D-F, 不触发 LTNE 解)。返回 (dP_h_frac, dP_c_frac)。
+    按流体分派 (air 可压 / water 不可压); 迎风面积按流向取 (叉流冷侧 +y → Lx·s)。"""
     geo = tpms_geometry(topo, l, t, K_STEEL); EPS_A = geo["epsilon_A"]
     pA = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h)
     pB = fluid_props(case.cold_fluid, case.T_in_c, case.P_in_c)
-    G_h = case.mdot_h / (EPS_A * s * s); G_c = case.mdot_c / (EPS_A * s * s)
-    dP_h = predict_dP_compressible(topo, l, t, EPS_A, G_h,
-                                   case.T_in_h, case.P_in_h, pA.mu, Lx)
-    Lx_c = s if arrangement == "cross" else Lx     # 叉流冷侧流程=面宽 s
-    dP_c = predict_dP_compressible(topo, l, t, EPS_A, G_c,
-                                   case.T_in_c, case.P_in_c, pB.mu, Lx_c)
+    # 热侧 A 沿 +x: 迎风面 = y×z = s×s, 流程 Lx
+    A_h = EPS_A * s * s
+    dP_h = _dp_one(case.hot_fluid, topo, l, t, EPS_A, case.mdot_h, A_h,
+                   case.T_in_h, case.P_in_h, pA, Lx)
+    # 冷侧 B: 叉流 +y 迎风 = x×z = Lx×s, 流程 s; 逆流 −x 迎风 = y×z = s×s, 流程 Lx
+    if arrangement == "cross":
+        A_c, L_c = EPS_A * Lx * s, s
+    else:
+        A_c, L_c = EPS_A * s * s, Lx
+    dP_c = _dp_one(case.cold_fluid, topo, l, t, EPS_A, case.mdot_c, A_c,
+                   case.T_in_c, case.P_in_c, pB, L_c)
     return dP_h / case.P_in_h, dP_c / case.P_in_c
 
 def _cold_outlet(Tb, arrangement):

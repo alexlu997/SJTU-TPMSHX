@@ -14,6 +14,8 @@ def test_energy_balance_closes():
     assert abs(r.Q_hot - r.Q_cold) / max(abs(r.Q_hot),1.0) < 0.10
     assert r.T_out_hot < _case().T_in_h          # 热空气被冷却
     assert 0 < r.dP_hot_frac < 1
+    # 冷侧 (水) 不可压 D-F; 修前 predict_dP_compressible 对水钳值 → dP_cold_frac=1.0 会失败
+    assert 0 < r.dP_cold_frac < 1
 
 def test_longer_Lx_cools_more():
     a = forward(_case(),"Diamond",7.0,0.5,0.084,0.015,"cross")
