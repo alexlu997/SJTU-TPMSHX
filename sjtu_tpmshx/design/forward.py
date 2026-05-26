@@ -10,10 +10,17 @@ from df_fit.predict import predict_dP_compressible, predict_dP
 from .fluids import fluid_props, fluid_nu
 
 K_STEEL = 16.0
-NX, NY_CROSS, NZ = 60, 40, 1          # 2D: 叉流解 y; 逆流 Ny=1
-LTNE_MAXIT, LTNE_TOL = 8000, 1e-5
+NX, NY_CROSS = 60, 40
+LTNE_TOL = 1e-5
 # dir 编码 (verified vs solve_full_3d docstring): 0=+x, 1=−x, 2=+y, 3=−y
-_ARR = {"cross": dict(dirB=2, axis="y"), "counter": dict(dirB=1, axis="x")}
+# 内核选择: 叉流走 2D 内核 (Nz=1, 垂直流股稳定快)。逆流两股同轴反向, 2D 内核
+# solve_full_domain 无欠松弛 → 极限环 (水出口 347↔357 跳, 能量不平衡 7-33%);
+# 改走 3D 内核 (Nz=2) + 低 α 欠松弛阻尼 → 稳定收敛 (实证 α=0.3 gap 0.4%, 各
+# max_iter 字节一致)。详见 vault .../2026-05-26-quick-design-tool-plan §执行修正。
+_ARR = {
+    "cross":   dict(dirB=2, ny=NY_CROSS, nz=1, alpha=0.7, maxit=8000),
+    "counter": dict(dirB=1, ny=1,        nz=2, alpha=0.3, maxit=20000),
+}
 
 @dataclass
 class ForwardResult:
@@ -72,7 +79,7 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
                            geo["A_0"], geo["D_h"])
     arr = _ARR[arrangement]
-    Ny = NY_CROSS if arrangement == "cross" else 1
+    Ny, Nz = arr["ny"], arr["nz"]
     # A (+x): inlet face = y×z = s×s
     h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
                                 case.mdot_h, s, s, case.T_in_h, case.P_in_h)
@@ -80,7 +87,7 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     span_c1 = Lx if arrangement == "cross" else s
     h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
                                 case.mdot_c, span_c1, s, case.T_in_c, case.P_in_c)
-    shp = (NX, Ny, NZ); z = np.zeros(shp)
+    shp = (NX, Ny, Nz); z = np.zeros(shp)
     ucA = np.full(shp, u_h)
     if arrangement == "cross":
         vcB, ucB = np.full(shp, u_c), z
@@ -90,16 +97,16 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     if init is not None:
         Ta0, Tb0, Ts0 = init                       # warm-start 续解
     Ta, Tb, Ts = solve_full_domain_3d(
-        Lx, s, s, NX, Ny, NZ, case.T_in_h, case.T_in_c,
+        Lx, s, s, NX, Ny, Nz, case.T_in_h, case.T_in_c,
         np.full(shp, EPS_A * pA.k), np.full(shp, EPS_A * pB.k),
         np.full(shp, (1.0 - EPS) * K_STEEL),
         np.full(shp, h_vA), np.full(shp, h_vB),
         pA.rho * pA.cp, pB.rho * pB.cp, np.full(shp, EPS),
         ucA, z, z, ucB, vcB, z, dir_A=0, dir_B=arr["dirB"],
         dx_arr=np.full(NX, Lx / NX), dy_arr=np.full(Ny, s / Ny),
-        dz_arr=np.full(NZ, s / NZ),
+        dz_arr=np.full(Nz, s / Nz),
         Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
-        max_iter=LTNE_MAXIT, tol=LTNE_TOL, alpha_T=0.7)  # 无 Tb_prescribed → 双股都解
+        max_iter=arr["maxit"], tol=LTNE_TOL, alpha_T=arr["alpha"])  # 无 Tb_prescribed → 双股都解
     T_out_h = float(np.asarray(Ta)[-1, :, :].mean())
     T_out_c = _cold_outlet(Tb, arrangement)
     Q_h = case.mdot_h * pA.cp * (case.T_in_h - T_out_h)

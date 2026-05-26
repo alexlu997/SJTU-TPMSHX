@@ -21,3 +21,13 @@ def test_longer_Lx_cools_more():
     a = forward(_case(),"Diamond",7.0,0.5,0.084,0.015,"cross")
     b = forward(_case(),"Diamond",7.0,0.5,0.084,0.040,"cross")
     assert b.T_out_hot < a.T_out_hot              # Lx↑ → 出口更冷 (单调)
+
+def test_counter_flow_energy_balance():
+    # 逆流: B 沿 −x (Ny=1), 冷侧迎风 = s² (与 Lx 无关), 出口 i=0
+    r = forward(_case(), "Diamond", 7.0, 0.5, s=0.084, Lx=0.05,
+                arrangement="counter")
+    assert isinstance(r, ForwardResult)
+    assert r.fields is not None
+    assert abs(r.Q_hot - r.Q_cold) / max(abs(r.Q_hot), 1.0) < 0.10  # 守恒
+    assert r.T_out_hot < _case().T_in_h          # 热空气被冷却
+    assert 0 < r.dP_hot_frac < 1 and 0 < r.dP_cold_frac < 1
