@@ -26,6 +26,8 @@ def run(argv=None) -> int:
     ap.add_argument("--arrangement", choices=["cross","counter"], default="cross")
     ap.add_argument("--refine", action="store_true",
                     help="auto 后对最优件做 warm-start 联合精修 (连续 l,t)")
+    ap.add_argument("--rho-s", type=float, default=7900.0,
+                    help="固体材料密度 kg/m³ (默认 7900 = 304 不锈钢)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     cases = load_cases(a.xlsx)
@@ -33,14 +35,14 @@ def run(argv=None) -> int:
     rows = []
     if a.mode == "fixed":
         topo, l, t = _parse_cell(a.cell)
-        d = size_fixed_cell(cases, topo, l, t, a.arrangement)
+        d = size_fixed_cell(cases, topo, l, t, a.arrangement, rho_s=a.rho_s)
         cand, tags = [d] if d.feasible else [], {}
     else:
         nodes = _parse_nodes(a.nodes) if a.nodes else None
-        cand, best = enumerate_select(cases, a.arrangement, nodes)
+        cand, best = enumerate_select(cases, a.arrangement, nodes, rho_s=a.rho_s)
         if a.refine and best is not None:           # Stage B warm-start 精修
             from .optimize import warm_start_joint
-            ref = warm_start_joint(cases, best, a.arrangement)
+            ref = warm_start_joint(cases, best, a.arrangement, rho_s=a.rho_s)
             if ref is not best:
                 cand.append(ref)
         tags = pareto_tags(cand)

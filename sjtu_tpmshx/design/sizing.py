@@ -95,7 +95,7 @@ def _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_floor):
             return Lx
     return None
 
-def size_fixed_cell(cases, topo, l, t, arrangement="cross") -> Design:
+def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S) -> Design:
     """min-V over s: 每个 s 内定 Lx = max(冷却所需, 满足两侧 dP 所需) (≤450),
     取 V=s²·Lx 最小者。s-loop 冷却只跑 cooling-governing 工况 (其余 dP 解析),
     s* 处对全 K 冷却终验。叉流冷侧迎风=Lx·s → 冷侧 dP 紧时加厚 Lx (而非误判不可行)。"""
@@ -141,4 +141,4 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross") -> Design:
                    for c in cases)                      # 报告 (各工况已 ≤ 各自目标)
     V = s_star * s_star * Lx_star
     return Design(True, topo, l, t, s_star, Lx_star, arrangement,
-                  V, (1.0 - EPS) * V * RHO_S, dPh, dPc, Tout_max, reason="")
+                  V, (1.0 - EPS) * V * rho_s, dPh, dPc, Tout_max, reason="")

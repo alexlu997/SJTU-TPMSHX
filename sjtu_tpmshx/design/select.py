@@ -1,17 +1,17 @@
 """枚举选型: 遍历 {拓扑×l×t}, 各跑 size_fixed_cell, Pareto-tag。"""
 from __future__ import annotations
-from .sizing import size_fixed_cell, Design
+from .sizing import size_fixed_cell, Design, RHO_S
 
 NODES = {"topo": ["Diamond", "Gyroid"],
          "l": [4.0, 5.0, 6.0, 8.0], "t": [0.3, 0.4, 0.5]}
 
-def enumerate_select(cases, arrangement="cross", nodes=None):
+def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S):
     nd = nodes or NODES
     feasible: list[Design] = []
     for topo in nd["topo"]:
         for l in nd["l"]:
             for t in nd["t"]:
-                d = size_fixed_cell(cases, topo, l, t, arrangement)
+                d = size_fixed_cell(cases, topo, l, t, arrangement, rho_s=rho_s)
                 if d.feasible:
                     feasible.append(d)
     best = min(feasible, key=lambda d: d.V) if feasible else None
