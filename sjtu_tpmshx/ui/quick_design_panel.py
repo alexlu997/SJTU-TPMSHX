@@ -68,7 +68,8 @@ def _make_worker_class():
                     feas = [d] if d.feasible else []
                     best = d if d.feasible else None
                 else:
-                    feas, best = enumerate_select(cases, p["arrangement"], p["nodes"], rho_s=p["rho_s"])
+                    feas, best = enumerate_select(cases, p["arrangement"], p["nodes"],
+                                                  rho_s=p["rho_s"], n_jobs=-1)  # 全核并行
                     if p["refine"] and best is not None:
                         from design.optimize import warm_start_joint
                         ref = warm_start_joint(cases, best, p["arrangement"], rho_s=p["rho_s"])

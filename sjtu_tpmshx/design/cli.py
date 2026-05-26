@@ -28,6 +28,8 @@ def run(argv=None) -> int:
                     help="auto 后对最优件做 warm-start 联合精修 (连续 l,t)")
     ap.add_argument("--rho-s", type=float, default=7900.0,
                     help="固体材料密度 kg/m³ (默认 7900 = 304 不锈钢)")
+    ap.add_argument("--jobs", type=int, default=-1,
+                    help="auto 枚举并行核数 (-1=全核, 1=串行; joblib loky)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     cases = load_cases(a.xlsx)
@@ -39,7 +41,8 @@ def run(argv=None) -> int:
         cand, tags = [d] if d.feasible else [], {}
     else:
         nodes = _parse_nodes(a.nodes) if a.nodes else None
-        cand, best = enumerate_select(cases, a.arrangement, nodes, rho_s=a.rho_s)
+        cand, best = enumerate_select(cases, a.arrangement, nodes,
+                                      rho_s=a.rho_s, n_jobs=a.jobs)
         if a.refine and best is not None:           # Stage B warm-start 精修
             from .optimize import warm_start_joint
             ref = warm_start_joint(cases, best, a.arrangement, rho_s=a.rho_s)
