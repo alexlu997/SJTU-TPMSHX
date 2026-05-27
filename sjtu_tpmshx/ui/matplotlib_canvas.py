@@ -12,6 +12,26 @@ from matplotlib.ticker import FormatStrFormatter
 from .theme import _THEMES, get_theme
 
 
+# ── Contour edge-fill helper ──────────────────────────────────
+def pad_field_to_edges(x_mm, y_mm, field, L_mm, H_mm):
+    """Extend cell-center coords + field to the domain boundary so contourf
+    fills the full [0, L]×[0, H] frame instead of leaving a half-cell blank
+    margin around the data (UI report point 2, 2026-05-22).
+
+    The result panels build coords as ``x = cumsum(dx) - dx/2`` (cell
+    centres), so contourf only paints between centres and the dark axis
+    background shows through a ~half-cell border — most visible at corners.
+    Here the boundary nodes (0 and L/H) are prepended/appended and the edge
+    cell values replicated outward (mode='edge'). Display-only: solver data
+    is untouched. ``field`` is (Nx, Ny) to match ``meshgrid(y, x)`` → (X, Y)
+    with X varying along axis 0. Returns (X, Y, F) ready for ax.contourf."""
+    xp = np.concatenate(([0.0], np.asarray(x_mm, float), [float(L_mm)]))
+    yp = np.concatenate(([0.0], np.asarray(y_mm, float), [float(H_mm)]))
+    Fp = np.pad(np.asarray(field, float), ((1, 1), (1, 1)), mode='edge')
+    Yp, Xp = np.meshgrid(yp, xp)
+    return Xp, Yp, Fp
+
+
 # ── Axis label helper ─────────────────────────────────────────
 def _label_axes(axes, L, H, mode=""):
     _t = get_theme()
@@ -228,9 +248,12 @@ class MatplotlibCanvas(FigureCanvas):
             (P_fA, r"$P_A$  [Pa]", "Fluid A"),
             (P_fB, r"$P_B$  [Pa]", "Fluid B"),
         ]
+        _Lmm, _Hmm = L * 1000.0, H * 1000.0
         for ax, (field, main_title, subtitle) in zip(axes_p, p_data):
             ax.set_facecolor(_t['ax_bg'])
-            cf = ax.contourf(X, Y, field, levels=128, cmap="turbo")
+            _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, _Lmm, _Hmm)
+            cf = ax.contourf(_Xp, _Yp, _Fp, levels=128, cmap="turbo")
+            ax.set_xlim(0, _Lmm); ax.set_ylim(0, _Hmm)
             cb = self.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format="%.0f")
             cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
             cb.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=7))

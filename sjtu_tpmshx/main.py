@@ -1097,6 +1097,16 @@ class Main_Menu(QMainWindow):
         return load_pareto_solution(self, x)
 
     # ─────────────────────────────────────────────────────────
+    #  Quick-design tool (Phase 2 Task 4)
+    # ─────────────────────────────────────────────────────────
+    def _open_quick_design(self):
+        from ui.quick_design_panel import build_quick_design_dialog
+        if getattr(self, "_qd_dialog", None) is None:
+            self._qd_dialog = build_quick_design_dialog(self)
+        self._qd_dialog.show()
+        self._qd_dialog.raise_()
+
+    # ─────────────────────────────────────────────────────────
     #  Layout helpers
     # ─────────────────────────────────────────────────────────
     def _section(self, parent_lay, title, title_style, frame_style):
@@ -4441,6 +4451,14 @@ class Main_Menu(QMainWindow):
             out = finalize_plots(self)
         finally:
             self.setUpdatesEnabled(True)
+        # 2026-05-22 (UI report point 1): finalize_plots renders the
+        # temp/pres/vel canvases but never recorded them in _drawn_tabs, so
+        # Export Figure's picker only listed "Geometry" after a 2D compute.
+        # Mark them here (mirrors the 3D path's drawn.add at main.py ~4207).
+        # layout/pareto are marked by their own draw routines.
+        drawn = getattr(self, '_drawn_tabs', set())
+        drawn.update({'temp', 'pres', 'vel'})
+        self._drawn_tabs = drawn
         self._push_recent_run()
         return out
 

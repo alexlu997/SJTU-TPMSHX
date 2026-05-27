@@ -1318,8 +1318,15 @@ class SIMPLESolver3D:
             self._mu_eff_field = np.ascontiguousarray(mu_new / eps_eff)
 
     def solve(self, max_iter=3000, tol=1e-6,
-              n_inner=1, verbose=False):
+              n_inner=1, verbose=False, cancel_check=None):
         """Run the SIMPLE iterative loop.
+
+        cancel_check : optional callable -> bool. Polled every 25 outer SIMPLE
+            iterations (cheap; the JIT sweeps inside one iteration are not
+            interruptible). When it returns True the loop breaks early and
+            returns the current iterate so the caller can abort responsively
+            (UI report point 4, 2026-05-22 — water Re~33 needs thousands of
+            iterations, so an outer-loop-only cancel left the user waiting).
 
         Returns
         -------
@@ -1386,6 +1393,11 @@ class SIMPLESolver3D:
             prev_x = None
 
         for it in range(1, max_iter + 1):
+            # Cooperative cancel (point 4): poll every 25 iters — cheap, and
+            # fine enough that a water solve aborts in well under a second.
+            if cancel_check is not None and (it % 25 == 0) and cancel_check():
+                self._cancelled = True
+                break
             # Effective density for continuity: ε·ρ. Uniform ε → multiplicative
             # constant (no functional change). Zoned ε → captures macroscopic
             # ∇·(ε·ρ·u)=0 form; without this the ∇ε contribution is dropped.

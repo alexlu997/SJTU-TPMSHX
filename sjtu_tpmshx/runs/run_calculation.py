@@ -1453,7 +1453,10 @@ def plot_temperature_3panel(window, r, _t):
                 kw.update(vmin=vmin_s, vmax=vmax_s)
         else:
             kw = dict(levels=128, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
-        cf = ax.contourf(X, Y, field, **kw)
+        from ui.matplotlib_canvas import pad_field_to_edges
+        _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, L * 1000.0, H * 1000.0)
+        cf = ax.contourf(_Xp, _Yp, _Fp, **kw)
+        ax.set_xlim(0, L * 1000.0); ax.set_ylim(0, H * 1000.0)
         cb = window.canvas_temp.fig.colorbar(cf, ax=ax, shrink=0.9,
                                               aspect=25, format="%.0f")
         cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
@@ -1591,7 +1594,10 @@ def finalize_plots(window):
         from matplotlib.colors import PowerNorm as _PowerNorm
         _vnorm = _PowerNorm(gamma=0.4, vmin=float(field.min()),
                             vmax=float(field.max()))
-        cf = ax.contourf(X, Y, field, levels=128, cmap='turbo', norm=_vnorm)
+        from ui.matplotlib_canvas import pad_field_to_edges
+        _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, L * 1000.0, H * 1000.0)
+        cf = ax.contourf(_Xp, _Yp, _Fp, levels=128, cmap='turbo', norm=_vnorm)
+        ax.set_xlim(0, L * 1000.0); ax.set_ylim(0, H * 1000.0)
         cb = window.canvas_vel.fig.colorbar(cf, ax=ax, shrink=0.9,
                                              aspect=25, format="%.1f")
         cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)
