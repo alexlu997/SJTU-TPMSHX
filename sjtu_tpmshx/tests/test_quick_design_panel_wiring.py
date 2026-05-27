@@ -47,8 +47,8 @@ def test_worker_auto_calls_backend_and_emits():
         V=2.02e-4; weight=0.6; dP_hot_max=0.005; dP_cold_max=0.031
         T_out_hot_max=560.0; arrangement="counter"; reason=""
     def _fake_load(path): captured["path"]=path; return ["case1"]
-    def _fake_enum(cases, arrangement, nodes, rho_s, n_jobs=1):
-        captured.update(arr=arrangement, nodes=nodes, rho=rho_s, jobs=n_jobs)
+    def _fake_enum(cases, arrangement, nodes, rho_s, n_jobs=1, k_s=16.0):
+        captured.update(arr=arrangement, nodes=nodes, rho=rho_s, jobs=n_jobs, ks=k_s)
         d=_D(); return [d], d
     received=[]
     worker.finished_with_result.connect(lambda r: received.append(r))
@@ -58,6 +58,7 @@ def test_worker_auto_calls_backend_and_emits():
     assert captured["path"]=="spec.xlsx"
     assert captured["arr"]=="counter" and captured["rho"]==7900.0
     assert captured["jobs"]==-1   # UI auto 默认全核并行
+    assert captured["ks"]==16.0   # 默认 304SS 热导率传入后端
     assert len(received)==1
     feas, best = received[0]["feasible"], received[0]["best"]
     assert best.topo=="Diamond" and len(feas)==1

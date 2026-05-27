@@ -1,6 +1,7 @@
 """枚举选型: 遍历 {拓扑×l×t}, 各跑 size_fixed_cell, Pareto-tag。"""
 from __future__ import annotations
 from .sizing import size_fixed_cell, Design, RHO_S
+from .forward import K_STEEL
 
 # 默认枚举网格 = 2 拓扑 × 5 l × 4 t = 40 构型。
 # l=7 / t=0.6 超出闭合训练节点 ({l 4,5,6,8} / {t .3,.4,.5}) → 内插/外推, 低置信
@@ -8,21 +9,25 @@ from .sizing import size_fixed_cell, Design, RHO_S
 NODES = {"topo": ["Diamond", "Gyroid"],
          "l": [4.0, 5.0, 6.0, 7.0, 8.0], "t": [0.3, 0.4, 0.5, 0.6]}
 
-def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S, n_jobs=1):
+def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S,
+                     n_jobs=1, k_s=K_STEEL):
     """枚举 {拓扑×l×t}, 各跑 size_fixed_cell, 取可行件 + min-V best。
     候选彼此独立 → n_jobs!=1 时用 joblib(loky 进程, 绕 GIL)跨候选并行
     (size_fixed_cell 为顶层函数, 可 pickle); n_jobs=1 走串行(确定性/测试)。
-    结果顺序按 combos 不变, 故并行与串行 feasible/best 一致。"""
+    结果顺序按 combos 不变, 故并行与串行 feasible/best 一致。
+    k_s: 固体热导率 [W/(m·K)] 传入定尺 LTNE 固体能量方程。"""
     nd = nodes or NODES
     combos = [(topo, l, t) for topo in nd["topo"]
               for l in nd["l"] for t in nd["t"]]
     if n_jobs == 1 or len(combos) <= 1:
-        results = [size_fixed_cell(cases, topo, l, t, arrangement, rho_s=rho_s)
+        results = [size_fixed_cell(cases, topo, l, t, arrangement,
+                                   rho_s=rho_s, k_s=k_s)
                    for topo, l, t in combos]
     else:
         from joblib import Parallel, delayed
         results = Parallel(n_jobs=n_jobs, backend="loky")(
-            delayed(size_fixed_cell)(cases, topo, l, t, arrangement, rho_s=rho_s)
+            delayed(size_fixed_cell)(cases, topo, l, t, arrangement,
+                                     rho_s=rho_s, k_s=k_s)
             for topo, l, t in combos)
     feasible = [d for d in results if d.feasible]
     best = min(feasible, key=lambda d: d.V) if feasible else None

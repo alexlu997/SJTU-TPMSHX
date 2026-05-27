@@ -27,11 +27,16 @@ def _gather_inputs(window) -> dict:
         rho_s = float(txt("le_qd_rho", "7900"))
     except ValueError:
         rho_s = 7900.0
+    try:
+        k_s = float(txt("le_qd_ks", "16"))
+    except ValueError:
+        k_s = 16.0
     return {
         "file": txt("le_qd_file"),
         "mode": cur("combo_qd_mode", "auto"),
         "arrangement": cur("combo_qd_arr", "counter"),
         "rho_s": rho_s,
+        "k_s": k_s,
         "refine": chk("chk_qd_refine"),
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
@@ -62,16 +67,19 @@ def _make_worker_class():
                 from design.select import enumerate_select
                 p = self.params
                 cases = load_cases(p["file"])
+                ks = p.get("k_s", 16.0)
                 if p["mode"] == "fixed":
                     topo, l, t = p["cell"]
-                    d = size_fixed_cell(cases, topo, l, t, p["arrangement"], rho_s=p["rho_s"])
+                    d = size_fixed_cell(cases, topo, l, t, p["arrangement"],
+                                        rho_s=p["rho_s"], k_s=ks)
                     results = [d]; best = d if d.feasible else None
                 else:
                     results, best = enumerate_select(cases, p["arrangement"], p["nodes"],
-                                                     rho_s=p["rho_s"], n_jobs=-1)  # 全核并行
+                                                     rho_s=p["rho_s"], n_jobs=-1, k_s=ks)  # 全核并行
                     if p["refine"] and best is not None:
                         from design.optimize import warm_start_joint
-                        ref = warm_start_joint(cases, best, p["arrangement"], rho_s=p["rho_s"])
+                        ref = warm_start_joint(cases, best, p["arrangement"],
+                                               rho_s=p["rho_s"], k_s=ks)
                         if ref is not best and ref.feasible:
                             results = list(results) + [ref]
                             if ref.V < best.V:
@@ -223,6 +231,14 @@ def build_quick_design_dialog(parent=None):
     le_rho.setFixedWidth(80)
     mode_row.addWidget(le_rho)
 
+    mode_row.addSpacing(16)
+    mode_row.addWidget(QLabel("热导率 (W/m·K):"))
+    le_ks = QLineEdit("16")
+    le_ks.setFixedWidth(60)
+    le_ks.setToolTip("固体热导率: 304SS=16, AlSi10Mg≈150, Cu≈300。"
+                     "钢系内 Q 影响<1%; k_s↑ 经轴向寄生导热略降 Q。")
+    mode_row.addWidget(le_ks)
+
     mode_row.addStretch(1)
     root.addLayout(mode_row)
 
@@ -345,6 +361,7 @@ def build_quick_design_dialog(parent=None):
     dlg.combo_qd_mode      = combo_mode
     dlg.combo_qd_arr       = combo_arr
     dlg.le_qd_rho          = le_rho
+    dlg.le_qd_ks           = le_ks
     dlg.le_qd_topo         = le_topo
     dlg.le_qd_l            = le_l
     dlg.le_qd_t            = le_t

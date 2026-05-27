@@ -12,6 +12,11 @@ from .fluids import fluid_props, fluid_nu
 K_STEEL = 16.0
 NX, NY_CROSS = 60, 40
 LTNE_TOL = 1e-5
+# 几何体素化分辨率。设计路径只需标量 (eps/A_0/D_h), N=128 vs 256 误差 eps<0.08%
+# / A_0<0.5% (远低于模型 ~10% Nu/dP 不确定度), 但内存 8×↓ (128MiB→16MiB phi grid)。
+# 关键: enumerate_select 全核 loky 并行, 各进程 lru_cache 不共享 → 各自重建 phi grid;
+# N=256 时 16 进程 × 2 拓扑 × 128MiB ≈ 4GiB 常驻 → MemoryError。N=128 解此瓶颈。
+GEOM_N = 128
 # dir 编码 (verified vs solve_full_3d docstring): 0=+x, 1=−x, 2=+y, 3=−y
 # 内核选择: 叉流走 2D 内核 (Nz=1, 垂直流股稳定快)。逆流两股同轴反向, 2D 内核
 # solve_full_domain 无欠松弛 → 极限环 (水出口 347↔357 跳, 能量不平衡 7-33%);
@@ -52,7 +57,7 @@ def _dp_one(fluid, topo, l, t, eps_A, mdot, A_flow, T, P, props, L_chan):
 def dP_fracs(case, topo, l, t, s, Lx, arrangement="cross"):
     """两侧归一化前压损分数 (纯解析 D-F, 不触发 LTNE 解)。返回 (dP_h_frac, dP_c_frac)。
     按流体分派 (air 可压 / water 不可压); 迎风面积按流向取 (叉流冷侧 +y → Lx·s)。"""
-    geo = tpms_geometry(topo, l, t, K_STEEL); EPS_A = geo["epsilon_A"]
+    geo = tpms_geometry(topo, l, t, K_STEEL, N=GEOM_N); EPS_A = geo["epsilon_A"]
     pA = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h)
     pB = fluid_props(case.cold_fluid, case.T_in_c, case.P_in_c)
     # 热侧 A 沿 +x: 迎风面 = y×z = s×s, 流程 Lx
@@ -74,8 +79,8 @@ def _cold_outlet(Tb, arrangement):
         else float(Tb[0, :, :].mean())            # cross:+y 末 / counter:−x 末 (i=0)
 
 def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
-            arrangement: str = "cross", init=None) -> ForwardResult:
-    geo = tpms_geometry(topo, l, t, K_STEEL)
+            arrangement: str = "cross", init=None, k_s: float = K_STEEL) -> ForwardResult:
+    geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N)
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
                            geo["A_0"], geo["D_h"])
     arr = _ARR[arrangement]
@@ -99,7 +104,7 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     Ta, Tb, Ts = solve_full_domain_3d(
         Lx, s, s, NX, Ny, Nz, case.T_in_h, case.T_in_c,
         np.full(shp, EPS_A * pA.k), np.full(shp, EPS_A * pB.k),
-        np.full(shp, (1.0 - EPS) * K_STEEL),
+        np.full(shp, (1.0 - EPS) * k_s),
         np.full(shp, h_vA), np.full(shp, h_vB),
         pA.rho * pA.cp, pB.rho * pB.cp, np.full(shp, EPS),
         ucA, z, z, ucB, vcB, z, dir_A=0, dir_B=arr["dirB"],
