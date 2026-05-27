@@ -144,7 +144,7 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     # U 形单峰; 可行区为上区间 (大 s 更易冷 + dP 更松)。先解析定热侧 dP 可行下界
     # (无 LTNE), 黄金分割于 [a, s_hi]; 不可行点 V=+inf, 两点皆 inf 时推向更大 s。
     if _dh_min(s_hi) > 1.0:                             # 最大迎风热侧 dP 仍超 → 无解
-        return Design(False, reason="dP>lim@s_max")
+        return Design(False, topo, l, t, arrangement=arrangement, reason="dP>lim@s_max")
     a = s_lo
     if _dh_min(s_lo) > 1.0:                             # 解析二分热侧 dP 可行下界 (廉价)
         a_lo, a_hi = s_lo, s_hi
@@ -179,7 +179,8 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
             break
 
     if best is None:
-        return Design(False, reason="cooling-unreachable" if not state["cooled"]
+        return Design(False, topo, l, t, arrangement=arrangement,
+                      reason="cooling-unreachable" if not state["cooled"]
                       else "dP>lim@s_max")
     _, s_star, _ = best
     s_seed = state["seed"]
@@ -187,10 +188,11 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     Lx_floor = _Lx_all(cases, topo, l, t, s_star, arrangement, k_s=k_s,
                        prop_model=prop_model, seed=s_seed)
     if Lx_floor is None or Lx_floor > LX_MAX:
-        return Design(False, reason="cooling-unreachable")
+        return Design(False, topo, l, t, arrangement=arrangement, reason="cooling-unreachable")
     Lx_star = _min_Lx_for_dP(cases, topo, l, t, s_star, arrangement, Lx_floor)
     if Lx_star is None:
-        return Design(False, reason="dP>lim@final")     # 全K冷却长度下两侧 dP 无法同时达标
+        return Design(False, topo, l, t, arrangement=arrangement,
+                      reason="dP>lim@final")             # 全K冷却长度下两侧 dP 无法同时达标
     # 全 K 工况终验 (一次 forward/工况, 既出 percase 明细又汇总; 不再重复 dP_fracs)
     percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
     for c in cases:
