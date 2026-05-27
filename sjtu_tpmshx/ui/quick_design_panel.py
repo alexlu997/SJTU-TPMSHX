@@ -31,13 +31,16 @@ def _gather_inputs(window) -> dict:
         k_s = float(txt("le_qd_ks", "16"))
     except ValueError:
         k_s = 16.0
+    # 物性模型下拉显示中文, 映射回后端的 const/mean (含 "定" 字 → const, 否则 mean)
+    pm_txt = cur("combo_qd_prop", "均温")
+    prop_model = "const" if ("定" in pm_txt or pm_txt == "const") else "mean"
     return {
         "file": txt("le_qd_file"),
         "mode": cur("combo_qd_mode", "auto"),
         "arrangement": cur("combo_qd_arr", "counter"),
         "rho_s": rho_s,
         "k_s": k_s,
-        "prop_model": cur("combo_qd_prop", "mean"),
+        "prop_model": prop_model,
         "refine": chk("chk_qd_refine"),
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
@@ -256,10 +259,10 @@ def build_quick_design_dialog(parent=None):
     le_ks = QLineEdit("16"); le_ks.setFixedWidth(60)
     le_ks.setToolTip("固体热导率: 304SS=16, AlSi10Mg≈150, Cu≈300。"
                      "钢系内 Q 影响<1%; k_s↑ 经轴向寄生导热略降 Q。")
-    combo_prop = QComboBox(); combo_prop.addItems(["mean", "const"])  # mean 首=默认
+    combo_prop = QComboBox(); combo_prop.addItems(["均温", "定物性"])  # 均温 首=默认
     combo_prop.setFixedWidth(90)
-    combo_prop.setToolTip("物性取值温度: mean=均温(T_in+T_out)/2 (推荐, 消大-ΔT 偏置, ~1.5×); "
-                          "const=入口温 (最快)。dP 始终用入口物性 (保守)。")
+    combo_prop.setToolTip("物性取值温度: 均温=(入口+出口)/2 膜温 (推荐, 消大-ΔT 偏置, ~2× 解两遍); "
+                          "定物性=入口温 (最快)。dP 始终用入口物性 (保守)。")
 
     mode_row = _FlowLayout(hs=16, vs=6)
     mode_row.addWidget(_pair("模式:", combo_mode))
