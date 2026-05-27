@@ -184,15 +184,37 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
                       else "dP>lim@s_max")
     _, s_star, _ = best
     s_seed = state["seed"]
-    # s* 处全 K 冷却终验 (governing 预选可能漏个别更难冷工况); 以全K冷却为 Lx 下界重定
-    Lx_floor = _Lx_all(cases, topo, l, t, s_star, arrangement, k_s=k_s,
-                       prop_model=prop_model, seed=s_seed)
-    if Lx_floor is None or Lx_floor > LX_MAX:
-        return Design(False, topo, l, t, arrangement=arrangement, reason="cooling-unreachable")
-    Lx_star = _min_Lx_for_dP(cases, topo, l, t, s_star, arrangement, Lx_floor)
+
+    def _allK(s):
+        """该 s 的全-K (所有工况) 定尺: 返回 (Lx_floor, Lx_star)。
+        Lx_floor None=某工况冷不到; Lx_star None=该长度下两侧 dP 超限。"""
+        Lxf = _Lx_all(cases, topo, l, t, s, arrangement, k_s=k_s,
+                      prop_model=prop_model, seed=s_seed)
+        if Lxf is None or Lxf > LX_MAX:
+            return None, None
+        return Lxf, _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lxf)
+
+    # s* 处全 K 终验。注意: s-搜索用 cooling-governing 代理, 其可行边界可能略低于全-K
+    # 边界 (个别工况 dP 在更长全-K 冷却 Lx 下超限) → golden 可能精准落在该缝中。
+    # 全-K 可行区是连续上区间 (大 s 迎风大 → dP 降 + 冷却易); 若 s* 全-K 不可行,
+    # 向上二分找全-K 可行下边界 (= min-V 全-K 点, V 在可行区随 s 增)。
+    Lx_floor, Lx_star = _allK(s_star)
     if Lx_star is None:
-        return Design(False, topo, l, t, arrangement=arrangement,
-                      reason="dP>lim@final")             # 全K冷却长度下两侧 dP 无法同时达标
+        if _allK(s_hi)[1] is None:                       # 连最大迎风也不行 → 真不可行
+            cooled = _allK(s_hi)[0] is not None
+            return Design(False, topo, l, t, arrangement=arrangement,
+                          reason="dP>lim@final" if cooled else "cooling-unreachable")
+        lo, hi = s_star, s_hi                            # 二分全-K 可行下边界
+        for _ in range(BISECT_IT):
+            m = 0.5 * (lo + hi)
+            if _allK(m)[1] is None: lo = m
+            else: hi = m
+            if hi - lo < TOL: break
+        s_star = hi
+        Lx_floor, Lx_star = _allK(s_star)
+        if Lx_star is None:                              # 安全兜底
+            return Design(False, topo, l, t, arrangement=arrangement,
+                          reason="dP>lim@final")
     # 全 K 工况终验 (一次 forward/工况, 既出 percase 明细又汇总; 不再重复 dP_fracs)
     percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
     for c in cases:

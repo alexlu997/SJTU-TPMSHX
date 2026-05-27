@@ -28,6 +28,19 @@ def test_size_counter_flow():
         assert d.reason in ("dP>lim@s_max", "dP>lim@final",
                             "cooling-unreachable", "Lx>envelope")
 
+def test_allK_boundary_correction_counter():
+    # 回归: governing 代理可行边界可能 < 全-K 边界 → golden 精准落缝, 误判 dP>lim@final。
+    # 修后须向上二分到全-K 可行边界。3 工况 air-air counter (template 同形) 该构型本可行,
+    # 细扫全-K 在 s≈108mm 起可行 (V≈0.37L); 修前 golden 选 s≈107 全-K 失败误判不可行。
+    cs = [DesignCase(1, "air", 688.0, 1_089_000.0, 0.2855, "air", 320.0, 300_000.0, 0.3, 30_000.0, 0.075, 0.05),
+          DesignCase(2, "air", 700.0, 1_000_000.0, 0.25,   "air", 320.0, 300_000.0, 0.3, None, 0.07, 0.05, dT=100.0),
+          DesignCase(3, "air", 650.0,   900_000.0, 0.3,    "air", 315.0, 250_000.0, 0.35, 28_000.0, 0.08, 0.05)]
+    d = size_fixed_cell(cs, "Gyroid", 8.0, 0.5, arrangement="counter")
+    assert d.feasible                                  # 不再误判
+    assert d.dP_hot_max <= 0.08 + 1e-6 and d.dP_cold_max <= 0.05 + 1e-6  # 全-K dP 真达标
+    assert 0 < d.s <= 0.450 and 0 < d.Lx <= 0.450
+
+
 def test_infeasible_carries_identity():
     # 不可行件须带 topo/l/t/arrangement (否则汇总表全塌成 _l0_t0/cross, 看不出哪个构型为何失败)。
     # 物理不可能: dT=400 → 目标出口 288K < 冷侧入口 320K (违反二定律) → 任何几何冷却不可达。
