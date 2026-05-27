@@ -12,10 +12,13 @@ L_BOUNDS = (4.0, 8.0)        # 训练凸包 [mm]
 T_BOUNDS = (0.3, 0.5)
 
 def warm_start_joint(cases, baseline: Design, arrangement: str = "cross",
-                     maxiter: int = 40, rho_s: float = RHO_S,
+                     maxiter: int = 20, rho_s: float = RHO_S,
                      k_s: float = K_STEEL, prop_model: str = "const") -> Design:
     """从 baseline (topo,l,t) warm-start, Nelder-Mead 在凸包内对 (l,t) 求 min-V。
-    外形每评估由 size_fixed_cell 内定。不可行/不优于 baseline → 回退 baseline。"""
+    外形每评估由 size_fixed_cell 内定 (串行, 每次一整定尺含 all-K 校正 → 单次贵)。
+    不可行/不优于 baseline → 回退 baseline。
+    收敛阈务实: 连续 (l,t) 精修相对离散最优通常仅 <1% 增益, fatol/maxiter 故设宽松 +
+    低上限 → 早停 (避免死追 <0.5% 微改善花数倍时间)。fatol 单位 m³ (1e-6=1mL≈0.5%V)。"""
     topo = baseline.topo
 
     def obj(x) -> float:
@@ -29,7 +32,7 @@ def warm_start_joint(cases, baseline: Design, arrangement: str = "cross",
 
     res = minimize(obj, np.array([baseline.l, baseline.t]),
                    method="Nelder-Mead", bounds=[L_BOUNDS, T_BOUNDS],
-                   options={"xatol": 0.05, "fatol": 1e-7, "maxiter": maxiter})
+                   options={"xatol": 0.05, "fatol": 1e-6, "maxiter": maxiter})
     d = size_fixed_cell(cases, topo, float(res.x[0]), float(res.x[1]),
                         arrangement, rho_s=rho_s, k_s=k_s, prop_model=prop_model)
     if (not d.feasible) or d.V >= baseline.V:      # 下界对照 → 回退
