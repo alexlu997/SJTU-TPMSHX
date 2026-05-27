@@ -348,8 +348,19 @@ def solve_full_domain(L, H, Nx, Ny,
                       dx_arr=None, dy_arr=None,
                       inlet_mask_A=None, inlet_mask_B=None,
                       Tb_prescribed=None,
-                      eps_A=None, eps_B=None):
+                      eps_A=None, eps_B=None,
+                      q_rel_tol=None, conv_chunk=None):
     """Full-domain steady-state 2-fluid LTNE solver.
+
+    q_rel_tol : float or None — per-chunk Q-relative convergence threshold.
+                None (default) keeps the legacy `min(tol*2e-3, 1e-3)` (very
+                tight, rarely fires → runs to max_iter). Callers that only need
+                a converged field (e.g. the design sizing tool) can pass a
+                looser, effective value (e.g. 1e-4) so the solve early-stops at
+                true convergence instead of burning max_iter.
+    conv_chunk : int or None — GS sweeps between convergence checks. None →
+                legacy 500. A smaller value (e.g. 100) lets the early-stop
+                trigger sooner. Default None preserves bitwise legacy behaviour.
 
     Parameters
     ----------
@@ -512,12 +523,12 @@ def solve_full_domain(L, H, Nx, Ny,
     #   (2) max|ΔTa|, max|ΔTb|, max|ΔTs| between chunks < T_rel_tol·|T|
     # Q-only could flag converged while T-fields were still drifting
     # (rho = P/(R·T) damps T swings at fixed Q). T-only is grid-dependent.
-    chunk = 500;  done = 0
+    chunk = 500 if conv_chunk is None else int(conv_chunk);  done = 0
     cell_area = dx_arr[:, None] * dy_arr[None, :]
     Q_prev = 0.0
     Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
     converged = False
-    q_rel_tol = min(tol * 2e-3, 1e-3)
+    q_tol = min(tol * 2e-3, 1e-3) if q_rel_tol is None else float(q_rel_tol)
     T_abs_tol = 0.01  # K between chunks
     # 2026-05-20 code-bug sweep (Tier 23): pre-init `chg` so the
     # `return_info` path (L551 `float(chg)`) cannot hit NameError when
@@ -555,7 +566,7 @@ def solve_full_domain(L, H, Nx, Ny,
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
             T_ok = (dTa_max < T_abs_tol and dTb_max < T_abs_tol
                     and dTs_max < T_abs_tol)
-            if rel_chg < q_rel_tol and T_ok:
+            if rel_chg < q_tol and T_ok:
                 converged = True
                 break
         Q_prev = Q_cur

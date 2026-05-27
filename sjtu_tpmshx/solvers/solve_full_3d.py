@@ -1202,9 +1202,11 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
                     dx_arr, dy_arr, dz_arr,
                     inlet_mask_A, inlet_mask_B,
                     Tb_prescribed,
-                    alpha_T):
+                    alpha_T,
+                    q_rel_tol=None, conv_chunk=None):
     """Nz == 1 shortcut: squeeze z axis and call 2D solver for bitwise equivalence.
-    alpha_T is accepted but ignored (2D uses Q-chunk convergence)."""
+    alpha_T is accepted but ignored (2D uses Q-chunk convergence).
+    q_rel_tol / conv_chunk passed through to the 2D solver (None = legacy)."""
 
     def _sq3(a):
         if a is None:
@@ -1245,7 +1247,8 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         dx_arr=dx_arr, dy_arr=dy_arr,
         inlet_mask_A=_sq_mask(inlet_mask_A, dir_A),
         inlet_mask_B=_sq_mask(inlet_mask_B, dir_B),
-        Tb_prescribed=_sq3(Tb_prescribed))
+        Tb_prescribed=_sq3(Tb_prescribed),
+        q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
 
     Ta3 = Ta2[..., None].copy()
     Tb3 = Tb2[..., None].copy()
@@ -1289,7 +1292,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           mms_S_A_field=None,
                           mms_S_B_field=None,
                           mms_S_s_field=None,
-                          cancel_check=None):
+                          cancel_check=None,
+                          q_rel_tol=None, conv_chunk=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
 
     Shape contracts
@@ -1328,7 +1332,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             max_iter, tol, progress_cb, return_info,
             Ta_init, Tb_init, Ts_init,
             dx_arr, dy_arr, dz_arr,
-            inlet_mask_A, inlet_mask_B, Tb_prescribed, alpha_T)
+            inlet_mask_A, inlet_mask_B, Tb_prescribed, alpha_T,
+            q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
 
     if not (0.0 < alpha_T <= 1.0):
         raise ValueError(f"alpha_T must be in (0, 1], got {alpha_T}")
@@ -1482,12 +1487,12 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     # `done>=chunk` and Q_prev starts at 0, so two full chunks are needed
     # to register meaningful stall. Larger grids (>30k cells) converge in
     # 1-3 chunks regardless, so chunk=500 overshoots ≤ chunk=200 there.
-    chunk = 500; done = 0
+    chunk = 500 if conv_chunk is None else int(conv_chunk); done = 0
     cell_vol = dx_arr[:, None, None] * dy_arr[None, :, None] * dz_arr[None, None, :]
     Q_prev = 0.0
     Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
     converged = False
-    q_rel_tol = max(tol * 10.0, 1e-4)
+    q_tol = max(tol * 10.0, 1e-4) if q_rel_tol is None else float(q_rel_tol)
     T_abs_tol = 0.01  # K between chunks — mirror 2D solve_full.py (#4)
     chg = 0.0
 
@@ -1602,7 +1607,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             # early-exit and demand both Q stable AND Ts residual bounded.
             # Previously iteration could terminate after 2 chunks while Q still
             # drifted 10-15% because max|ΔT| was simply < 0.01 K per chunk.
-            if rel_chg < q_rel_tol:
+            if rel_chg < q_tol:
                 converged = True
                 break
         Q_prev = Q_cur
