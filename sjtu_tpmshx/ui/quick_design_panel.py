@@ -289,7 +289,11 @@ def build_quick_design_dialog(parent=None):
     le_t.setToolTip("壁厚 t (mm) 列表，逗号分隔。注: 训练域 t∈{0.3,0.4,0.5}; t=0.6 为外推, 低置信")
     auto_form.addRow("t 列表 (mm):", le_t)
 
-    chk_refine = QCheckBox("warm-start")
+    chk_refine = QCheckBox("warm-start (连续 l,t 精修)")
+    chk_refine.setChecked(False)                 # 默认关: 串行 NM, 耗时≈枚举一遍, 增益通常 <1%
+    chk_refine.setToolTip("可选: 对枚举最优件再做连续 (l,t) Nelder-Mead 精修。"
+                          "串行不并行, 耗时约等于整轮枚举; 相对密集离散网格增益通常 <1%。"
+                          "快速扫无需勾选, 需榨最后 1% 体积时再开。")
     auto_form.addRow("精细化:", chk_refine)
 
     root.addWidget(auto_group)
