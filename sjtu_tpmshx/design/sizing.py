@@ -200,16 +200,27 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     # 向上二分找全-K 可行下边界 (= min-V 全-K 点, V 在可行区随 s 增)。
     Lx_floor, Lx_star = _allK(s_star)
     if Lx_star is None:
-        if _allK(s_hi)[1] is None:                       # 连最大迎风也不行 → 真不可行
+        # 全-K 边界紧邻 s* 上方 (governing≈全-K, 差几 mm) → 先指数扩张定位首个全-K
+        # 可行 s (省去满程二分), 再在小区间 [last_infeas, first_feas] 二分到 ~1.5mm。
+        lo_inf, s_feas = s_star, None
+        s = s_star
+        for _ in range(10):
+            s = min(s * 1.08, s_hi)
+            if _allK(s)[1] is not None:
+                s_feas = s; break
+            lo_inf = s
+            if s >= s_hi - 1e-9:
+                break
+        if s_feas is None:                               # 连最大迎风也不行 → 真不可行
             cooled = _allK(s_hi)[0] is not None
             return Design(False, topo, l, t, arrangement=arrangement,
                           reason="dP>lim@final" if cooled else "cooling-unreachable")
-        lo, hi = s_star, s_hi                            # 二分全-K 可行下边界
-        for _ in range(BISECT_IT):
+        lo, hi = lo_inf, s_feas                          # 小区间二分边界 (~1.5mm 够)
+        for _ in range(12):
             m = 0.5 * (lo + hi)
             if _allK(m)[1] is None: lo = m
             else: hi = m
-            if hi - lo < TOL: break
+            if hi - lo < 0.0015: break
         s_star = hi
         Lx_floor, Lx_star = _allK(s_star)
         if Lx_star is None:                              # 安全兜底
