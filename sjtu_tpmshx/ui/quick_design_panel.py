@@ -175,9 +175,45 @@ def build_quick_design_dialog(parent=None):
         QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
         QGroupBox, QLabel, QLineEdit, QPushButton,
         QComboBox, QCheckBox, QTableWidget, QFileDialog,
-        QSizePolicy, QFrame,
+        QSizePolicy, QFrame, QWidget, QLayout,
     )
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QRect, QSize, QPoint
+
+    class _FlowLayout(QLayout):
+        """控件按宽度自动折行 (窄窗/小字体不重叠)。标准 Qt FlowLayout 习语。"""
+        def __init__(self, hs=14, vs=6):
+            super().__init__(); self._items = []; self._hs = hs; self._vs = vs
+            self.setContentsMargins(0, 0, 0, 0)
+        def addItem(self, it): self._items.append(it)
+        def count(self): return len(self._items)
+        def itemAt(self, i): return self._items[i] if 0 <= i < len(self._items) else None
+        def takeAt(self, i): return self._items.pop(i) if 0 <= i < len(self._items) else None
+        def expandingDirections(self): return Qt.Orientation(0)
+        def hasHeightForWidth(self): return True
+        def heightForWidth(self, w): return self._lay(QRect(0, 0, w, 0), True)
+        def setGeometry(self, r): super().setGeometry(r); self._lay(r, False)
+        def sizeHint(self): return self.minimumSize()
+        def minimumSize(self):
+            sz = QSize()
+            for it in self._items:
+                sz = sz.expandedTo(it.minimumSize())
+            return sz
+        def _lay(self, r, test):
+            x, y, line_h = r.x(), r.y(), 0
+            for it in self._items:
+                w, h = it.sizeHint().width(), it.sizeHint().height()
+                if x + w > r.right() and line_h > 0:
+                    x = r.x(); y += line_h + self._vs; line_h = 0
+                if not test:
+                    it.setGeometry(QRect(QPoint(x, y), it.sizeHint()))
+                x += w + self._hs; line_h = max(line_h, h)
+            return y + line_h - r.y()
+
+    def _pair(label, widget):
+        """label + 控件 打包成一个 flow item (整体折行, 不拆散)。"""
+        w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0); h.setSpacing(6)
+        h.addWidget(QLabel(label)); h.addWidget(widget)
+        return w
 
     dlg = QDialog(parent)
     dlg.setWindowTitle("快速设计工具")
@@ -211,47 +247,26 @@ def build_quick_design_dialog(parent=None):
     file_row.addWidget(btn_browse)
     root.addLayout(file_row)
 
-    # ── 模式 / 排列 ──────────────────────────────────────────
-    mode_row = QHBoxLayout()
-    mode_row.setSpacing(16)
-
-    mode_row.addWidget(QLabel("模式:"))
-    combo_mode = QComboBox()
-    combo_mode.addItems(["auto", "fixed"])
+    # ── 模式 / 排列 / 材料 / 物性 (FlowLayout: 窄窗自动折行不重叠) ──────
+    combo_mode = QComboBox(); combo_mode.addItems(["auto", "fixed"])
     combo_mode.setFixedWidth(100)
-    mode_row.addWidget(combo_mode)
-
-    mode_row.addSpacing(16)
-    mode_row.addWidget(QLabel("排列:"))
-    combo_arr = QComboBox()
-    combo_arr.addItems(["counter", "cross"])
+    combo_arr = QComboBox(); combo_arr.addItems(["counter", "cross"])
     combo_arr.setFixedWidth(100)
-    mode_row.addWidget(combo_arr)
-
-    mode_row.addSpacing(16)
-    mode_row.addWidget(QLabel("材料密度 (kg/m³):"))
-    le_rho = QLineEdit("7900")
-    le_rho.setFixedWidth(80)
-    mode_row.addWidget(le_rho)
-
-    mode_row.addSpacing(16)
-    mode_row.addWidget(QLabel("热导率 (W/m·K):"))
-    le_ks = QLineEdit("16")
-    le_ks.setFixedWidth(60)
+    le_rho = QLineEdit("7900"); le_rho.setFixedWidth(80)
+    le_ks = QLineEdit("16"); le_ks.setFixedWidth(60)
     le_ks.setToolTip("固体热导率: 304SS=16, AlSi10Mg≈150, Cu≈300。"
                      "钢系内 Q 影响<1%; k_s↑ 经轴向寄生导热略降 Q。")
-    mode_row.addWidget(le_ks)
-
-    mode_row.addSpacing(16)
-    mode_row.addWidget(QLabel("物性模型:"))
-    combo_prop = QComboBox()
-    combo_prop.addItems(["mean", "const"])      # mean 首 = 默认 (均温, 消大-ΔT 偏置)
+    combo_prop = QComboBox(); combo_prop.addItems(["mean", "const"])  # mean 首=默认
     combo_prop.setFixedWidth(90)
     combo_prop.setToolTip("物性取值温度: mean=均温(T_in+T_out)/2 (推荐, 消大-ΔT 偏置, ~1.5×); "
                           "const=入口温 (最快)。dP 始终用入口物性 (保守)。")
-    mode_row.addWidget(combo_prop)
 
-    mode_row.addStretch(1)
+    mode_row = _FlowLayout(hs=16, vs=6)
+    mode_row.addWidget(_pair("模式:", combo_mode))
+    mode_row.addWidget(_pair("排列:", combo_arr))
+    mode_row.addWidget(_pair("材料密度 (kg/m³):", le_rho))
+    mode_row.addWidget(_pair("热导率 (W/m·K):", le_ks))
+    mode_row.addWidget(_pair("物性模型:", combo_prop))
     root.addLayout(mode_row)
 
     # ── Auto 参数组 ───────────────────────────────────────────
