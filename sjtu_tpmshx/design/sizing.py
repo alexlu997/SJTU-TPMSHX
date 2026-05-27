@@ -4,14 +4,17 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+from scipy.optimize import brentq
+
 from solvers.tpms_calc import geometry as tpms_geometry
 from .fluids import fluid_props
-from .forward import forward, dP_fracs, K_STEEL, GEOM_N
+from .forward import forward, dP_fracs, K_STEEL, GEOM_N, LTNE_TOL
 
 S_MAX = 0.450          # build envelope [m]
 LX_MAX = 0.450
 N_MIN = 4              # 每向最少晶胞 (均质化)
 BISECT_IT, TOL = 28, 1e-4
+SIZING_TOL = 1e-4      # 定尺搜索期放松 LTNE 残差 (终点再用 LTNE_TOL 收紧)
 NS = 20                # min-V over s 扫描点数
 N_DP = 40              # 内定 Lx 的解析 dP 扫描点数
 
@@ -23,32 +26,31 @@ def t_target(case) -> float:
     return case.T_in_h - case.Q / (case.mdot_h * cp_h)
 
 def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
-             prop_model="const"):
-    """二分 Lx ∈ (0, LX_MAX] 使 T_out_hot = target (T_out 随 Lx 单调↓)。
-    warm-start: 用上一次解的 fields 续解, 大幅减 LTNE 迭代。
+             prop_model="const", seed=None):
+    """求 Lx ∈ (0, LX_MAX] 使 T_out_hot = target (T_out 随 Lx 单调↓)。
+    B: 用 brentq (超线性) 代替二分 → ~3× 少解。
+    A: seed=(Ta,Tb,Ts) 跨-s 续解种子 (s 平滑变, 场近似); ev 内每步续解。
+    D: 搜索用 SIZING_TOL (松), 终点用 LTNE_TOL (紧) → 渐进收紧。
     返回 (Lx, ForwardResult)。不可达 (LX_MAX 仍欠冷) → (None, None)。"""
     tgt = target if target is not None else t_target(case)
-    prev = {"f": None}
-    def ev(Lx):
+    prev = {"f": seed, "last": None}
+    def ev(Lx, tol):
         r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"],
-                    k_s=k_s, prop_model=prop_model)
-        prev["f"] = r.fields                # 续解种子
+                    k_s=k_s, prop_model=prop_model, tol=tol)
+        prev["f"] = r.fields                # 续解种子 (链式)
+        prev["last"] = r
         return r
     lo, hi = max(2.0 * l / 1000.0, 1e-3), LX_MAX
-    r_hi = ev(hi)
-    if r_hi.T_out_hot > tgt:                 # 最长也欠冷
+    f_hi = ev(hi, SIZING_TOL).T_out_hot - tgt
+    if f_hi > 0:                             # 最长也欠冷
         return None, None
-    r_lo = ev(lo)
-    if r_lo.T_out_hot <= tgt:                # 最短已够
-        return lo, r_lo
-    rb = r_hi
-    for _ in range(BISECT_IT):
-        m = 0.5 * (lo + hi)
-        rb = ev(m)
-        if rb.T_out_hot > tgt: lo = m
-        else: hi = m
-        if hi - lo < TOL: break
-    return 0.5 * (lo + hi), rb
+    f_lo = ev(lo, SIZING_TOL).T_out_hot - tgt
+    if f_lo <= 0:                            # 最短已够
+        return lo, ev(lo, LTNE_TOL)          # 终点收紧
+    # f_lo>0>f_hi 已 bracket → brentq 超线性求根 (T_out 单调)
+    Lx_root = brentq(lambda Lx: ev(Lx, SIZING_TOL).T_out_hot - tgt,
+                     lo, hi, xtol=TOL, maxiter=BISECT_IT)
+    return Lx_root, ev(Lx_root, LTNE_TOL)    # 终点收紧
 
 RHO_S = 7900.0          # 304 SS [kg/m³]
 
@@ -76,14 +78,18 @@ def _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement) -> float:
         w = max(w, dh / c.dPlim_h, dc / c.dPlim_c)
     return w
 
-def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL, prop_model="const"):
-    """全 K 工况冷却所需 Lx 的最大 (governing 终验)。任一不可达 → None。"""
+def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL, prop_model="const",
+            seed=None):
+    """全 K 工况冷却所需 Lx 的最大 (governing 终验)。任一不可达 → None。
+    seed: 跨工况续解种子 (链式, 减 LTNE 迭代)。"""
     mx = 0.0
     for c in cases:
-        Lx, _ = solve_Lx(c, topo, l, t, s, arrangement, k_s=k_s,
-                         prop_model=prop_model)
+        Lx, r = solve_Lx(c, topo, l, t, s, arrangement, k_s=k_s,
+                         prop_model=prop_model, seed=seed)
         if Lx is None:
             return None
+        if r is not None:
+            seed = r.fields                 # 链式续解
         mx = max(mx, Lx)
     return mx
 
@@ -112,6 +118,7 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     lo_lx = max(2.0 * l / 1000.0, 1e-3)                 # 最小流向晶胞长 (= solve_Lx 下界)
     best = None                                         # (V, s, Lx)
     any_cool = False                                    # 是否存在能冷却的 s
+    s_seed = None                                       # 跨-s 续解种子 (governing 场, A)
     for i in range(NS):
         s = s_lo + (s_hi - s_lo) * i / (NS - 1)
         # 廉价预筛: 热侧 dP 随 Lx 单调↑, 最小在 Lx=lo_lx; 若此处已超限则该 s 任何 Lx 不可行
@@ -119,11 +126,13 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
                      for c in cases)
         if dh_min > 1.0:
             continue                                    # 跳过 (省去昂贵冷却解)
-        Lx_cool, _ = solve_Lx(cool_gov, topo, l, t, s, arrangement, k_s=k_s,
-                              prop_model=prop_model)
+        Lx_cool, r_cool = solve_Lx(cool_gov, topo, l, t, s, arrangement, k_s=k_s,
+                                   prop_model=prop_model, seed=s_seed)
         if Lx_cool is None:                             # governing 此 s 冷不到
             continue
         any_cool = True
+        if r_cool is not None:
+            s_seed = r_cool.fields                      # 携带场到下个 s (s 平滑变)
         Lx = _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_cool)
         if Lx is None:                                  # 此 s 无 Lx 同时满足冷却+dP
             continue
@@ -137,7 +146,7 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     _, s_star, _ = best
     # s* 处全 K 冷却终验 (governing 预选可能漏个别更难冷工况); 以全K冷却为 Lx 下界重定
     Lx_floor = _Lx_all(cases, topo, l, t, s_star, arrangement, k_s=k_s,
-                       prop_model=prop_model)
+                       prop_model=prop_model, seed=s_seed)
     if Lx_floor is None or Lx_floor > LX_MAX:
         return Design(False, reason="cooling-unreachable")
     Lx_star = _min_Lx_for_dP(cases, topo, l, t, s_star, arrangement, Lx_floor)

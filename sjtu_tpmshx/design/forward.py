@@ -80,10 +80,11 @@ def _cold_outlet(Tb, arrangement):
 
 def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
             arrangement: str = "cross", init=None, k_s: float = K_STEEL,
-            prop_model: str = "const") -> ForwardResult:
+            prop_model: str = "const", tol: float = LTNE_TOL) -> ForwardResult:
     """prop_model: 'const' = 物性在入口温取值 (现状, 最快); 'mean' = 2-pass
     均温 (入口解→出口温→(T_in+T_out)/2 重取物性→warm-start 重解), 消大-ΔT 系统偏置。
-    dP 始终用入口物性 (冷却空气入口 μ/ρ 偏高 = 保守安全)。"""
+    dP 始终用入口物性 (冷却空气入口 μ/ρ 偏高 = 保守安全)。
+    tol: LTNE 收敛残差 (默认 1e-5); 定尺搜索阶段可放松 (sizing 渐进收紧)。"""
     geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N)
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
                            geo["A_0"], geo["D_h"])
@@ -117,7 +118,7 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
             dx_arr=np.full(NX, Lx / NX), dy_arr=np.full(Ny, s / Ny),
             dz_arr=np.full(Nz, s / Nz),
             Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
-            max_iter=arr["maxit"], tol=LTNE_TOL, alpha_T=arr["alpha"])  # 双股都解
+            max_iter=arr["maxit"], tol=tol, alpha_T=arr["alpha"])  # 双股都解
         Toh = float(np.asarray(Ta)[-1, :, :].mean())
         Toc = _cold_outlet(Tb, arrangement)
         return (Ta, Tb, Ts), Toh, Toc, pA, pB, Re_h, Re_c
