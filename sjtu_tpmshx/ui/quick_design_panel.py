@@ -37,6 +37,7 @@ def _gather_inputs(window) -> dict:
         "arrangement": cur("combo_qd_arr", "counter"),
         "rho_s": rho_s,
         "k_s": k_s,
+        "prop_model": cur("combo_qd_prop", "mean"),
         "refine": chk("chk_qd_refine"),
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
@@ -68,18 +69,20 @@ def _make_worker_class():
                 p = self.params
                 cases = load_cases(p["file"])
                 ks = p.get("k_s", 16.0)
+                pm = p.get("prop_model", "mean")
                 if p["mode"] == "fixed":
                     topo, l, t = p["cell"]
                     d = size_fixed_cell(cases, topo, l, t, p["arrangement"],
-                                        rho_s=p["rho_s"], k_s=ks)
+                                        rho_s=p["rho_s"], k_s=ks, prop_model=pm)
                     results = [d]; best = d if d.feasible else None
                 else:
                     results, best = enumerate_select(cases, p["arrangement"], p["nodes"],
-                                                     rho_s=p["rho_s"], n_jobs=-1, k_s=ks)  # 全核并行
+                                                     rho_s=p["rho_s"], n_jobs=-1, k_s=ks,
+                                                     prop_model=pm)  # 全核并行
                     if p["refine"] and best is not None:
                         from design.optimize import warm_start_joint
                         ref = warm_start_joint(cases, best, p["arrangement"],
-                                               rho_s=p["rho_s"], k_s=ks)
+                                               rho_s=p["rho_s"], k_s=ks, prop_model=pm)
                         if ref is not best and ref.feasible:
                             results = list(results) + [ref]
                             if ref.V < best.V:
@@ -239,6 +242,15 @@ def build_quick_design_dialog(parent=None):
                      "钢系内 Q 影响<1%; k_s↑ 经轴向寄生导热略降 Q。")
     mode_row.addWidget(le_ks)
 
+    mode_row.addSpacing(16)
+    mode_row.addWidget(QLabel("物性模型:"))
+    combo_prop = QComboBox()
+    combo_prop.addItems(["mean", "const"])      # mean 首 = 默认 (均温, 消大-ΔT 偏置)
+    combo_prop.setFixedWidth(90)
+    combo_prop.setToolTip("物性取值温度: mean=均温(T_in+T_out)/2 (推荐, 消大-ΔT 偏置, ~1.5×); "
+                          "const=入口温 (最快)。dP 始终用入口物性 (保守)。")
+    mode_row.addWidget(combo_prop)
+
     mode_row.addStretch(1)
     root.addLayout(mode_row)
 
@@ -362,6 +374,7 @@ def build_quick_design_dialog(parent=None):
     dlg.combo_qd_arr       = combo_arr
     dlg.le_qd_rho          = le_rho
     dlg.le_qd_ks           = le_ks
+    dlg.combo_qd_prop      = combo_prop
     dlg.le_qd_topo         = le_topo
     dlg.le_qd_l            = le_l
     dlg.le_qd_t            = le_t

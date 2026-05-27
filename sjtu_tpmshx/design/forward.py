@@ -79,43 +79,55 @@ def _cold_outlet(Tb, arrangement):
         else float(Tb[0, :, :].mean())            # cross:+y 末 / counter:−x 末 (i=0)
 
 def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
-            arrangement: str = "cross", init=None, k_s: float = K_STEEL) -> ForwardResult:
+            arrangement: str = "cross", init=None, k_s: float = K_STEEL,
+            prop_model: str = "const") -> ForwardResult:
+    """prop_model: 'const' = 物性在入口温取值 (现状, 最快); 'mean' = 2-pass
+    均温 (入口解→出口温→(T_in+T_out)/2 重取物性→warm-start 重解), 消大-ΔT 系统偏置。
+    dP 始终用入口物性 (冷却空气入口 μ/ρ 偏高 = 保守安全)。"""
     geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N)
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
                            geo["A_0"], geo["D_h"])
     arr = _ARR[arrangement]
     Ny, Nz = arr["ny"], arr["nz"]
-    # A (+x): inlet face = y×z = s×s
-    h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
-                                case.mdot_h, s, s, case.T_in_h, case.P_in_h)
-    # B: cross (+y) inlet face = x×z = Lx×s; counter (−x) inlet face = y×z = s×s
-    span_c1 = Lx if arrangement == "cross" else s
-    h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
-                                case.mdot_c, span_c1, s, case.T_in_c, case.P_in_c)
     shp = (NX, Ny, Nz); z = np.zeros(shp)
-    ucA = np.full(shp, u_h)
-    if arrangement == "cross":
-        vcB, ucB = np.full(shp, u_c), z
-    else:
-        ucB, vcB = np.full(shp, -u_c), z
-    Ta0 = Tb0 = Ts0 = None
-    if init is not None:
-        Ta0, Tb0, Ts0 = init                       # warm-start 续解
-    Ta, Tb, Ts = solve_full_domain_3d(
-        Lx, s, s, NX, Ny, Nz, case.T_in_h, case.T_in_c,
-        np.full(shp, EPS_A * pA.k), np.full(shp, EPS_A * pB.k),
-        np.full(shp, (1.0 - EPS) * k_s),
-        np.full(shp, h_vA), np.full(shp, h_vB),
-        pA.rho * pA.cp, pB.rho * pB.cp, np.full(shp, EPS),
-        ucA, z, z, ucB, vcB, z, dir_A=0, dir_B=arr["dirB"],
-        dx_arr=np.full(NX, Lx / NX), dy_arr=np.full(Ny, s / Ny),
-        dz_arr=np.full(Nz, s / Nz),
-        Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
-        max_iter=arr["maxit"], tol=LTNE_TOL, alpha_T=arr["alpha"])  # 无 Tb_prescribed → 双股都解
-    T_out_h = float(np.asarray(Ta)[-1, :, :].mean())
-    T_out_c = _cold_outlet(Tb, arrangement)
+    # B 迎风首维: cross (+y) = Lx×s; counter (−x) = s×s
+    span_c1 = Lx if arrangement == "cross" else s
+
+    def _one_pass(Th_eval, Tc_eval, seed):
+        """在指定取值温 (Th_eval/Tc_eval) 取物性, 解一次 LTNE。seed=(Ta,Tb,Ts) 续解。"""
+        h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
+                                    case.mdot_h, s, s, Th_eval, case.P_in_h)
+        h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
+                                    case.mdot_c, span_c1, s, Tc_eval, case.P_in_c)
+        ucA = np.full(shp, u_h)
+        if arrangement == "cross":
+            vcB, ucB = np.full(shp, u_c), z
+        else:
+            ucB, vcB = np.full(shp, -u_c), z
+        Ta0 = Tb0 = Ts0 = None
+        if seed is not None:
+            Ta0, Tb0, Ts0 = seed                   # warm-start 续解
+        Ta, Tb, Ts = solve_full_domain_3d(
+            Lx, s, s, NX, Ny, Nz, case.T_in_h, case.T_in_c,
+            np.full(shp, EPS_A * pA.k), np.full(shp, EPS_A * pB.k),
+            np.full(shp, (1.0 - EPS) * k_s),
+            np.full(shp, h_vA), np.full(shp, h_vB),
+            pA.rho * pA.cp, pB.rho * pB.cp, np.full(shp, EPS),
+            ucA, z, z, ucB, vcB, z, dir_A=0, dir_B=arr["dirB"],
+            dx_arr=np.full(NX, Lx / NX), dy_arr=np.full(Ny, s / Ny),
+            dz_arr=np.full(Nz, s / Nz),
+            Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
+            max_iter=arr["maxit"], tol=LTNE_TOL, alpha_T=arr["alpha"])  # 双股都解
+        Toh = float(np.asarray(Ta)[-1, :, :].mean())
+        Toc = _cold_outlet(Tb, arrangement)
+        return (Ta, Tb, Ts), Toh, Toc, pA, pB, Re_h, Re_c
+
+    fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(
+        case.T_in_h, case.T_in_c, init)
+    if prop_model == "mean":                       # 第二趟: 均温物性 + warm-start
+        Th = 0.5 * (case.T_in_h + T_out_h); Tc = 0.5 * (case.T_in_c + T_out_c)
+        fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(Th, Tc, fld)
     Q_h = case.mdot_h * pA.cp * (case.T_in_h - T_out_h)
     Q_c = case.mdot_c * pB.cp * (T_out_c - case.T_in_c)
-    dPh, dPc = dP_fracs(case, topo, l, t, s, Lx, arrangement)
-    return ForwardResult(T_out_h, T_out_c, Q_h, Q_c, dPh, dPc, Re_h, Re_c,
-                         (Ta, Tb, Ts))
+    dPh, dPc = dP_fracs(case, topo, l, t, s, Lx, arrangement)  # 始终入口物性 (保守)
+    return ForwardResult(T_out_h, T_out_c, Q_h, Q_c, dPh, dPc, Re_h, Re_c, fld)

@@ -22,14 +22,16 @@ def t_target(case) -> float:
     cp_h = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h).cp
     return case.T_in_h - case.Q / (case.mdot_h * cp_h)
 
-def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL):
+def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
+             prop_model="const"):
     """二分 Lx ∈ (0, LX_MAX] 使 T_out_hot = target (T_out 随 Lx 单调↓)。
     warm-start: 用上一次解的 fields 续解, 大幅减 LTNE 迭代。
     返回 (Lx, ForwardResult)。不可达 (LX_MAX 仍欠冷) → (None, None)。"""
     tgt = target if target is not None else t_target(case)
     prev = {"f": None}
     def ev(Lx):
-        r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"], k_s=k_s)
+        r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"],
+                    k_s=k_s, prop_model=prop_model)
         prev["f"] = r.fields                # 续解种子
         return r
     lo, hi = max(2.0 * l / 1000.0, 1e-3), LX_MAX
@@ -74,11 +76,12 @@ def _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement) -> float:
         w = max(w, dh / c.dPlim_h, dc / c.dPlim_c)
     return w
 
-def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL):
+def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL, prop_model="const"):
     """全 K 工况冷却所需 Lx 的最大 (governing 终验)。任一不可达 → None。"""
     mx = 0.0
     for c in cases:
-        Lx, _ = solve_Lx(c, topo, l, t, s, arrangement, k_s=k_s)
+        Lx, _ = solve_Lx(c, topo, l, t, s, arrangement, k_s=k_s,
+                         prop_model=prop_model)
         if Lx is None:
             return None
         mx = max(mx, Lx)
@@ -97,7 +100,7 @@ def _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_floor):
     return None
 
 def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
-                    k_s=K_STEEL) -> Design:
+                    k_s=K_STEEL, prop_model="const") -> Design:
     """min-V over s: 每个 s 内定 Lx = max(冷却所需, 满足两侧 dP 所需) (≤450),
     取 V=s²·Lx 最小者。s-loop 冷却只跑 cooling-governing 工况 (其余 dP 解析),
     s* 处对全 K 冷却终验。叉流冷侧迎风=Lx·s → 冷侧 dP 紧时加厚 Lx (而非误判不可行)。
@@ -116,7 +119,8 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
                      for c in cases)
         if dh_min > 1.0:
             continue                                    # 跳过 (省去昂贵冷却解)
-        Lx_cool, _ = solve_Lx(cool_gov, topo, l, t, s, arrangement, k_s=k_s)
+        Lx_cool, _ = solve_Lx(cool_gov, topo, l, t, s, arrangement, k_s=k_s,
+                              prop_model=prop_model)
         if Lx_cool is None:                             # governing 此 s 冷不到
             continue
         any_cool = True
@@ -132,7 +136,8 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
                       else "dP>lim@s_max")
     _, s_star, _ = best
     # s* 处全 K 冷却终验 (governing 预选可能漏个别更难冷工况); 以全K冷却为 Lx 下界重定
-    Lx_floor = _Lx_all(cases, topo, l, t, s_star, arrangement, k_s=k_s)
+    Lx_floor = _Lx_all(cases, topo, l, t, s_star, arrangement, k_s=k_s,
+                       prop_model=prop_model)
     if Lx_floor is None or Lx_floor > LX_MAX:
         return Design(False, reason="cooling-unreachable")
     Lx_star = _min_Lx_for_dP(cases, topo, l, t, s_star, arrangement, Lx_floor)
@@ -141,7 +146,8 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     # 全 K 工况终验 (一次 forward/工况, 既出 percase 明细又汇总; 不再重复 dP_fracs)
     percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
     for c in cases:
-        r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s)
+        r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s,
+                    prop_model=prop_model)
         percase.append(dict(
             case=c.case, hot_fluid=c.hot_fluid, cold_fluid=c.cold_fluid,
             T_air_out=r.T_out_hot, T_cold_out=r.T_out_cold, Q_W=r.Q_hot,

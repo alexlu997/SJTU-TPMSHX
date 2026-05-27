@@ -30,6 +30,8 @@ def run(argv=None) -> int:
                     help="固体材料密度 kg/m³ (默认 7900 = 304 不锈钢)")
     ap.add_argument("--k-s", type=float, default=16.0,
                     help="固体热导率 W/(m·K) (默认 16 = 304SS; 铝~150 铜~300)")
+    ap.add_argument("--prop-model", choices=["const", "mean"], default="const",
+                    help="物性取值温: const=入口(快,默认) / mean=均温(消大-ΔT偏置,~1.5×)")
     ap.add_argument("--jobs", type=int, default=-1,
                     help="auto 枚举并行核数 (-1=全核, 1=串行; joblib loky)")
     ap.add_argument("--out", required=True)
@@ -39,16 +41,18 @@ def run(argv=None) -> int:
     if a.mode == "fixed":
         topo, l, t = _parse_cell(a.cell)
         d = size_fixed_cell(cases, topo, l, t, a.arrangement,
-                            rho_s=a.rho_s, k_s=a.k_s)
+                            rho_s=a.rho_s, k_s=a.k_s, prop_model=a.prop_model)
         results, best = [d], (d if d.feasible else None)
     else:
         nodes = _parse_nodes(a.nodes) if a.nodes else None
         results, best = enumerate_select(cases, a.arrangement, nodes,
-                                         rho_s=a.rho_s, n_jobs=a.jobs, k_s=a.k_s)
+                                         rho_s=a.rho_s, n_jobs=a.jobs, k_s=a.k_s,
+                                         prop_model=a.prop_model)
         if a.refine and best is not None:           # Stage B warm-start 精修
             from .optimize import warm_start_joint
             ref = warm_start_joint(cases, best, a.arrangement,
-                                   rho_s=a.rho_s, k_s=a.k_s)
+                                   rho_s=a.rho_s, k_s=a.k_s,
+                                   prop_model=a.prop_model)
             if ref is not best:
                 results = results + [ref]
     from .report import write_xlsx, cid          # 双 sheet 写入器 (CLI/UI 共用)
