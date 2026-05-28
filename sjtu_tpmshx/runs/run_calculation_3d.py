@@ -43,11 +43,12 @@ from solvers.roughness import (f_enhancement, nu_extra_factor,
 # side already encodes Sa. See `solvers/roughness.py` module docstring for
 # the audit history (1.46 → 1.28 → 1.0).
 #
-# Why kept here despite being provisional: closes Shanghai 3D dP RMSRE
-# from 44.74 % (baseline) → 24.15 % (norris_1a) at Q-side cost ~ 0.7 pp.
-# Expected to be replaced by a Sa-explicit closure once the bs_f_only
-# experimental track converges OR a TPMS-fit rough-wall correlation
-# becomes available.
+# Naming retained for back-compat with existing config files / BO defaults
+# (optimization/evaluator_3d.py also defaults to 'norris_1a'). 2D path in
+# run_calculation.py defaults to 'baseline' — label asymmetry is cosmetic
+# only (verified 2026-05-28 audit C2 follow-up). Stale earlier comment had
+# claimed "norris_1a closes 44.74 %→24.15 %"; that data is from the pre-
+# revert multiplier-bearing version and is obsolete post-2026-05-14.
 _UI_ROUGH_MODE_DEFAULT = 'norris_1a'
 
 
