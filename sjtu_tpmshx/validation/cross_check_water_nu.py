@@ -39,11 +39,14 @@ from solvers.tpms_calc import (
     geometry as tpms_geometry, nu_from_Re, nu_water_from_Re,
 )
 
-# Shanghai geometry
-TPMS = "Gyroid"
-L_CELL = 7.0
-T_WALL = 0.6
-K_S = 16.0
+# Shanghai geometry — canonical from configs/shanghai_baseline.json
+# (Item 3 / AR8, 2026-05-28).
+from configs import load_shanghai_baseline
+_SH = load_shanghai_baseline()
+TPMS = _SH['geometry']['tpms']
+L_CELL = _SH['geometry']['L_cell_mm']
+T_WALL = _SH['geometry']['t_wall_mm']
+K_S = _SH['geometry']['k_s_W_mK']
 
 
 def wakao_kaguei(Re: float, Pr: float) -> float:

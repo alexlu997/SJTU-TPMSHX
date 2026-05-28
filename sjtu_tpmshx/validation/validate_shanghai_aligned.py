@@ -55,12 +55,19 @@ _DT_TOL_K     = 1.0
 _ALPHA_COUP   = 0.7
 
 # ── Geometry (Shanghai Electric Gyroid prototype) ──
-TPMS = 'Gyroid'; L_CELL = 7.0; T_WALL = 0.6; K_S = 16.0
+# Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
+from configs import load_shanghai_baseline
+_SH = load_shanghai_baseline()
+TPMS = _SH['geometry']['tpms']
+L_CELL = _SH['geometry']['L_cell_mm']
+T_WALL = _SH['geometry']['t_wall_mm']
+K_S = _SH['geometry']['k_s_W_mK']
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
 EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
-L_DOM = 0.182; H_DOM = 0.042
-N_UNITS = 36
-A_FLOW_PER_UNIT = 18.0565e-6
+L_DOM = _SH['domain']['L_dom_m']
+H_DOM = _SH['domain']['H_dom_m']
+N_UNITS = _SH['domain']['n_units']
+A_FLOW_PER_UNIT = _SH['domain']['a_flow_per_unit_m2']
 A_FLOW = N_UNITS * A_FLOW_PER_UNIT
 
 from solvers.tpms_calc import adaptive_grid

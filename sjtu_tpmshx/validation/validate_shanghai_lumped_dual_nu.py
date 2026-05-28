@@ -58,16 +58,19 @@ from solvers.tpms_calc import (
 )
 
 # ─── Geometry (Shanghai cross-flow HX) ───────────────────────────
+# Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
 # Air flows along x (full-width inlet on yz face), water flows along y
 # (cross-flow, narrow 42×42 port). Internal interstitial flow areas
 # differ between streams since flow direction differs.
-TPMS = "Gyroid"
-L_CELL = 7.0       # mm
-T_WALL = 0.6       # mm
-K_STEEL = 16.0     # W/(m·K), 304 SS
-L_AIR   = 0.182    # m, x  (air flow length)
-L_WATER = 0.042    # m, y  (water flow length)
-L_Z     = 0.042    # m, z  (spanwise)
+from configs import load_shanghai_baseline
+_SH = load_shanghai_baseline()
+TPMS = _SH['geometry']['tpms']
+L_CELL = _SH['geometry']['L_cell_mm']         # mm
+T_WALL = _SH['geometry']['t_wall_mm']         # mm
+K_STEEL = _SH['geometry']['k_s_W_mK']         # W/(m·K), 304 SS
+L_AIR   = _SH['domain']['L_dom_m']            # m, x  (air flow length)
+L_WATER = _SH['domain']['H_dom_m']            # m, y  (water flow length)
+L_Z     = _SH['domain']['Lz_m']               # m, z  (spanwise)
 # Aliases retained for legacy variable names elsewhere in script
 L_DOM = L_AIR
 H_DOM = L_WATER
