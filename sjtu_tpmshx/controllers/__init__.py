@@ -8,11 +8,20 @@ Phase 3: ThemeManager + SignalRouter — theme + connection lifecycle.
 Phase 4: DomainValidator (TODO).
 Phase 5: FieldFactory (TODO).
 """
+from .compute_config import (
+    ComputeConfig,
+    FluidConfig,
+    GeometryConfig,
+    SolverConfig,
+)
 from .compute_orchestrator import ComputeOrchestrator
 from .result_cache import ResultCache
 from .session_manager import SessionManager
 from .theme_manager import ThemeManager
 from .signal_router import SignalRouter
 
-__all__ = ['ComputeOrchestrator', 'ResultCache', 'SessionManager',
-           'ThemeManager', 'SignalRouter']
+__all__ = [
+    'ComputeConfig', 'FluidConfig', 'GeometryConfig', 'SolverConfig',
+    'ComputeOrchestrator', 'ResultCache', 'SessionManager',
+    'ThemeManager', 'SignalRouter',
+]
