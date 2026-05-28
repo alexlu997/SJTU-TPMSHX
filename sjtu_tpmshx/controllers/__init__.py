@@ -13,6 +13,10 @@ from .compute_config import (
     FluidConfig,
     GeometryConfig,
     SolverConfig,
+    PartialBCConfig,
+    ZoneInputConfig,
+    ExtrapPolicy,
+    FeatureFlags,
 )
 from .compute_orchestrator import ComputeOrchestrator
 from .result_cache import ResultCache
@@ -22,6 +26,7 @@ from .signal_router import SignalRouter
 
 __all__ = [
     'ComputeConfig', 'FluidConfig', 'GeometryConfig', 'SolverConfig',
+    'PartialBCConfig', 'ZoneInputConfig', 'ExtrapPolicy', 'FeatureFlags',
     'ComputeOrchestrator', 'ResultCache', 'SessionManager',
     'ThemeManager', 'SignalRouter',
 ]

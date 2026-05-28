@@ -23,6 +23,10 @@ from controllers.compute_config import (
     FluidConfig,
     GeometryConfig,
     SolverConfig,
+    PartialBCConfig,
+    ZoneInputConfig,
+    ExtrapPolicy,
+    FeatureFlags,
 )
 
 
@@ -32,19 +36,35 @@ from controllers.compute_config import (
 class _StubLineEdit:
     """Tiny stand-in for QLineEdit that returns a fixed text value."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, hidden: bool = False):
         self._text = text
+        self._hidden = hidden
 
     def text(self) -> str:
         return self._text
 
+    def isHidden(self) -> bool:
+        return self._hidden
+
 
 class _StubComboBox:
-    def __init__(self, text: str):
+    def __init__(self, text: str, index: int = 0):
         self._text = text
+        self._index = index
 
     def currentText(self) -> str:
         return self._text
+
+    def currentIndex(self) -> int:
+        return self._index
+
+
+class _StubCheckBox:
+    def __init__(self, checked: bool = False):
+        self._checked = checked
+
+    def isChecked(self) -> bool:
+        return self._checked
 
 
 class _StubWindow:
@@ -288,3 +308,207 @@ def test_from_qt_window_strict_autodetects_3d():
     with pytest.raises(ValueError) as exc:
         ComputeConfig.from_qt_window(window, strict=True)
     assert 'Width Lz' in str(exc.value)
+
+
+# ── audit C4: extended schema (PartialBC / Zone / Extrap / Flags) ───
+
+
+def test_c4_new_dataclasses_have_safe_defaults():
+    """Default-construct each new dataclass — must not raise and must
+    return values that match the legacy ``window`` defaults (zero-width
+    BC = full face; zones disabled; no extrap; wall_refine off; K)."""
+    bc = PartialBCConfig()
+    assert bc.dir == 0
+    assert bc.in_w == 0.0 and bc.in_ctr == 0.0
+    assert bc.in_z_ctr is None and bc.out_z_w is None
+    zn = ZoneInputConfig()
+    assert zn.enabled is False
+    assert zn.axis == 'y'
+    assert zn.grid is None
+    assert zn.pareto_x_decision is None
+    fl = FeatureFlags()
+    assert fl.wall_refine_3d is False
+    assert fl.temp_unit == 'K'
+    ex = ExtrapPolicy()
+    assert ex.allow is False
+
+
+def test_c4_compute_config_default_has_new_fields():
+    """``ComputeConfig()`` must default-construct every new sub-cfg
+    without the caller having to supply them."""
+    cfg = ComputeConfig()
+    assert isinstance(cfg.bc_A, PartialBCConfig)
+    assert isinstance(cfg.bc_B, PartialBCConfig)
+    assert isinstance(cfg.zones, ZoneInputConfig)
+    assert isinstance(cfg.flags, FeatureFlags)
+    assert isinstance(cfg.extrap, ExtrapPolicy)
+
+
+def test_c4_from_qt_window_reads_partial_bc_widgets():
+    """The 2D partial-BC pipe widgets feed ``bc_A`` / ``bc_B``."""
+    window = _StubWindow()
+    window.combo_dirA = _StubComboBox('+x', index=0)
+    window.combo_dirB = _StubComboBox('-y', index=3)
+    window.le_pipeA_in_ctr = _StubLineEdit('0.021')
+    window.le_pipeA_in_w = _StubLineEdit('0.020')
+    window.le_pipeA_out_ctr = _StubLineEdit('0.021')
+    window.le_pipeA_out_w = _StubLineEdit('0.020')
+    window.le_pipeB_in_ctr = _StubLineEdit('0.091')
+    window.le_pipeB_in_w = _StubLineEdit('0.080')
+    window.le_pipeB_out_ctr = _StubLineEdit('0.091')
+    window.le_pipeB_out_w = _StubLineEdit('0.080')
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.bc_A.dir == 0
+    assert cfg.bc_A.in_ctr == pytest.approx(0.021)
+    assert cfg.bc_A.out_w == pytest.approx(0.020)
+    assert cfg.bc_B.dir == 3
+    assert cfg.bc_B.in_w == pytest.approx(0.080)
+    # 3D z-fields absent → stay None
+    assert cfg.bc_A.in_z_ctr is None
+    assert cfg.bc_B.in_z_w is None
+
+
+def test_c4_from_qt_window_reads_partial_bc_z_when_visible():
+    """``le_pipe<side>_in_z_*`` honoured when present and not hidden
+    (3D mode)."""
+    window = _StubWindow()
+    window.combo_dirA = _StubComboBox('+x', index=0)
+    window.le_pipeA_in_ctr = _StubLineEdit('0.02')
+    window.le_pipeA_in_w = _StubLineEdit('0.02')
+    window.le_pipeA_out_ctr = _StubLineEdit('0.02')
+    window.le_pipeA_out_w = _StubLineEdit('0.02')
+    # z-fields visible
+    window.le_pipeA_in_z_ctr = _StubLineEdit('0.025', hidden=False)
+    window.le_pipeA_in_z_w = _StubLineEdit('0.020', hidden=False)
+    window.le_pipeA_out_z_ctr = _StubLineEdit('0.025', hidden=False)
+    window.le_pipeA_out_z_w = _StubLineEdit('0.020', hidden=False)
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.bc_A.in_z_ctr == pytest.approx(0.025)
+    assert cfg.bc_A.out_z_w == pytest.approx(0.020)
+
+
+def test_c4_from_qt_window_skips_partial_bc_z_when_hidden():
+    """Hidden z-widgets fall back to None (2D mode hides them)."""
+    window = _StubWindow()
+    window.combo_dirA = _StubComboBox('+x', index=0)
+    window.le_pipeA_in_ctr = _StubLineEdit('0.02')
+    window.le_pipeA_in_w = _StubLineEdit('0.02')
+    window.le_pipeA_out_ctr = _StubLineEdit('0.02')
+    window.le_pipeA_out_w = _StubLineEdit('0.02')
+    window.le_pipeA_in_z_ctr = _StubLineEdit('0.025', hidden=True)
+    window.le_pipeA_in_z_w = _StubLineEdit('0.020', hidden=True)
+    window.le_pipeA_out_z_ctr = _StubLineEdit('0.025', hidden=True)
+    window.le_pipeA_out_z_w = _StubLineEdit('0.020', hidden=True)
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.bc_A.in_z_ctr is None
+    assert cfg.bc_A.out_z_w is None
+
+
+def test_c4_from_qt_window_reads_zone_state():
+    """``chk_zones`` + ``combo_zone_axis`` + ``_zone_grid`` snapshot
+    into ``cfg.zones``. ``_pareto_*`` carried through unchanged."""
+    window = _StubWindow()
+    window.chk_zones = _StubCheckBox(checked=True)
+    window.combo_zone_axis = _StubComboBox('grid', index=2)
+    window._zone_grid = {'cells': [], 'tpms_type': 'Diamond', 'k_s': 16.0}
+    window._pareto_x_decision = [0.1, 0.2, 0.3]
+    window._pareto_y_trans_inlet = 0.15
+    window._pareto_y_trans_outlet = 0.18
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.zones.enabled is True
+    assert cfg.zones.axis == 'grid'
+    assert cfg.zones.grid is not None
+    assert cfg.zones.grid['tpms_type'] == 'Diamond'
+    assert cfg.zones.pareto_x_decision == [0.1, 0.2, 0.3]
+    assert cfg.zones.pareto_y_trans_inlet == pytest.approx(0.15)
+
+
+def test_c4_from_qt_window_zone_defaults_when_widgets_absent():
+    """No zone widgets on window → zones default (disabled, axis='y')."""
+    window = _StubWindow()
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.zones.enabled is False
+    assert cfg.zones.axis == 'y'
+    assert cfg.zones.grid is None
+    assert cfg.zones.pareto_x_decision is None
+
+
+def test_c4_from_qt_window_reads_extrap_policy():
+    window = _StubWindow()
+    window.chk_allow_extrap = _StubCheckBox(checked=True)
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.extrap.allow is True
+
+
+def test_c4_from_qt_window_extrap_default_when_widget_absent():
+    window = _StubWindow()
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.extrap.allow is False
+
+
+def test_c4_from_qt_window_reads_feature_flags():
+    window = _StubWindow()
+    window.chk_wall_refine_3d = _StubCheckBox(checked=True)
+    window._temp_unit = 'C'
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.flags.wall_refine_3d is True
+    assert cfg.flags.temp_unit == 'C'
+
+
+def test_c4_feature_flags_default_when_widgets_absent():
+    window = _StubWindow()
+    cfg = ComputeConfig.from_qt_window(window)
+    assert cfg.flags.wall_refine_3d is False
+    assert cfg.flags.temp_unit == 'K'
+
+
+def test_c4_json_roundtrip_includes_new_fields():
+    """JSON canonical layout round-trips every new sub-cfg."""
+    cfg = ComputeConfig(
+        bc_A=PartialBCConfig(dir=0, in_ctr=0.021, in_w=0.02,
+                              out_ctr=0.021, out_w=0.02),
+        bc_B=PartialBCConfig(dir=3, in_ctr=0.091, in_w=0.08,
+                              out_ctr=0.091, out_w=0.08),
+        zones=ZoneInputConfig(enabled=True, axis='x',
+                              pareto_y_trans_inlet=0.18),
+        flags=FeatureFlags(wall_refine_3d=True, temp_unit='C'),
+        extrap=ExtrapPolicy(allow=True),
+    )
+    with tempfile.NamedTemporaryFile('w', suffix='.json',
+                                      delete=False) as f:
+        path = f.name
+    try:
+        cfg.to_json(path)
+        cfg2 = ComputeConfig.from_json(path)
+    finally:
+        Path(path).unlink()
+    assert cfg2.bc_A.dir == 0
+    assert cfg2.bc_A.in_ctr == pytest.approx(0.021)
+    assert cfg2.bc_B.dir == 3
+    assert cfg2.zones.enabled is True
+    assert cfg2.zones.axis == 'x'
+    assert cfg2.zones.pareto_y_trans_inlet == pytest.approx(0.18)
+    assert cfg2.flags.wall_refine_3d is True
+    assert cfg2.flags.temp_unit == 'C'
+    assert cfg2.extrap.allow is True
+
+
+def test_c4_legacy_json_without_new_fields_keeps_defaults():
+    """Old JSON files (no bc_A/zones/flags) load with default sub-cfgs."""
+    legacy = {
+        'fluid_A': {'type': 'air', 'u_mps': 5.0},
+        'geometry': {'tpms': 'Gyroid', 'L_dom_m': 0.182},
+        'solver': {'Nx': 30},
+    }
+    with tempfile.NamedTemporaryFile('w', suffix='.json',
+                                      delete=False) as f:
+        path = f.name
+    try:
+        Path(path).write_text(json.dumps(legacy), encoding='utf-8')
+        cfg = ComputeConfig.from_json(path)
+    finally:
+        Path(path).unlink()
+    assert cfg.bc_A.dir == 0
+    assert cfg.zones.enabled is False
+    assert cfg.flags.temp_unit == 'K'
+    assert cfg.extrap.allow is False

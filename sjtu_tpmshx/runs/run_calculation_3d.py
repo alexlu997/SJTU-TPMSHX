@@ -694,23 +694,60 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
 
 # ─────────────────────────── internals ────────────────────────────
 
-def _parse_inputs(window, compute_cfg=None):
-    """Phase 1: route scalars from ``ComputeConfig`` + zone/extrap state
-    from the window into the cfg dict consumed by ``_run_3d_stack``.
+def _bc_cfg_to_dict_3d_A(bc, L_dom, H_dom):
+    """Convert :class:`PartialBCConfig` (side A) → legacy 3D BC dict.
 
-    Audit C3 (2026-05-28, L-a-1): all scalar reads moved from
-    ``le_*`` widgets into :class:`ComputeConfig`. Strict validation
-    runs upstream in ``ComputeConfig.from_qt_window(strict=True)``.
-
-    ``compute_cfg`` defaults to ``None`` for backward compatibility
-    with callers that pass only the window (e.g. older regression
-    tests). When ``None``, the strict ``from_qt_window`` adapter is
-    invoked here.
+    Mirrors the 2D fallback ``dict(dir=0, in_ctr=H/2, in_w=H, …)`` when
+    ``bc.in_w == 0``. Adds ``in_z_*`` / ``out_z_*`` only when the cfg
+    captured 3D z-partial fields.
     """
-    if compute_cfg is None:
-        compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
-                                                    force_3d=True)
-    # Scalar geometry + grid + fluids — sourced from ComputeConfig.
+    is_x_flow = bc.dir in (0, 1)
+    cross_dim = H_dom if is_x_flow else L_dom
+    if bc.in_w > 0 and bc.out_w > 0:
+        d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
+                 out_ctr=bc.out_ctr, out_w=bc.out_w)
+    else:
+        d = dict(dir=bc.dir, in_ctr=cross_dim / 2, in_w=cross_dim,
+                 out_ctr=cross_dim / 2, out_w=cross_dim)
+    # 3D z-partial overlay (None = full-face along z).
+    if bc.in_z_ctr is not None:
+        d['in_z_ctr'] = bc.in_z_ctr
+        d['in_z_w'] = bc.in_z_w
+        d['out_z_ctr'] = bc.out_z_ctr
+        d['out_z_w'] = bc.out_z_w
+    return d
+
+
+def _bc_cfg_to_dict_3d_B(bc):
+    """Convert :class:`PartialBCConfig` (side B) → legacy 3D BC dict
+    or ``None``.
+
+    The 3D solver treats ``fluid_B_cfg=None`` as "B has no partial-pipe
+    overlay, use full-face cross-flow"; this is the legacy ValueError
+    fallback in ``_parse_inputs`` (side B only — side A always falls
+    back to a full-face dict).  Reproduce that asymmetry exactly.
+    """
+    if bc.in_w <= 0 and bc.out_w <= 0:
+        return None
+    d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
+             out_ctr=bc.out_ctr, out_w=bc.out_w)
+    if bc.in_z_ctr is not None:
+        d['in_z_ctr'] = bc.in_z_ctr
+        d['in_z_w'] = bc.in_z_w
+        d['out_z_ctr'] = bc.out_z_ctr
+        d['out_z_w'] = bc.out_z_w
+    return d
+
+
+def _parse_inputs_3d_cfg(compute_cfg):
+    """Phase 1 (Qt-free) 3D mirror of ``_parse_inputs(window, compute_cfg)``.
+
+    Audit C4 (L-a-2): reads only :class:`ComputeConfig`. Returns the
+    same parsed dict ``_run_3d_stack`` expects plus an
+    ``extrap_reasons`` key (the legacy version mutated this onto
+    ``window._extrap_reasons``).
+    """
+    # ── scalar geometry + grid + fluids ─────────────────────────────
     L = compute_cfg.geometry.L_dom_m
     H = compute_cfg.geometry.H_dom_m
     Lz = (compute_cfg.geometry.Lz_m
@@ -719,26 +756,25 @@ def _parse_inputs(window, compute_cfg=None):
     Ny = compute_cfg.solver.Ny
     Nz = compute_cfg.solver.Nz
 
-    # Basic positive-domain sanity checks
     for name, val in [('L', L), ('H', H), ('Lz', Lz)]:
         if val <= 0:
-            raise ValueError(f"Domain dimension {name!r} must be > 0 (got {val})")
-    # Defensive unit check: GUI labels L/H/Lz as METERS but L_cell / t are in
-    # MM. A user typing the TPMS-cell value (mm) into the domain field (m)
-    # would silently spawn a 7 m × 0.6 m domain. Cap at 10 m as a sanity
-    # firewall — physical TPMS HX rigs are sub-meter. Adjust if you ever
-    # actually want to model a >10 m duct.
+            raise ValueError(
+                f"Domain dimension {name!r} must be > 0 (got {val})")
     _DOMAIN_MAX_M = 10.0
     for name, val in [('L', L), ('H', H), ('Lz', Lz)]:
         if val > _DOMAIN_MAX_M:
             raise ValueError(
-                f"Domain dimension {name!r}={val} m exceeds {_DOMAIN_MAX_M} m. "
-                f"Likely unit slip — GUI expects meters here, while L_cell "
-                f"and t use millimeters. Re-check input.")
+                f"Domain dimension {name!r}={val} m exceeds "
+                f"{_DOMAIN_MAX_M} m. Likely unit slip — GUI expects "
+                f"meters here, while L_cell and t use millimeters. "
+                f"Re-check input.")
     for name, val in [('Nx', Nx), ('Ny', Ny), ('Nz', Nz)]:
         if val < 1:
-            raise ValueError(f"Grid count {name!r} must be >= 1 (got {val})")
+            raise ValueError(
+                f"Grid count {name!r} must be >= 1 (got {val})")
+
     u_A = compute_cfg.fluid_A.u_mps
+    u_B = compute_cfg.fluid_B.u_mps
     T_inA = compute_cfg.fluid_A.T_in_K
     T_inB = compute_cfg.fluid_B.T_in_K
     T_s_init = compute_cfg.solver.T_s_init_K
@@ -753,30 +789,20 @@ def _parse_inputs(window, compute_cfg=None):
     eps = g['epsilon']
     D_h = g['D_h']
 
-    # Fluid A + B inlet/outlet config (for partial BC). Fallback = full face.
-    try:
-        fluid_A_cfg = window._fluid_config('A')
-    except Exception:
-        fluid_A_cfg = dict(dir=0, in_ctr=H / 2, in_w=H,
-                           out_ctr=H / 2, out_w=H)
-    try:
-        fluid_B_cfg = window._fluid_config('B')
-    except Exception:
-        fluid_B_cfg = None
-    u_B = compute_cfg.fluid_B.u_mps
+    # Partial-pipe BC dicts — side A full-face fallback, side B None.
+    fluid_A_cfg = _bc_cfg_to_dict_3d_A(compute_cfg.bc_A, L, H)
+    fluid_B_cfg = _bc_cfg_to_dict_3d_B(compute_cfg.bc_B)
 
-    # Surrogate training-domain guard for the UI 3D Compute path (#10).
-    # Opt-in extrapolation via `chk_allow_extrap` or env TPMSHX_ALLOW_EXTRAP.
-    window._extrap_reasons = []
-    _allow_extrap = bool(getattr(window, 'chk_allow_extrap', None)
-                         and window.chk_allow_extrap.isChecked())
+    # Surrogate-domain extrap guard — cfg.extrap.allow drives it.
+    extrap_reasons = []
+    _allow_extrap = bool(compute_cfg.extrap.allow)
     try:
         from df_fit.surrogate_domain import check_surrogate_domain_at_point
-        window._extrap_reasons += check_surrogate_domain_at_point(
+        extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_A, T_inA, P_inA, side='A',
             allow_extrap=_allow_extrap) or []
-        window._extrap_reasons += check_surrogate_domain_at_point(
+        extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_B, T_inB, P_inB, side='B',
             allow_extrap=_allow_extrap) or []
@@ -787,29 +813,21 @@ def _parse_inputs(window, compute_cfg=None):
     from solvers.tpms_calc import validate_fluid_type
     fluid_type_A = compute_cfg.fluid_A.type
     fluid_type_B = compute_cfg.fluid_B.type
-
     validate_fluid_type(fluid_type_A, 'A')
     validate_fluid_type(fluid_type_B, 'B')
 
-    # 3D wall refinement toggle. Default OFF (matches UI checkbox default,
-    # see ui_builders.py:628). Refine adds 8 BL cells per wall × 6 walls
-    # → ~6× cell count, 3-5 min runs; only enable if BL accuracy needed.
-    wall_refine = False
-    if hasattr(window, 'chk_wall_refine_3d'):
-        wall_refine = bool(window.chk_wall_refine_3d.isChecked())
-
-    # Optional zone grid (2D design broadcast over z for 3D z-uniform zoning)
+    # Feature flags — sourced from cfg.flags + cfg.zones.
+    wall_refine = bool(compute_cfg.flags.wall_refine_3d)
     zone_grid_cells = None
-    if (getattr(window, 'chk_zones', None) is not None
-            and window.chk_zones.isChecked()
-            and getattr(window, '_zone_grid', None) is not None):
-        zg = window._zone_grid
+    if (compute_cfg.zones.enabled and compute_cfg.zones.grid is not None):
+        zg = compute_cfg.zones.grid
         if isinstance(zg, dict) and zg.get('cells'):
             zone_grid_cells = zg['cells']
 
     return dict(
         L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
-        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB, P_inA=P_inA, P_inB=P_inB,
+        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
+        P_inA=P_inA, P_inB=P_inB,
         T_s_init=T_s_init,
         Lcell=Lcell, t_wall=t_wall, k_s=k_s, tpms_type=tpms_type,
         eps=eps, D_h=D_h,
@@ -819,9 +837,177 @@ def _parse_inputs(window, compute_cfg=None):
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
-        # Stash strict ComputeConfig for downstream consumers (C3).
+        extrap_reasons=extrap_reasons,
         compute_cfg=compute_cfg,
     )
+
+
+def _build_fields_3d_cfg(parsed):
+    """Phase 2 (Qt-free) 3D: passthrough.
+
+    Audit C4 (L-a-2). The 3D stack has no separate build phase — the
+    cfg dict from :func:`_parse_inputs_3d_cfg` is consumed directly by
+    :func:`_run_3d_stack`. This stub keeps the Pipeline ABC contract
+    symmetric with 2D: ``build_fields → run_solvers → finalize``.
+    """
+    return parsed
+
+
+def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
+                         cancel_token=None):
+    """Phase 3 (Qt-free) 3D: drive :func:`_run_3d_stack` with the
+    progress + cancel hooks read off the cfg dict.
+
+    Audit C4 (L-a-2). Wraps the existing ``_run_3d_stack(cfg)`` body
+    without modifying it.  ``parsed`` and ``fields`` are the same dict
+    (the build phase is a passthrough); the Pipeline ABC contract
+    surfaces both so the signature matches :class:`Pipeline2D`.
+    """
+    import os as _os
+    cfg = dict(parsed)  # shallow copy — _run_3d_stack mutates a few keys
+
+    # Progress + cancel hooks (mirrors legacy run_calculation_3d_inner_cfg).
+    if progress_cb is not None:
+        cfg['_progress_cb'] = (lambda pct, _cb=progress_cb: _cb(int(pct)))
+    if cancel_token is not None:
+        cfg['_cancel_check'] = (lambda _tok=cancel_token:
+                                bool(getattr(_tok, 'cancelled', False)))
+
+    # Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
+    cfg.setdefault('use_adaptive_amg_tol',
+                    _os.getenv('TPMSHX_PHASE_A', '1') != '0')
+    cfg.setdefault('use_anderson',
+                    _os.getenv('TPMSHX_PHASE_B', '0') == '1')
+    cfg.setdefault('use_coarse_bootstrap',
+                    _os.getenv('TPMSHX_PHASE_C', '0') == '1')
+
+    return _run_3d_stack(cfg)
+
+
+def _finalize_3d_cfg(raw, fields):
+    """Phase 4 (Qt-free) 3D: assemble a :class:`ComputeResult` from the
+    ``_run_3d_stack`` output.
+
+    Audit C4 (L-a-2). The 3D result dict is much richer than the 2D
+    one — most fields land in ``ComputeResult.fields`` /
+    ``ComputeResult.diagnostics``. The headline scalars (``Q_total``,
+    ``dP_A`` / ``dP_B``, ``T_out_A`` / ``T_out_B``) lift directly.
+    """
+    from controllers.compute_pipeline import ComputeResult
+    compute_cfg = fields.get('compute_cfg')
+
+    # 3D solver already computed mass-weighted outlet T per side.
+    # ``raw.get(key, default)`` only returns ``default`` when ``key`` is
+    # absent — explicit ``None`` values (e.g. when fluid B is frozen)
+    # come back as ``None``, which would crash ``float(None)``. Guard
+    # via ``or`` so any None / missing value falls back to ``nan``.
+    def _safe_float(v):
+        try:
+            return float(v) if v is not None else float('nan')
+        except (TypeError, ValueError):
+            return float('nan')
+
+    T_out_A = _safe_float(raw.get('T_out_A', raw.get('T_A_out')))
+    T_out_B = _safe_float(raw.get('T_out_B', raw.get('T_B_out')))
+
+    # TPMS geometry (eps + D_h + A_0) for props slot.
+    eps_geom = D_h_m = A_0_m2 = float('nan')
+    if compute_cfg is not None:
+        from solvers.tpms_calc import geometry as _tpms_geom
+        g = _tpms_geom(compute_cfg.geometry.tpms,
+                       compute_cfg.geometry.L_cell_mm,
+                       compute_cfg.geometry.t_wall_mm,
+                       compute_cfg.geometry.k_s_W_mK)
+        eps_geom = g['epsilon']
+        D_h_m = g['D_h']
+        A_0_m2 = g['A_0']
+
+    return ComputeResult(
+        Q_W=_safe_float(raw.get('Q_total', raw.get('Q'))),
+        dP_A_Pa=_safe_float(raw.get('dP_A', raw.get('dP'))),
+        dP_B_Pa=_safe_float(raw.get('dP_B')),
+        T_out_A_K=T_out_A,
+        T_out_B_K=T_out_B,
+        fields={
+            'Ta': raw.get('Ta'),
+            'Tb': raw.get('Tb'),
+            'Ts': raw.get('Ts'),
+            'P_fA': raw.get('P_Pa'),
+            'P_fB': raw.get('P_Pa_B'),
+            'ucA': raw.get('uc_real'),
+            'vcA': raw.get('vc_real'),
+            'wcA': raw.get('wc_real'),
+            'ucB': raw.get('uc_real_B'),
+            'vcB': raw.get('vc_real_B'),
+            'wcB': raw.get('wc_real_B'),
+            'dx': raw.get('dx'),
+            'dy': raw.get('dy'),
+            'dz': raw.get('dz'),
+            'Lx': raw.get('Lx'),
+            'Ly': raw.get('Ly'),
+            'Lz': raw.get('Lz'),
+            'dir_A': raw.get('dir_A'),
+            'dir_B': raw.get('dir_B'),
+            'vmag_A': raw.get('vmag'),
+            'vmag_B': raw.get('vmag_B'),
+            'chi_B': raw.get('chi_B'),
+            'h_vA_field': raw.get('h_vA_field'),
+            'h_vB_field': raw.get('h_vB_field'),
+        },
+        coeffs={
+            'K_ffA': raw.get('_audit_K_ffA'),
+            'K_ffB': raw.get('_audit_K_ffB'),
+            'K_ss': raw.get('_audit_K_ss'),
+        },
+        props={
+            'eps_A': eps_geom,
+            'D_h_m': D_h_m,
+            'A_0_m2': A_0_m2,
+            'rho_cp_A': raw.get('_audit_rho_cp_fA'),
+            'rho_cp_B': raw.get('_audit_rho_cp_fB'),
+        },
+        residuals={
+            'Q_enthalpy_A': _safe_float(raw.get('Q_enthalpy_A')),
+            'Q_enthalpy_B': _safe_float(raw.get('Q_enthalpy_B')),
+            'Q_solid_B': _safe_float(raw.get('Q_solid_B')),
+            'Q_sA': _safe_float(raw.get('Q_sA')),
+            'Q_sB': _safe_float(raw.get('Q_sB')),
+            'Q_net': _safe_float(raw.get('Q_net')),
+            'Q_interior': _safe_float(raw.get('Q_interior')),
+            'energy_imbalance_rel': _safe_float(
+                raw.get('energy_imbalance_rel')),
+            'mass_imbalance_rel_A': _safe_float(
+                raw.get('mass_imbalance_rel_A')),
+            'mass_imbalance_rel_B': _safe_float(
+                raw.get('mass_imbalance_rel_B')),
+        },
+        zones=None,  # 3D zones land in fields['chi_B'] / fields['*'] directly
+        warnings=[],
+        extrap_reasons=list(fields.get('extrap_reasons', [])),
+        diagnostics={
+            '_ltne_info': raw.get('_ltne_info'),
+            'AB_interior': raw.get('AB_interior'),
+            'Q_sA_interior': raw.get('Q_sA_interior'),
+            'Q_sB_interior': raw.get('Q_sB_interior'),
+        },
+    )
+
+
+def _parse_inputs(window, compute_cfg=None):
+    """Phase 1 adapter: thin wrapper around :func:`_parse_inputs_3d_cfg`
+    that propagates the extrap-reasons list back onto ``window`` so the
+    UI watermark + status-bar handler keep working.
+
+    Audit C4 (L-a-2): the cfg-pure body lives in ``_parse_inputs_3d_cfg``;
+    Pipeline3D drives that directly without a window.
+    """
+    if compute_cfg is None:
+        compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
+                                                    force_3d=True)
+    parsed = _parse_inputs_3d_cfg(compute_cfg)
+    if window is not None:
+        window._extrap_reasons = list(parsed.get('extrap_reasons', []))
+    return parsed
 
 
 def _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz):
