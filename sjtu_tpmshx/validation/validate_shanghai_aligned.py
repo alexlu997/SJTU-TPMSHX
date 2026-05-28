@@ -347,15 +347,18 @@ for ci in range(16):
 
 
 # ── Summary + save ──
+from validation._metrics import err_stats_pct
 out_df = pd.DataFrame(results)
 err_dp = np.array([r['err_dP%'] for r in results])
 err_q  = np.array([r['err_Q%']  for r in results])
+rmsre_dp, bias_dp, maxabs_dp = err_stats_pct(err_dp)
+rmsre_q,  bias_q,  maxabs_q  = err_stats_pct(err_q)
 print('='*72)
-print(f"RMSRE_dP = {np.sqrt(np.mean(err_dp**2)):.2f}%   "
-      f"mean_bias_dP = {np.mean(err_dp):+.2f}%   "
-      f"max|err_dP| = {np.max(np.abs(err_dp)):.1f}%")
-print(f"RMSRE_Q  = {np.sqrt(np.mean(err_q**2)):.2f}%   "
-      f"mean_bias_Q  = {np.mean(err_q):+.2f}%   "
+print(f"RMSRE_dP = {rmsre_dp:.2f}%   "
+      f"mean_bias_dP = {bias_dp:+.2f}%   "
+      f"max|err_dP| = {maxabs_dp:.1f}%")
+print(f"RMSRE_Q  = {rmsre_q:.2f}%   "
+      f"mean_bias_Q  = {bias_q:+.2f}%   "
       f"max|err_Q|  = {np.max(np.abs(err_q)):.1f}%")
 
 out_path = _DATA / 'shanghai_validation_aligned.xlsx'
