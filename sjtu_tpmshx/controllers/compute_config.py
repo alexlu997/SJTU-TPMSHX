@@ -49,6 +49,7 @@ from typing import Any, Dict, Literal, Optional, Union
 FluidType = Literal['air', 'water', 'sco2']
 TPMSType = Literal['Diamond', 'Gyroid']
 RoughMode = Literal['baseline', 'norris_1a', 'bhatti_shah_1b']
+ZoneAxis = Literal['x', 'y', 'grid']
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -189,6 +190,102 @@ def _temp_in_K(window, widget, default_K: float) -> float:
     return _qt_float(widget, default_K)
 
 
+def _read_partial_bc(window, side: Literal['A', 'B']) -> 'PartialBCConfig':
+    """Snapshot the per-side partial-pipe BC widgets into a dataclass.
+
+    Mirrors ``Main_Menu._fluid_config(side)`` but does not call back into
+    the window once the cfg is built. Optional z-partial widgets are
+    only honoured when the matching ``le_pipe<side>_in_z_*`` widgets
+    exist and are visible (3D mode); otherwise the z-fields stay
+    ``None`` and the solver treats the z-axis as full-face.
+    """
+    le_prefix = f'le_pipe{side}'
+    combo_dir = getattr(window, f'combo_dir{side}', None)
+    dir_int = 0
+    if combo_dir is not None:
+        try:
+            dir_int = int(combo_dir.currentIndex())
+        except Exception:
+            dir_int = 0
+    bc = PartialBCConfig(
+        dir=dir_int,
+        in_ctr=_qt_float(getattr(window, f'{le_prefix}_in_ctr', None), 0.0),
+        in_w=_qt_float(getattr(window, f'{le_prefix}_in_w', None), 0.0),
+        out_ctr=_qt_float(getattr(window, f'{le_prefix}_out_ctr', None), 0.0),
+        out_w=_qt_float(getattr(window, f'{le_prefix}_out_w', None), 0.0),
+    )
+    # 3D z-partial widgets are only present (and visible) in 3D mode.
+    le_in_z_ctr = getattr(window, f'{le_prefix}_in_z_ctr', None)
+    if le_in_z_ctr is not None:
+        try:
+            visible = not le_in_z_ctr.isHidden()
+        except Exception:
+            visible = True
+        if visible:
+            try:
+                bc.in_z_ctr = float(le_in_z_ctr.text())
+                bc.in_z_w = float(getattr(window, f'{le_prefix}_in_z_w').text())
+                bc.out_z_ctr = float(
+                    getattr(window, f'{le_prefix}_out_z_ctr').text())
+                bc.out_z_w = float(
+                    getattr(window, f'{le_prefix}_out_z_w').text())
+            except (AttributeError, ValueError):
+                # Leave z-fields as None — solver treats as full face.
+                pass
+    return bc
+
+
+def _read_zone_input(window) -> 'ZoneInputConfig':
+    """Snapshot zone / sigmoid-field control state.
+
+    Reads ``chk_zones``, ``combo_zone_axis``, ``_zone_grid``, and the
+    ``_pareto_*`` attributes. The actual ``ZoneConfig`` object (1D mode)
+    is *not* resolved here — the pipeline builds it from the zone table
+    or the captured grid cells. Keeping ``ZoneInputConfig`` pure-data
+    makes the cfg trivially JSON-serialisable.
+    """
+    chk = getattr(window, 'chk_zones', None)
+    enabled = bool(chk is not None and getattr(chk, 'isChecked', lambda: False)())
+    axis: ZoneAxis = 'y'
+    combo = getattr(window, 'combo_zone_axis', None)
+    if combo is not None:
+        try:
+            idx = int(combo.currentIndex())
+            axis = ('y', 'x', 'grid')[max(0, min(idx, 2))]
+        except Exception:
+            axis = 'y'
+    grid = getattr(window, '_zone_grid', None)
+    return ZoneInputConfig(
+        enabled=enabled,
+        axis=axis,
+        grid=grid if isinstance(grid, dict) else None,
+        pareto_x_decision=getattr(window, '_pareto_x_decision', None),
+        pareto_y_trans_inlet=float(
+            getattr(window, '_pareto_y_trans_inlet', 0.2)),
+        pareto_y_trans_outlet=float(
+            getattr(window, '_pareto_y_trans_outlet', 0.2)),
+    )
+
+
+def _read_feature_flags(window) -> 'FeatureFlags':
+    """Snapshot UI feature-flag toggles that survive into the solver."""
+    chk_wall = getattr(window, 'chk_wall_refine_3d', None)
+    wall = bool(chk_wall is not None and
+                getattr(chk_wall, 'isChecked', lambda: False)())
+    unit = getattr(window, '_temp_unit', 'K')
+    if unit not in ('K', 'C'):
+        unit = 'K'
+    return FeatureFlags(wall_refine_3d=wall, temp_unit=unit)
+
+
+def _read_extrap_policy(window) -> 'ExtrapPolicy':
+    """Snapshot the surrogate-domain extrapolation allow flag."""
+    chk = getattr(window, 'chk_allow_extrap', None)
+    allow = bool(chk is not None and
+                 getattr(chk, 'isChecked', lambda: False)())
+    return ExtrapPolicy(allow=allow)
+
+
 # ── dataclasses ──────────────────────────────────────────────────────
 
 
@@ -240,6 +337,79 @@ class SolverConfig:
 
 
 @dataclass
+class PartialBCConfig:
+    """Per-side partial-pipe inlet/outlet placement (cross-stream).
+
+    ``dir`` is the flow direction encoded by ``window._DIR_MAP``:
+    ``0=+x``, ``1=-x``, ``2=+y``, ``3=-y``. ``in_ctr``/``in_w`` and
+    ``out_ctr``/``out_w`` are inlet / outlet centre + width in the
+    cross-stream coordinate (m). ``in_z_*``/``out_z_*`` extend to the
+    3D z-axis partial mask; ``None`` means "full face along z".
+
+    Audit C4 (L-a-2): added so the pipeline does not have to call back
+    into ``window._fluid_config(which)``.
+    """
+    dir: int = 0
+    in_ctr: float = 0.0
+    in_w: float = 0.0
+    out_ctr: float = 0.0
+    out_w: float = 0.0
+    in_z_ctr: Optional[float] = None
+    in_z_w: Optional[float] = None
+    out_z_ctr: Optional[float] = None
+    out_z_w: Optional[float] = None
+
+
+@dataclass
+class ZoneInputConfig:
+    """Zone / sigmoid-field control state.
+
+    Captures the inputs that the legacy ``window._build_zone_config()``
+    + ``window._zone_axis()`` pair plus the ``_pareto_*`` attributes
+    fed into the 2D/3D solver. The pipeline builds the actual zone
+    property arrays (``za``) from this; the resolved ``ZoneConfig``
+    object lives in the intermediate fields dict, not here.
+
+    Audit C4 (L-a-2).
+    """
+    enabled: bool = False
+    axis: ZoneAxis = 'y'
+    grid: Optional[Dict[str, Any]] = None  # cells / tpms_type / k_s
+    pareto_x_decision: Optional[Any] = None
+    pareto_y_trans_inlet: float = 0.2
+    pareto_y_trans_outlet: float = 0.2
+
+
+@dataclass
+class ExtrapPolicy:
+    """Surrogate-domain extrapolation policy.
+
+    ``allow`` mirrors the ``chk_allow_extrap`` checkbox (or the
+    ``TPMSHX_ALLOW_EXTRAP=1`` env var read by the optimizer entrypoints).
+    The pipeline appends string reasons to a separate ``warnings`` list
+    on :class:`ComputeResult`; this dataclass is *input only*.
+
+    Audit C4 (L-a-2).
+    """
+    allow: bool = False
+
+
+@dataclass
+class FeatureFlags:
+    """UI toggles that survive into the solver layer.
+
+    ``wall_refine_3d`` mirrors ``window.chk_wall_refine_3d`` (3D wall
+    boundary-layer refinement). ``temp_unit`` mirrors ``window._temp_unit``
+    purely for round-tripping; ComputeConfig fields are always Kelvin so
+    the solver itself never needs this flag.
+
+    Audit C4 (L-a-2).
+    """
+    wall_refine_3d: bool = False
+    temp_unit: Literal['K', 'C'] = 'K'
+
+
+@dataclass
 class ComputeConfig:
     """Composite settings handed to solver-side entrypoints.
 
@@ -251,6 +421,13 @@ class ComputeConfig:
     fluid_B: FluidConfig = field(default_factory=FluidConfig)
     geometry: GeometryConfig = field(default_factory=GeometryConfig)
     solver: SolverConfig = field(default_factory=SolverConfig)
+    # ── audit C4 additions: cover the non-le_* window state that the
+    # ── pipeline needs but C3 deliberately punted on.
+    bc_A: PartialBCConfig = field(default_factory=PartialBCConfig)
+    bc_B: PartialBCConfig = field(default_factory=PartialBCConfig)
+    zones: ZoneInputConfig = field(default_factory=ZoneInputConfig)
+    extrap: ExtrapPolicy = field(default_factory=ExtrapPolicy)
+    flags: FeatureFlags = field(default_factory=FeatureFlags)
 
     # ── derived ──────────────────────────────────────────────────────
 
@@ -347,8 +524,20 @@ class ComputeConfig:
             P_in_Pa=_qt_float(getattr(window, 'le_PinB', None), 101325.0),
         )
 
+        # ── audit C4 additions ──────────────────────────────────
+        # Partial-pipe BC + zone state + feature flags + extrap policy.
+        # Defaults preserve legacy behaviour when widgets are missing
+        # (test stubs, headless scripts).
+        bc_A = _read_partial_bc(window, 'A')
+        bc_B = _read_partial_bc(window, 'B')
+        zones = _read_zone_input(window)
+        flags = _read_feature_flags(window)
+        extrap = _read_extrap_policy(window)
+
         return cls(fluid_A=fluid_A, fluid_B=fluid_B,
-                   geometry=geom, solver=solver)
+                   geometry=geom, solver=solver,
+                   bc_A=bc_A, bc_B=bc_B,
+                   zones=zones, flags=flags, extrap=extrap)
 
     # ── JSON ─────────────────────────────────────────────────────────
 
@@ -394,11 +583,23 @@ class ComputeConfig:
             fB_d = data.get('fluid_B', {}) or {}
             ge_d = data.get('geometry', {}) or {}
             so_d = data.get('solver', {}) or {}
+            # audit C4 additions — all optional, default-constructed
+            # when absent so old JSON files keep round-tripping.
+            bcA_d = data.get('bc_A', {}) or {}
+            bcB_d = data.get('bc_B', {}) or {}
+            zn_d = data.get('zones', {}) or {}
+            fl_d = data.get('flags', {}) or {}
+            ex_d = data.get('extrap', {}) or {}
             return cls(
                 fluid_A=FluidConfig(**fA_d) if fA_d else FluidConfig(),
                 fluid_B=FluidConfig(**fB_d) if fB_d else FluidConfig(),
                 geometry=GeometryConfig(**ge_d) if ge_d else GeometryConfig(),
                 solver=SolverConfig(**so_d) if so_d else SolverConfig(),
+                bc_A=PartialBCConfig(**bcA_d) if bcA_d else PartialBCConfig(),
+                bc_B=PartialBCConfig(**bcB_d) if bcB_d else PartialBCConfig(),
+                zones=ZoneInputConfig(**zn_d) if zn_d else ZoneInputConfig(),
+                flags=FeatureFlags(**fl_d) if fl_d else FeatureFlags(),
+                extrap=ExtrapPolicy(**ex_d) if ex_d else ExtrapPolicy(),
             )
 
         # ── legacy shanghai_baseline.json layout ────────────────
@@ -419,7 +620,9 @@ class ComputeConfig:
 
 
 __all__ = [
-    'FluidType', 'TPMSType', 'RoughMode',
+    'FluidType', 'TPMSType', 'RoughMode', 'ZoneAxis',
     'FluidConfig', 'GeometryConfig', 'SolverConfig',
+    'PartialBCConfig', 'ZoneInputConfig',
+    'ExtrapPolicy', 'FeatureFlags',
     'ComputeConfig',
 ]
