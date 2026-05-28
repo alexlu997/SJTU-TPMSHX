@@ -280,10 +280,38 @@ def _enthalpy_q(arrays: dict, Tb: np.ndarray, Ts: np.ndarray,
 # ─── Public API ─────────────────────────────────────────────────────
 
 
+def _compute_cfg_to_evaluator_dict(compute_cfg) -> dict:
+    """Map ``controllers.ComputeConfig`` → evaluator-style flat dict.
+
+    Audit C3 (2026-05-28, L-a-1): callers can pass a strict-typed
+    ComputeConfig instead of hand-rolling a dict. Keys are the subset
+    that overlaps with :data:`DEFAULT_CONFIG`; everything else stays
+    on the dataclass defaults.
+    """
+    return {
+        'L_domain': compute_cfg.geometry.L_dom_m,
+        'H_domain': compute_cfg.geometry.H_dom_m,
+        'Nx': compute_cfg.solver.Nx,
+        'Ny': compute_cfg.solver.Ny,
+        'tpms_type': compute_cfg.geometry.tpms,
+        'k_s': compute_cfg.geometry.k_s_W_mK,
+        'u_A': compute_cfg.fluid_A.u_mps,
+        'u_B': compute_cfg.fluid_B.u_mps,
+        'T_inA': compute_cfg.fluid_A.T_in_K,
+        'T_inB': compute_cfg.fluid_B.T_in_K,
+        'P_inA': compute_cfg.fluid_A.P_in_Pa,
+        'P_inB': compute_cfg.fluid_B.P_in_Pa,
+        'max_iter_simple': compute_cfg.solver.max_iter_simple,
+        'tol_simple': compute_cfg.solver.tol_simple,
+        'tol_energy': compute_cfg.solver.outer_tol_K,
+    }
+
+
 def evaluate_design(x: np.ndarray,
                     cfg: dict | None = None,
                     fc: ContinuousFieldConfig | None = None,
-                    *, verbose: bool = False) -> tuple:
+                    *, verbose: bool = False,
+                    compute_cfg=None) -> tuple:
     """Evaluate one continuous-field design.
 
     Parameters
@@ -293,6 +321,11 @@ def evaluate_design(x: np.ndarray,
     fc  : ContinuousFieldConfig — pre-built field (e.g. for sanity tests
                         bypassing the encode/decode step).
     verbose : bool    — propagate to SIMPLE for residual printout.
+    compute_cfg : controllers.ComputeConfig, optional
+                        Strict-typed config (audit C3, L-a-1). When
+                        provided, its overlapping fields are merged
+                        underneath ``cfg`` so the dict path keeps
+                        absolute precedence.
 
     Returns
     -------
@@ -301,7 +334,11 @@ def evaluate_design(x: np.ndarray,
                     penalty [Pa].
     mass  : float — solid mass per unit depth [kg/m].
     """
-    cfg_full = {**DEFAULT_CONFIG, **(cfg or {})}
+    if compute_cfg is not None:
+        cc_dict = _compute_cfg_to_evaluator_dict(compute_cfg)
+        cfg_full = {**DEFAULT_CONFIG, **cc_dict, **(cfg or {})}
+    else:
+        cfg_full = {**DEFAULT_CONFIG, **(cfg or {})}
 
     # 1. Build / accept the field config
     if fc is None:

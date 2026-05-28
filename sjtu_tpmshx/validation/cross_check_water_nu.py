@@ -50,11 +50,14 @@ from solvers.tpms_calc import (
 # Shanghai geometry — canonical from configs/shanghai_baseline.json
 # (Item 3 / AR8, 2026-05-28).
 from configs import load_shanghai_baseline
+from controllers.compute_config import ComputeConfig
+# Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()
-TPMS = _SH['geometry']['tpms']
-L_CELL = _SH['geometry']['L_cell_mm']
-T_WALL = _SH['geometry']['t_wall_mm']
-K_S = _SH['geometry']['k_s_W_mK']
+_SH_CC = ComputeConfig.from_dict(_SH)
+TPMS = _SH_CC.geometry.tpms
+L_CELL = _SH_CC.geometry.L_cell_mm
+T_WALL = _SH_CC.geometry.t_wall_mm
+K_S = _SH_CC.geometry.k_s_W_mK
 
 
 def wakao_kaguei(Re: float, Pr: float) -> float:
