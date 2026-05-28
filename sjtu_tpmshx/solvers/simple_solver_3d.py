@@ -907,7 +907,9 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
         # hierarchy is still a good preconditioner; rebuilding is wasted
         # work. Drift threshold default 5 % matches audit P4 recommendation.
         # Track counts for diagnostics (`solver._ml_cache` exposes them).
-        if not rebuild and 'ml' in ml_cache:
+        # drift_thresh <= 0 disables the drift check entirely (legacy
+        # cadence-only behaviour, no per-iter diagonal-norm cost).
+        if drift_thresh > 0.0 and not rebuild and 'ml' in ml_cache:
             diag_norm = float(np.linalg.norm(A.diagonal()))
             last = ml_cache.get('diag_norm', None)
             if last is not None and last > 0.0:
