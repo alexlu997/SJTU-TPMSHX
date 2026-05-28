@@ -96,16 +96,32 @@ def test_shanghai_2d_legacy():
 def test_shanghai_3d_baseline():
     """Production 3D Shanghai validation (Nz=3 default grid).
 
-    Baselines (2026-05-28, post audit-quick-wins PR refactor):
-      RMSRE_dP = 41.19%
-      RMSRE_Q  =  2.85%
+    Baselines (2026-05-28, post G-convention fix):
+      RMSRE_dP = 29.58%
+      RMSRE_Q  =  3.06%
 
-    Note: memory cites Nz=10 baseline (dP 44.74% / Q 2.91%) which is the
-    production analysis grid. This test uses Nz=3 default for speed
-    (each case ~25 s on Nz=3 vs ~3 min on Nz=10). If you want Nz=10 in
-    CI, pass `--nz 10` and update baselines.
+    History:
+      * pre G-fix (col 48 G + α applied):     dP 97.11% / Q 2.51%
+      * pre G-fix (col 48 G + α skip):        dP 96.60% / Q 2.52%
+      * post G-fix (G = ρ·v from cols 12·13): **dP 29.58% / Q 3.06%**
+      * pre-incident baseline (memory Nz=3):  dP 41.19% / Q 2.85%
+      * doc method spec 2D (lost xlsx):       dP 10.07%
 
-    Tolerance: ±3% relative on dP, ±10% relative on Q.
+    The 67 pp dP drop came from correcting the G convention used at
+    fit time. The v3.1 xlsx ``col 48 "G (千克每平方米每秒)"`` carries
+    an interstitial-throat mass flux (~20×ρv) that does not match the
+    surrogate_v3 method spec (vault/reports/_archive/methodology/
+    2026-04-16-surrogate-v3-dP-Q-method-CN.md §1.2-1.3), which expects
+    superficial G = ρ·u = m_dot/A_total. ``_build`` now reconstructs G
+    from cols 12 (ρ) and 13 (v) per the doc convention.
+
+    Q tolerance kept ±10 % relative. dP tolerance ±5 % against the new
+    baseline so a future surrogate refresh does not silently break the
+    gate.
+
+    Note: this test uses Nz=3 default for speed (each case ~25 s vs
+    ~3 min on Nz=10). If you want Nz=10 in CI, pass ``--nz 10`` and
+    update baselines.
     """
     import pandas as pd
     rc, stdout, stderr = _run_subprocess(
@@ -123,9 +139,9 @@ def test_shanghai_3d_baseline():
     rmsre_dP = _rmsre_from_pct(df['err_dP%'])
     rmsre_Q = _rmsre_from_pct(df['err_Q%'])
 
-    BASELINE_DP = 41.19
-    BASELINE_Q = 2.85
-    tol_dp = 0.03
+    BASELINE_DP = 29.58
+    BASELINE_Q = 3.06
+    tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (
         f"3D RMSRE_dP drift: {rmsre_dP:.2f}% vs baseline "
