@@ -897,10 +897,18 @@ def _finalize_3d_cfg(raw, fields):
     compute_cfg = fields.get('compute_cfg')
 
     # 3D solver already computed mass-weighted outlet T per side.
-    T_out_A = float(raw.get('T_out_A',
-                            raw.get('T_A_out', float('nan'))))
-    T_out_B = float(raw.get('T_out_B',
-                            raw.get('T_B_out', float('nan'))))
+    # ``raw.get(key, default)`` only returns ``default`` when ``key`` is
+    # absent — explicit ``None`` values (e.g. when fluid B is frozen)
+    # come back as ``None``, which would crash ``float(None)``. Guard
+    # via ``or`` so any None / missing value falls back to ``nan``.
+    def _safe_float(v):
+        try:
+            return float(v) if v is not None else float('nan')
+        except (TypeError, ValueError):
+            return float('nan')
+
+    T_out_A = _safe_float(raw.get('T_out_A', raw.get('T_A_out')))
+    T_out_B = _safe_float(raw.get('T_out_B', raw.get('T_B_out')))
 
     # TPMS geometry (eps + D_h + A_0) for props slot.
     eps_geom = D_h_m = A_0_m2 = float('nan')
@@ -915,9 +923,9 @@ def _finalize_3d_cfg(raw, fields):
         A_0_m2 = g['A_0']
 
     return ComputeResult(
-        Q_W=float(raw.get('Q_total', raw.get('Q', float('nan')))),
-        dP_A_Pa=float(raw.get('dP_A', raw.get('dP', float('nan')))),
-        dP_B_Pa=float(raw.get('dP_B', float('nan')) or float('nan')),
+        Q_W=_safe_float(raw.get('Q_total', raw.get('Q'))),
+        dP_A_Pa=_safe_float(raw.get('dP_A', raw.get('dP'))),
+        dP_B_Pa=_safe_float(raw.get('dP_B')),
         T_out_A_K=T_out_A,
         T_out_B_K=T_out_B,
         fields={
@@ -959,19 +967,19 @@ def _finalize_3d_cfg(raw, fields):
             'rho_cp_B': raw.get('_audit_rho_cp_fB'),
         },
         residuals={
-            'Q_enthalpy_A': float(raw.get('Q_enthalpy_A', float('nan'))),
-            'Q_enthalpy_B': float(raw.get('Q_enthalpy_B', float('nan'))),
-            'Q_solid_B': float(raw.get('Q_solid_B', float('nan'))),
-            'Q_sA': float(raw.get('Q_sA', float('nan'))),
-            'Q_sB': float(raw.get('Q_sB', float('nan'))),
-            'Q_net': float(raw.get('Q_net', float('nan'))),
-            'Q_interior': float(raw.get('Q_interior', float('nan'))),
-            'energy_imbalance_rel': float(
-                raw.get('energy_imbalance_rel', float('nan'))),
-            'mass_imbalance_rel_A': float(
-                raw.get('mass_imbalance_rel_A', float('nan'))),
-            'mass_imbalance_rel_B': float(
-                raw.get('mass_imbalance_rel_B', float('nan'))),
+            'Q_enthalpy_A': _safe_float(raw.get('Q_enthalpy_A')),
+            'Q_enthalpy_B': _safe_float(raw.get('Q_enthalpy_B')),
+            'Q_solid_B': _safe_float(raw.get('Q_solid_B')),
+            'Q_sA': _safe_float(raw.get('Q_sA')),
+            'Q_sB': _safe_float(raw.get('Q_sB')),
+            'Q_net': _safe_float(raw.get('Q_net')),
+            'Q_interior': _safe_float(raw.get('Q_interior')),
+            'energy_imbalance_rel': _safe_float(
+                raw.get('energy_imbalance_rel')),
+            'mass_imbalance_rel_A': _safe_float(
+                raw.get('mass_imbalance_rel_A')),
+            'mass_imbalance_rel_B': _safe_float(
+                raw.get('mass_imbalance_rel_B')),
         },
         zones=None,  # 3D zones land in fields['chi_B'] / fields['*'] directly
         warnings=[],
