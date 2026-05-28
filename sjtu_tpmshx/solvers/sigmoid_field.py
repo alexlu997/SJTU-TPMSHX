@@ -196,22 +196,17 @@ def get_geometry_lut(tpms_type, **kwargs):
 # ── Vectorized property computation ──────────────────────────
 
 def _nu_vec(tpms_type, Re, eps, L_mm, D_h_mm):
-    """Vectorized Nu computation for arrays.
+    """Back-compat thin wrapper. Delegates to ``nu_correlations.nu_vec``.
 
-    Form (3p pure power-law + explicit Pr^(1/3), Pr=0.72 air const):
-      Nu = c · Pr^(1/3) · Re^a · (D_h/L)^d
-    Coefficients match `tpms_calc._nu_diamond` / `_nu_gyroid`
-    (user-locked fits 2026-04-28 from 试验记录表_整理版_v3.1.xlsx).
-    eps argument unused (kept for API compatibility).
+    The ``eps`` argument is kept for the legacy 5-arg signature (used by
+    sigmoid_field_3d.py and tests/test_review_fixes.py) but unused since
+    the 2026-05-28 audit Item 1 refactor (H1).
+
+    Re_floor=10 preserves the legacy Re=np.maximum(Re, 10.0) behaviour.
     """
-    from solvers.tpms_calc import _NU_ROUGHNESS_FACTOR
-    Re = np.maximum(Re, 10.0)
-    pr13 = Pr ** (1/3)
-    if tpms_type == 'Diamond':
-        Nu_smooth = 0.0944 * pr13 * Re**0.8273 * (D_h_mm / L_mm)**0.226
-    else:
-        Nu_smooth = 0.126 * pr13 * Re**0.7898 * (D_h_mm / L_mm)**0.2409
-    return _NU_ROUGHNESS_FACTOR * Nu_smooth
+    del eps
+    from .nu_correlations import nu_vec
+    return nu_vec(tpms_type, Re, L_mm, D_h_mm)
 
 
 # ── Main entry point ─────────────────────────────────────────
