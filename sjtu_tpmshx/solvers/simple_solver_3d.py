@@ -43,6 +43,7 @@ outside this class; the solver itself is coordinate-agnostic.
 from __future__ import annotations
 
 import os
+from time import perf_counter as _perf_counter
 import numpy as np
 from numba import njit, prange
 from scipy import sparse
@@ -70,6 +71,15 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
     """Return True when grid is big enough that red-black prange beats
     serial natural-ordering GS."""
     return (Nx * Ny * Nz) >= _PARALLEL_CELL_THRESHOLD
+
+
+# ─── AMG-active gate (pressure-correction inner solver) ───────────
+# Below this N the pressure-correction system uses scipy.sparse.linalg.spsolve
+# (sparse LU); above it, PyAMG ruge_stuben_solver as a preconditioner for
+# BiCGStab. Break-even ~30 k cells where spsolve memory + factor cost starts
+# hurting and AMG O(N) win amortises. This constant is also used to auto-
+# enable `coarse_bootstrap_3d` warm-start (audit P4 / phase L-d Option B).
+_AMG_GATE = 30_000
 
 from .tpms_calc import air_density, air_viscosity, P_atm
 
@@ -862,7 +872,7 @@ def _build_pp_sparsity_3d(Nx, Ny, Nz, outlet_mask_ij):
 
 def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
                    Nx, Ny, Nz, dx, dy, dz, rho_field, sparsity,
-                   ml_cache, rebuild, rtol_dyn=1e-5):
+                   ml_cache, rebuild, rtol_dyn=1e-5, drift_thresh=0.05):
     """Assemble + solve the pressure-correction system using PyAMG SA.
 
     ml_cache : dict holding the reusable multilevel hierarchy. Rebuilt when
@@ -871,6 +881,8 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
         Caller passes ~0.05 * outer_simple_residual so inner solve does not
         over-solve while outer is still loose. Default 1e-5 reproduces legacy
         fixed-tol behaviour.
+    drift_thresh : relative L2-norm drift on A's diagonal that forces a
+        rebuild on a non-cadence iter (audit P4 / phase L-d). 0 disables.
     """
     N = Nx * Ny * Nz
     nnz = sparsity['nnz']
@@ -887,24 +899,99 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
                            shape=(N, N))
 
     N = A.shape[0]
-    if _HAS_PYAMG and N > 30000:
+    if _HAS_PYAMG and N > _AMG_GATE:
         # Large grids: AMG-preconditioned BiCGStab.
         # The pinned Dirichlet row (diag=1) sits among typical interior rows
         # whose diagonals scale ~1e-5—1e-7. Pure AMG diverges on this
         # heterogeneity; RS-AMG as an INNER preconditioner for BiCGStab is
         # robust against that scale mismatch.
-        if rebuild or 'ml' not in ml_cache:
+        #
+        # Cold-start bypass (audit P4 / phase L-d follow-up, 2026-05-28).
+        # The first call into _solve_pp_amg from a fresh solver instance sees
+        # an A built from zero-velocity initial guess: d_u/d_v/d_w reflect a
+        # state where only the inlet face carries flow, so A's diagonal
+        # spans ~6 orders of magnitude (interior ~1e-7, pinned outlet=1).
+        # AMG built on this A is a poor preconditioner — BiCGStab empirically
+        # exhausts maxiter=200 V-cycles every cold-start solve and falls
+        # back to spsolve anyway. Skip the wasted V-cycles: solve directly
+        # via spsolve and build the hierarchy in the same iter so iter=2+
+        # can take the normal AMG-BiCGStab path (where A is well-scaled and
+        # BiCGStab converges in 5-20 V-cycles).
+        if not ml_cache.get('cold_start_done', False):
+            t0 = _perf_counter()
             ml = pyamg.ruge_stuben_solver(A, max_coarse=200)
             ml_cache['ml'] = ml
+            ml_cache['diag_norm'] = float(np.linalg.norm(A.diagonal()))
+            ml_cache['rebuild_count'] = (
+                ml_cache.get('rebuild_count', 0) + 1)
+            ml_cache['rebuild_time'] = (
+                ml_cache.get('rebuild_time', 0.0)
+                + (_perf_counter() - t0))
+            from scipy.sparse.linalg import spsolve
+            Pp_flat = spsolve(A, rhs)
+            ml_cache['cold_start_done'] = True
+            ml_cache['cold_start_count'] = (
+                ml_cache.get('cold_start_count', 0) + 1)
+            Pp[:, :, :] = Pp_flat.reshape(Nx, Ny, Nz)
+            return A, rhs
+
+        # Dynamic rebuild trigger (audit P4 / phase L-d, 2026-05-28).
+        # Caller-requested rebuild always honoured (it == 1 or cadence hit).
+        # On non-cadence iters, force rebuild if A's diagonal L2 norm drifted
+        # by more than `drift_thresh` since the last rebuild — proxy for
+        # hierarchy staleness. Rationale: A_ij depends on d_u/d_v/d_w (face
+        # momentum coefficients) + rho_field, both of which evolve with the
+        # outer SIMPLE iteration. A near-static diagonal means the existing
+        # hierarchy is still a good preconditioner; rebuilding is wasted
+        # work. Drift threshold default 5 % matches audit P4 recommendation.
+        # Track counts for diagnostics (`solver._ml_cache` exposes them).
+        # drift_thresh <= 0 disables the drift check entirely (legacy
+        # cadence-only behaviour, no per-iter diagonal-norm cost).
+        if drift_thresh > 0.0 and not rebuild and 'ml' in ml_cache:
+            diag_norm = float(np.linalg.norm(A.diagonal()))
+            last = ml_cache.get('diag_norm', None)
+            if last is not None and last > 0.0:
+                drift = abs(diag_norm - last) / last
+                if drift > drift_thresh:
+                    rebuild = True
+                    ml_cache['drift_rebuild_count'] = (
+                        ml_cache.get('drift_rebuild_count', 0) + 1)
+                    ml_cache['last_drift'] = drift
+                else:
+                    ml_cache['skip_count'] = (
+                        ml_cache.get('skip_count', 0) + 1)
+                    ml_cache['last_drift'] = drift
+            ml_cache['diag_norm_now'] = diag_norm
+
+        if rebuild or 'ml' not in ml_cache:
+            t0 = _perf_counter()
+            ml = pyamg.ruge_stuben_solver(A, max_coarse=200)
+            ml_cache['ml'] = ml
+            ml_cache['diag_norm'] = float(np.linalg.norm(A.diagonal()))
+            ml_cache['rebuild_count'] = (
+                ml_cache.get('rebuild_count', 0) + 1)
+            ml_cache['rebuild_time'] = (
+                ml_cache.get('rebuild_time', 0.0)
+                + (_perf_counter() - t0))
         from scipy.sparse.linalg import bicgstab as _bcg
         M = ml_cache['ml'].aspreconditioner(cycle='V')
         # Phase A: adaptive rtol — caller schedules `rtol_dyn` ≈ 0.05 *
         # outer_residual, clipped to [1e-7, 1e-3]. Early outer iters with
         # res~1e-2 → inner rtol~5e-4 (~10× fewer V-cycles); late iters with
         # res~1e-6 → inner rtol~5e-7 (matches legacy precision).
+        t0 = _perf_counter()
         Pp_flat, info = _bcg(A, rhs, M=M, rtol=rtol_dyn, maxiter=200)
+        ml_cache['bcg_time'] = (
+            ml_cache.get('bcg_time', 0.0) + (_perf_counter() - t0))
+        ml_cache['bcg_calls'] = ml_cache.get('bcg_calls', 0) + 1
         if info != 0:
-            # AMG-PCG failed; fall back to direct for robustness
+            # AMG-PCG failed; fall back to direct for robustness.
+            # Keep cached hierarchy — popping forces next-iter rebuild that
+            # is unlikely to fix the failure (A drift bounded within outer
+            # SIMPLE step) and would double the cost. Track failure count
+            # so callers can adjust `rtol_dyn` / `maxiter` if persistent.
+            ml_cache['bcg_fail_count'] = (
+                ml_cache.get('bcg_fail_count', 0) + 1)
             from scipy.sparse.linalg import spsolve
             Pp_flat = spsolve(A, rhs)
     else:
@@ -1159,6 +1246,8 @@ class SIMPLESolver3D:
                  P_ref_abs=None,
                  alpha_u=0.5, alpha_p=0.2,
                  pyamg_rebuild_every=100,
+                 pyamg_rebuild_drift_thresh=0.05,
+                 use_coarse_bootstrap=None,
                  fluid_type='ideal_gas',
                  R_gas=287.05,
                  alpha_rho=0.3):
@@ -1187,6 +1276,19 @@ class SIMPLESolver3D:
         self.alpha_u = float(alpha_u)
         self.alpha_p = float(alpha_p)
         self.pyamg_rebuild_every = int(pyamg_rebuild_every)
+        # Audit P4 / phase L-d (2026-05-28): dynamic rebuild trigger. On
+        # non-cadence iters the hierarchy is reused unless A's diagonal L2
+        # norm drifts by more than this threshold since last rebuild. 0
+        # disables drift checks (legacy fixed-cadence-only behaviour).
+        self.pyamg_rebuild_drift_thresh = float(pyamg_rebuild_drift_thresh)
+
+        # Audit P4 / phase L-d Option B (2026-05-28): coarse-grid warm start.
+        # None = auto-enable when N > _AMG_GATE (the same gate that turns on
+        # AMG-BiCGStab); True/False = explicit override. Auto-mode removes the
+        # cold-start cost on the only workloads where it hurts (AMG-active
+        # grids), without touching small-grid solves that already run in
+        # ~1 spsolve call.
+        self.use_coarse_bootstrap = use_coarse_bootstrap
 
         # Compressibility knobs (mirror 2D SIMPLESolver)
         self.fluid_type = str(fluid_type)
@@ -1336,11 +1438,19 @@ class SIMPLESolver3D:
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self.dx, self.dy, self.dz
 
-        # Phase C — coarse-grid bootstrap (opt-in). Halves grid each axis,
-        # solves to loose tol (1e-3), prolongates (u,v,w,P) back as initial
-        # guess. Skipped on already-warm solvers (residuals non-empty).
-        if (getattr(self, 'use_coarse_bootstrap', False)
-                and not self.residuals):
+        # Phase C — coarse-grid bootstrap. Halves grid each axis, solves to
+        # loose tol (1e-3), prolongates (u,v,w,P) back as initial guess.
+        # Skipped on already-warm solvers (residuals non-empty).
+        # `use_coarse_bootstrap`:
+        #   * None (default)  — auto: on when Nx*Ny*Nz > _AMG_GATE
+        #     (audit P4 / phase L-d Option B). Removes cold-start cost on
+        #     AMG-active grids where it dominates.
+        #   * True            — always on (legacy explicit opt-in)
+        #   * False           — always off
+        _cb_flag = getattr(self, 'use_coarse_bootstrap', None)
+        if _cb_flag is None:
+            _cb_flag = (Nx * Ny * Nz > _AMG_GATE)
+        if _cb_flag and not self.residuals:
             try:
                 from .coarse_bootstrap_3d import bootstrap_simple_3d
                 _bs_info = bootstrap_simple_3d(
@@ -1435,7 +1545,8 @@ class SIMPLESolver3D:
                            self.d_u, self.d_v, self.d_w,
                            Nx, Ny, Nz, dx, dy, dz, rho_eps_field,
                            self._pp_sparsity, self._ml_cache, rebuild,
-                           rtol_dyn=rtol_dyn)
+                           rtol_dyn=rtol_dyn,
+                           drift_thresh=self.pyamg_rebuild_drift_thresh)
 
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                              self.d_u, self.d_v, self.d_w,
@@ -1472,7 +1583,9 @@ class SIMPLESolver3D:
                                        self.d_u, self.d_v, self.d_w,
                                        Nx, Ny, Nz, dx, dy, dz, rho_eps_field2,
                                        self._pp_sparsity, self._ml_cache,
-                                       False, rtol_dyn=rtol_dyn)
+                                       False, rtol_dyn=rtol_dyn,
+                                       drift_thresh=(
+                                           self.pyamg_rebuild_drift_thresh))
                         _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                                          self.d_u, self.d_v, self.d_w,
                                          self.v_inlet_field, Nx, Ny, Nz,
