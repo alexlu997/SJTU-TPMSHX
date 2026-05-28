@@ -43,6 +43,7 @@ outside this class; the solver itself is coordinate-agnostic.
 from __future__ import annotations
 
 import os
+from time import perf_counter as _perf_counter
 import numpy as np
 from numba import njit, prange
 from scipy import sparse
@@ -862,7 +863,7 @@ def _build_pp_sparsity_3d(Nx, Ny, Nz, outlet_mask_ij):
 
 def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
                    Nx, Ny, Nz, dx, dy, dz, rho_field, sparsity,
-                   ml_cache, rebuild, rtol_dyn=1e-5):
+                   ml_cache, rebuild, rtol_dyn=1e-5, drift_thresh=0.05):
     """Assemble + solve the pressure-correction system using PyAMG SA.
 
     ml_cache : dict holding the reusable multilevel hierarchy. Rebuilt when
@@ -871,6 +872,8 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
         Caller passes ~0.05 * outer_simple_residual so inner solve does not
         over-solve while outer is still loose. Default 1e-5 reproduces legacy
         fixed-tol behaviour.
+    drift_thresh : relative L2-norm drift on A's diagonal that forces a
+        rebuild on a non-cadence iter (audit P4 / phase L-d). 0 disables.
     """
     N = Nx * Ny * Nz
     nnz = sparsity['nnz']
@@ -893,18 +896,62 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
         # whose diagonals scale ~1e-5—1e-7. Pure AMG diverges on this
         # heterogeneity; RS-AMG as an INNER preconditioner for BiCGStab is
         # robust against that scale mismatch.
+        #
+        # Dynamic rebuild trigger (audit P4 / phase L-d, 2026-05-28).
+        # Caller-requested rebuild always honoured (it == 1 or cadence hit).
+        # On non-cadence iters, force rebuild if A's diagonal L2 norm drifted
+        # by more than `drift_thresh` since the last rebuild — proxy for
+        # hierarchy staleness. Rationale: A_ij depends on d_u/d_v/d_w (face
+        # momentum coefficients) + rho_field, both of which evolve with the
+        # outer SIMPLE iteration. A near-static diagonal means the existing
+        # hierarchy is still a good preconditioner; rebuilding is wasted
+        # work. Drift threshold default 5 % matches audit P4 recommendation.
+        # Track counts for diagnostics (`solver._ml_cache` exposes them).
+        if not rebuild and 'ml' in ml_cache:
+            diag_norm = float(np.linalg.norm(A.diagonal()))
+            last = ml_cache.get('diag_norm', None)
+            if last is not None and last > 0.0:
+                drift = abs(diag_norm - last) / last
+                if drift > drift_thresh:
+                    rebuild = True
+                    ml_cache['drift_rebuild_count'] = (
+                        ml_cache.get('drift_rebuild_count', 0) + 1)
+                    ml_cache['last_drift'] = drift
+                else:
+                    ml_cache['skip_count'] = (
+                        ml_cache.get('skip_count', 0) + 1)
+                    ml_cache['last_drift'] = drift
+            ml_cache['diag_norm_now'] = diag_norm
+
         if rebuild or 'ml' not in ml_cache:
+            t0 = _perf_counter()
             ml = pyamg.ruge_stuben_solver(A, max_coarse=200)
             ml_cache['ml'] = ml
+            ml_cache['diag_norm'] = float(np.linalg.norm(A.diagonal()))
+            ml_cache['rebuild_count'] = (
+                ml_cache.get('rebuild_count', 0) + 1)
+            ml_cache['rebuild_time'] = (
+                ml_cache.get('rebuild_time', 0.0)
+                + (_perf_counter() - t0))
         from scipy.sparse.linalg import bicgstab as _bcg
         M = ml_cache['ml'].aspreconditioner(cycle='V')
         # Phase A: adaptive rtol — caller schedules `rtol_dyn` ≈ 0.05 *
         # outer_residual, clipped to [1e-7, 1e-3]. Early outer iters with
         # res~1e-2 → inner rtol~5e-4 (~10× fewer V-cycles); late iters with
         # res~1e-6 → inner rtol~5e-7 (matches legacy precision).
+        t0 = _perf_counter()
         Pp_flat, info = _bcg(A, rhs, M=M, rtol=rtol_dyn, maxiter=200)
+        ml_cache['bcg_time'] = (
+            ml_cache.get('bcg_time', 0.0) + (_perf_counter() - t0))
+        ml_cache['bcg_calls'] = ml_cache.get('bcg_calls', 0) + 1
         if info != 0:
-            # AMG-PCG failed; fall back to direct for robustness
+            # AMG-PCG failed; fall back to direct for robustness.
+            # Keep cached hierarchy — popping forces next-iter rebuild that
+            # is unlikely to fix the failure (A drift bounded within outer
+            # SIMPLE step) and would double the cost. Track failure count
+            # so callers can adjust `rtol_dyn` / `maxiter` if persistent.
+            ml_cache['bcg_fail_count'] = (
+                ml_cache.get('bcg_fail_count', 0) + 1)
             from scipy.sparse.linalg import spsolve
             Pp_flat = spsolve(A, rhs)
     else:
@@ -1159,6 +1206,7 @@ class SIMPLESolver3D:
                  P_ref_abs=None,
                  alpha_u=0.5, alpha_p=0.2,
                  pyamg_rebuild_every=100,
+                 pyamg_rebuild_drift_thresh=0.05,
                  fluid_type='ideal_gas',
                  R_gas=287.05,
                  alpha_rho=0.3):
@@ -1187,6 +1235,11 @@ class SIMPLESolver3D:
         self.alpha_u = float(alpha_u)
         self.alpha_p = float(alpha_p)
         self.pyamg_rebuild_every = int(pyamg_rebuild_every)
+        # Audit P4 / phase L-d (2026-05-28): dynamic rebuild trigger. On
+        # non-cadence iters the hierarchy is reused unless A's diagonal L2
+        # norm drifts by more than this threshold since last rebuild. 0
+        # disables drift checks (legacy fixed-cadence-only behaviour).
+        self.pyamg_rebuild_drift_thresh = float(pyamg_rebuild_drift_thresh)
 
         # Compressibility knobs (mirror 2D SIMPLESolver)
         self.fluid_type = str(fluid_type)
@@ -1435,7 +1488,8 @@ class SIMPLESolver3D:
                            self.d_u, self.d_v, self.d_w,
                            Nx, Ny, Nz, dx, dy, dz, rho_eps_field,
                            self._pp_sparsity, self._ml_cache, rebuild,
-                           rtol_dyn=rtol_dyn)
+                           rtol_dyn=rtol_dyn,
+                           drift_thresh=self.pyamg_rebuild_drift_thresh)
 
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                              self.d_u, self.d_v, self.d_w,
@@ -1472,7 +1526,9 @@ class SIMPLESolver3D:
                                        self.d_u, self.d_v, self.d_w,
                                        Nx, Ny, Nz, dx, dy, dz, rho_eps_field2,
                                        self._pp_sparsity, self._ml_cache,
-                                       False, rtol_dyn=rtol_dyn)
+                                       False, rtol_dyn=rtol_dyn,
+                                       drift_thresh=(
+                                           self.pyamg_rebuild_drift_thresh))
                         _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                                          self.d_u, self.d_v, self.d_w,
                                          self.v_inlet_field, Nx, Ny, Nz,
