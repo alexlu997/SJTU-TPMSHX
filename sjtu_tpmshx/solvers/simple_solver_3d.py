@@ -897,6 +897,35 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
         # heterogeneity; RS-AMG as an INNER preconditioner for BiCGStab is
         # robust against that scale mismatch.
         #
+        # Cold-start bypass (audit P4 / phase L-d follow-up, 2026-05-28).
+        # The first call into _solve_pp_amg from a fresh solver instance sees
+        # an A built from zero-velocity initial guess: d_u/d_v/d_w reflect a
+        # state where only the inlet face carries flow, so A's diagonal
+        # spans ~6 orders of magnitude (interior ~1e-7, pinned outlet=1).
+        # AMG built on this A is a poor preconditioner — BiCGStab empirically
+        # exhausts maxiter=200 V-cycles every cold-start solve and falls
+        # back to spsolve anyway. Skip the wasted V-cycles: solve directly
+        # via spsolve and build the hierarchy in the same iter so iter=2+
+        # can take the normal AMG-BiCGStab path (where A is well-scaled and
+        # BiCGStab converges in 5-20 V-cycles).
+        if not ml_cache.get('cold_start_done', False):
+            t0 = _perf_counter()
+            ml = pyamg.ruge_stuben_solver(A, max_coarse=200)
+            ml_cache['ml'] = ml
+            ml_cache['diag_norm'] = float(np.linalg.norm(A.diagonal()))
+            ml_cache['rebuild_count'] = (
+                ml_cache.get('rebuild_count', 0) + 1)
+            ml_cache['rebuild_time'] = (
+                ml_cache.get('rebuild_time', 0.0)
+                + (_perf_counter() - t0))
+            from scipy.sparse.linalg import spsolve
+            Pp_flat = spsolve(A, rhs)
+            ml_cache['cold_start_done'] = True
+            ml_cache['cold_start_count'] = (
+                ml_cache.get('cold_start_count', 0) + 1)
+            Pp[:, :, :] = Pp_flat.reshape(Nx, Ny, Nz)
+            return A, rhs
+
         # Dynamic rebuild trigger (audit P4 / phase L-d, 2026-05-28).
         # Caller-requested rebuild always honoured (it == 1 or cadence hit).
         # On non-cadence iters, force rebuild if A's diagonal L2 norm drifted

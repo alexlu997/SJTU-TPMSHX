@@ -49,15 +49,15 @@ def _make_solver(drift_thresh=0.05, rebuild_every=100):
 def test_static_K_only_rebuilds_at_first_iter():
     """K_arr / cF_arr fixed → drift stays below 5 % after cold start.
 
-    Expected: hierarchy rebuilt once at it=1, then reused (skip_count
-    grows). Drift-triggered rebuilds should not fire. Rebuild count is
-    well below `total_iter / pyamg_rebuild_every`.
+    Expected: hierarchy rebuilt once at it=1 (cold-start bypass branch
+    also builds it for iter=2+), then reused (skip_count grows). Drift-
+    triggered rebuilds should not fire.
     """
     s = _make_solver(drift_thresh=0.05)
     s.solve(max_iter=20, tol=1e-6)
     c = s._ml_cache
     assert c.get('rebuild_count', 0) == 1, (
-        f"expected exactly 1 rebuild (it=1 cold start), "
+        f"expected exactly 1 rebuild (cold-start), "
         f"got {c.get('rebuild_count')}")
     assert c.get('skip_count', 0) >= 5, (
         f"expected drift-skip to fire on >=5 iters, "
@@ -67,6 +67,32 @@ def test_static_K_only_rebuilds_at_first_iter():
         f"{c.get('drift_rebuild_count')}")
     assert c.get('last_drift', 1.0) < 0.05, (
         f"final drift should be < 5 %, got {c.get('last_drift')}")
+
+
+@pytest.mark.slow
+def test_cold_start_bypass_skips_bicgstab_on_first_iter():
+    """Cold-start fix: iter=1 in AMG path goes spsolve-direct, never enters
+    BiCGStab. Hierarchy still built so iter=2+ takes AMG-BiCGStab path.
+    """
+    s = _make_solver(drift_thresh=0.05)
+    s.solve(max_iter=5, tol=1e-6)
+    c = s._ml_cache
+    # Cold-start fired exactly once
+    assert c.get('cold_start_count', 0) == 1, (
+        f"expected exactly 1 cold-start bypass, "
+        f"got {c.get('cold_start_count')}")
+    assert c.get('cold_start_done', False) is True
+    # Hierarchy got built (for iter=2+ to use)
+    assert c.get('rebuild_count', 0) == 1
+    assert 'ml' in c
+    # BiCGStab calls fewer than outer iter count by 1 (skipped iter=1)
+    assert c.get('bcg_calls', 0) <= 4, (
+        f"bcg_calls should be <= outer_iters - 1 (cold-start skipped), "
+        f"got {c.get('bcg_calls')}")
+    # No BiCGStab fail expected on warm iters with stable cached hierarchy
+    assert c.get('bcg_fail_count', 0) == 0, (
+        f"bcg_fail should be 0 after cold-start bypass, "
+        f"got {c.get('bcg_fail_count')}")
 
 
 @pytest.mark.slow
