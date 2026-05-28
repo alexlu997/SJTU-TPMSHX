@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "case_name": "Shanghai 上海电气天然气加热器 16-case",
+    "specimen": "SLM Gyroid HX",
+    "data_source": "data/raw_data/20260401-上海电气天然气加热器实验工况.xlsx",
+    "canonical_since": "2026-05-28",
+    "audit_ref": "vault/reports/engineering/2026-05-28-sjtu-tpmshx-4-perspective-audit-CN.html §AR8"
+  },
+  "geometry": {
+    "tpms": "Gyroid",
+    "L_cell_mm": 7.0,
+    "t_wall_mm": 0.6,
+    "k_s_W_mK": 16.0
+  },
+  "domain": {
+    "L_dom_m": 0.182,
+    "H_dom_m": 0.042,
+    "Lz_m": 0.042,
+    "n_units": 36,
+    "a_flow_per_unit_m2": 1.80565e-5
+  },
+  "_excluded": {
+    "boundary_conditions": "in_ctr/in_w/out_ctr/out_w 因 audit 脚本各异, 不入 canonical",
+    "surrogate_v3_helper": "df_fit/surrogate_v3.eval_shanghai 用同一 0.182 (2026-05-28 fixed)",
+    "diag_scripts": "runs/diag_shanghai_* 历史诊断, 不规范化"
+  }
+}

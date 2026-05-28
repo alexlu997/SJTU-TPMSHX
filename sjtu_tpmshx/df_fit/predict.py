@@ -78,21 +78,27 @@ def predict_K_cF_vec(tpms_type: str, L_mm: np.ndarray, t_mm: np.ndarray,
     Shape-agnostic: accepts any compatible array shape (1D, 2D, 3D). The
     returned (K, c_F) arrays match the input shape. Inputs are broadcast
     together.
+
+    Performance (2026-05-28 audit Item 2 / H2): native RBF batched eval
+    replaces the per-cell Python loop. ~50× faster on Shanghai-shaped
+    grids — the RBFInterpolator kernel matmul vectorises naturally over
+    a (N, 3) query array, so we hand it the whole batch at once.
     """
     model = _get_model(tpms_type)
     L_arr = np.asarray(L_mm, dtype=np.float64)
     t_arr = np.asarray(t_mm, dtype=np.float64)
     e_arr = np.asarray(eps_f, dtype=np.float64)
     shape = np.broadcast(L_arr, t_arr, e_arr).shape
-    Lf = np.broadcast_to(L_arr, shape).ravel()
-    tf = np.broadcast_to(t_arr, shape).ravel()
-    ef = np.broadcast_to(e_arr, shape).ravel()
-    n = Lf.size
-    K_out = np.empty(n, dtype=np.float64)
-    cF_out = np.empty(n, dtype=np.float64)
-    for i in range(n):
-        K_out[i], cF_out[i] = model.predict(float(Lf[i]), float(tf[i]), float(ef[i]))
-    return K_out.reshape(shape), cF_out.reshape(shape)
+    X = np.column_stack([
+        np.broadcast_to(L_arr, shape).ravel(),
+        np.broadcast_to(t_arr, shape).ravel(),
+        np.broadcast_to(e_arr, shape).ravel(),
+    ])
+    log_K = model._rbf_K(X)
+    log_cF = model._rbf_cF(X)
+    K = np.maximum(10.0 ** log_K, model.K_min)
+    cF = 10.0 ** log_cF
+    return K.reshape(shape), cF.reshape(shape)
 
 
 def predict_dP(tpms_type: str, L_mm: float, t_mm: float, eps_f: float,
