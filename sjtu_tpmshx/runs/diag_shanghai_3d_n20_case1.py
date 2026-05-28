@@ -1,5 +1,10 @@
 """Diagnostic dump of 3D fields for Shanghai case 1, uniform Gyroid L=7 t=0.6.
 
+⚠ ARCHIVAL: 2026-05-14 historical diagnostic snapshot. The issues this
+   investigated (ε double-halving / partial-B ghost / mass-flow) have
+   since been fixed (commits 02f091c / 2026-05-14 closure default 'none'
+   / d80fbb1). Kept for reference; not for routine CI runs.
+
 User reports velocity/pressure/temperature fields look wrong in 3D. This
 script reproduces a single 3D run at Nx=Ny=Nz=20, wall_refine OFF, and
 dumps every relevant field slice + numeric sanity checks so we can spot
