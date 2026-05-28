@@ -4239,6 +4239,16 @@ class Main_Menu(QMainWindow):
         mode = self.compute.current_mode()
         if mode == '3d':
             from runs.run_calculation_3d import finalize_plots_3d
+            # Audit C5 H5 fix (L-b, 2026-05-28): initialise the
+            # ``_has_results_3d`` / ``_3d_vis_ok`` flags BEFORE entering
+            # finalize_plots_3d.  If finalize crashes mid-way the
+            # function previously returned early without resetting the
+            # flag, leaving a stale ``True`` from a prior successful
+            # 3D run — the next 2D compute would then see the 3D tab
+            # marked ready and the user could be auto-switched to a
+            # blank canvas.  Set False at the top, flip True only after
+            # the embedded panel reports ok.
+            self._has_results_3d = False
             _finalize_ok = False
             _3d_vis_ok = False
             try:
