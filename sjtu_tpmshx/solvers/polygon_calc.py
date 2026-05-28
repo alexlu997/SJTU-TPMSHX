@@ -225,18 +225,20 @@ def _store_results(window, cfg, fields, result, _log):
     nPA = _cell_to_node(_safe(result['P_A']))
     nPB = _cell_to_node(_safe(result['P_B']))
     # Velocity: Laplacian smoothing kills degenerate-cell outliers
+    # Vectorized gather/scatter form (audit M-e / P5, 2026-05-28); the
+    # original Python triple-loop ran 8 * n_cells * 3 iterations and was
+    # the dominant cost of build_2d_field_results for large meshes.
     def _smooth(field, n_passes=8):
-        f = field.copy()
+        f = np.asarray(field, dtype=np.float64).copy()
+        nbr = mesh.nbr  # shape (n_cells, 3); -1 marks boundary
+        # Sentinel: route -1 -> len(f) and zero its contribution via mask.
+        idx = np.where(nbr >= 0, nbr, f.size).astype(np.int64)
+        mask = (nbr >= 0).astype(np.float64)
+        cnt = mask.sum(axis=1)
         for _ in range(n_passes):
-            fn = f.copy()
-            for ci in range(mesh.n_cells):
-                s, w = f[ci], 1.0
-                for fi in range(3):
-                    j = mesh.nbr[ci, fi]
-                    if j >= 0:
-                        s += f[j]; w += 1.0
-                fn[ci] = s / w
-            f = fn
+            f_pad = np.concatenate([f, [0.0]])
+            nbr_sum = (f_pad[idx] * mask).sum(axis=1)
+            f = (f + nbr_sum) / (1.0 + cnt)
         return f
 
     nUmagA = _cell_to_node(_smooth(_safe(
