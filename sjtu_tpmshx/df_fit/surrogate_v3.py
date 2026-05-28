@@ -250,6 +250,10 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
               "20260401-上海电气天然气加热器实验工况.xlsx"
     sh = pd.read_excel(str(sh_xlsx), engine="openpyxl",
                        sheet_name="Sheet1", header=None, skiprows=2)
+    # Canonical Shanghai params: see configs/shanghai_baseline.json
+    # (n_units=36, a_flow_per_unit_m2=1.80565e-5, L_dom_m=0.182). Not loaded
+    # here to keep eval_shanghai a zero-dependency standalone helper; if
+    # the JSON drifts, this constant must follow.
     A_FLOW = 36 * 18.0565e-6
     L_DOM = 0.182  # Shanghai HX streamwise A length [m]. Was 0.231 (stale —
                    # 182+42+7 historical "total" guess); corrected 2026-05-28.

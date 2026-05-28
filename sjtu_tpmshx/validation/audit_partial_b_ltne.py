@@ -1,5 +1,11 @@
 """audit_partial_b_ltne.py — partial-B LTNE conservation audit (P1-P7).
 
+⚠ ARCHIVAL: this is a post-mortem audit snapshot from 2026-05-04.
+   Designed as a one-shot read-only diagnostic; **not for routine CI runs**.
+   Per memory `feedback_partial_b_audit`, the issues it diagnosed have since
+   been resolved (closure default 'none' from 2026-05-14; ε double-halving
+   fixed at commit 02f091c). Keep for historical reference.
+
 Read-only diagnostic. Runs Shanghai case 1 (B_area_frac = 0.20) twice — closure
 "none" and closure "m4_effective_area" (p=0.67, mode=sqrt) — and emits the
 P1-P7 markdown report demanded by the task spec.
