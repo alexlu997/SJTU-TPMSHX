@@ -496,13 +496,11 @@ def main():
           f"{n_invalid} pressure-INVALID (clip fired)")
     if n_invalid:
         print(f"  invalid cases : {invalid_cases}  (EXCLUDED from RMSRE below)")
-    # 2026-05-28 post surrogate-α-fix + xlsx v3.1 refresh: 2D baseline
-    # updated 32.34% → 99.24% (dP), 5.70% → 5.05% (max|err_Q|).
-    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 99.24%)  "
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 32.34%)  "
           f"[over {len(err_dP)} valid]")
     print(f"  max|err_dP|   : {max_err_dP:.2f}%")
     print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  [over {len(err_Q)} valid]")
-    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.05%)")
+    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.70%)")
     print("=" * 70)
 
     # Save CSV

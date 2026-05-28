@@ -19,10 +19,9 @@ Velocity / mass-flux convention:
 Calibration:
     1. Compressible WLS on raw Pressureloss_TPMS (col 43) + G (col 48):
        (P_in² - P_out²) / (2·R·T·L_ch) = μG/K + c_F·G²
-    2. **No α multiplication** (audit fix 2026-05-28). The xlsx
-       ``Pressureloss_TPMS`` values are already boundary-effect-removed
-       per domain expertise; the historical α multiplication was a
-       double correction. ``alpha_map`` defaults to 1.0 (see ``_build``).
+    2. Multiply by boundary effect coefficient alpha:
+       c_F_final = alpha × c_F_raw
+       K_final = K_raw / alpha
     3. L=8 geometries: Re < 1600 excluded (transition regime)
 
 Usage:
@@ -72,26 +71,13 @@ class SurrogateV3:
         self._build()
 
     def _build(self) -> None:
-        """Load data, calibrate, build RBF interpolators.
-
-        Audit 2026-05-28 (Shanghai dP regression root cause): the
-        original implementation multiplied the fitted ``c_F`` by a
-        per-geometry α coefficient (from the ``边界效应系数`` sheet)
-        under the assumption that the raw ``Pressureloss_TPMS`` (col
-        43) values contained boundary friction artefacts. Domain
-        expertise confirmed the raw values are already
-        boundary-effect-removed clean experimental data — applying α
-        was a double correction. We now force ``alpha_map`` empty so
-        every downstream ``alpha_map.get(key, 1.0)`` returns 1.0 →
-        ``c_F_final = c_F_raw``, ``K_final = K_raw``. The xlsx sheet
-        is still read upstream by external tools / diagnostics; we
-        simply ignore it here.
-        """
-        # 2026-05-28 audit fix: skip the boundary-effect α
-        # multiplication. ``alpha_map`` becomes a sentinel dict whose
-        # ``.get(key, 1.0)`` always returns 1.0 — keeps the rest of the
-        # _build flow unchanged but eliminates the double-correction.
-        alpha_map: dict = {}
+        """Load data, calibrate, build RBF interpolators."""
+        # Load boundary effect coefficients
+        alpha_df = pd.read_excel(
+            str(XLSX), engine="openpyxl",
+            sheet_name="边界效应系数", header=None)
+        alpha_map = {str(r.iloc[0]): float(r.iloc[1])
+                     for _, r in alpha_df.iterrows()}
 
         # Load training data
         prefix = self.tpms[0]  # 'G' for Gyroid, 'D' for Diamond
