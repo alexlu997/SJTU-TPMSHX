@@ -196,24 +196,39 @@ class Pipeline2D(ComputePipeline):
     business logic.  Keeping the helpers in ``runs.run_calculation``
     (rather than copying them here) avoids a multi-thousand-line move
     in this PR.  A future C5 phase will hoist them.
+
+    The legacy helpers consume *two* dicts (``parsed`` from
+    ``_parse_inputs_cfg`` and ``fields`` from ``_build_fields_cfg``).
+    The ABC contract surfaces only one ``fields`` dict between phases,
+    so we cache ``parsed`` on the instance for ``run_solvers`` +
+    ``finalize`` to reach.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._parsed: Optional[Dict[str, Any]] = None
 
     def build_fields(self) -> Dict[str, Any]:
         from runs.run_calculation import (
             _parse_inputs_cfg, _build_fields_cfg,
         )
-        parsed = _parse_inputs_cfg(self.cfg)
-        return _build_fields_cfg(parsed)
+        self._parsed = _parse_inputs_cfg(self.cfg)
+        return _build_fields_cfg(self._parsed)
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
         from runs.run_calculation import _run_solvers_cfg
-        return _run_solvers_cfg(fields, progress_cb=self.progress_cb,
+        assert self._parsed is not None, (
+            "Pipeline2D.run_solvers called before build_fields")
+        return _run_solvers_cfg(self._parsed, fields,
+                                progress_cb=self.progress_cb,
                                 cancel_token=self.cancel)
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
         from runs.run_calculation import _finalize_cfg
-        return _finalize_cfg(raw, fields)
+        assert self._parsed is not None, (
+            "Pipeline2D.finalize called before build_fields")
+        return _finalize_cfg(raw, self._parsed)
 
 
 class Pipeline3D(ComputePipeline):
