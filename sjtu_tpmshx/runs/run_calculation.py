@@ -84,27 +84,43 @@ def run_calculation_inner_cfg(compute_cfg, window):
     contract.
     """
     cfg = _parse_inputs(window, compute_cfg)
-    fields = _build_fields(window, cfg)
+    fields = _build_fields_cfg(cfg)
     result = _run_solvers(window, cfg, fields)
     _store_results(window, cfg, result)
 
 
-def _parse_inputs(window, compute_cfg=None):
-    """Phase 1: UI input reading + validation + zone config building.
+def _bc_cfg_to_dict_2d(bc, L_dom, H_dom):
+    """Convert :class:`PartialBCConfig` into the legacy 2D BC dict.
 
-    ``compute_cfg`` defaults to ``None`` for backward compatibility
-    with older test callers that pass only the window; in that case
-    the strict ``from_qt_window`` adapter is invoked here.
+    Full-face fallback (``in_w==0`` or ``out_w==0``) produces an
+    inlet/outlet that spans the entire cross-stream axis (``H`` for
+    x-flow, ``L`` for y-flow), matching the legacy ``ValueError``
+    fallback inside the old ``_parse_inputs`` ``window._fluid_config``
+    block.
+    """
+    is_x_flow = bc.dir in (0, 1)
+    cross_dim = H_dom if is_x_flow else L_dom
+    if bc.in_w > 0 and bc.out_w > 0:
+        return dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
+                    out_ctr=bc.out_ctr, out_w=bc.out_w)
+    return dict(dir=bc.dir, in_ctr=cross_dim / 2, in_w=cross_dim,
+                out_ctr=cross_dim / 2, out_w=cross_dim)
 
-    When provided (audit C3), it carries every scalar that used to come
-    from ````le_*`` widget`` reads. Non-scalar window state (zone config,
-    eps_A snapshot, pareto state, extrap reasons) still flows through
-    the Qt object.
+
+def _parse_inputs_cfg(compute_cfg):
+    """Phase 1 (Qt-free): assemble the parsed-config dict from a
+    :class:`ComputeConfig`.
+
+    Audit C4 (L-a-2): cfg-only mirror of ``_parse_inputs``. The legacy
+    function now wraps this and propagates ``extrap_reasons`` back onto
+    ``window._extrap_reasons`` so the UI watermark keeps working.
+
+    Returns the same parsed dict as ``_parse_inputs`` plus an
+    ``extrap_reasons`` key (the legacy version mutated this onto the
+    window directly; the cfg-pure version returns it instead).
     """
     warnings_list = []
-
-    if compute_cfg is None:
-        compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
+    extrap_reasons = []
 
     # Block unsupported fluids up-front (2D path currently hardcodes air_*
     # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
@@ -119,13 +135,11 @@ def _parse_inputs(window, compute_cfg=None):
     # Surrogate training-domain guard for the UI Compute path (#10) —
     # previously only the optimizer did this; the Compute tab now also
     # guards a single out-of-window (u, T, L, t) from silent RBF extrap.
-    # If the "Allow surrogate extrapolation" checkbox is on (or env var
-    # TPMSHX_ALLOW_EXTRAP=1), out-of-window values downgrade to warn and
-    # we stash the reasons on window._extrap_reasons so run_calculation
-    # can mark the result + watermark the plots.
-    window._extrap_reasons = []
-    _allow_extrap = bool(getattr(window, 'chk_allow_extrap', None)
-                         and window.chk_allow_extrap.isChecked())
+    # If ``cfg.extrap.allow`` is set (the checkbox is on, or the env
+    # var TPMSHX_ALLOW_EXTRAP=1 fed the dataclass), out-of-window
+    # values downgrade to warn and we stash the reasons in the parsed
+    # dict so the UI can mark the result + watermark the plots.
+    _allow_extrap = bool(compute_cfg.extrap.allow)
     try:
         from df_fit.surrogate_domain import check_surrogate_domain_at_point
         _tpms = compute_cfg.geometry.tpms
@@ -138,19 +152,17 @@ def _parse_inputs(window, compute_cfg=None):
         _P_B = compute_cfg.fluid_B.P_in_Pa
         _uA = compute_cfg.fluid_A.u_mps
         _uB = compute_cfg.fluid_B.u_mps
-        window._extrap_reasons += check_surrogate_domain_at_point(
+        extrap_reasons += check_surrogate_domain_at_point(
             _tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A',
             allow_extrap=_allow_extrap) or []
-        window._extrap_reasons += check_surrogate_domain_at_point(
+        extrap_reasons += check_surrogate_domain_at_point(
             _tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B',
             allow_extrap=_allow_extrap) or []
     except (AttributeError, ValueError) as _e:
         if isinstance(_e, ValueError):
             raise
 
-    # Scalar parameters (audit C3 — sourced from ComputeConfig instead of
-    # ``float(``le_*`` widget.text())``). Strict validation happened upstream
-    # in ``ComputeConfig.from_qt_window(window, strict=True)``.
+    # Scalar parameters (already cfg-sourced).
     L = compute_cfg.geometry.L_dom_m
     H = compute_cfg.geometry.H_dom_m
     N_x = compute_cfg.solver.Nx
@@ -163,9 +175,10 @@ def _parse_inputs(window, compute_cfg=None):
     # Optional solid initial temperature — None means legacy seed
     # 0.5*(T_inA+T_inB) inside solve_full_domain. Not a prescribed Ts.
     T_s_init = compute_cfg.solver.T_s_init_K
-    # Defensive unit firewall — see run_calculation_3d.py:_parse_inputs for
-    # rationale (GUI labels L/H in METERS but L_cell/t in MM; mistyping the
-    # mm value into the metre field silently spawns a multi-metre domain).
+
+    # Defensive unit firewall (GUI labels L/H in METERS but L_cell/t in
+    # MM; mistyping the mm value into the metre field silently spawns a
+    # multi-metre domain). See run_calculation_3d.py for the same guard.
     _DOMAIN_MAX_M = 10.0
     for _name, _val in [('L', L), ('H', H)]:
         if _val > _DOMAIN_MAX_M:
@@ -174,82 +187,94 @@ def _parse_inputs(window, compute_cfg=None):
                 f"Likely unit slip — GUI expects meters here, while L_cell "
                 f"and t use millimeters. Re-check input.")
 
-    dx = L / N_x;  dy = H / N_y
-    try:
-        cfgA = window._fluid_config('A')
-        cfgB = window._fluid_config('B')
-    except ValueError:
-        cfgA = dict(dir=0, in_ctr=H/2, in_w=H, out_ctr=H/2, out_w=H)
-        cfgB = dict(dir=3, in_ctr=L/2, in_w=L, out_ctr=L/2, out_w=L)
-    dir_A = cfgA['dir'];  dir_B = cfgB['dir']
+    dx = L / N_x
+    dy = H / N_y
+    cfgA = _bc_cfg_to_dict_2d(compute_cfg.bc_A, L, H)
+    cfgB = _bc_cfg_to_dict_2d(compute_cfg.bc_B, L, H)
+    dir_A = cfgA['dir']
+    dir_B = cfgB['dir']
 
+    # TPMS geometry derives porosity + hydraulic radius purely from cfg.
+    # The legacy version cached this in ``window._eps_A``; we re-derive
+    # because tpms_geometry is cheap (closed-form per Cheng 2021).
     tpms_type = compute_cfg.geometry.tpms
     Lcell = compute_cfg.geometry.L_cell_mm
     t_wall = compute_cfg.geometry.t_wall_mm
     k_s = compute_cfg.geometry.k_s_W_mK
-    eps = window._eps_A
     g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
+    eps = g['epsilon']
     r_h = g['D_h'] / 2.0
 
-    # ── Build zone config (if enabled) ──
+    # ── zone config from cfg.zones (pre-resolved at UI boundary) ──
     zone_config = None
     za = None
-    z_axis = 'y'  # default; overwritten if zones active
+    z_axis = 'y'
     try:
-        zone_config = window._build_zone_config()
-        if zone_config is not None:
-            z_axis = window._zone_axis()
+        if compute_cfg.zones.enabled:
+            z_axis = compute_cfg.zones.axis
             P_in_val = compute_cfg.fluid_A.P_in_Pa
-            if z_axis == 'grid' and window._zone_grid is not None:
-                # 2D grid mode — use Sigmoid continuous field if decision vector available
-                _x_dec = getattr(window, '_pareto_x_decision', None)
+            if z_axis == 'grid' and compute_cfg.zones.grid is not None:
+                grid = compute_cfg.zones.grid
+                _x_dec = compute_cfg.zones.pareto_x_decision
                 if _x_dec is not None:
-                    from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
+                    from solvers.sigmoid_field import (
+                        build_continuous_arrays, get_geometry_lut,
+                    )
                     _lut = get_geometry_lut(tpms_type)
-                    _ax_ui = bool(getattr(window, 'chk_allow_extrap', None)
-                                  and window.chk_allow_extrap.isChecked())
                     za = build_continuous_arrays(
                         _x_dec, Lcell, t_wall,
-                        getattr(window, '_pareto_y_trans_inlet', 0.2),
-                        getattr(window, '_pareto_y_trans_outlet', 0.2),
+                        compute_cfg.zones.pareto_y_trans_inlet,
+                        compute_cfg.zones.pareto_y_trans_outlet,
                         N_x, N_y, L, H,
                         tpms_type, k_s,
                         u_A, u_B, T_inA, T_inB, _lut,
-                        allow_extrap=_ax_ui)
+                        allow_extrap=_allow_extrap)
                     print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
                     from solvers.zone_config import ZoneConfig
                     za = ZoneConfig.build_grid_arrays(
                         N_x, N_y, L, H,
-                        window._zone_grid['cells'],
-                        window._zone_grid['tpms_type'], window._zone_grid['k_s'],
+                        grid['cells'],
+                        grid['tpms_type'], grid['k_s'],
                         u_A, u_B, T_inA, T_inB, P_in_val)
-                    print(f"[ZONE] Grid {len(window._zone_grid['cells'])} cells (discrete)")
+                    print(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
                 zone_config = 'grid'
             else:
-                # 1D mode
-                zone_config.compute_properties(
-                    u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
-                    P_in=P_in_val)
-                z_dim = H if z_axis == 'y' else L
-                za = zone_config.build_structured_arrays(
-                    N_x, N_y, z_dim, axis=z_axis)
-                print(f"[ZONE] {len(zone_config.zones)} zones along {z_axis}")
+                # 1D zone mode — cfg.zones.config carries the resolved
+                # ZoneConfig (pre-built at the UI boundary by
+                # _read_zone_input in controllers.compute_config).
+                if compute_cfg.zones.config is None:
+                    warnings_list.append(
+                        "Zone enabled in 1D mode but no ZoneConfig "
+                        "resolved; falling back to uniform zone.")
+                else:
+                    zone_config = compute_cfg.zones.config
+                    zone_config.compute_properties(
+                        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
+                        P_in=P_in_val)
+                    z_dim = H if z_axis == 'y' else L
+                    za = zone_config.build_structured_arrays(
+                        N_x, N_y, z_dim, axis=z_axis)
+                    print(f"[ZONE] {len(zone_config.zones)} zones along "
+                          f"{z_axis}")
     except Exception as e:
-        import traceback; traceback.print_exc()
-        warnings_list.append(f"Zone config error: {e}\nFalling back to uniform zone.")
+        import traceback
+        traceback.print_exc()
+        warnings_list.append(
+            f"Zone config error: {e}\nFalling back to uniform zone.")
         zone_config = None
+        za = None
 
-    # Smooth zone property arrays at boundaries (skip for continuous mode)
+    # Smooth zone property arrays at boundaries (skip continuous mode).
     if za is not None and zone_config is not None and za.get('axis') != 'continuous':
         from scipy.ndimage import gaussian_filter
-        _sigma = 2.0  # smoothing width in cells
+        _sigma = 2.0
         for _key in ('K_ffA_arr', 'K_ffB_arr', 'K_ss_arr',
                      'h_vA_arr', 'h_vB_arr', 'eps_arr'):
             if _key in za:
                 za[_key] = gaussian_filter(za[_key], sigma=_sigma)
 
-    cfg = {
+    return {
         'L': L, 'H': H,
         'N_x': N_x, 'N_y': N_y,
         'dx': dx, 'dy': dy,
@@ -264,16 +289,41 @@ def _parse_inputs(window, compute_cfg=None):
         'zone_config': zone_config, 'za': za, 'z_axis': z_axis,
         'fluid_A': fluid_A, 'fluid_B': fluid_B,
         'warnings_list': warnings_list,
+        'extrap_reasons': extrap_reasons,
         # Stash the strict ComputeConfig so downstream phases
         # (_build_fields / _run_solvers / _store_results) can reach
         # P_inA / P_inB etc. without re-reading ``le_*`` widget.
         'compute_cfg': compute_cfg,
     }
-    return cfg
 
 
-def _build_fields(window, cfg):
-    """Phase 2: construct aligned grid arrays and SIMPLE helper closures."""
+def _parse_inputs(window, compute_cfg=None):
+    """Phase 1 adapter: builds cfg-only ``_parse_inputs_cfg`` output
+    and propagates the extrap-reasons list back onto ``window`` so the
+    UI watermark + status-bar handler keep working.
+
+    Audit C4 (L-a-2): legacy window-coupled signature kept for the UI
+    entrypoint; the Pipeline ABC calls ``_parse_inputs_cfg`` directly.
+    """
+    if compute_cfg is None:
+        compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
+    parsed = _parse_inputs_cfg(compute_cfg)
+    if window is not None:
+        # Legacy UI side-effect — mirror to the window so existing
+        # render code that reads ``window._extrap_reasons`` keeps
+        # working until the Phase 5 (Main_Menu.write_result) cleanup.
+        window._extrap_reasons = list(parsed.get('extrap_reasons', []))
+    return parsed
+
+
+def _build_fields_cfg(cfg):
+    """Phase 2 (Qt-free): construct aligned grid arrays and SIMPLE
+    helper closures.
+
+    Audit C4 (L-a-2): renamed from ``_build_fields(window, cfg)``. The
+    only window touch was ``window._is_x_dir(d)``, which is inlined as
+    ``d in (0, 1)`` per the original ``Main_Menu._is_x_dir`` body.
+    """
     L = cfg['L']; H = cfg['H']
     N_x = cfg['N_x']; N_y = cfg['N_y']
     u_A = cfg['u_A']; u_B = cfg['u_B']
@@ -449,7 +499,7 @@ def _build_fields(window, cfg):
         iter or treats ρ as fixed (water). Option B 2026-05-09.
         """
         d = cfg_fluid['dir']
-        is_x = window._is_x_dir(d)
+        is_x = d in (0, 1)  # x-flow = dirs {+x, -x}
         pipe_lo = cfg_fluid['in_ctr'] - cfg_fluid['in_w'] / 2
         pipe_hi = cfg_fluid['in_ctr'] + cfg_fluid['in_w'] / 2
         out_lo = cfg_fluid.get('out_ctr', cfg_fluid['in_ctr']) - cfg_fluid.get('out_w', cfg_fluid['in_w']) / 2

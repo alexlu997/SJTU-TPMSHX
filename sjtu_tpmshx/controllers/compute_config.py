@@ -198,15 +198,20 @@ def _read_partial_bc(window, side: Literal['A', 'B']) -> 'PartialBCConfig':
     only honoured when the matching ``le_pipe<side>_in_z_*`` widgets
     exist and are visible (3D mode); otherwise the z-fields stay
     ``None`` and the solver treats the z-axis as full-face.
+
+    ``side='B'`` defaults to ``dir=3`` (-y) when ``combo_dirB`` is
+    missing, matching the legacy ``runs.run_calculation._parse_inputs``
+    fall-through (``cfgB = dict(dir=3, …)``).
     """
     le_prefix = f'le_pipe{side}'
     combo_dir = getattr(window, f'combo_dir{side}', None)
-    dir_int = 0
+    default_dir = 3 if side == 'B' else 0
+    dir_int = default_dir
     if combo_dir is not None:
         try:
             dir_int = int(combo_dir.currentIndex())
         except Exception:
-            dir_int = 0
+            dir_int = default_dir
     bc = PartialBCConfig(
         dir=dir_int,
         in_ctr=_qt_float(getattr(window, f'{le_prefix}_in_ctr', None), 0.0),
@@ -239,10 +244,15 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
     """Snapshot zone / sigmoid-field control state.
 
     Reads ``chk_zones``, ``combo_zone_axis``, ``_zone_grid``, and the
-    ``_pareto_*`` attributes. The actual ``ZoneConfig`` object (1D mode)
-    is *not* resolved here — the pipeline builds it from the zone table
-    or the captured grid cells. Keeping ``ZoneInputConfig`` pure-data
-    makes the cfg trivially JSON-serialisable.
+    ``_pareto_*`` attributes. When ``chk_zones`` is checked, also
+    pre-resolves the ``ZoneConfig`` instance via
+    ``solvers.zone_editor.build_zone_config(window)`` so the downstream
+    Pipeline2D / Pipeline3D layer never touches the Qt zone-table
+    widget.
+
+    The pre-resolution is wrapped in ``try/except`` so test stubs that
+    set ``chk_zones=True`` but skip the full ``zone_table`` widget
+    still produce a usable ``ZoneInputConfig`` (with ``config=None``).
     """
     chk = getattr(window, 'chk_zones', None)
     enabled = bool(chk is not None and getattr(chk, 'isChecked', lambda: False)())
@@ -254,11 +264,24 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
             axis = ('y', 'x', 'grid')[max(0, min(idx, 2))]
         except Exception:
             axis = 'y'
+
+    # Pre-resolve ZoneConfig (1D zone mode needs the zone-table rows).
+    # Grid mode populates ``window._zone_grid`` as a side effect of the
+    # same call.  Skip silently when the call cannot fire — tests pass
+    # plain ``object()`` stubs without a real zone_table widget.
+    resolved_config = None
+    if enabled:
+        try:
+            from solvers.zone_editor import build_zone_config as _bzc
+            resolved_config = _bzc(window)
+        except Exception:
+            resolved_config = None
     grid = getattr(window, '_zone_grid', None)
     return ZoneInputConfig(
         enabled=enabled,
         axis=axis,
         grid=grid if isinstance(grid, dict) else None,
+        config=resolved_config,
         pareto_x_decision=getattr(window, '_pareto_x_decision', None),
         pareto_y_trans_inlet=float(
             getattr(window, '_pareto_y_trans_inlet', 0.2)),
@@ -366,15 +389,21 @@ class ZoneInputConfig:
 
     Captures the inputs that the legacy ``window._build_zone_config()``
     + ``window._zone_axis()`` pair plus the ``_pareto_*`` attributes
-    fed into the 2D/3D solver. The pipeline builds the actual zone
-    property arrays (``za``) from this; the resolved ``ZoneConfig``
-    object lives in the intermediate fields dict, not here.
+    fed into the 2D/3D solver.
+
+    ``config`` is the pre-resolved ``solvers.zone_config.ZoneConfig``
+    instance (1D zone mode) or ``None`` when zones are disabled or
+    running in grid mode (``grid`` carries the cell list instead).
+    The UI adapter snapshots ``config`` via
+    ``window._build_zone_config()`` at the boundary so the Pipeline
+    layer never has to touch the Qt zone-table widget.
 
     Audit C4 (L-a-2).
     """
     enabled: bool = False
     axis: ZoneAxis = 'y'
     grid: Optional[Dict[str, Any]] = None  # cells / tpms_type / k_s
+    config: Optional[Any] = None  # resolved ZoneConfig instance (1D)
     pareto_x_decision: Optional[Any] = None
     pareto_y_trans_inlet: float = 0.2
     pareto_y_trans_outlet: float = 0.2
