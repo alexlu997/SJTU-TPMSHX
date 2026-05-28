@@ -232,24 +232,40 @@ class Pipeline2D(ComputePipeline):
 
 
 class Pipeline3D(ComputePipeline):
-    """3D compute pipeline backed by ``runs.run_calculation_3d`` helpers."""
+    """3D compute pipeline backed by ``runs.run_calculation_3d`` helpers.
+
+    The 3D path has no separate build phase — the cfg dict from
+    ``_parse_inputs_3d_cfg`` is consumed directly by ``_run_3d_stack``.
+    We keep the ABC's 3-phase contract by routing ``build_fields`` to a
+    passthrough and caching the parsed dict on ``self._parsed`` so
+    finalize can reach ``compute_cfg`` + ``extrap_reasons``.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._parsed: Optional[Dict[str, Any]] = None
 
     def build_fields(self) -> Dict[str, Any]:
         from runs.run_calculation_3d import (
             _parse_inputs_3d_cfg, _build_fields_3d_cfg,
         )
-        parsed = _parse_inputs_3d_cfg(self.cfg)
-        return _build_fields_3d_cfg(parsed)
+        self._parsed = _parse_inputs_3d_cfg(self.cfg)
+        return _build_fields_3d_cfg(self._parsed)
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
         from runs.run_calculation_3d import _run_solvers_3d_cfg
-        return _run_solvers_3d_cfg(fields, progress_cb=self.progress_cb,
+        assert self._parsed is not None, (
+            "Pipeline3D.run_solvers called before build_fields")
+        return _run_solvers_3d_cfg(self._parsed, fields,
+                                    progress_cb=self.progress_cb,
                                     cancel_token=self.cancel)
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
         from runs.run_calculation_3d import _finalize_3d_cfg
-        return _finalize_3d_cfg(raw, fields)
+        assert self._parsed is not None, (
+            "Pipeline3D.finalize called before build_fields")
+        return _finalize_3d_cfg(raw, self._parsed)
 
 
 def pipeline_for(cfg: ComputeConfig,
