@@ -63,14 +63,17 @@ from solvers.tpms_calc import (
 # (cross-flow, narrow 42×42 port). Internal interstitial flow areas
 # differ between streams since flow direction differs.
 from configs import load_shanghai_baseline
+from controllers.compute_config import ComputeConfig
+# Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()
-TPMS = _SH['geometry']['tpms']
-L_CELL = _SH['geometry']['L_cell_mm']         # mm
-T_WALL = _SH['geometry']['t_wall_mm']         # mm
-K_STEEL = _SH['geometry']['k_s_W_mK']         # W/(m·K), 304 SS
-L_AIR   = _SH['domain']['L_dom_m']            # m, x  (air flow length)
-L_WATER = _SH['domain']['H_dom_m']            # m, y  (water flow length)
-L_Z     = _SH['domain']['Lz_m']               # m, z  (spanwise)
+_SH_CC = ComputeConfig.from_dict(_SH)
+TPMS = _SH_CC.geometry.tpms
+L_CELL = _SH_CC.geometry.L_cell_mm                 # mm
+T_WALL = _SH_CC.geometry.t_wall_mm                 # mm
+K_STEEL = _SH_CC.geometry.k_s_W_mK                 # W/(m·K), 304 SS
+L_AIR   = _SH_CC.geometry.L_dom_m                  # m, x  (air flow length)
+L_WATER = _SH_CC.geometry.H_dom_m                  # m, y  (water flow length)
+L_Z     = _SH_CC.geometry.Lz_m                     # m, z  (spanwise)
 # Aliases retained for legacy variable names elsewhere in script
 L_DOM = L_AIR
 H_DOM = L_WATER

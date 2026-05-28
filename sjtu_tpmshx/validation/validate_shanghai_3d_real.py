@@ -46,16 +46,21 @@ R_AIR = 287.05
 # ── Shanghai geometry (mirrors 2D validate_shanghai.py) ──
 # Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
 from configs import load_shanghai_baseline
+from controllers.compute_config import ComputeConfig
+# Audit C3 (2026-05-28): sourced through ComputeConfig.  `_SH` keeps
+# the raw dict view for the two Shanghai-specific fields (n_units,
+# a_flow_per_unit_m2) that are not part of the ComputeConfig schema.
 _SH = load_shanghai_baseline()
-TPMS = _SH['geometry']['tpms']
-L_CELL = _SH['geometry']['L_cell_mm']
-T_WALL = _SH['geometry']['t_wall_mm']
-K_S = _SH['geometry']['k_s_W_mK']
+_SH_CC = ComputeConfig.from_dict(_SH)
+TPMS = _SH_CC.geometry.tpms
+L_CELL = _SH_CC.geometry.L_cell_mm
+T_WALL = _SH_CC.geometry.t_wall_mm
+K_S = _SH_CC.geometry.k_s_W_mK
 g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
 EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
-L_DOM = _SH['domain']['L_dom_m']
-H_DOM = _SH['domain']['H_dom_m']
-LZ = _SH['domain']['Lz_m']  # arbitrary 3D depth (water uniform along z)
+L_DOM = _SH_CC.geometry.L_dom_m
+H_DOM = _SH_CC.geometry.H_dom_m
+LZ = _SH_CC.geometry.Lz_m  # arbitrary 3D depth (water uniform along z)
 
 N_UNITS = _SH['domain']['n_units']
 A_FLOW_PER_UNIT = _SH['domain']['a_flow_per_unit_m2']

@@ -75,14 +75,40 @@ DEFAULT_CONFIG_3D: dict = {
 # ─── Public API ─────────────────────────────────────────────────────
 
 
+def _compute_cfg_to_evaluator_dict_3d(compute_cfg) -> dict:
+    """Map :class:`controllers.ComputeConfig` → 3D-evaluator flat dict.
+
+    Audit C3 (2026-05-28, L-a-1). Same overlap rules as the 2D
+    counterpart in :mod:`optimization.evaluator`, plus the 3D-only
+    ``Nx_3d`` / ``Ny_3d`` / ``Nz_3d`` / ``Lz`` overrides.
+    """
+    from optimization.evaluator import _compute_cfg_to_evaluator_dict
+    d = _compute_cfg_to_evaluator_dict(compute_cfg)
+    d['Nx_3d'] = compute_cfg.solver.Nx
+    d['Ny_3d'] = compute_cfg.solver.Ny
+    d['Nz_3d'] = compute_cfg.solver.Nz
+    if compute_cfg.geometry.Lz_m is not None:
+        d['Lz'] = compute_cfg.geometry.Lz_m
+    d['max_outer_3d'] = compute_cfg.solver.max_outer_ltne
+    d['outer_tol_K'] = compute_cfg.solver.outer_tol_K
+    d['alpha_outer'] = compute_cfg.solver.alpha_T
+    d['roughness_mode'] = compute_cfg.solver.rough_mode
+    return d
+
+
 def evaluate_design_3d(x: np.ndarray,
-                       cfg: dict | None = None) -> tuple:
+                       cfg: dict | None = None,
+                       *, compute_cfg=None) -> tuple:
     """Evaluate one 3D design.
 
     Parameters
     ----------
     x : (D,) array — decision vector (D = decision_dim from cfg control grid).
     cfg : dict — overrides over DEFAULT_CONFIG_3D.
+    compute_cfg : controllers.ComputeConfig, optional
+        Strict-typed config (audit C3, L-a-1). When provided, its
+        overlapping fields seed ``cfg_full`` underneath ``cfg`` so the
+        explicit dict path keeps absolute precedence.
 
     Returns
     -------
@@ -91,7 +117,11 @@ def evaluate_design_3d(x: np.ndarray,
     dP_total : float — dP_A + dP_B in Pa.
     mass_per_m : float — solid mass kg per metre of HX depth.
     """
-    cfg_full = {**DEFAULT_CONFIG_3D, **(cfg or {})}
+    if compute_cfg is not None:
+        cc_dict = _compute_cfg_to_evaluator_dict_3d(compute_cfg)
+        cfg_full = {**DEFAULT_CONFIG_3D, **cc_dict, **(cfg or {})}
+    else:
+        cfg_full = {**DEFAULT_CONFIG_3D, **(cfg or {})}
 
     Nx = int(cfg_full['Nx_3d'])
     Ny = int(cfg_full['Ny_3d'])
