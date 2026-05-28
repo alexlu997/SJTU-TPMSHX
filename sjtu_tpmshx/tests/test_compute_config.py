@@ -58,8 +58,9 @@ class _StubWindow:
         self.le_ks = _StubLineEdit(fields.get('ks', '20.0'))
         self.le_L = _StubLineEdit(fields.get('L', '0.20'))
         self.le_H = _StubLineEdit(fields.get('H', '0.05'))
-        if 'Lz' in fields:
-            self.le_Lz = _StubLineEdit(fields['Lz'])
+        # le_Lz defaults to a numeric value so strict mode passes for
+        # 3D runs unless the test explicitly drops it.
+        self.le_Lz = _StubLineEdit(fields.get('Lz', '0.05'))
         # solver
         self.le_Nx = _StubLineEdit(fields.get('Nx', '40'))
         self.le_Ny = _StubLineEdit(fields.get('Ny', '80'))
@@ -238,3 +239,52 @@ def test_from_qt_window_blank_lineedit_uses_default():
     assert cfg.fluid_A.u_mps == 5.0   # FluidConfig default
     assert cfg.solver.Nx == 30        # SolverConfig default
     assert cfg.fluid_A.T_in_K == 300.0
+
+
+# ── strict validation ───────────────────────────────────────────────
+
+
+def test_from_qt_window_strict_passes_on_full_window():
+    """Strict mode is a no-op when every required widget is filled."""
+    window = _StubWindow()   # all defaults non-empty
+    cfg = ComputeConfig.from_qt_window(window, strict=True)
+    assert cfg.fluid_A.u_mps == pytest.approx(10.0)
+
+
+def test_from_qt_window_strict_flags_blank_required_field():
+    """Blank Velocity A → strict raises ValueError naming the field."""
+    window = _StubWindow(uA='', H='')
+    with pytest.raises(ValueError) as exc:
+        ComputeConfig.from_qt_window(window, strict=True)
+    msg = str(exc.value)
+    assert 'Velocity A' in msg
+    assert 'Domain Height' in msg
+
+
+def test_from_qt_window_strict_flags_non_numeric_grid():
+    """Garbage in Nx → strict raises naming the grid field."""
+    window = _StubWindow(Nx='abc')
+    with pytest.raises(ValueError) as exc:
+        ComputeConfig.from_qt_window(window, strict=True)
+    assert 'Grid Nx' in str(exc.value)
+
+
+def test_from_qt_window_strict_3d_requires_Lz_Nz():
+    """force_3d=True checks le_Lz / le_Nz as well."""
+    window = _StubWindow(Nz='5')
+    if hasattr(window, 'le_Lz'):
+        del window.le_Lz   # 3D run with missing Lz
+    with pytest.raises(ValueError) as exc:
+        ComputeConfig.from_qt_window(window, strict=True, force_3d=True)
+    assert 'Width Lz' in str(exc.value)
+
+
+def test_from_qt_window_strict_autodetects_3d():
+    """Nz>=2 in the widget auto-triggers the 3D required set even when
+    ``force_3d`` is left as the default ``None``."""
+    window = _StubWindow(Nz='5')
+    if hasattr(window, 'le_Lz'):
+        del window.le_Lz
+    with pytest.raises(ValueError) as exc:
+        ComputeConfig.from_qt_window(window, strict=True)
+    assert 'Width Lz' in str(exc.value)

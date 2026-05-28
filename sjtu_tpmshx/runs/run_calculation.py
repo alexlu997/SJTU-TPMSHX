@@ -2,10 +2,16 @@
 
 Extracted from main.py (Task B.9). Entry: run_calculation_inner.
 Also contains finalize_plots which renders results on canvas widgets.
-All functions take `window` (Main_Menu) as first argument.
+
+C3 refactor (2026-05-28, L-a-1): scalar UI inputs now route through
+``controllers.compute_config.ComputeConfig.from_qt_window`` instead of
+direct ````le_*`` widget.text()`` reads. The window is still required for
+non-le state (zone config, _eps_A, extrap reasons, _temp_to_K hook,
+_DIR_MAP, etc.) — C4 task to extract that into a SessionState object.
 """
 import numpy as np
 import matplotlib.pyplot as plt
+from controllers.compute_config import ComputeConfig
 from solvers.simple_solver import SIMPLESolver
 from solvers.solve_full import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
@@ -58,26 +64,48 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
 
 
 def run_calculation_inner(window):
-    """Orchestrator: split into 4 phases for readability."""
-    cfg = _parse_inputs(window)
+    """Orchestrator: split into 4 phases for readability.
+
+    Backward-compatible adapter — builds a strict-validated
+    :class:`ComputeConfig` from the window and delegates to
+    :func:`run_calculation_inner_cfg`. Callers that already hold a
+    cfg (tests, future C4 Pipeline) can call ``_cfg`` directly.
+    """
+    compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
+    return run_calculation_inner_cfg(compute_cfg, window)
+
+
+def run_calculation_inner_cfg(compute_cfg, window):
+    """Orchestrator with explicit :class:`ComputeConfig` (C3, L-a-1).
+
+    ``window`` is still required for non-le_* state (zone config,
+    ``_eps_A``, ``_DIR_MAP``, extrap reasons, K/°C toggle, …); C4 will
+    extract that into a ``SessionState`` object so the cfg is the only
+    contract.
+    """
+    cfg = _parse_inputs(window, compute_cfg)
     fields = _build_fields(window, cfg)
     result = _run_solvers(window, cfg, fields)
     _store_results(window, cfg, result)
 
 
-def _parse_inputs(window):
-    """Phase 1: UI input reading + validation + zone config building."""
+def _parse_inputs(window, compute_cfg):
+    """Phase 1: UI input reading + validation + zone config building.
+
+    ``compute_cfg`` (audit C3) carries every scalar that used to come
+    from ````le_*`` widget`` reads. Non-scalar window state (zone config,
+    eps_A snapshot, pareto state, extrap reasons) still flows through
+    the Qt object.
+    """
     warnings_list = []
 
     # Block unsupported fluids up-front (2D path currently hardcodes air_*
     # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
     # still blocks. Per-side fluid type captured into cfg so _run_solvers
     # picks the right property accessors.
-    from solvers.tpms_calc import parse_fluid_type, validate_fluid_type
-    fluid_A = (parse_fluid_type(window.combo_fluidA)
-               if hasattr(window, 'combo_fluidA') else 'air')
-    fluid_B = (parse_fluid_type(window.combo_fluidB)
-               if hasattr(window, 'combo_fluidB') else 'air')
+    from solvers.tpms_calc import validate_fluid_type
+    fluid_A = compute_cfg.fluid_A.type
+    fluid_B = compute_cfg.fluid_B.type
     validate_fluid_type(fluid_A, 'A')
     validate_fluid_type(fluid_B, 'B')
 
@@ -93,18 +121,16 @@ def _parse_inputs(window):
                          and window.chk_allow_extrap.isChecked())
     try:
         from df_fit.surrogate_domain import check_surrogate_domain_at_point
-        _tpms = window.combo_tpms.currentText()
-        _L = float(window.le_Lcell.text()); _t = float(window.le_t.text())
-        _ks = float(window.le_ks.text())
-        _T_A = (window._temp_to_K(window.le_TinA)
-                if hasattr(window, '_temp_to_K')
-                else float(window.le_TinA.text()))
-        _T_B = (window._temp_to_K(window.le_TinB)
-                if hasattr(window, '_temp_to_K')
-                else float(window.le_TinB.text()))
-        _P_A = float(window.le_PinA.text())
-        _P_B = float(window.le_PinB.text())
-        _uA = float(window.le_uA.text()); _uB = float(window.le_uB.text())
+        _tpms = compute_cfg.geometry.tpms
+        _L = compute_cfg.geometry.L_cell_mm
+        _t = compute_cfg.geometry.t_wall_mm
+        _ks = compute_cfg.geometry.k_s_W_mK
+        _T_A = compute_cfg.fluid_A.T_in_K
+        _T_B = compute_cfg.fluid_B.T_in_K
+        _P_A = compute_cfg.fluid_A.P_in_Pa
+        _P_B = compute_cfg.fluid_B.P_in_Pa
+        _uA = compute_cfg.fluid_A.u_mps
+        _uB = compute_cfg.fluid_B.u_mps
         window._extrap_reasons += check_surrogate_domain_at_point(
             _tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A',
             allow_extrap=_allow_extrap) or []
@@ -115,44 +141,21 @@ def _parse_inputs(window):
         if isinstance(_e, ValueError):
             raise
 
-    def _parse(widget, name, typ=float):
-        try:
-            return typ(widget.text())
-        except ValueError:
-            return name  # return field name as sentinel
+    # Scalar parameters (audit C3 — sourced from ComputeConfig instead of
+    # ``float(``le_*`` widget.text())``). Strict validation happened upstream
+    # in ``ComputeConfig.from_qt_window(window, strict=True)``.
+    L = compute_cfg.geometry.L_dom_m
+    H = compute_cfg.geometry.H_dom_m
+    N_x = compute_cfg.solver.Nx
+    N_y = compute_cfg.solver.Ny
+    u_A = compute_cfg.fluid_A.u_mps
+    u_B = compute_cfg.fluid_B.u_mps
+    T_inA = compute_cfg.fluid_A.T_in_K
+    T_inB = compute_cfg.fluid_B.T_in_K
 
-    _fields = {
-        'L': _parse(window.le_L, "Domain Length (L)"),
-        'H': _parse(window.le_H, "Domain Height (H)"),
-        # cp_f removed 2026-04-23 — solver uses per-cell air_cp(T) everywhere
-        # (review item #1). UI field is read-only.
-        'N_x': _parse(window.le_Nx, "Grid Nx", int),
-        'N_y': _parse(window.le_Ny, "Grid Ny", int),
-        'u_A': _parse(window.le_uA, "Velocity A (u_A)"),
-        'u_B': _parse(window.le_uB, "Velocity B (u_B)"),
-        # Honour the K/°C UI toggle: _temp_to_K returns a Kelvin float
-        # regardless of what the user is currently typing.
-        'T_inA': (window._temp_to_K(window.le_TinA)
-                  if hasattr(window, '_temp_to_K')
-                  else _parse(window.le_TinA, "Inlet Temp A (T_inA)")),
-        'T_inB': (window._temp_to_K(window.le_TinB)
-                  if hasattr(window, '_temp_to_K')
-                  else _parse(window.le_TinB, "Inlet Temp B (T_inB)")),
-    }
-
-    # Optional solid initial temperature — empty means legacy seed
+    # Optional solid initial temperature — None means legacy seed
     # 0.5*(T_inA+T_inB) inside solve_full_domain. Not a prescribed Ts.
-    _le_ts = getattr(window, 'le_TsInit', None)
-    T_s_init = None
-    if _le_ts is not None and _le_ts.text().strip():
-        if hasattr(window, '_temp_to_K'):
-            T_s_init = window._temp_to_K(_le_ts)
-        else:
-            T_s_init = float(_le_ts.text())
-    bad = [v for v in _fields.values() if isinstance(v, str)]
-    if bad:
-        raise ValueError(f"Invalid input in: {', '.join(bad)}")
-    L, H = _fields['L'], _fields['H']
+    T_s_init = compute_cfg.solver.T_s_init_K
     # Defensive unit firewall — see run_calculation_3d.py:_parse_inputs for
     # rationale (GUI labels L/H in METERS but L_cell/t in MM; mistyping the
     # mm value into the metre field silently spawns a multi-metre domain).
@@ -163,9 +166,6 @@ def _parse_inputs(window):
                 f"Domain dimension {_name!r}={_val} m exceeds {_DOMAIN_MAX_M} m. "
                 f"Likely unit slip — GUI expects meters here, while L_cell "
                 f"and t use millimeters. Re-check input.")
-    N_x, N_y = _fields['N_x'], _fields['N_y']
-    u_A, u_B = _fields['u_A'], _fields['u_B']
-    T_inA, T_inB = _fields['T_inA'], _fields['T_inB']
 
     dx = L / N_x;  dy = H / N_y
     try:
@@ -176,10 +176,10 @@ def _parse_inputs(window):
         cfgB = dict(dir=3, in_ctr=L/2, in_w=L, out_ctr=L/2, out_w=L)
     dir_A = cfgA['dir'];  dir_B = cfgB['dir']
 
-    tpms_type = window.combo_tpms.currentText()
-    Lcell = float(window.le_Lcell.text())
-    t_wall = float(window.le_t.text())
-    k_s = float(window.le_ks.text())
+    tpms_type = compute_cfg.geometry.tpms
+    Lcell = compute_cfg.geometry.L_cell_mm
+    t_wall = compute_cfg.geometry.t_wall_mm
+    k_s = compute_cfg.geometry.k_s_W_mK
     eps = window._eps_A
     g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
     r_h = g['D_h'] / 2.0
@@ -192,7 +192,7 @@ def _parse_inputs(window):
         zone_config = window._build_zone_config()
         if zone_config is not None:
             z_axis = window._zone_axis()
-            P_in_val = float(window.le_PinA.text())
+            P_in_val = compute_cfg.fluid_A.P_in_Pa
             if z_axis == 'grid' and window._zone_grid is not None:
                 # 2D grid mode — use Sigmoid continuous field if decision vector available
                 _x_dec = getattr(window, '_pareto_x_decision', None)
@@ -257,6 +257,10 @@ def _parse_inputs(window):
         'zone_config': zone_config, 'za': za, 'z_axis': z_axis,
         'fluid_A': fluid_A, 'fluid_B': fluid_B,
         'warnings_list': warnings_list,
+        # Stash the strict ComputeConfig so downstream phases
+        # (_build_fields / _run_solvers / _store_results) can reach
+        # P_inA / P_inB etc. without re-reading ``le_*`` widget.
+        'compute_cfg': compute_cfg,
     }
     return cfg
 
@@ -723,8 +727,8 @@ def _run_solvers(window, cfg, fields):
 
     rho_A, rho_B = window._rho_A, window._rho_B
     mu_A, mu_B = window._mu_A, window._mu_B
-    P_inA_val = float(window.le_PinA.text())
-    P_inB_val = float(window.le_PinB.text())
+    P_inA_val = cfg['compute_cfg'].fluid_A.P_in_Pa
+    P_inB_val = cfg['compute_cfg'].fluid_B.P_in_Pa
 
     def _on_progress(step, total):
         pass  # progress handled by main thread timer
@@ -1028,8 +1032,8 @@ def _run_solvers(window, cfg, fields):
     window.T_s  = Ts[np.newaxis]
 
     # ── Step 3: Pressure from SIMPLE ──
-    P_inA = float(window.le_PinA.text())
-    P_inB = float(window.le_PinB.text())
+    P_inA = cfg['compute_cfg'].fluid_A.P_in_Pa
+    P_inB = cfg['compute_cfg'].fluid_B.P_in_Pa
     dir_flow_A = window._DIR_MAP[dir_A]
     dir_flow_B = window._DIR_MAP[dir_B]
 

@@ -96,6 +96,61 @@ def _qt_int(widget, default: int) -> int:
         return default
 
 
+# Required widget attributes for strict-mode validation. The labels mirror
+# the human-friendly names that the legacy ``runs.run_calculation._parse``
+# helper surfaced in its ``ValueError`` payload.
+_REQUIRED_2D = [
+    ('le_L', "Domain Length (L)"),
+    ('le_H', "Domain Height (H)"),
+    ('le_Nx', "Grid Nx"),
+    ('le_Ny', "Grid Ny"),
+    ('le_uA', "Velocity A (u_A)"),
+    ('le_uB', "Velocity B (u_B)"),
+    ('le_TinA', "Inlet Temp A (T_inA)"),
+    ('le_TinB', "Inlet Temp B (T_inB)"),
+    ('le_Lcell', "TPMS L_cell"),
+    ('le_t', "TPMS t"),
+    ('le_ks', "TPMS k_s"),
+]
+_REQUIRED_3D_EXTRA = [
+    ('le_Lz', "Width Lz"),
+    ('le_Nz', "Grid Nz"),
+]
+
+
+def _validate_required_widgets(window, *, is_3d: bool) -> None:
+    """Raise ``ValueError`` listing every blank / non-numeric required
+    widget — preserves the legacy behaviour of
+    ``runs.run_calculation._parse``.
+    """
+    required = list(_REQUIRED_2D)
+    if is_3d:
+        required = required + _REQUIRED_3D_EXTRA
+    bad = []
+    for attr, label in required:
+        widget = getattr(window, attr, None)
+        if widget is None:
+            bad.append(label)
+            continue
+        txt = _qt_text(widget).strip()
+        if not txt:
+            bad.append(label)
+            continue
+        # int widgets get a tighter check
+        if attr in ('le_Nx', 'le_Ny', 'le_Nz'):
+            try:
+                int(txt)
+            except ValueError:
+                bad.append(label)
+        else:
+            try:
+                float(txt)
+            except ValueError:
+                bad.append(label)
+    if bad:
+        raise ValueError(f"Invalid input in: {', '.join(bad)}")
+
+
 def _parse_fluid_label(combo) -> FluidType:
     """Inline copy of ``solvers.tpms_calc.parse_fluid_type``.
 
@@ -207,7 +262,8 @@ class ComputeConfig:
     # ── adapters ─────────────────────────────────────────────────────
 
     @classmethod
-    def from_qt_window(cls, window) -> 'ComputeConfig':
+    def from_qt_window(cls, window, *, strict: bool = False,
+                       force_3d: Optional[bool] = None) -> 'ComputeConfig':
         """Build a ``ComputeConfig`` from the main UI window.
 
         Reads ``window.le_*`` and ``window.combo_*`` exactly once.
@@ -216,7 +272,34 @@ class ComputeConfig:
         This is the *only* place in the codebase allowed to read
         ``QLineEdit.text()`` / ``QComboBox.currentText()`` and feed it
         into the solver layer.
+
+        Parameters
+        ----------
+        window : Main_Menu
+            The Qt window holding the QLineEdit / QComboBox widgets.
+        strict : bool, optional
+            When ``True``, raise ``ValueError`` listing every blank /
+            non-numeric required widget — mirrors the legacy validation
+            inside ``runs.run_calculation._parse_inputs``. Defaults to
+            ``False`` so tests / scripts can build partial configs.
+        force_3d : bool, optional
+            Override the 3D-validation set. ``True`` requires Lz/Nz,
+            ``False`` only requires the 2D set, ``None`` (default)
+            decides from ``int(window.le_Nz.text()) >= 2`` after the
+            cheap parse.
         """
+        if strict:
+            is_3d_for_check = force_3d
+            if is_3d_for_check is None:
+                try:
+                    _nz_widget = getattr(window, 'le_Nz', None)
+                    is_3d_for_check = (
+                        _nz_widget is not None and
+                        int(_qt_text(_nz_widget).strip() or '1') >= 2
+                    )
+                except ValueError:
+                    is_3d_for_check = False
+            _validate_required_widgets(window, is_3d=bool(is_3d_for_check))
         # ── geometry ────────────────────────────────────────────
         tpms = _qt_text(getattr(window, 'combo_tpms', None)) or 'Gyroid'
         if tpms not in ('Diamond', 'Gyroid'):

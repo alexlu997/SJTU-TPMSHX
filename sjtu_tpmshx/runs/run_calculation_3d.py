@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import numpy as np
 
+from controllers.compute_config import ComputeConfig
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.solve_full_3d import solve_full_domain_3d
 from solvers.tpms_calc import (
@@ -269,8 +270,25 @@ _M4_DEFAULT_MODE = 'sqrt'
 
 
 def run_calculation_3d_inner(window):
-    """Phase 1: parse inputs → build fields → solve → store."""
-    cfg = _parse_inputs(window)
+    """Adapter (audit C3): builds a strict :class:`ComputeConfig` from
+    the window then delegates to :func:`run_calculation_3d_inner_cfg`.
+
+    Callers that already hold a :class:`ComputeConfig` (tests, future
+    C4 Pipeline) should call ``_cfg`` directly to skip the Qt read.
+    """
+    compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
+                                                force_3d=True)
+    return run_calculation_3d_inner_cfg(compute_cfg, window)
+
+
+def run_calculation_3d_inner_cfg(compute_cfg, window):
+    """Phase 1: parse inputs → build fields → solve → store.
+
+    ``window`` still required for non-le_* state (zone_grid, cancel
+    token, _compute_progress, extrap reasons, K/°C hook). C4 task to
+    extract that into a SessionState object.
+    """
+    cfg = _parse_inputs(window, compute_cfg)
     def _prog(pct):
         window._compute_progress = pct
     cfg['_progress_cb'] = _prog
@@ -676,25 +694,22 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
 
 # ─────────────────────────── internals ────────────────────────────
 
-def _parse_inputs(window):
-    def _f(widget, name):
-        try:
-            return float(widget.text())
-        except ValueError:
-            raise ValueError(f"Invalid number in {name!r}: {widget.text()!r}")
+def _parse_inputs(window, compute_cfg):
+    """Phase 1: route scalars from ``ComputeConfig`` + zone/extrap state
+    from the window into the cfg dict consumed by ``_run_3d_stack``.
 
-    def _i(widget, name):
-        try:
-            return int(widget.text())
-        except ValueError:
-            raise ValueError(f"Invalid integer in {name!r}: {widget.text()!r}")
-
-    L = _f(window.le_L, "Length L")
-    H = _f(window.le_H, "Width H")
-    Lz = _f(window.le_Lz, "Depth Lz")
-    Nx = _i(window.le_Nx, "Grid Nx")
-    Ny = _i(window.le_Ny, "Grid Ny")
-    Nz = _i(window.le_Nz, "Grid Nz")
+    Audit C3 (2026-05-28, L-a-1): all scalar reads moved from
+    ````le_*`` widget`` into :class:`ComputeConfig`. Strict validation
+    runs upstream in ``ComputeConfig.from_qt_window(strict=True)``.
+    """
+    # Scalar geometry + grid + fluids — sourced from ComputeConfig.
+    L = compute_cfg.geometry.L_dom_m
+    H = compute_cfg.geometry.H_dom_m
+    Lz = (compute_cfg.geometry.Lz_m
+          if compute_cfg.geometry.Lz_m is not None else 0.042)
+    Nx = compute_cfg.solver.Nx
+    Ny = compute_cfg.solver.Ny
+    Nz = compute_cfg.solver.Nz
 
     # Basic positive-domain sanity checks
     for name, val in [('L', L), ('H', H), ('Lz', Lz)]:
@@ -715,30 +730,16 @@ def _parse_inputs(window):
     for name, val in [('Nx', Nx), ('Ny', Ny), ('Nz', Nz)]:
         if val < 1:
             raise ValueError(f"Grid count {name!r} must be >= 1 (got {val})")
-    u_A = _f(window.le_uA, "Velocity u_A")
-    # Honour UI K/°C toggle — _temp_to_K returns Kelvin regardless of display
-    if hasattr(window, '_temp_to_K'):
-        T_inA = window._temp_to_K(window.le_TinA)
-        T_inB = window._temp_to_K(window.le_TinB)
-    else:
-        T_inA = _f(window.le_TinA, "Inlet T_A")
-        T_inB = _f(window.le_TinB, "Inlet T_B")
-
-    # Optional solid warm-start seed — empty field falls back to the legacy
-    # 0.5*(T_inA+T_inB) seed inside solve_full_domain_3d.
-    _le_ts = getattr(window, 'le_TsInit', None)
-    T_s_init = None
-    if _le_ts is not None and _le_ts.text().strip():
-        if hasattr(window, '_temp_to_K'):
-            T_s_init = window._temp_to_K(_le_ts)
-        else:
-            T_s_init = float(_le_ts.text())
-    P_inA = _f(window.le_PinA, "Inlet P_A") if hasattr(window, 'le_PinA') else P_atm + 1e5
-    P_inB = _f(window.le_PinB, "Inlet P_B") if hasattr(window, 'le_PinB') else P_atm
-    Lcell = _f(window.le_Lcell, "TPMS L_cell")
-    t_wall = _f(window.le_t, "TPMS t")
-    k_s = _f(window.le_ks, "TPMS k_s")
-    tpms_type = window.combo_tpms.currentText()
+    u_A = compute_cfg.fluid_A.u_mps
+    T_inA = compute_cfg.fluid_A.T_in_K
+    T_inB = compute_cfg.fluid_B.T_in_K
+    T_s_init = compute_cfg.solver.T_s_init_K
+    P_inA = compute_cfg.fluid_A.P_in_Pa
+    P_inB = compute_cfg.fluid_B.P_in_Pa
+    Lcell = compute_cfg.geometry.L_cell_mm
+    t_wall = compute_cfg.geometry.t_wall_mm
+    k_s = compute_cfg.geometry.k_s_W_mK
+    tpms_type = compute_cfg.geometry.tpms
 
     g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
     eps = g['epsilon']
@@ -754,10 +755,7 @@ def _parse_inputs(window):
         fluid_B_cfg = window._fluid_config('B')
     except Exception:
         fluid_B_cfg = None
-    try:
-        u_B = float(window.le_uB.text())
-    except Exception:
-        u_B = u_A
+    u_B = compute_cfg.fluid_B.u_mps
 
     # Surrogate training-domain guard for the UI 3D Compute path (#10).
     # Opt-in extrapolation via `chk_allow_extrap` or env TPMSHX_ALLOW_EXTRAP.
@@ -778,15 +776,9 @@ def _parse_inputs(window):
         if isinstance(_e, ValueError):
             raise
 
-    from solvers.tpms_calc import parse_fluid_type, validate_fluid_type
-
-    fluid_type_A = 'air'
-    if hasattr(window, 'combo_fluidA'):
-        fluid_type_A = parse_fluid_type(window.combo_fluidA)
-
-    fluid_type_B = 'air'
-    if hasattr(window, 'combo_fluidB'):
-        fluid_type_B = parse_fluid_type(window.combo_fluidB)
+    from solvers.tpms_calc import validate_fluid_type
+    fluid_type_A = compute_cfg.fluid_A.type
+    fluid_type_B = compute_cfg.fluid_B.type
 
     validate_fluid_type(fluid_type_A, 'A')
     validate_fluid_type(fluid_type_B, 'B')
@@ -819,6 +811,8 @@ def _parse_inputs(window):
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
+        # Stash strict ComputeConfig for downstream consumers (C3).
+        compute_cfg=compute_cfg,
     )
 
 
