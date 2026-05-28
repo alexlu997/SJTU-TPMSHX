@@ -139,7 +139,7 @@ def _C_from_tL(tpms_type: str, t_over_L: float) -> float:
 
 @lru_cache(maxsize=64)
 def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
-                 N: int = 256) -> dict:
+                 N: int = 128) -> dict:
     """
     Compute epsilon and A_0 using calibrated level-set thresholding.
 
@@ -148,7 +148,9 @@ def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
     tpms_type : 'Diamond' or 'Gyroid'
     L_mm      : unit cell size [mm]
     t_mm      : wall thickness [mm]
-    N         : grid resolution (default 256)
+    N         : grid resolution (default 128, audit M-d / P3 2026-05-28;
+                16 MiB/proc vs 128 MiB at N=256; epsilon drift <0.3 %,
+                A_0 drift <1 % per test_tpms_geometry_n128)
 
     Returns
     -------
@@ -172,7 +174,7 @@ def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
 
 @lru_cache(maxsize=1024)
 def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
-                     N: int = 256) -> dict:
+                     N: int = 128) -> dict:
     """
     Compute TPMS geometric properties with validation.
 
