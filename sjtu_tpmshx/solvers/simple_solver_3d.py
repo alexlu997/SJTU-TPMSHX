@@ -72,6 +72,15 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
     serial natural-ordering GS."""
     return (Nx * Ny * Nz) >= _PARALLEL_CELL_THRESHOLD
 
+
+# ─── AMG-active gate (pressure-correction inner solver) ───────────
+# Below this N the pressure-correction system uses scipy.sparse.linalg.spsolve
+# (sparse LU); above it, PyAMG ruge_stuben_solver as a preconditioner for
+# BiCGStab. Break-even ~30 k cells where spsolve memory + factor cost starts
+# hurting and AMG O(N) win amortises. This constant is also used to auto-
+# enable `coarse_bootstrap_3d` warm-start (audit P4 / phase L-d Option B).
+_AMG_GATE = 30_000
+
 from .tpms_calc import air_density, air_viscosity, P_atm
 
 
@@ -890,7 +899,7 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
                            shape=(N, N))
 
     N = A.shape[0]
-    if _HAS_PYAMG and N > 30000:
+    if _HAS_PYAMG and N > _AMG_GATE:
         # Large grids: AMG-preconditioned BiCGStab.
         # The pinned Dirichlet row (diag=1) sits among typical interior rows
         # whose diagonals scale ~1e-5—1e-7. Pure AMG diverges on this
@@ -1238,6 +1247,7 @@ class SIMPLESolver3D:
                  alpha_u=0.5, alpha_p=0.2,
                  pyamg_rebuild_every=100,
                  pyamg_rebuild_drift_thresh=0.05,
+                 use_coarse_bootstrap=None,
                  fluid_type='ideal_gas',
                  R_gas=287.05,
                  alpha_rho=0.3):
@@ -1271,6 +1281,14 @@ class SIMPLESolver3D:
         # norm drifts by more than this threshold since last rebuild. 0
         # disables drift checks (legacy fixed-cadence-only behaviour).
         self.pyamg_rebuild_drift_thresh = float(pyamg_rebuild_drift_thresh)
+
+        # Audit P4 / phase L-d Option B (2026-05-28): coarse-grid warm start.
+        # None = auto-enable when N > _AMG_GATE (the same gate that turns on
+        # AMG-BiCGStab); True/False = explicit override. Auto-mode removes the
+        # cold-start cost on the only workloads where it hurts (AMG-active
+        # grids), without touching small-grid solves that already run in
+        # ~1 spsolve call.
+        self.use_coarse_bootstrap = use_coarse_bootstrap
 
         # Compressibility knobs (mirror 2D SIMPLESolver)
         self.fluid_type = str(fluid_type)
@@ -1420,11 +1438,19 @@ class SIMPLESolver3D:
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self.dx, self.dy, self.dz
 
-        # Phase C — coarse-grid bootstrap (opt-in). Halves grid each axis,
-        # solves to loose tol (1e-3), prolongates (u,v,w,P) back as initial
-        # guess. Skipped on already-warm solvers (residuals non-empty).
-        if (getattr(self, 'use_coarse_bootstrap', False)
-                and not self.residuals):
+        # Phase C — coarse-grid bootstrap. Halves grid each axis, solves to
+        # loose tol (1e-3), prolongates (u,v,w,P) back as initial guess.
+        # Skipped on already-warm solvers (residuals non-empty).
+        # `use_coarse_bootstrap`:
+        #   * None (default)  — auto: on when Nx*Ny*Nz > _AMG_GATE
+        #     (audit P4 / phase L-d Option B). Removes cold-start cost on
+        #     AMG-active grids where it dominates.
+        #   * True            — always on (legacy explicit opt-in)
+        #   * False           — always off
+        _cb_flag = getattr(self, 'use_coarse_bootstrap', None)
+        if _cb_flag is None:
+            _cb_flag = (Nx * Ny * Nz > _AMG_GATE)
+        if _cb_flag and not self.residuals:
             try:
                 from .coarse_bootstrap_3d import bootstrap_simple_3d
                 _bs_info = bootstrap_simple_3d(

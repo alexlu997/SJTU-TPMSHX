@@ -32,7 +32,13 @@ from solvers.simple_solver_3d import SIMPLESolver3D
 _NX, _NY, _NZ = 60, 60, 10
 
 
-def _make_solver(drift_thresh=0.05, rebuild_every=100):
+def _make_solver(drift_thresh=0.05, rebuild_every=100,
+                 use_coarse_bootstrap=False):
+    """Default `use_coarse_bootstrap=False` to keep drift-trigger tests
+    isolated from Option B warm-start side effects. Option B auto-enables
+    bootstrap on N>30 k by default, but bootstrap shrinks the iter-to-iter
+    A drift to ~1e-15 (already steady-state after warm guess) which would
+    suppress the drift_thresh=1e-12 trigger this file asserts on."""
     K_arr = np.full((_NY, _NZ), 5e-9, dtype=np.float64)
     cF_arr = np.full((_NY, _NZ), 250.0, dtype=np.float64)
     return SIMPLESolver3D(
@@ -42,7 +48,8 @@ def _make_solver(drift_thresh=0.05, rebuild_every=100):
         eps=0.78, K_arr=K_arr, cF_arr=cF_arr,
         P_ref_abs=101325.0,
         pyamg_rebuild_every=rebuild_every,
-        pyamg_rebuild_drift_thresh=drift_thresh)
+        pyamg_rebuild_drift_thresh=drift_thresh,
+        use_coarse_bootstrap=use_coarse_bootstrap)
 
 
 @pytest.mark.slow
@@ -149,6 +156,50 @@ def test_constructor_accepts_drift_kwarg():
         rho=1.0, mu=2e-5, T_in=300.0, v_inlet=1.0,
         pyamg_rebuild_drift_thresh=0.07)
     assert s.pyamg_rebuild_drift_thresh == pytest.approx(0.07)
+
+
+def test_coarse_bootstrap_init_param_passthrough():
+    """Option B: `use_coarse_bootstrap` constructor kwarg persists on the
+    instance, None is the default sentinel (auto-resolve in solve())."""
+    # Default: None (auto-resolve in solve based on N)
+    s = SIMPLESolver3D(
+        Lx=0.01, Ly=0.01, Lz=0.01, Nx=4, Ny=4, Nz=4,
+        rho=1.0, mu=2e-5, T_in=300.0, v_inlet=1.0)
+    assert s.use_coarse_bootstrap is None
+    # Explicit True/False honoured
+    s2 = SIMPLESolver3D(
+        Lx=0.01, Ly=0.01, Lz=0.01, Nx=4, Ny=4, Nz=4,
+        rho=1.0, mu=2e-5, T_in=300.0, v_inlet=1.0,
+        use_coarse_bootstrap=True)
+    assert s2.use_coarse_bootstrap is True
+    s3 = SIMPLESolver3D(
+        Lx=0.01, Ly=0.01, Lz=0.01, Nx=4, Ny=4, Nz=4,
+        rho=1.0, mu=2e-5, T_in=300.0, v_inlet=1.0,
+        use_coarse_bootstrap=False)
+    assert s3.use_coarse_bootstrap is False
+
+
+@pytest.mark.slow
+def test_coarse_bootstrap_auto_enables_on_large_grid():
+    """Option B: Default `use_coarse_bootstrap=None` triggers bootstrap on
+    N>30 k grids. Asserts `_coarse_bootstrap_info['applied']` True after solve."""
+    # 36 k cells: above AMG gate, auto-enable expected
+    s = _make_solver(use_coarse_bootstrap=None)  # None → auto
+    s.solve(max_iter=5, tol=1e-6)
+    bs_info = getattr(s, '_coarse_bootstrap_info', {})
+    assert bs_info.get('applied', False) is True, (
+        f"bootstrap should auto-enable on 36 k grid, info={bs_info}")
+
+
+@pytest.mark.slow
+def test_coarse_bootstrap_explicit_false_disables_auto():
+    """Option B: Explicit `use_coarse_bootstrap=False` overrides auto-enable
+    even on large grids."""
+    s = _make_solver(use_coarse_bootstrap=False)
+    s.solve(max_iter=5, tol=1e-6)
+    # _coarse_bootstrap_info either missing or applied=False
+    bs_info = getattr(s, '_coarse_bootstrap_info', {})
+    assert bs_info.get('applied', False) is False
 
 
 if __name__ == "__main__":
