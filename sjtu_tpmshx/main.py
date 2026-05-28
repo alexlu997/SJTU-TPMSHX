@@ -4136,6 +4136,76 @@ class Main_Menu(QMainWindow):
         """Worker emitted explicit progress (rare for current solver). Render."""
         self.progress.setValue(min(100, max(0, int(percent))))
 
+    def write_result(self, result):
+        """Copy a :class:`controllers.compute_pipeline.ComputeResult`
+        onto the legacy window attributes (``_compute_results`` dict,
+        ``_compute_warnings``, ``_extrap_reasons``, ``_K_ff*``,
+        ``_rho_*``, ``_mu_*``, ``_h_v*``, ``_zone_*``) so the existing
+        finalize_plots / redraw_temperature_panel renderers keep
+        working when the compute path runs via
+        :class:`controllers.compute_pipeline.Pipeline2D` instead of
+        the legacy ``runs.run_calculation.run_calculation_inner``.
+
+        Audit C4 (L-a-2, 2026-05-28). This is the *UI adapter*
+        counterpart to ``_finalize_cfg`` — together they replace the
+        pre-C4 ``runs.run_calculation._store_results(window, cfg, raw)``
+        which conflated UI writes with result assembly.  Existing UI
+        flow keeps calling ``run_calculation_inner`` (which still
+        invokes ``_store_results`` for legacy shape); this method
+        provides the parallel path for Pipeline-based callers.
+        """
+        f = result.fields
+        self._compute_results = {
+            'Ta': f.get('Ta'), 'Tb': f.get('Tb'), 'Ts': f.get('Ts'),
+            'ucA': f.get('ucA'), 'vcA': f.get('vcA'),
+            'ucB': f.get('ucB'), 'vcB': f.get('vcB'),
+            'P_fA': f.get('P_fA'), 'P_fB': f.get('P_fB'),
+            'dP_A': result.dP_A_Pa, 'dP_B': result.dP_B_Pa,
+            'Q_total': result.Q_W,
+            'N_x': f.get('N_x'), 'N_y': f.get('N_y'),
+            'L': f.get('L'), 'H': f.get('H'),
+            'dir_A': f.get('dir_A'), 'dir_B': f.get('dir_B'),
+            'zone_config': f.get('zone_config'),
+            'za': f.get('za'),
+            'dx_arr': f.get('dx_arr'), 'dy_arr': f.get('dy_arr'),
+            'residuals_A': result.residuals.get('simple_A'),
+            'residuals_B': result.residuals.get('simple_B'),
+            'Q_A': result.residuals.get('Q_A', float('nan')),
+            'Q_B': result.residuals.get('Q_B', float('nan')),
+            'Q_net': result.residuals.get('Q_net', float('nan')),
+            'energy_imbalance_rel': result.residuals.get(
+                'energy_imbalance_rel', float('nan')),
+        }
+        self._compute_warnings = list(result.warnings)
+        self._extrap_reasons = list(result.extrap_reasons)
+        self._has_extrap = bool(result.extrap_reasons)
+
+        # Fluid + porous coefficients — UI Fluids panel reads these
+        # after Auto-Fill; Pipeline path recomputes them from cfg, so
+        # forward to keep the read-out panel consistent.
+        for _key in ('K_ffA', 'K_ffB', 'K_ss', 'h_vA', 'h_vB'):
+            _val = result.coeffs.get(_key)
+            if _val is not None:
+                setattr(self, f'_{_key}', _val)
+        for _key in ('rho_A', 'rho_B', 'mu_A', 'mu_B'):
+            _val = result.props.get(_key)
+            if _val is not None:
+                setattr(self, f'_{_key}', _val)
+
+        # Zone stats (None when zones disabled).
+        if result.zones is not None:
+            self._zone_axis_dir = result.zones.get('axis_dir')
+            self._zone_stats = result.zones.get('stats')
+            self._zone_boundaries = result.zones.get('boundaries')
+            self._zone_boundaries_x = result.zones.get('boundaries_x')
+            self._zone_boundaries_y = result.zones.get('boundaries_y')
+        else:
+            self._zone_stats = None
+            self._zone_axis_dir = None
+            self._zone_boundaries = None
+            self._zone_boundaries_x = None
+            self._zone_boundaries_y = None
+
     def _on_orch_finished(self, _result_dict):
         """Compute succeeded. Render plots + push to recent runs ring.
 
