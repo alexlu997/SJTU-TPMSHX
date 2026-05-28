@@ -96,28 +96,35 @@ def test_shanghai_2d_legacy():
 def test_shanghai_3d_baseline():
     """Production 3D Shanghai validation (Nz=3 default grid).
 
-    Baselines (2026-05-28, post G-convention fix):
-      RMSRE_dP = 29.58%
-      RMSRE_Q  =  3.06%
+    Baselines (2026-05-29, post G-fix + RBF cubic/smoothing=0.1):
+      RMSRE_dP = 17.32%
+      RMSRE_Q  =  3.74%
 
     History:
-      * pre G-fix (col 48 G + α applied):     dP 97.11% / Q 2.51%
-      * pre G-fix (col 48 G + α skip):        dP 96.60% / Q 2.52%
-      * post G-fix (G = ρ·v from cols 12·13): **dP 29.58% / Q 3.06%**
-      * pre-incident baseline (memory Nz=3):  dP 41.19% / Q 2.85%
-      * doc method spec 2D (lost xlsx):       dP 10.07%
+      * pre G-fix (col 48 G, thin_plate s=0):   dP 97.11% / Q 2.51%
+      * post G-fix (cols 12·13, thin_plate s=0): dP 29.58% / Q 3.06%
+      * **post G-fix + cubic s=0.1**:           **dP 17.32% / Q 3.74%**
+      * pre-incident memory baseline (Nz=3):    dP 41.19% / Q 2.85%
+      * doc method spec 2D (lost xlsx):         dP 10.07%
 
-    The 67 pp dP drop came from correcting the G convention used at
-    fit time. The v3.1 xlsx ``col 48 "G (千克每平方米每秒)"`` carries
-    an interstitial-throat mass flux (~20×ρv) that does not match the
-    surrogate_v3 method spec (vault/reports/_archive/methodology/
-    2026-04-16-surrogate-v3-dP-Q-method-CN.md §1.2-1.3), which expects
-    superficial G = ρ·u = m_dot/A_total. ``_build`` now reconstructs G
-    from cols 12 (ρ) and 13 (v) per the doc convention.
+    Two stacked surrogate fixes:
 
-    Q tolerance kept ±10 % relative. dP tolerance ±5 % against the new
-    baseline so a future surrogate refresh does not silently break the
-    gate.
+    1. **G convention** (commit f6146db): v3.1 xlsx col 48 G carries
+       interstitial-throat mass flux (~20×ρv) that does not match the
+       method spec
+       (vault/reports/_archive/methodology/2026-04-16-surrogate-v3-dP-Q-method-CN.md
+       §1.2-1.3). ``_build`` now reads ``G = col 12 (ρ) × col 13 (v)``.
+
+    2. **RBF kernel + smoothing**: switched from thin_plate_spline,
+       smoothing=0 (exact interp, prone to extrapolation wiggle) to
+       ``cubic`` kernel with ``smoothing=0.1`` (Tikhonov reg). Sweep
+       found smoothing < 0.01 collapses 6 high-Re cases into
+       pressure-INVALID (c_F extrapolated too aggressive → P_out²≤0).
+       0.1 is the safest production sweet spot — 12 pp better than
+       thin_plate baseline, 16/16 valid, 6× margin to choke. See
+       ``vault/reports/method/2026-05-29-surrogate-rbf-cubic-smoothing-CN.md``.
+
+    Q tolerance ±10 % relative. dP tolerance ±5 %.
 
     Note: this test uses Nz=3 default for speed (each case ~25 s vs
     ~3 min on Nz=10). If you want Nz=10 in CI, pass ``--nz 10`` and
@@ -139,8 +146,8 @@ def test_shanghai_3d_baseline():
     rmsre_dP = _rmsre_from_pct(df['err_dP%'])
     rmsre_Q = _rmsre_from_pct(df['err_Q%'])
 
-    BASELINE_DP = 29.58
-    BASELINE_Q = 3.06
+    BASELINE_DP = 17.32
+    BASELINE_Q = 3.74
     tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (

@@ -496,13 +496,13 @@ def main():
           f"{n_invalid} pressure-INVALID (clip fired)")
     if n_invalid:
         print(f"  invalid cases : {invalid_cases}  (EXCLUDED from RMSRE below)")
-    # 2026-05-28 post surrogate G-convention fix (cols 12·13 → ρ·v):
-    # 2D RMSRE_dP 99.73→38.22%, max|err_Q| 5.70→5.46%.
-    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 38.22%)  "
+    # 2026-05-29 post RBF cubic+smoothing=0.1: 2D RMSRE_dP 38.22→35.60%
+    # (G-fix earlier reduced 99.73→38.22%); max|err_Q| 5.46→5.69%.
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 35.60%)  "
           f"[over {len(err_dP)} valid]")
     print(f"  max|err_dP|   : {max_err_dP:.2f}%")
     print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  [over {len(err_Q)} valid]")
-    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.46%)")
+    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.69%)")
     print("=" * 70)
 
     # Save CSV
