@@ -28,7 +28,7 @@ Usage:
     >>> from sjtu_tpmshx.df_fit.surrogate_v3 import SurrogateV3
     >>> model = SurrogateV3()
     >>> K, c_F = model.predict(L_mm=7.0, t_mm=0.6)
-    >>> dP = model.predict_dP(K, c_F, G=63.05, T=370.7, P_in=304746, mu=2.16e-5, L=0.231)
+    >>> dP = model.predict_dP(K, c_F, G=63.05, T=370.7, P_in=304746, mu=2.16e-5, L=0.182)
 """
 from __future__ import annotations
 
@@ -251,7 +251,8 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
     sh = pd.read_excel(str(sh_xlsx), engine="openpyxl",
                        sheet_name="Sheet1", header=None, skiprows=2)
     A_FLOW = 36 * 18.0565e-6
-    L_DOM = 0.231
+    L_DOM = 0.182  # Shanghai HX streamwise A length [m]. Was 0.231 (stale —
+                   # 182+42+7 historical "total" guess); corrected 2026-05-28.
 
     K, c_F = model.predict(L, t)
     print(f"K = {K:.4e}, c_F = {c_F:.2f}")
