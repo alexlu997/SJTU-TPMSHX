@@ -29,7 +29,11 @@ from __future__ import annotations
 import numpy as np
 
 from optimization.evaluator import DEFAULT_CONFIG as _EVAL_DEFAULT_CONFIG
-from validation.verify_pareto_3d import evaluate_3d as _evaluate_3d_dict
+# M4 (2026-05-28 audit): import via core.evaluators neutral layer instead of
+# directly from validation.verify_pareto_3d, breaking the
+# optimization→validation direction anomaly. core.evaluators currently
+# re-exports the function; physical move pending future cleanup.
+from core.evaluators import evaluate_3d as _evaluate_3d_dict
 
 
 # ─── Default cfg ────────────────────────────────────────────────────
