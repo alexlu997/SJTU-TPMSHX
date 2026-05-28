@@ -694,14 +694,22 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
 
 # ─────────────────────────── internals ────────────────────────────
 
-def _parse_inputs(window, compute_cfg):
+def _parse_inputs(window, compute_cfg=None):
     """Phase 1: route scalars from ``ComputeConfig`` + zone/extrap state
     from the window into the cfg dict consumed by ``_run_3d_stack``.
 
     Audit C3 (2026-05-28, L-a-1): all scalar reads moved from
-    ````le_*`` widget`` into :class:`ComputeConfig`. Strict validation
+    ``le_*`` widgets into :class:`ComputeConfig`. Strict validation
     runs upstream in ``ComputeConfig.from_qt_window(strict=True)``.
+
+    ``compute_cfg`` defaults to ``None`` for backward compatibility
+    with callers that pass only the window (e.g. older regression
+    tests). When ``None``, the strict ``from_qt_window`` adapter is
+    invoked here.
     """
+    if compute_cfg is None:
+        compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
+                                                    force_3d=True)
     # Scalar geometry + grid + fluids — sourced from ComputeConfig.
     L = compute_cfg.geometry.L_dom_m
     H = compute_cfg.geometry.H_dom_m

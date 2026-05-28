@@ -89,15 +89,22 @@ def run_calculation_inner_cfg(compute_cfg, window):
     _store_results(window, cfg, result)
 
 
-def _parse_inputs(window, compute_cfg):
+def _parse_inputs(window, compute_cfg=None):
     """Phase 1: UI input reading + validation + zone config building.
 
-    ``compute_cfg`` (audit C3) carries every scalar that used to come
+    ``compute_cfg`` defaults to ``None`` for backward compatibility
+    with older test callers that pass only the window; in that case
+    the strict ``from_qt_window`` adapter is invoked here.
+
+    When provided (audit C3), it carries every scalar that used to come
     from ````le_*`` widget`` reads. Non-scalar window state (zone config,
     eps_A snapshot, pareto state, extrap reasons) still flows through
     the Qt object.
     """
     warnings_list = []
+
+    if compute_cfg is None:
+        compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
 
     # Block unsupported fluids up-front (2D path currently hardcodes air_*
     # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
