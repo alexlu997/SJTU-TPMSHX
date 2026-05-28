@@ -200,8 +200,10 @@ def main():
         err_dP = np.array([r['err_dP%'] for r in rs])
         err_Q = np.array([r['err_Q%'] for r in rs])
         m_rel = np.array([r['mass_rel_A'] for r in rs])
-        rmsre_dP = float(np.sqrt(np.mean(err_dP ** 2)))
-        rmsre_Q = float(np.sqrt(np.mean(err_Q ** 2)))
+        # L5 helper (audit U2 follow-up cleanup, 2026-05-28)
+        from validation._metrics import rmsre_from_pct
+        rmsre_dP = rmsre_from_pct(err_dP)
+        rmsre_Q = rmsre_from_pct(err_Q)
         max_dP = float(np.max(np.abs(err_dP)))
         max_Q = float(np.max(np.abs(err_Q)))
         max_m = float(np.max(m_rel))

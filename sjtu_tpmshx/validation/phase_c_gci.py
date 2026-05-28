@@ -143,24 +143,49 @@ def run_c1(case_id, grids=(12, 16, 20, 30), out_csv=None):
     return rows, gci
 
 
+import contextlib
+
+
+@contextlib.contextmanager
+def _patched_env(name: str, value: str):
+    """Temporarily override an environment variable, restore on exit.
+
+    Restores the original value (or absence) even if the body raises —
+    safer than the previous unconditional del at end-of-function (which
+    could leak the patched value across runs if exception occurred mid-sweep).
+
+    Audit 2026-05-28 L3 fix.
+    """
+    old = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = old
+
+
 def run_c3_tol(case_id='T2', grid=20, tols=(1e-3, 1e-5, 1e-7)):
-    """C.3 tol sweep — sets TPMSHX_SIMPLE_TOL env, runs each, records Q."""
+    """C.3 tol sweep — sets TPMSHX_SIMPLE_TOL env, runs each, records Q.
+
+    Uses ``_patched_env`` context manager so env var is restored even if
+    a sweep run raises.
+    """
     print(f"\n--- C.3 tol sweep: case={case_id}, grid={grid} ---")
     rows = []
     for tol in tols:
-        os.environ['TPMSHX_SIMPLE_TOL'] = f'{tol:.2e}'
-        cfg = CASES_C[case_id](grid)
-        t0 = time.time()
-        res = _run_3d_stack(cfg)
-        dt = time.time() - t0
-        Q = float(res.get('Q_enthalpy_A', float('nan')))
-        T_A_out = float(res.get('T_A_out', float('nan')))
-        rows.append(dict(case=case_id, grid=grid, tol=tol,
-                         Q_enth_A=Q, T_A_out=T_A_out, elapsed=dt))
-        print(f"  tol={tol:.0e}: Q={Q:.4f}W  T_A_out={T_A_out:.4f}K  [{dt:.0f}s]")
-    # Reset
-    if 'TPMSHX_SIMPLE_TOL' in os.environ:
-        del os.environ['TPMSHX_SIMPLE_TOL']
+        with _patched_env('TPMSHX_SIMPLE_TOL', f'{tol:.2e}'):
+            cfg = CASES_C[case_id](grid)
+            t0 = time.time()
+            res = _run_3d_stack(cfg)
+            dt = time.time() - t0
+            Q = float(res.get('Q_enthalpy_A', float('nan')))
+            T_A_out = float(res.get('T_A_out', float('nan')))
+            rows.append(dict(case=case_id, grid=grid, tol=tol,
+                             Q_enth_A=Q, T_A_out=T_A_out, elapsed=dt))
+            print(f"  tol={tol:.0e}: Q={Q:.4f}W  T_A_out={T_A_out:.4f}K  [{dt:.0f}s]")
     return rows
 
 
