@@ -3609,38 +3609,15 @@ class Main_Menu(QMainWindow):
         lay.addWidget(btns)
         dlg.exec()
 
-    # Native unit each input field expects, used by the unified
-    # validator + unit parser below. Family keys: length (→ m or mm),
-    # pressure (→ Pa), speed (→ m/s), temp (→ K or °C — honours current
-    # ``_temp_unit``), count (reject units).
-    _FIELD_UNITS = {
-        # geometry — metres
-        'le_L': ('length', 'm'), 'le_H': ('length', 'm'),
-        'le_Lz': ('length', 'm'),
-        'le_pipeA_in_ctr': ('length', 'm'), 'le_pipeA_in_w':  ('length', 'm'),
-        'le_pipeA_out_ctr':('length', 'm'), 'le_pipeA_out_w': ('length', 'm'),
-        'le_pipeB_in_ctr': ('length', 'm'), 'le_pipeB_in_w':  ('length', 'm'),
-        'le_pipeB_out_ctr':('length', 'm'), 'le_pipeB_out_w': ('length', 'm'),
-        # TPMS geometry — millimetres
-        'le_Lcell': ('length', 'mm'), 'le_t': ('length', 'mm'),
-        # flow / thermo
-        'le_uA': ('speed', 'm/s'), 'le_uB': ('speed', 'm/s'),
-        'le_PinA': ('pressure', 'Pa'), 'le_PinB': ('pressure', 'Pa'),
-        'le_TinA': ('temp', None), 'le_TinB': ('temp', None),
-        # counts (no unit allowed)
-        'le_Nx': ('count', None), 'le_Ny': ('count', None),
-        'le_Nz': ('count', None), 'le_mesh_density': ('count', None),
-    }
-
-    # Fields that must be strictly positive (numeric > 0) after parse.
-    # Superset of ``_FIELD_UNITS`` for the unified validator below.
-    _POSITIVE_FIELDS = frozenset((
-        'le_L', 'le_H', 'le_Lz', 'le_Lcell', 'le_t', 'le_ks',
-        'le_uA', 'le_uB',
-        'le_TinA', 'le_TinB', 'le_PinA', 'le_PinB',
-        'le_Nx', 'le_Ny', 'le_Nz',
-        'le_rho_s',
-    ))
+    # Audit C5 Phase 4 (L-b, 2026-05-28): unit-parsing config + the
+    # canonical positive-numeric set live in ``domain/validator.py``
+    # so future scripts / widgets can read the same canonical map.
+    # The class still surfaces the two names as attributes for the
+    # ``_attach_field_validation`` / ``_make_field_handler`` callers.
+    from domain.validator import (
+        FIELD_UNITS as _FIELD_UNITS,
+        POSITIVE_FIELDS as _POSITIVE_FIELDS,
+    )
 
     def _attach_field_validation(self):
         """Unified blur-time unit parser + numeric validator.
@@ -3673,6 +3650,10 @@ class Main_Menu(QMainWindow):
         ``(family, target_unit)`` tuple, or ``None`` if the field has
         no unit-parsing rule).  ``is_positive`` flips on the
         strictly-positive numeric validation.
+
+        Unit parsing + formatting delegate to
+        :func:`domain.validator.parse_field_value` /
+        :func:`domain.validator.format_unit_value`.
         """
         import re as _re_up
         base_tip = le.toolTip() or ""
@@ -3680,21 +3661,10 @@ class Main_Menu(QMainWindow):
             r"\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*"
             r"([A-Za-zμΜ°/··]+[A-Za-z0-9/··]*)\s*$")
 
-        # Unit conversion delegated to domain.parse_unit_value
-        # (Phase 4 #4).  Counts get a tiny inline whitelist so
-        # "12 cells" / "12 nodes" round-trip without calling the
-        # domain helper.
-        from domain.validator import parse_unit_value as _domain_parse_unit
-
-        def _convert(family, target_unit, val, unit_txt):
-            if family == 'count':
-                u = (unit_txt or '').strip().lower()
-                if u in ('cells', 'cell', 'pts', 'points', 'nodes'):
-                    return val
-                return None
-            return _domain_parse_unit(
-                val, unit_txt, family, target_unit=target_unit,
-                temp_unit=getattr(self, '_temp_unit', 'K'))
+        from domain.validator import (
+            parse_field_value as _domain_parse_field,
+            format_unit_value as _domain_format,
+        )
 
         def _cb():
             txt = le.text().strip()
@@ -3714,14 +3684,11 @@ class Main_Menu(QMainWindow):
                         raw_val = None
                     if raw_val is not None:
                         unit_txt = m.group(2)
-                        new_val = _convert(fam, target, raw_val, unit_txt)
+                        new_val = _domain_parse_field(
+                            attr, raw_val, unit_txt,
+                            temp_unit=getattr(self, '_temp_unit', 'K'))
                         if new_val is not None:
-                            if fam == 'count':
-                                fmt = f"{int(round(new_val))}"
-                            elif abs(new_val) >= 1000 or abs(new_val) < 0.01:
-                                fmt = f"{new_val:.6g}"
-                            else:
-                                fmt = f"{new_val:.4g}"
+                            fmt = _domain_format(new_val, fam)
                             # Suppress our own re-fire of editingFinished.
                             was = le.blockSignals(True)
                             le.setText(fmt)
