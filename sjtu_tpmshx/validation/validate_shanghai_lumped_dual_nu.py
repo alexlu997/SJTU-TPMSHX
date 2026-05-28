@@ -256,10 +256,8 @@ def main() -> None:
     csv_path = _PROJECT / 'data' / 'shanghai_lumped_dual_nu.csv'
     out.to_csv(csv_path, index=False, encoding='utf-8-sig')
 
-    def stats(arr: np.ndarray) -> tuple:
-        return (float(np.sqrt(np.mean(arr**2))),
-                float(np.mean(arr)),
-                float(np.max(np.abs(arr))))
+    # err_stats_pct: shared helper (validation/_metrics.py, L5 fix 2026-05-28)
+    from validation._metrics import err_stats_pct as stats
 
     print('\n' + '═' * 70)
     print(f"{'Reference':>16}  {'RMSRE':>8}  {'bias':>8}  {'max|err|':>8}")

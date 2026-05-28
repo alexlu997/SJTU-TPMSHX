@@ -479,8 +479,9 @@ def main():
         # prints a number, but the n_invalid banner makes it un-trustable.
         err_dP, err_Q = err_dP_all, err_Q_all
 
-    rmsre_dP = float(np.sqrt(np.mean(err_dP ** 2)))
-    rmsre_Q = float(np.sqrt(np.mean(err_Q ** 2)))
+    from validation._metrics import rmsre_from_pct
+    rmsre_dP = rmsre_from_pct(err_dP)
+    rmsre_Q = rmsre_from_pct(err_Q)
     max_err_Q = float(np.max(np.abs(err_Q)))
     max_err_dP = float(np.max(np.abs(err_dP)))
 
