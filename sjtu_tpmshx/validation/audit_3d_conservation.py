@@ -358,33 +358,6 @@ def _slice_at(axis, idx, shape):
     return tuple(s)
 
 
-def _compute_eps_fluid(T_field, T_in, h_v_field, K_ff_field,
-                       eps_arr, rho_cp_field, uc, vc, wc,
-                       dx, dy, dz, fA_or_B_cfg):
-    """Compute ε_α (1st-law residual) for one fluid phase α ∈ {A, B}.
-
-    LHS_α = ∮_∂Ω F_α·n dA  with F_α = ε·ρ_cp·u·T − K_ff·∇T
-    RHS_α = ∫_Ω h_v·(Ts − T_α) dV       (fluid α, NB: source in code is
-                                         h_v·(Ts − T) so RHS for the
-                                         FVM equation = +∫h_v(Ts−T)dV)
-    Steady-state continuous form: LHS = RHS exactly.
-    Discrete check: |LHS − RHS| / max(|LHS|, |RHS|) → ε_α.
-
-    Approximations (1st-order accurate, sufficient for 1% gate):
-      - face advective: ε_α/2 · ρ_cp_cell · u_n_cell-center · T_cell · A_face
-      - face diffusive at inlet (Dirichlet): K_ff_cell · (T_in − T_cell) / (0.5·dh)
-      - face diffusive at outlet (Neumann zero-grad): 0
-      - lateral walls: u_n=0 advective + zero-grad diffusive → 0 contribution
-    """
-    Nx, Ny, Nz = T_field.shape
-    cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
-    eps_per_phase = 0.5 * eps_arr   # ε_α = ε/2 (LTNE symmetric split)
-    # Note: T_field is what the kernel solved (Ta or Tb). Source term is
-    # h_v · (Ts − T_α) — caller passes Ts implicitly via h_v_field*(Ts−T)
-    # is already done outside. Actually we accept directly the integrand.
-    raise NotImplementedError("inline below")
-
-
 def compute_phase2a_interior(res):
     """Phase 2a — interior 1st-law residual ε_α using BC-excluded volume.
 

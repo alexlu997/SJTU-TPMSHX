@@ -226,7 +226,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     cp_B0 = float(water_cp(T_Bin_K))
     k_B = float(water_conductivity(T_Bin_K))
     Pr_B = float(mu_B0 * cp_B0 / k_B)
-    m_water = float(df.iloc[ci, 7])
+    # m_water already read at line ~172 (Excel col 7); reuse, don't re-read.
     u_B = m_water / (rho_B * A_FLOW)
     Re_B = rho_B * abs(u_B) * D_H / mu_B0
     Nu_B = float(nu_water_gyroid_yan6(max(Re_B, 1.0), Pr_B))
