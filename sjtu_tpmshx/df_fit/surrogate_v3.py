@@ -91,7 +91,16 @@ class SurrogateV3:
         L_mm = L_col[mask].astype(float).values
         t_mm = pd.to_numeric(raw.iloc[:, 2], errors="coerce")[mask].astype(float).values
         T_C = pd.to_numeric(raw.iloc[:, 7], errors="coerce")[mask].astype(float).values
-        G = pd.to_numeric(raw.iloc[:, 48], errors="coerce")[mask].astype(float).values
+        # 2026-05-28 G convention fix: previous code read col 48 ("G
+        # 千克每平方米每秒") which in the v3.1 xlsx is ≈ 20× ρ·v — an
+        # interstitial-throat mass flux that does not match the doc
+        # convention. The vault method spec (2026-04-16) and LOO table
+        # use G = ρ·u = m/(A_total) (superficial). Reconstruct it from
+        # col 12 (density) and col 13 (velocity) so the fit ranges
+        # match the documented c_F = 186–2140 for trained geometries.
+        rho_col = pd.to_numeric(raw.iloc[:, 12], errors="coerce")[mask].astype(float).values
+        v_col = pd.to_numeric(raw.iloc[:, 13], errors="coerce")[mask].astype(float).values
+        G = rho_col * v_col
         dP_raw = pd.to_numeric(raw.iloc[:, 43], errors="coerce")[mask].astype(float).values
         Re = pd.to_numeric(raw.iloc[:, 3], errors="coerce")[mask].astype(float).values
 
@@ -170,10 +179,10 @@ class SurrogateV3:
         X_feat = self.ref[["L_mm", "t_mm", "eps_f"]].to_numpy(dtype=float)
         self._rbf_K = RBFInterpolator(
             X_feat, np.log10(K_arr),
-            kernel="thin_plate_spline", smoothing=0)
+            kernel="cubic", smoothing=0.1)
         self._rbf_cF = RBFInterpolator(
             X_feat, np.log10(self.ref["c_F"].to_numpy()),
-            kernel="thin_plate_spline", smoothing=0)
+            kernel="cubic", smoothing=0.1)
 
     def predict(self, L_mm: float, t_mm: float,
                 eps_f: float | None = None) -> tuple[float, float]:
@@ -327,10 +336,10 @@ def eval_loo(model: SurrogateV3):
 
         rbf_K_i = RBFInterpolator(
             X_feat[mask], log_K[mask],
-            kernel="thin_plate_spline", smoothing=0)
+            kernel="cubic", smoothing=0.1)
         rbf_cF_i = RBFInterpolator(
             X_feat[mask], log_cF[mask],
-            kernel="thin_plate_spline", smoothing=0)
+            kernel="cubic", smoothing=0.1)
 
         K_p = max(10.0 ** rbf_K_i(X_feat[idx:idx + 1])[0], model.K_min)
         cF_p = 10.0 ** rbf_cF_i(X_feat[idx:idx + 1])[0]

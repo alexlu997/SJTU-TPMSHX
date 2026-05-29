@@ -254,7 +254,13 @@ class Main_Menu(QMainWindow):
         # captures the help HTML as its baseline tooltip (saved and later
         # restored when the field returns to a valid value).
         self._install_field_help()
-        self._attach_input_validators()
+        # Audit C5 H4 fix: unified parse → validate handler replaces
+        # the pre-Phase-5 split (``_attach_input_validators`` +
+        # ``_install_inline_unit_parser``). The single connection
+        # eliminates the order-sensitive dual-editingFinished race
+        # that left ``inpError`` red borders stuck on freshly-valid
+        # converted fields.
+        self._attach_field_validation()
         self._install_status_log()
         self._rebuild_preset_combo()
         self._install_undo_stack()
@@ -294,7 +300,8 @@ class Main_Menu(QMainWindow):
         if _os_perf.environ.get('TPMSHX_PREINIT_3D', '0') == '1':
             self._schedule_3d_preinit()
         self._schedule_tpms_geometry_prewarm()
-        self._install_inline_unit_parser()
+        # Note: ``_install_inline_unit_parser`` was merged into
+        # ``_attach_field_validation`` at line 257 (audit C5 H4 fix).
         self._wire_fluid_defaults()
         self._install_status_bar_widgets()
         from ui.command_palette import install_command_palette
@@ -3602,178 +3609,208 @@ class Main_Menu(QMainWindow):
         lay.addWidget(btns)
         dlg.exec()
 
-    def _attach_input_validators(self):
-        """Wire blur-time numeric validation on the main input fields.
+    # Audit C5 Phase 4 (L-b, 2026-05-28): unit-parsing config + the
+    # canonical positive-numeric set live in ``domain/validator.py``
+    # so future scripts / widgets can read the same canonical map.
+    # The class still surfaces the two names as attributes for the
+    # ``_attach_field_validation`` / ``_make_field_handler`` callers.
+    from domain.validator import (
+        FIELD_UNITS as _FIELD_UNITS,
+        POSITIVE_FIELDS as _POSITIVE_FIELDS,
+    )
 
-        Fields fall into three groups: strictly-positive (L, H, Lcell, t, ks,
-        u, T, P, Nx/Ny/Nz); non-negative (init temps); and free-form ("auto"
-        accepted, e.g. mesh_density). Anything that fails float() or breaches
-        its sign rule flips the `inpError` property — the `_INP` stylesheet
-        paints a red border until the user corrects.
+    # ─── Audit C5 Phase 5 (L-b, 2026-05-28): ResultCache bridges ──
+    # Storage moves wholesale to ``self.cache`` (ResultCache); these
+    # properties keep the legacy attribute names working at every
+    # existing call site (~50 sites in main.py + runs/ + ui/ +
+    # finalize_plots), so the migration costs zero call-site churn.
+    # Behaviour is single-source-of-truth: there is no longer a
+    # parallel inline dict + the cache; the inline name reads/writes
+    # through the cache.
+
+    @property
+    def _compute_results(self) -> dict:
+        """2D mode result dict — bridges to ``self.cache``."""
+        r = self.cache.get_result('2d')
+        return r if r is not None else {}
+
+    @_compute_results.setter
+    def _compute_results(self, value) -> None:
+        # An empty dict ``{}`` was used as a "clear" sentinel in some
+        # call sites; treat that identically to ``None``.
+        self.cache.set_result('2d', value if value else None)
+
+    @property
+    def _result_3d(self):
+        """3D mode result dict — bridges to ``self.cache``."""
+        return self.cache.get_result('3d')
+
+    @_result_3d.setter
+    def _result_3d(self, value) -> None:
+        self.cache.set_result('3d', value)
+
+    @property
+    def _has_results_2d(self) -> bool:
+        return self.cache.has_results('2d')
+
+    @_has_results_2d.setter
+    def _has_results_2d(self, value: bool) -> None:
+        # Writing ``True`` is a no-op (presence of the result dict
+        # already drives the flag).  Writing ``False`` clears the
+        # cached 2D result so the next ``has_results('2d')`` returns
+        # False, matching the legacy paired-write pattern.
+        if not value:
+            self.cache.set_result('2d', None)
+
+    @property
+    def _has_results_3d(self) -> bool:
+        return self.cache.has_results('3d')
+
+    @_has_results_3d.setter
+    def _has_results_3d(self, value: bool) -> None:
+        if not value:
+            self.cache.set_result('3d', None)
+
+    @property
+    def _has_results(self) -> bool:
+        return self.cache.has_any_results()
+
+    @_has_results.setter
+    def _has_results(self, value: bool) -> None:
+        if not value:
+            self.cache.clear()
+
+    @property
+    def _drawn_tabs(self) -> set:
+        """Live view of ``self.cache._drawn_tabs``. Mutations on the
+        returned set do NOT propagate back to the cache; call sites
+        that previously did ``self._drawn_tabs.add(x)`` work because
+        the cache exposes a real ``set`` reference (see
+        ``ResultCache.get_drawn_tabs`` — currently returns a copy).
+        Sites doing in-place ``.add`` after C5 Phase 5 should switch
+        to ``self.cache.mark_drawn(x)``; meanwhile the setter below
+        catches the common ``self._drawn_tabs = drawn`` pattern."""
+        return self.cache.get_drawn_tabs()
+
+    @_drawn_tabs.setter
+    def _drawn_tabs(self, value: set) -> None:
+        self.cache.replace_drawn_tabs(value)
+    # ─── end Phase 5 bridges ──────────────────────────────────────
+
+    def _attach_field_validation(self):
+        """Unified blur-time unit parser + numeric validator.
+
+        Audit C5 H4 fix (2026-05-28): replaces the pre-Phase-5 split where
+        ``_attach_input_validators`` and ``_install_inline_unit_parser``
+        each connected their own callback to ``editingFinished``. Qt
+        fired them in connection order, so the validator saw the raw
+        "5 mm" text *before* the unit parser converted it, leaving the
+        ``inpError`` red border stuck on freshly-valid fields.
+
+        The unified handler does parse → validate → apply in one slot.
         """
-        positive = [
-            'le_L', 'le_H', 'le_Lz', 'le_Lcell', 'le_t', 'le_ks',
-            'le_uA', 'le_uB',
-            'le_TinA', 'le_TinB', 'le_PinA', 'le_PinB',
-            'le_Nx', 'le_Ny', 'le_Nz',
-            'le_rho_s',
-        ]
-        def _validator(le, strict_positive=True):
-            # Preserve the field's baseline tooltip so we can restore it when
-            # the value returns to valid — prevents leaking the error text
-            # into a healthy field.
-            base_tip = le.toolTip() or ""
-            def _on_blur():
-                txt = le.text().strip()
-                bad = False
-                reason = ""
+        all_fields = self._POSITIVE_FIELDS | self._FIELD_UNITS.keys()
+        for attr in all_fields:
+            le = getattr(self, attr, None)
+            if le is None:
+                continue
+            fam_target = self._FIELD_UNITS.get(attr)
+            is_positive = attr in self._POSITIVE_FIELDS
+            cb = self._make_field_handler(le, attr, fam_target, is_positive)
+            le.editingFinished.connect(cb)
+            self.signals.adopt(le.editingFinished, cb,
+                                tag=f'field-{attr}', sender=le)
+
+    def _make_field_handler(self, le, attr, fam_target, is_positive):
+        """Build the per-field blur callback: parse → validate → apply.
+
+        ``fam_target`` is ``self._FIELD_UNITS.get(attr)`` (an
+        ``(family, target_unit)`` tuple, or ``None`` if the field has
+        no unit-parsing rule).  ``is_positive`` flips on the
+        strictly-positive numeric validation.
+
+        Unit parsing + formatting delegate to
+        :func:`domain.validator.parse_field_value` /
+        :func:`domain.validator.format_unit_value`.
+        """
+        import re as _re_up
+        base_tip = le.toolTip() or ""
+        num_unit = _re_up.compile(
+            r"\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*"
+            r"([A-Za-zμΜ°/··]+[A-Za-z0-9/··]*)\s*$")
+
+        from domain.validator import (
+            parse_field_value as _domain_parse_field,
+            format_unit_value as _domain_format,
+        )
+
+        def _cb():
+            txt = le.text().strip()
+            if not txt:
+                return
+
+            # ── 1. PARSE — convert "5 mm" → "5e-3" etc. when the field
+            #    has a unit family. Validator then sees the canonical
+            #    value, never the raw "5 mm" string.
+            if fam_target is not None:
+                fam, target = fam_target
+                m = num_unit.match(txt)
+                if m:
+                    try:
+                        raw_val = float(m.group(1))
+                    except ValueError:
+                        raw_val = None
+                    if raw_val is not None:
+                        unit_txt = m.group(2)
+                        new_val = _domain_parse_field(
+                            attr, raw_val, unit_txt,
+                            temp_unit=getattr(self, '_temp_unit', 'K'))
+                        if new_val is not None:
+                            fmt = _domain_format(new_val, fam)
+                            # Suppress our own re-fire of editingFinished.
+                            was = le.blockSignals(True)
+                            le.setText(fmt)
+                            le.blockSignals(was)
+                            # Sync undo baseline (Tier 25).
+                            ul = getattr(self, '_undo_last', None)
+                            if ul is not None:
+                                ul[attr] = fmt
+                            self.statusBar().showMessage(
+                                f"Converted {m.group(1)} {unit_txt} → {fmt} "
+                                f"({target or fam})", 4000)
+                            txt = fmt
+
+            # ── 2. VALIDATE — strictly-positive numeric check for the
+            #    positive-set fields. Non-positive fields skip this.
+            bad = False
+            reason = ""
+            if is_positive:
                 try:
                     v = float(txt)
-                    if strict_positive and v <= 0:
+                    if v <= 0:
                         bad = True
                         reason = "Must be > 0"
                 except Exception:
                     bad = True
                     reason = "Must be a number"
-                current = le.property('inpError')
-                new = 'true' if bad else 'false'
-                if current != new:
-                    le.setProperty('inpError', new)
-                    le.style().unpolish(le); le.style().polish(le)
-                # Non-color error indication (a11y): tooltip carries the
-                # reason, status bar flashes a warning icon + message.
-                if bad:
-                    le.setToolTip(f"⚠ {reason}"
-                                  + (f"\n{base_tip}" if base_tip else ""))
-                    self.statusBar().showMessage(
-                        f"⚠  Invalid input: {le.objectName() or 'field'} — {reason}",
-                        4000)
-                else:
-                    le.setToolTip(base_tip)
-            return _on_blur
-        for name in positive:
-            le = getattr(self, name, None)
-            if le is not None:
-                cb = _validator(le, strict_positive=True)
-                le.editingFinished.connect(cb)
-                self.signals.adopt(le.editingFinished, cb,
-                                    tag=f'validator-{name}', sender=le)
 
-    # Native unit each input field expects, used by the inline unit parser
-    # below. Family keys: length (→ m or mm), pressure (→ Pa), speed (→ m/s),
-    # temp (→ K or °C — honours current _temp_unit), count (reject units).
-    _FIELD_UNITS = {
-        # geometry — metres
-        'le_L': ('length', 'm'), 'le_H': ('length', 'm'),
-        'le_Lz': ('length', 'm'),
-        'le_pipeA_in_ctr': ('length', 'm'), 'le_pipeA_in_w':  ('length', 'm'),
-        'le_pipeA_out_ctr':('length', 'm'), 'le_pipeA_out_w': ('length', 'm'),
-        'le_pipeB_in_ctr': ('length', 'm'), 'le_pipeB_in_w':  ('length', 'm'),
-        'le_pipeB_out_ctr':('length', 'm'), 'le_pipeB_out_w': ('length', 'm'),
-        # TPMS geometry — millimetres
-        'le_Lcell': ('length', 'mm'), 'le_t': ('length', 'mm'),
-        # flow / thermo
-        'le_uA': ('speed', 'm/s'), 'le_uB': ('speed', 'm/s'),
-        'le_PinA': ('pressure', 'Pa'), 'le_PinB': ('pressure', 'Pa'),
-        'le_TinA': ('temp', None), 'le_TinB': ('temp', None),
-        # counts (no unit allowed)
-        'le_Nx': ('count', None), 'le_Ny': ('count', None),
-        'le_Nz': ('count', None), 'le_mesh_density': ('count', None),
-    }
-
-    _UNIT_LENGTH = {
-        'm': 1.0, 'cm': 1e-2, 'mm': 1e-3, 'μm': 1e-6, 'um': 1e-6,
-        'in': 0.0254, 'inch': 0.0254, 'ft': 0.3048,
-    }
-    _UNIT_PRESSURE = {
-        'pa': 1.0, 'kpa': 1e3, 'mpa': 1e6, 'bar': 1e5, 'mbar': 1e2,
-        'psi': 6894.757, 'atm': 101325.0, 'torr': 133.322, 'mmhg': 133.322,
-    }
-    _UNIT_SPEED = {
-        'm/s': 1.0, 'cm/s': 1e-2, 'mm/s': 1e-3,
-        'km/h': 1.0 / 3.6, 'kph': 1.0 / 3.6,
-        'mph': 0.44704, 'ft/s': 0.3048,
-    }
-
-    def _install_inline_unit_parser(self):
-        """On editingFinished, scan each field for a trailing unit token
-        ("150 mm", "5 bar", "148.9 °C"). If the token matches a known
-        family for that field, convert to the field's native unit and
-        rewrite the text — the validator then sees the canonical number
-        and the rest of the app stays unit-naive.
-        """
-        import re as _re_up
-        num_unit = _re_up.compile(
-            r"\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*"
-            r"([A-Za-zμΜ°/··]+[A-Za-z0-9/··]*)\s*$")
-
-        # Unit conversion delegated to domain.parse_unit_value (Phase 4 #4).
-        # The legacy closure form is preserved here so existing call sites
-        # in this method (count family, fall-through to None) stay
-        # behaviour-identical without flipping every caller.
-        from domain.validator import parse_unit_value as _domain_parse_unit
-        def _convert(family, target_unit, val, unit_txt):
-            if family == 'count':
-                # Counts don't take units; strip the unit if it's "cells".
-                u = (unit_txt or '').strip().lower()
-                if u in ('cells', 'cell', 'pts', 'points', 'nodes'):
-                    return val
-                return None
-            return _domain_parse_unit(
-                val, unit_txt, family, target_unit=target_unit,
-                temp_unit=getattr(self, '_temp_unit', 'K'))
-
-        def _on_commit(le=None, fam=None, target=None, attr=None):
-            def _cb():
-                txt = le.text().strip()
-                if not txt:
-                    return
-                # Try float-with-unit first; bare numbers fall through.
-                m = num_unit.match(txt)
-                if not m:
-                    return
-                raw = m.group(1)
-                unit_txt = m.group(2)
-                try:
-                    raw_val = float(raw)
-                except ValueError:
-                    return
-                new_val = _convert(fam, target, raw_val, unit_txt)
-                if new_val is None:
-                    return
-                # Pretty format: drop trailing zeros for tiny/normal values.
-                if fam == 'count':
-                    fmt = f"{int(round(new_val))}"
-                elif abs(new_val) >= 1000 or abs(new_val) < 0.01:
-                    fmt = f"{new_val:.6g}"
-                else:
-                    fmt = f"{new_val:.4g}"
-                # Avoid an endless loop by suppressing our own signal fire.
-                was = le.blockSignals(True)
-                le.setText(fmt)
-                le.blockSignals(was)
-                # Tier 25: keep the undo baseline in step with the rewrite.
-                # The undo slot recorded the RAW pre-conversion text (e.g.
-                # "5mm") because it ran before this parser on the same
-                # editingFinished. Snap `_undo_last` to the converted value
-                # so the user's next manual edit undoes to "5", not "5mm".
-                if attr is not None:
-                    ul = getattr(self, '_undo_last', None)
-                    if ul is not None:
-                        ul[attr] = fmt
+            # ── 3. APPLY — flip inpError + tooltip + status-bar warn.
+            current = le.property('inpError')
+            new = 'true' if bad else 'false'
+            if current != new:
+                le.setProperty('inpError', new)
+                le.style().unpolish(le)
+                le.style().polish(le)
+            if bad:
+                le.setToolTip(f"⚠ {reason}"
+                              + (f"\n{base_tip}" if base_tip else ""))
                 self.statusBar().showMessage(
-                    f"Converted {raw} {unit_txt} → {fmt} "
-                    f"({target or fam})", 4000)
-            return _cb
+                    f"⚠  Invalid input: {le.objectName() or 'field'}"
+                    f" — {reason}", 4000)
+            else:
+                le.setToolTip(base_tip)
 
-        for attr, (fam, target) in self._FIELD_UNITS.items():
-            le = getattr(self, attr, None)
-            if le is None:
-                continue
-            cb = _on_commit(le, fam, target, attr)
-            le.editingFinished.connect(cb)
-            self.signals.adopt(le.editingFinished, cb,
-                                tag=f'unit-parser-{attr}', sender=le)
+        return _cb
 
     def _begin_compute_ui(self, status="Computing…"):
         """Lock the header Compute button + surface the progress bar so the
@@ -4247,6 +4284,16 @@ class Main_Menu(QMainWindow):
         mode = self.compute.current_mode()
         if mode == '3d':
             from runs.run_calculation_3d import finalize_plots_3d
+            # Audit C5 H5 fix (L-b, 2026-05-28): initialise the
+            # ``_has_results_3d`` / ``_3d_vis_ok`` flags BEFORE entering
+            # finalize_plots_3d.  If finalize crashes mid-way the
+            # function previously returned early without resetting the
+            # flag, leaving a stale ``True`` from a prior successful
+            # 3D run — the next 2D compute would then see the 3D tab
+            # marked ready and the user could be auto-switched to a
+            # blank canvas.  Set False at the top, flip True only after
+            # the embedded panel reports ok.
+            self._has_results_3d = False
             _finalize_ok = False
             _3d_vis_ok = False
             try:
