@@ -1,5 +1,10 @@
 """Shanghai case 1 partial-B inlet — compare ghost-heating bug fix.
 
+⚠ ARCHIVAL: 2026-05-14 historical diagnostic snapshot. The issues this
+   investigated (ε double-halving / partial-B ghost / mass-flow) have
+   since been fixed (commits 02f091c / 2026-05-14 closure default 'none'
+   / d80fbb1). Kept for reference; not for routine CI runs.
+
 Two runs at identical config:
   A. partial_B_closure='none'           (current UI default, ghost-heated)
   B. partial_B_closure='per_cell_chi_b' (fix, ghost cells zero out h_vB+K_ffB)

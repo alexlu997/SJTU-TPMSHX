@@ -1,6 +1,11 @@
 """Re-run Shanghai case 1 3D and produce pyvista volume + isosurface
 renderings of Ta (air), Tb (water), and Ts (solid).
 
+⚠ ARCHIVAL: 2026-05-14 historical diagnostic snapshot. The issues this
+   investigated (ε double-halving / partial-B ghost / mass-flow) have
+   since been fixed (commits 02f091c / 2026-05-14 closure default 'none'
+   / d80fbb1). Kept for reference; not for routine CI runs.
+
 Outputs PNGs to vault/reports/3d-solver/2026-05-14-shanghai-3d-n20-case1-fields/
 """
 from __future__ import annotations

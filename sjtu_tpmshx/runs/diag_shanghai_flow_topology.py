@@ -1,5 +1,10 @@
 """Flow-field topology audit — Shanghai case 1, real geometry (6×6×26 cells).
 
+⚠ ARCHIVAL: 2026-05-14 historical diagnostic snapshot. The issues this
+   investigated (ε double-halving / partial-B ghost / mass-flow) have
+   since been fixed (commits 02f091c / 2026-05-14 closure default 'none'
+   / d80fbb1). Kept for reference; not for routine CI runs.
+
 Question: does SIMPLE B's water flow match the expected diagonal cross-flow
 topology (top-right inlet → bottom-left outlet), or does Brinkman over-
 homogenise into a near-uniform field across the whole domain?

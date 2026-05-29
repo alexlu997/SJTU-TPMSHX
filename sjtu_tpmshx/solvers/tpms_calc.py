@@ -268,7 +268,7 @@ C_DISP = 0.0
 
 
 def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
-             chi_s: float | None = None, N: int = 256) -> dict:
+             chi_s: float | None = None, N: int = 128) -> dict:
     """
     Return TPMS geometric properties without fluid information.
 
@@ -280,12 +280,12 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
     k_s       : solid thermal conductivity [W/(m·K)]
     chi_s     : solid tortuosity / anisotropy factor (optional, overrides the
                 module-level `CHI_S`). K_ss = chi_s * (1 - eps) * k_s.
-    N         : voxelisation grid resolution (default 256). The phi grid is
-                N^3 float64 (128 MiB at N=256). Callers that only need the
-                scalar outputs (eps, A_0, D_h) and run MANY parallel processes
-                — each rebuilding its own un-shared lru_cache — can pass a
-                lower N to cut per-process memory: N=128 keeps eps within
-                <0.08% and A_0 within <0.5% of N=256 at 1/8 the memory.
+    N         : voxelisation grid resolution (default 128 as of audit M-d /
+                P3 2026-05-28; was 256). The phi grid is N^3 float64
+                (16 MiB at N=128 vs 128 MiB at N=256), so the lower default
+                cuts per-process memory ~8x for parallel BO with un-shared
+                lru_caches. epsilon drift <0.3 % and A_0 drift <1 % vs
+                N=256, guarded by test_tpms_geometry_n128.
 
     Returns
     -------
