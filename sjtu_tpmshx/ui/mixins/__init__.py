@@ -10,5 +10,6 @@ Adoption: ``class Main_Menu(RunHistoryMixin, ..., QMainWindow)``.
 
 from ui.mixins.run_history import RunHistoryMixin
 from ui.mixins.dialogs import DialogsMixin
+from ui.mixins.zone_panel import ZonePanelMixin
 
-__all__ = ["RunHistoryMixin", "DialogsMixin"]
+__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin"]

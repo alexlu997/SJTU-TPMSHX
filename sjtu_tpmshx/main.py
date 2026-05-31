@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
 from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
-from ui.mixins import RunHistoryMixin, DialogsMixin
+from ui.mixins import RunHistoryMixin, DialogsMixin, ZonePanelMixin
 from ui.ui_constants import (
     TOAST_MS_BRIEF, TOAST_MS_SHORT, TOAST_MS_MED,
     VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
@@ -151,7 +151,7 @@ from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 
 
 # ── Main window ───────────────────────────────────────────────
-class Main_Menu(RunHistoryMixin, DialogsMixin, QMainWindow):
+class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         # Central widget created directly — the old `Ui_MainWindow` /
@@ -1132,41 +1132,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, QMainWindow):
     def _add_row(self, g, row, text, widget):
         from ui.ui_builders import add_row
         return add_row(self, g, row, text, widget)
-
-    # ─────────────────────────────────────────────────────────
-    #  Zone configuration helpers
-    # ─────────────────────────────────────────────────────────
-    def _zone_mode_changed(self, idx):
-        from solvers.zone_editor import zone_mode_changed
-        return zone_mode_changed(self, idx)
-
-    def _zone_init_1d(self, n):
-        from solvers.zone_editor import zone_init_1d
-        return zone_init_1d(self, n)
-
-    def _zone_add_row(self):
-        from solvers.zone_editor import zone_add_row
-        return zone_add_row(self)
-
-    def _zone_remove_row(self):
-        from solvers.zone_editor import zone_remove_row
-        return zone_remove_row(self)
-
-    def _zone_add_col(self):
-        from solvers.zone_editor import zone_add_col
-        return zone_add_col(self)
-
-    def _zone_remove_col(self):
-        from solvers.zone_editor import zone_remove_col
-        return zone_remove_col(self)
-
-    def _zone_axis(self):
-        from solvers.zone_editor import zone_axis
-        return zone_axis(self)
-
-    def _build_zone_config(self):
-        from solvers.zone_editor import build_zone_config
-        return build_zone_config(self)
 
     # ─────────────────────────────────────────────────────────
     #  TPMS geometry + time-constant helpers
