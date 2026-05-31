@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
 from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
-from ui.mixins import RunHistoryMixin
+from ui.mixins import RunHistoryMixin, DialogsMixin
 from ui.ui_constants import (
     TOAST_MS_BRIEF, TOAST_MS_SHORT, TOAST_MS_MED,
     VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
@@ -151,7 +151,7 @@ from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 
 
 # ── Main window ───────────────────────────────────────────────
-class Main_Menu(RunHistoryMixin, QMainWindow):
+class Main_Menu(RunHistoryMixin, DialogsMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         # Central widget created directly — the old `Ui_MainWindow` /
@@ -4581,76 +4581,6 @@ class Main_Menu(RunHistoryMixin, QMainWindow):
         return out
 
     _MAX_RECENT_RUNS = 5
-
-    def _show_overview(self):
-        """Open the D7 overview dashboard dialog."""
-        from ui.overview import open_overview
-        open_overview(self)
-
-    def _show_test_info(self):
-        """Static info about the project's test suite. The count on the
-        status-bar badge is hand-maintained; this dialog surfaces the file
-        list for users curious about coverage."""
-        import os as _os_ti
-        tests_dir = _os_ti.path.join(
-            _os_ti.path.dirname(_os_ti.path.abspath(__file__)), 'tests')
-        files = []
-        try:
-            for f in sorted(_os_ti.listdir(tests_dir)):
-                if f.startswith('test_') and f.endswith('.py'):
-                    files.append(f)
-        except Exception:
-            pass
-        lines = [f"<b>{len(files)} test modules</b>", ""]
-        for f in files:
-            lines.append(f"<code>{f}</code>")
-        lines.append("")
-        lines.append("Run locally:")
-        lines.append(
-            "<code>QT_QPA_PLATFORM=offscreen pytest tests/ -q</code>")
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Test suite")
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText("<br>".join(lines))
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
-
-    def _show_solve_log(self):
-        """Modal text viewer for the last captured solver stdout."""
-        text = getattr(self, '_last_solve_log', None) or ""
-        if not text.strip():
-            QMessageBox.information(
-                self, "Solve log",
-                "No solve log captured yet — run Compute first.")
-            return
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QPlainTextEdit, QPushButton, QHBoxLayout)
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Solve log — SIMPLE / coupling output")
-        dlg.resize(820, 640)
-        v = QVBoxLayout(dlg)
-        edit = QPlainTextEdit(text)
-        edit.setReadOnly(True)
-        from ui.theme import get_theme as _gt_sl
-        _tsl = _gt_sl()
-        edit.setStyleSheet(
-            f"QPlainTextEdit{{background:{_tsl.get('surface_raised', _tsl['card_bg'])};"
-            f"color:{_tsl['fg']}; border:1px solid {_tsl['card_border']};"
-            f"font-family:'Fira Code','Consolas',monospace; font-size:10pt;"
-            "padding:8px;}}")
-        v.addWidget(edit, 1)
-        btn_row = QHBoxLayout(); btn_row.addStretch(1)
-        btn_copy = QPushButton("Copy all")
-        btn_copy.clicked.connect(
-            lambda: (QApplication.clipboard().setText(text),
-                     self.statusBar().showMessage(
-                         "Log copied to clipboard.", 3000)))
-        btn_close = QPushButton("Close"); btn_close.clicked.connect(dlg.accept)
-        btn_copy.setStyleSheet(_BTN_TERTIARY)
-        btn_close.setStyleSheet(_BTN_SECONDARY)
-        btn_row.addWidget(btn_copy); btn_row.addWidget(btn_close)
-        v.addLayout(btn_row)
-        dlg.exec()
 
     # ─────────────────────────────────────────────────────────
     #  3D compute pipeline (uniform MVP)

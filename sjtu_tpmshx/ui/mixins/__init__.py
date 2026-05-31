@@ -9,5 +9,6 @@ Adoption: ``class Main_Menu(RunHistoryMixin, ..., QMainWindow)``.
 """
 
 from ui.mixins.run_history import RunHistoryMixin
+from ui.mixins.dialogs import DialogsMixin
 
-__all__ = ["RunHistoryMixin"]
+__all__ = ["RunHistoryMixin", "DialogsMixin"]
