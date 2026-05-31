@@ -83,10 +83,21 @@ def test_pipeline2d_run_returns_compute_result():
     assert 'Tb' in result.fields
     assert 'Ts' in result.fields
     assert 'P_fA' in result.fields and 'P_fB' in result.fields
-    assert result.fields['Ta'].shape == (20, 40)
+    # Field grids share one 2D shape. Wall-refinement expands the nominal
+    # Nx×Ny (here 20×40 → 36×56), so assert consistency + lower bound, not
+    # an exact shape that rots whenever BL refinement params change.
+    ta_shape = result.fields['Ta'].shape
+    assert len(ta_shape) == 2
+    assert result.fields['Tb'].shape == ta_shape
+    assert result.fields['Ts'].shape == ta_shape
+    assert ta_shape[0] >= cfg.solver.Nx and ta_shape[1] >= cfg.solver.Ny
 
-    # Coefficients + properties.
-    assert result.coeffs['K_ssA'] is None or result.coeffs.get('K_ss') is not None
+    # Coefficients + properties. K_ss is the single shared solid-wall
+    # conductance (one solid between both fluids — no per-side K_ssA/K_ssB;
+    # the per-side coefficients are the fluid ones K_ffA/K_ffB). A uniform
+    # (non-zone) run resolves it to a float, so assert it flowed through
+    # finalize into coeffs.
+    assert result.coeffs['K_ss'] is not None
     assert result.props['rho_A'] is not None
     assert result.props['mu_A'] is not None
     assert 0 < result.props['eps_A'] < 1
