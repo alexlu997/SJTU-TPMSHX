@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
 from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
-from ui.mixins import RunHistoryMixin, DialogsMixin, ZonePanelMixin
+from ui.mixins import RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin
 from ui.ui_constants import (
     TOAST_MS_BRIEF, TOAST_MS_SHORT, TOAST_MS_MED,
     VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
@@ -151,7 +151,7 @@ from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 
 
 # ── Main window ───────────────────────────────────────────────
-class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, QMainWindow):
+class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         # Central widget created directly — the old `Ui_MainWindow` /
@@ -1073,47 +1073,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, QMainWindow):
     # ─────────────────────────────────────────────────────────
     #  Theme toggle
     # ─────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────
-    #  Multi-objective optimization
-    # ─────────────────────────────────────────────────────────
-    def _run_optimize(self):
-        from ui.optimize_panel import run_optimize
-        return run_optimize(self)
-
-    def _cancel_optimize(self):
-        from ui.optimize_panel import cancel_optimize
-        return cancel_optimize(self)
-
-    def _reshow_pareto(self):
-        from ui.optimize_panel import reshow_pareto
-        return reshow_pareto(self)
-
-    def _show_pareto(self, res):
-        from ui.optimize_panel import show_pareto
-        return show_pareto(self, res)
-
-    def _on_pareto_pick(self, event):
-        from ui.optimize_panel import on_pareto_pick
-        return on_pareto_pick(self, event)
-
-    def _save_opt_results(self, res, cfg):
-        from ui.optimize_panel import save_opt_results
-        return save_opt_results(self, res, cfg)
-
-    def _load_pareto_solution(self, x):
-        from ui.optimize_panel import load_pareto_solution
-        return load_pareto_solution(self, x)
-
-    # ─────────────────────────────────────────────────────────
-    #  Quick-design tool (Phase 2 Task 4)
-    # ─────────────────────────────────────────────────────────
-    def _open_quick_design(self):
-        from ui.quick_design_panel import build_quick_design_dialog
-        if getattr(self, "_qd_dialog", None) is None:
-            self._qd_dialog = build_quick_design_dialog(self)
-        self._qd_dialog.show()
-        self._qd_dialog.raise_()
-
     # ─────────────────────────────────────────────────────────
     #  Layout helpers
     # ─────────────────────────────────────────────────────────
