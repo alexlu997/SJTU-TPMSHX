@@ -14,5 +14,6 @@ from ui.mixins.zone_panel import ZonePanelMixin
 from ui.mixins.optimize_ui import OptimizeUIMixin
 from ui.mixins.tab_view import TabViewMixin
 from ui.mixins.ui_builder import UIBuilderMixin
+from ui.mixins.fluid_input import FluidInputMixin
 
-__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin"]
+__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin", "FluidInputMixin"]
