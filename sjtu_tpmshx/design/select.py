@@ -10,24 +10,27 @@ NODES = {"topo": ["Diamond", "Gyroid"],
          "l": [4.0, 5.0, 6.0, 7.0, 8.0], "t": [0.3, 0.4, 0.5, 0.6]}
 
 def enumerate_select(cases, arrangement="cross", nodes=None, rho_s=RHO_S,
-                     n_jobs=1, k_s=K_STEEL, prop_model="const"):
+                     n_jobs=1, k_s=K_STEEL, prop_model="const", height=None):
     """枚举 {拓扑×l×t}, 各跑 size_fixed_cell, 取可行件 + min-V best。
     候选彼此独立 → n_jobs!=1 时用 joblib(loky 进程, 绕 GIL)跨候选并行
     (size_fixed_cell 为顶层函数, 可 pickle); n_jobs=1 走串行(确定性/测试)。
     结果顺序按 combos 不变, 故并行与串行 feasible/best 一致。
-    k_s: 固体热导率 [W/(m·K)]; prop_model: 物性取值温 (const/mean), 均传入定尺。"""
+    k_s: 固体热导率 [W/(m·K)]; prop_model: 物性取值温 (const/mean), 均传入定尺。
+    height: 矩形迎风高 [m] (None=方形 sz=s, 现状/UI 默认), 透传 size_fixed_cell。"""
     nd = nodes or NODES
     combos = [(topo, l, t) for topo in nd["topo"]
               for l in nd["l"] for t in nd["t"]]
     if n_jobs == 1 or len(combos) <= 1:
         results = [size_fixed_cell(cases, topo, l, t, arrangement,
-                                   rho_s=rho_s, k_s=k_s, prop_model=prop_model)
+                                   rho_s=rho_s, k_s=k_s, prop_model=prop_model,
+                                   height=height)
                    for topo, l, t in combos]
     else:
         from joblib import Parallel, delayed
         results = Parallel(n_jobs=n_jobs, backend="loky")(
             delayed(size_fixed_cell)(cases, topo, l, t, arrangement,
-                                     rho_s=rho_s, k_s=k_s, prop_model=prop_model)
+                                     rho_s=rho_s, k_s=k_s, prop_model=prop_model,
+                                     height=height)
             for topo, l, t in combos)
     feasible = [d for d in results if d.feasible]
     best = min(feasible, key=lambda d: d.V) if feasible else None

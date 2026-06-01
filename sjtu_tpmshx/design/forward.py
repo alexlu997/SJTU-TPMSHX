@@ -67,21 +67,23 @@ def _dp_one(fluid, topo, l, t, eps_A, mdot, A_flow, T, P, props, L_chan):
     u = G / props.rho                              # 孔隙内速度
     return predict_dP(topo, l, t, eps_A, u, props.rho, props.mu, L_chan)
 
-def dP_fracs(case, topo, l, t, s, Lx, arrangement="cross"):
+def dP_fracs(case, topo, l, t, s, Lx, arrangement="cross", height=None):
     """两侧归一化前压损分数 (纯解析 D-F, 不触发 LTNE 解)。返回 (dP_h_frac, dP_c_frac)。
-    按流体分派 (air 可压 / water 不可压); 迎风面积按流向取 (叉流冷侧 +y → Lx·s)。"""
+    按流体分派 (air 可压 / water 不可压); 迎风面积按流向取 (叉流冷侧 +y → Lx·s)。
+    height: 矩形迎风时高(z)向尺寸 [m]; None → 方形 (s_z=s, 现状/UI 默认)。"""
+    sz = s if height is None else height          # z(高)向跨度
     geo = tpms_geometry(topo, l, t, K_STEEL, N=GEOM_N); EPS_A = geo["epsilon_A"]
     pA = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h)
     pB = fluid_props(case.cold_fluid, case.T_in_c, case.P_in_c)
-    # 热侧 A 沿 +x: 迎风面 = y×z = s×s, 流程 Lx
-    A_h = EPS_A * s * s
+    # 热侧 A 沿 +x: 迎风面 = y×z = s×sz, 流程 Lx
+    A_h = EPS_A * s * sz
     dP_h = _dp_one(case.hot_fluid, topo, l, t, EPS_A, case.mdot_h, A_h,
                    case.T_in_h, case.P_in_h, pA, Lx)
-    # 冷侧 B: 叉流 +y 迎风 = x×z = Lx×s, 流程 s; 逆流 −x 迎风 = y×z = s×s, 流程 Lx
+    # 冷侧 B: 叉流 +y 迎风 = x×z = Lx×sz, 流程 s; 逆流 −x 迎风 = y×z = s×sz, 流程 Lx
     if arrangement == "cross":
-        A_c, L_c = EPS_A * Lx * s, s
+        A_c, L_c = EPS_A * Lx * sz, s
     else:
-        A_c, L_c = EPS_A * s * s, Lx
+        A_c, L_c = EPS_A * s * sz, Lx
     dP_c = _dp_one(case.cold_fluid, topo, l, t, EPS_A, case.mdot_c, A_c,
                    case.T_in_c, case.P_in_c, pB, L_c)
     return dP_h / case.P_in_h, dP_c / case.P_in_c
@@ -93,26 +95,30 @@ def _cold_outlet(Tb, arrangement):
 
 def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
             arrangement: str = "cross", init=None, k_s: float = K_STEEL,
-            prop_model: str = "const", tol: float = LTNE_TOL) -> ForwardResult:
+            prop_model: str = "const", tol: float = LTNE_TOL,
+            height=None) -> ForwardResult:
     """prop_model: 'const' = 物性在入口温取值 (现状, 最快); 'mean' = 2-pass
     均温 (入口解→出口温→(T_in+T_out)/2 重取物性→warm-start 重解), 消大-ΔT 系统偏置。
     dP 始终用入口物性 (冷却空气入口 μ/ρ 偏高 = 保守安全)。
-    tol: LTNE 收敛残差 (默认 1e-5); 定尺搜索阶段可放松 (sizing 渐进收紧)。"""
+    tol: LTNE 收敛残差 (默认 1e-5); 定尺搜索阶段可放松 (sizing 渐进收紧)。
+    height: 矩形迎风高(z)向尺寸 [m]; None → 方形 (s_z=s, 现状/UI 默认)。
+    叉流 nz=1 → 2D x-y 物理, z 仅经迎风面积影响流速; height 与宽 s 解耦不破方形。"""
+    sz = s if height is None else height           # z(高)向跨度
     geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N)
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
                            geo["A_0"], geo["D_h"])
     arr = _ARR[arrangement]
     Ny, Nz = arr["ny"], arr["nz"]
     shp = (NX, Ny, Nz); z = np.zeros(shp)
-    # B 迎风首维: cross (+y) = Lx×s; counter (−x) = s×s
+    # B 迎风首维: cross (+y) = Lx×sz; counter (−x) = s×sz
     span_c1 = Lx if arrangement == "cross" else s
 
     def _one_pass(Th_eval, Tc_eval, seed):
         """在指定取值温 (Th_eval/Tc_eval) 取物性, 解一次 LTNE。seed=(Ta,Tb,Ts) 续解。"""
         h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
-                                    case.mdot_h, s, s, Th_eval, case.P_in_h)
+                                    case.mdot_h, s, sz, Th_eval, case.P_in_h)
         h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
-                                    case.mdot_c, span_c1, s, Tc_eval, case.P_in_c)
+                                    case.mdot_c, span_c1, sz, Tc_eval, case.P_in_c)
         ucA = np.full(shp, u_h)
         if arrangement == "cross":
             vcB, ucB = np.full(shp, u_c), z
@@ -122,14 +128,14 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
         if seed is not None:
             Ta0, Tb0, Ts0 = seed                   # warm-start 续解
         Ta, Tb, Ts = solve_full_domain_3d(
-            Lx, s, s, NX, Ny, Nz, case.T_in_h, case.T_in_c,
+            Lx, s, sz, NX, Ny, Nz, case.T_in_h, case.T_in_c,
             np.full(shp, EPS_A * pA.k), np.full(shp, EPS_A * pB.k),
             np.full(shp, (1.0 - EPS) * k_s),
             np.full(shp, h_vA), np.full(shp, h_vB),
             pA.rho * pA.cp, pB.rho * pB.cp, np.full(shp, EPS),
             ucA, z, z, ucB, vcB, z, dir_A=0, dir_B=arr["dirB"],
             dx_arr=np.full(NX, Lx / NX), dy_arr=np.full(Ny, s / Ny),
-            dz_arr=np.full(Nz, s / Nz),
+            dz_arr=np.full(Nz, sz / Nz),
             Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
             max_iter=arr["maxit"], tol=tol, alpha_T=arr["alpha"],
             q_rel_tol=arr["qtol"], conv_chunk=arr["chunk"])  # 双股都解 + (cross) 自适应早停
@@ -144,5 +150,5 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
         fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(Th, Tc, fld)
     Q_h = case.mdot_h * pA.cp * (case.T_in_h - T_out_h)
     Q_c = case.mdot_c * pB.cp * (T_out_c - case.T_in_c)
-    dPh, dPc = dP_fracs(case, topo, l, t, s, Lx, arrangement)  # 始终入口物性 (保守)
+    dPh, dPc = dP_fracs(case, topo, l, t, s, Lx, arrangement, height=height)  # 始终入口物性 (保守)
     return ForwardResult(T_out_h, T_out_c, Q_h, Q_c, dPh, dPc, Re_h, Re_c, fld)

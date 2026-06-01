@@ -27,17 +27,18 @@ def t_target(case) -> float:
     return case.T_in_h - case.Q / (case.mdot_h * cp_h)
 
 def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
-             prop_model="const", seed=None):
+             prop_model="const", seed=None, height=None):
     """求 Lx ∈ (0, LX_MAX] 使 T_out_hot = target (T_out 随 Lx 单调↓)。
     B: 用 brentq (超线性) 代替二分 → ~3× 少解。
     A: seed=(Ta,Tb,Ts) 跨-s 续解种子 (s 平滑变, 场近似); ev 内每步续解。
     D: 搜索用 SIZING_TOL (松), 终点用 LTNE_TOL (紧) → 渐进收紧。
+    height: 矩形迎风高 (None=方形); 透传 forward。
     返回 (Lx, ForwardResult)。不可达 (LX_MAX 仍欠冷) → (None, None)。"""
     tgt = target if target is not None else t_target(case)
     prev = {"f": seed, "last": None}
     def ev(Lx, tol):
         r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"],
-                    k_s=k_s, prop_model=prop_model, tol=tol)
+                    k_s=k_s, prop_model=prop_model, tol=tol, height=height)
         prev["f"] = r.fields                # 续解种子 (链式)
         prev["last"] = r
         return r
@@ -71,22 +72,22 @@ def _cool_proxy(case) -> float:
     eps_req = (case.T_in_h - t_target(case)) / denom if abs(denom) > 1e-9 else 0.0
     return eps_req * case.mdot_h
 
-def _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement) -> float:
+def _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement, height=None) -> float:
     """全 K 工况两侧归一化 dP 的最大值 (纯解析, 无 LTNE 解)。"""
     w = 0.0
     for c in cases:
-        dh, dc = dP_fracs(c, topo, l, t, s, Lx, arrangement)
+        dh, dc = dP_fracs(c, topo, l, t, s, Lx, arrangement, height=height)
         w = max(w, dh / c.dPlim_h, dc / c.dPlim_c)
     return w
 
 def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL, prop_model="const",
-            seed=None):
+            seed=None, height=None):
     """全 K 工况冷却所需 Lx 的最大 (governing 终验)。任一不可达 → None。
     seed: 跨工况续解种子 (链式, 减 LTNE 迭代)。"""
     mx = 0.0
     for c in cases:
         Lx, r = solve_Lx(c, topo, l, t, s, arrangement, k_s=k_s,
-                         prop_model=prop_model, seed=seed)
+                         prop_model=prop_model, seed=seed, height=height)
         if Lx is None:
             return None
         if r is not None:
@@ -94,7 +95,7 @@ def _Lx_all(cases, topo, l, t, s, arrangement, k_s=K_STEEL, prop_model="const",
         mx = max(mx, Lx)
     return mx
 
-def _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_floor):
+def _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_floor, height=None):
     """返回 ≥ Lx_floor 的最小 Lx ∈ [Lx_floor, LX_MAX] 使全K两侧归一化 dP ≤ 1
     (纯解析, 无 LTNE 解)。叉流: 冷侧 dP 随 Lx↓ (迎风 Lx·s 变大), 热侧 dP 随 Lx↑
     (流程变长) → 升序扫描取首个达标点 = 该 s 下 min-V 的 Lx。无可行 → None。"""
@@ -102,25 +103,28 @@ def _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_floor):
         return None
     for i in range(N_DP + 1):
         Lx = Lx_floor + (LX_MAX - Lx_floor) * i / N_DP
-        if _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement) <= 1.0 + 1e-6:
+        if _maxnorm_dP(cases, topo, l, t, s, Lx, arrangement, height=height) <= 1.0 + 1e-6:
             return Lx
     return None
 
 def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
-                    k_s=K_STEEL, prop_model="const") -> Design:
+                    k_s=K_STEEL, prop_model="const", height=None) -> Design:
     """min-V over s: 每个 s 内定 Lx = max(冷却所需, 满足两侧 dP 所需) (≤450),
-    取 V=s²·Lx 最小者。s-loop 冷却只跑 cooling-governing 工况 (其余 dP 解析),
-    s* 处对全 K 冷却终验。叉流冷侧迎风=Lx·s → 冷侧 dP 紧时加厚 Lx (而非误判不可行)。
+    取 V=s·sz·Lx 最小者 (方形 sz=s)。s-loop 冷却只跑 cooling-governing 工况 (其余
+    dP 解析), s* 处对全 K 冷却终验。叉流冷侧迎风=Lx·sz → 冷侧 dP 紧时加厚 Lx。
+    height: 矩形迎风高 sz [m] (固定, 搜索宽 s); None → 方形 sz=s (现状/UI 默认)。
     k_s: 固体热导率 [W/(m·K)], 默认 16 (304SS); 入 LTNE 固体能量 K_ss=(1-ε)·k_s。"""
     geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N); EPS = geo["epsilon"]
+    def _sz(sv):
+        return sv if height is None else height        # z(高)向跨度 (方形=s)
     cool_gov = max(cases, key=_cool_proxy)              # 0-D 预选 (无解)
     s_lo = max(0.010, N_MIN * l / 1000.0); s_hi = S_MAX
 
     lo_lx = max(2.0 * l / 1000.0, 1e-3)                 # 最小流向晶胞长 (= solve_Lx 下界)
 
     def _dh_min(s):                                     # 全 K 热侧归一化 dP @Lx=lo_lx (解析, 无解)
-        return max(dP_fracs(c, topo, l, t, s, lo_lx, arrangement)[0] / c.dPlim_h
-                   for c in cases)
+        return max(dP_fracs(c, topo, l, t, s, lo_lx, arrangement, height=height)[0]
+                   / c.dPlim_h for c in cases)
 
     state = {"seed": None, "cooled": False}             # warm-start 链 + 是否曾冷到
 
@@ -129,16 +133,16 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
         if _dh_min(s) > 1.0:                            # 热侧 dP 超限 (任何 Lx 不可行)
             return None, None
         Lx_cool, r = solve_Lx(cool_gov, topo, l, t, s, arrangement, k_s=k_s,
-                              prop_model=prop_model, seed=state["seed"])
+                              prop_model=prop_model, seed=state["seed"], height=height)
         if Lx_cool is None:                             # governing 冷不到
             return None, None
         state["cooled"] = True
         if r is not None:
             state["seed"] = r.fields                    # 携带场 (跨 s 平滑变)
-        Lx = _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_cool)
+        Lx = _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lx_cool, height=height)
         if Lx is None:
             return None, None
-        return s * s * Lx, Lx
+        return s * _sz(s) * Lx, Lx
 
     # C: min-V over s 用黄金分割 (代替 20 点网格)。V(s)=s²·Lx(s), Lx(s) 随 s↓ →
     # U 形单峰; 可行区为上区间 (大 s 更易冷 + dP 更松)。先解析定热侧 dP 可行下界
@@ -189,10 +193,10 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
         """该 s 的全-K (所有工况) 定尺: 返回 (Lx_floor, Lx_star)。
         Lx_floor None=某工况冷不到; Lx_star None=该长度下两侧 dP 超限。"""
         Lxf = _Lx_all(cases, topo, l, t, s, arrangement, k_s=k_s,
-                      prop_model=prop_model, seed=s_seed)
+                      prop_model=prop_model, seed=s_seed, height=height)
         if Lxf is None or Lxf > LX_MAX:
             return None, None
-        return Lxf, _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lxf)
+        return Lxf, _min_Lx_for_dP(cases, topo, l, t, s, arrangement, Lxf, height=height)
 
     # s* 处全 K 终验。注意: s-搜索用 cooling-governing 代理, 其可行边界可能略低于全-K
     # 边界 (个别工况 dP 在更长全-K 冷却 Lx 下超限) → golden 可能精准落在该缝中。
@@ -230,7 +234,7 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
     for c in cases:
         r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s,
-                    prop_model=prop_model)
+                    prop_model=prop_model, height=height)
         percase.append(dict(
             case=c.case, hot_fluid=c.hot_fluid, cold_fluid=c.cold_fluid,
             T_air_out=r.T_out_hot, T_cold_out=r.T_out_cold, Q_W=r.Q_hot,
@@ -239,7 +243,7 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
             Re_hot=r.Re_hot, Re_cold=r.Re_cold))
         dPh = max(dPh, r.dP_hot_frac); dPc = max(dPc, r.dP_cold_frac)
         Tout_max = max(Tout_max, r.T_out_hot)
-    V = s_star * s_star * Lx_star
+    V = s_star * _sz(s_star) * Lx_star
     return Design(True, topo, l, t, s_star, Lx_star, arrangement,
                   V, (1.0 - EPS) * V * rho_s, dPh, dPc, Tout_max, reason="",
                   percase=percase)
