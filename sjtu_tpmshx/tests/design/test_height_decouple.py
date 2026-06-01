@@ -47,3 +47,16 @@ def test_rect_height_changes_water_side():
     # 两侧迎风都含 sz → height≠s 时两侧 dP 均改变 (rect sz 大 → 迎风大 → 流速/压损低)
     assert not math.isclose(sq[0], rect[0], rel_tol=1e-3)   # 气侧 dP 改变
     assert not math.isclose(sq[1], rect[1], rel_tol=1e-3)   # 水侧 dP 改变
+
+
+def test_nu_re_window_per_fluid():
+    from design.fluids import nu_re_window, NU_RE_FIT_RANGE, YAN_RE_RANGE
+    assert nu_re_window("air") == NU_RE_FIT_RANGE        # (400, 16000)
+    assert nu_re_window("water") == YAN_RE_RANGE         # Yan[6] (150, 3000)
+
+
+def test_design_validity_fields_default():
+    from design.sizing import Design
+    d = Design(False)
+    assert d.height == 0.0 and d.validity == ""
+    assert d.Re_hot_max == 0.0 and d.Re_cold_max == 0.0

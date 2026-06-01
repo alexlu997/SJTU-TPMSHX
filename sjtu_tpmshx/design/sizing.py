@@ -7,8 +7,10 @@ from dataclasses import dataclass, field
 from scipy.optimize import brentq
 
 from solvers.tpms_calc import geometry as tpms_geometry
-from .fluids import fluid_props
+from .fluids import fluid_props, nu_re_window
 from .forward import forward, dP_fracs, K_STEEL, GEOM_N, LTNE_TOL
+
+DP_DEGEN_FRAC = 0.30      # 单侧归一化压损 > 此 = 压降近进口压 → 退化 (超音速/迎风缩崩)
 
 S_MAX = 0.450          # build envelope [m]
 LX_MAX = 0.450
@@ -65,6 +67,10 @@ class Design:
     dP_hot_max: float = 0.0; dP_cold_max: float = 0.0
     T_out_hot_max: float = 0.0; reason: str = ""
     percase: list = field(default_factory=list)   # 每工况明细 @ 定尺几何 (供工况明细表)
+    height: float = 0.0          # 矩形迎风高 sz [m]; 0 = 方形 (H=W=s)
+    Re_hot_max: float = 0.0      # 全工况热侧最大 Re (验证域判定)
+    Re_cold_max: float = 0.0     # 全工况冷侧最大 Re
+    validity: str = ""           # 验证域标记 (空=域内); A 外推 + B 退化
 
 def _cool_proxy(case) -> float:
     """0-D 冷却难度代理 (无解): 所需效能 × 热侧流量 (越大越难冷→需更长 Lx)。"""
@@ -232,6 +238,8 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
                           reason="dP>lim@final")
     # 全 K 工况终验 (一次 forward/工况, 既出 percase 明细又汇总; 不再重复 dP_fracs)
     percase, dPh, dPc, Tout_max = [], 0.0, 0.0, 0.0
+    re_h_max = re_c_max = 0.0
+    warns = set()                                   # A 外推 + B 退化 标记
     for c in cases:
         r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s,
                     prop_model=prop_model, height=height)
@@ -243,7 +251,17 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
             Re_hot=r.Re_hot, Re_cold=r.Re_cold))
         dPh = max(dPh, r.dP_hot_frac); dPc = max(dPc, r.dP_cold_frac)
         Tout_max = max(Tout_max, r.T_out_hot)
+        re_h_max = max(re_h_max, r.Re_hot); re_c_max = max(re_c_max, r.Re_cold)
+        hlo, hhi = nu_re_window(c.hot_fluid); clo, chi = nu_re_window(c.cold_fluid)
+        if r.Re_hot < hlo: warns.add("热Re↓外推")    # A: Nu 关联式域外
+        if r.Re_hot > hhi: warns.add("热Re↑外推")
+        if r.Re_cold < clo: warns.add("冷Re↓外推")
+        if r.Re_cold > chi: warns.add("冷Re↑外推")
+        if r.dP_hot_frac > DP_DEGEN_FRAC: warns.add("热dP退化")   # B: 压降近进口压
+        if r.dP_cold_frac > DP_DEGEN_FRAC: warns.add("冷dP退化")
     V = s_star * _sz(s_star) * Lx_star
     return Design(True, topo, l, t, s_star, Lx_star, arrangement,
                   V, (1.0 - EPS) * V * rho_s, dPh, dPc, Tout_max, reason="",
-                  percase=percase)
+                  percase=percase, height=(height or 0.0),
+                  Re_hot_max=re_h_max, Re_cold_max=re_c_max,
+                  validity=";".join(sorted(warns)))

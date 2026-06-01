@@ -48,9 +48,9 @@ def test_worker_auto_calls_backend_and_emits():
         T_out_hot_max=560.0; arrangement="counter"; reason=""
     def _fake_load(path): captured["path"]=path; return ["case1"]
     def _fake_enum(cases, arrangement, nodes, rho_s, n_jobs=1, k_s=16.0,
-                   prop_model="const"):
+                   prop_model="const", height=None):
         captured.update(arr=arrangement, nodes=nodes, rho=rho_s, jobs=n_jobs,
-                        ks=k_s, pm=prop_model)
+                        ks=k_s, pm=prop_model, height=height)
         d=_D(); return [d], d
     received=[]
     worker.finished_with_result.connect(lambda r: received.append(r))
@@ -62,9 +62,19 @@ def test_worker_auto_calls_backend_and_emits():
     assert captured["jobs"]==-1   # UI auto 默认全核并行
     assert captured["ks"]==16.0   # 默认 304SS 热导率传入后端
     assert captured["pm"]=="mean" # UI 默认物性模型 = 均温
+    assert captured["height"] is None   # 默认方形 (未勾固定高度迎风)
     assert len(received)==1
     feas, best = received[0]["feasible"], received[0]["best"]
     assert best.topo=="Diamond" and len(feas)==1
+
+def test_gather_inputs_rect_height():
+    w = _make_window("auto")
+    w.chk_qd_rect = QCheckBox(); w.chk_qd_rect.setChecked(True)
+    w.le_qd_height = _le("750")
+    p = _gather_inputs(w)
+    assert abs(p["height"] - 0.750) < 1e-12   # mm→m
+    # 默认 (无 chk_qd_rect 控件) → 方形
+    assert _gather_inputs(_make_window("auto"))["height"] is None
 
 def test_worker_emits_error_on_exception():
     w=_make_window("auto"); worker=_make_worker_class()(_gather_inputs(w))

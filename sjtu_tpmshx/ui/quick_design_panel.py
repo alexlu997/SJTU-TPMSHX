@@ -34,6 +34,13 @@ def _gather_inputs(window) -> dict:
     # 物性模型下拉显示中文, 映射回后端的 const/mean (含 "定" 字 → const, 否则 mean)
     pm_txt = cur("combo_qd_prop", "均温")
     prop_model = "const" if ("定" in pm_txt or pm_txt == "const") else "mean"
+    # 矩形迎风 (固定高度) opt-in: 勾选 → 高 [mm]→[m]; 默认关 = 方形 (height=None)
+    height = None
+    if chk("chk_qd_rect"):
+        try:
+            height = float(txt("le_qd_height", "750")) / 1e3
+        except ValueError:
+            height = 0.750
     return {
         "file": txt("le_qd_file"),
         "mode": cur("combo_qd_mode", "auto"),
@@ -41,6 +48,7 @@ def _gather_inputs(window) -> dict:
         "rho_s": rho_s,
         "k_s": k_s,
         "prop_model": prop_model,
+        "height": height,
         "refine": chk("chk_qd_refine"),
         "nodes": {
             "topo": [s.strip() for s in txt("le_qd_topo", "Diamond,Gyroid").split(",") if s.strip()],
@@ -73,19 +81,22 @@ def _make_worker_class():
                 cases = load_cases(p["file"])
                 ks = p.get("k_s", 16.0)
                 pm = p.get("prop_model", "mean")
+                ht = p.get("height", None)          # 矩形迎风高 [m]; None=方形 (默认)
                 if p["mode"] == "fixed":
                     topo, l, t = p["cell"]
                     d = size_fixed_cell(cases, topo, l, t, p["arrangement"],
-                                        rho_s=p["rho_s"], k_s=ks, prop_model=pm)
+                                        rho_s=p["rho_s"], k_s=ks, prop_model=pm,
+                                        height=ht)
                     results = [d]; best = d if d.feasible else None
                 else:
                     results, best = enumerate_select(cases, p["arrangement"], p["nodes"],
                                                      rho_s=p["rho_s"], n_jobs=-1, k_s=ks,
-                                                     prop_model=pm)  # 全核并行
+                                                     prop_model=pm, height=ht)  # 全核并行
                     if p["refine"] and best is not None:
                         from design.optimize import warm_start_joint
                         ref = warm_start_joint(cases, best, p["arrangement"],
-                                               rho_s=p["rho_s"], k_s=ks, prop_model=pm)
+                                               rho_s=p["rho_s"], k_s=ks, prop_model=pm,
+                                               height=ht)
                         if ref is not best and ref.feasible:
                             results = list(results) + [ref]
                             if ref.V < best.V:
@@ -110,24 +121,37 @@ def _fill_table(window, feasible, best):
     rows = sorted(feasible, key=lambda d: d.V)
     from design.select import pareto_tags
     tags = pareto_tags(feasible)
+    def _hmm(d):                       # 矩形取固定高, 方形回退 W=s
+        h = getattr(d, "height", 0.0) or d.s
+        return f"{d.s*1e3:.0f}×{h*1e3:.0f}"
     tbl = getattr(window, "_qd_table", None)
     if tbl is None or not hasattr(tbl, "setRowCount"):
         for d in rows:
-            print(f"  {d.topo} l={d.l} t={d.t} s={d.s*1e3:.1f} Lx={d.Lx*1e3:.1f} "
+            vd = getattr(d, "validity", "")
+            print(f"  {d.topo} l={d.l} t={d.t} WxH={_hmm(d)} Lx={d.Lx*1e3:.1f} "
                   f"V={d.V*1e3:.3f}L wt={d.weight:.3f} dPh={d.dP_hot_max*100:.2f} "
-                  f"dPc={d.dP_cold_max*100:.2f} {','.join(tags.get(id(d),[]))}")
+                  f"dPc={d.dP_cold_max*100:.2f} Re_h={getattr(d,'Re_hot_max',0):.0f} "
+                  f"Re_c={getattr(d,'Re_cold_max',0):.0f} "
+                  f"{'⚠'+vd if vd else ''} {','.join(tags.get(id(d),[]))}")
         return
-    cols = ["拓扑","l","t","W×H(mm)","Lx(mm)","V(L)","重量(kg)","热侧压损%","冷侧压损%","标签"]
+    cols = ["拓扑","l","t","W×H(mm)","Lx(mm)","V(L)","重量(kg)","热侧压损%","冷侧压损%",
+            "Re热","Re冷","验证域","标签"]
     tbl.setColumnCount(len(cols)); tbl.setRowCount(len(rows))
     tbl.setHorizontalHeaderLabels(cols)
     from PySide6.QtWidgets import QTableWidgetItem
+    from PySide6.QtGui import QColor
     for i, d in enumerate(rows):
-        vals = [d.topo, f"{d.l:g}", f"{d.t:g}", f"{d.s*1e3:.0f}×{d.s*1e3:.0f}",
+        vd = getattr(d, "validity", "")
+        vals = [d.topo, f"{d.l:g}", f"{d.t:g}", _hmm(d),
                 f"{d.Lx*1e3:.1f}", f"{d.V*1e3:.3f}", f"{d.weight:.3f}",
                 f"{d.dP_hot_max*100:.2f}", f"{d.dP_cold_max*100:.2f}",
-                ",".join(tags.get(id(d), []))]
+                f"{getattr(d,'Re_hot_max',0):.0f}", f"{getattr(d,'Re_cold_max',0):.0f}",
+                (vd if vd else "域内"), ",".join(tags.get(id(d), []))]
         for j, v in enumerate(vals):
-            tbl.setItem(i, j, QTableWidgetItem(str(v)))
+            it = QTableWidgetItem(str(v))
+            if vd:                      # A+B: 外推/退化 → 整行验证列标红, 提示勿盲信
+                it.setForeground(QColor(200, 0, 0))
+            tbl.setItem(i, j, it)
 
 def run_quick_design(window) -> None:
     """点「运行设计」入口: 后台 worker 跑后端, 完成回填表。"""
@@ -263,6 +287,14 @@ def build_quick_design_dialog(parent=None):
     combo_prop.setFixedWidth(90)
     combo_prop.setToolTip("物性取值温度: 均温=(入口+出口)/2 膜温 (推荐, 消大-ΔT 偏置, ~2× 解两遍); "
                           "定物性=入口温 (最快)。dP 始终用入口物性 (保守)。")
+    # 矩形迎风 (固定高度) opt-in — 默认关 = 方形 s×s (UI 现状不变)
+    chk_rect = QCheckBox("固定高度迎风")
+    chk_rect.setChecked(False)
+    chk_rect.setToolTip("默认关 = 方形迎风 s×s (现状)。勾选 = 矩形: 迎风高 H 固定、宽自由, "
+                        "求 min-V。适合给定迎风高度的工况 (如 H=750mm)。")
+    le_height = QLineEdit("750"); le_height.setFixedWidth(64); le_height.setEnabled(False)
+    le_height.setToolTip("矩形迎风固定高 H [mm] (仅勾选「固定高度迎风」时生效)。")
+    chk_rect.toggled.connect(le_height.setEnabled)
 
     mode_row = _FlowLayout(hs=16, vs=6)
     mode_row.addWidget(_pair("模式:", combo_mode))
@@ -270,6 +302,8 @@ def build_quick_design_dialog(parent=None):
     mode_row.addWidget(_pair("材料密度 (kg/m³):", le_rho))
     mode_row.addWidget(_pair("热导率 (W/m·K):", le_ks))
     mode_row.addWidget(_pair("物性模型:", combo_prop))
+    mode_row.addWidget(chk_rect)
+    mode_row.addWidget(_pair("迎风高 (mm):", le_height))
     root.addLayout(mode_row)
 
     # ── Auto 参数组 ───────────────────────────────────────────
@@ -374,10 +408,10 @@ def build_quick_design_dialog(parent=None):
     lbl_results = QLabel("可行设计列表:")
     root.addWidget(lbl_results)
 
-    tbl = QTableWidget(0, 10)
+    tbl = QTableWidget(0, 13)
     tbl.setHorizontalHeaderLabels(
         ["拓扑", "l", "t", "W×H(mm)", "Lx(mm)", "V(L)", "重量(kg)",
-         "热侧压损%", "冷侧压损%", "标签"])
+         "热侧压损%", "冷侧压损%", "Re热", "Re冷", "验证域", "标签"])
     tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     tbl.horizontalHeader().setStretchLastSection(True)
@@ -397,6 +431,8 @@ def build_quick_design_dialog(parent=None):
     dlg.le_qd_rho          = le_rho
     dlg.le_qd_ks           = le_ks
     dlg.combo_qd_prop      = combo_prop
+    dlg.chk_qd_rect        = chk_rect
+    dlg.le_qd_height       = le_height
     dlg.le_qd_topo         = le_topo
     dlg.le_qd_l            = le_l
     dlg.le_qd_t            = le_t

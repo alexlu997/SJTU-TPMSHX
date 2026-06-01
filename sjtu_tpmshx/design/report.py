@@ -15,14 +15,22 @@ def cid(d) -> str:
     return f"{d.topo}_l{d.l:g}_t{d.t:g}"
 
 
+def _H_mm(d):
+    """矩形 (d.height>0) 取固定高; 方形回退 W=s。"""
+    h = d.height if getattr(d, "height", 0.0) else d.s
+    return round(h * 1e3, 2)
+
 def summary_rows(results, tags) -> list:
     return [dict(
         构型=cid(d), 拓扑=d.topo, l_mm=d.l, t_mm=d.t, 布置=d.arrangement,
         可行=("是" if d.feasible else "否"),
-        W_mm=round(d.s * 1e3, 2), H_mm=round(d.s * 1e3, 2),
+        W_mm=round(d.s * 1e3, 2), H_mm=_H_mm(d),
         Lx_mm=round(d.Lx * 1e3, 2),
         V_L=round(d.V * 1e3, 4), 重量_kg=round(d.weight, 4),
         dP热_max=round(d.dP_hot_max, 4), dP冷_max=round(d.dP_cold_max, 4),
+        Re热_max=round(getattr(d, "Re_hot_max", 0.0)),
+        Re冷_max=round(getattr(d, "Re_cold_max", 0.0)),
+        验证=getattr(d, "validity", ""),
         备注=d.reason, 标记=",".join(tags.get(id(d), []))) for d in results]
 
 

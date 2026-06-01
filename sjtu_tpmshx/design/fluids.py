@@ -7,6 +7,14 @@ from solvers.tpms_calc import (
     water_density, water_viscosity, water_conductivity, water_cp,
     nu_from_Re, nu_water_gyroid_yan6,
 )
+from solvers.nu_correlations import NU_RE_FIT_RANGE   # air 幂律拟合 Re 窗 (400,16000)
+
+YAN_RE_RANGE = (150.0, 3000.0)      # Yan[6] 水侧 gyroid 验证 Re 域
+
+def nu_re_window(fluid: str):
+    """该流体 Nu 关联式的验证 Re 域 (lo, hi)。域外 = 外推, 低置信。
+    air → 项目幂律拟合窗; water → Yan[6] 实验域。"""
+    return YAN_RE_RANGE if fluid == "water" else NU_RE_FIT_RANGE
 
 @dataclass
 class Props:
