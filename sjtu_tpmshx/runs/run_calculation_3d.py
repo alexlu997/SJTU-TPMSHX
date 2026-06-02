@@ -23,6 +23,7 @@ Stored on window:
 
 from __future__ import annotations
 import os
+import time as _time
 import numpy as np
 
 from controllers.compute_config import ComputeConfig
@@ -206,6 +207,73 @@ def _simple_tol_default():
     return float(os.environ.get('TPMSHX_SIMPLE_TOL', '1e-5'))
 
 
+# ─────────────────────────────────────────────────────────────────────────
+#  3D solver profiler (opt-in, zero-cost when off)
+# ─────────────────────────────────────────────────────────────────────────
+#  WHY: 3D runtime is dominated by the SIMPLE↔LTNE coupling. When a run is
+#  slow, you need per-solve attribution to know whether SIMPLE-A, SIMPLE-B,
+#  or the LTNE solve is the bottleneck — and whether a solve is genuinely
+#  converging or burning iterations on a residual plateau. This profiler
+#  emits exactly that.
+#
+#  This is the instrument that diagnosed the low-Re water bottleneck
+#  (2026-06-02): it showed SIMPLE_B hitting its iteration cap (2000/600,
+#  conv=False) while its velocity field was already settled — i.e. the
+#  absolute mass residual plateaus above the air-tuned tol for slow water.
+#  That finding drove the A+B early-exit in solvers/simple_solver_3d.py.
+#
+#  OUTPUT (stdout, grep-friendly):
+#    [PROF]     <stage>: <wall>s  iters=<n>  conv=<bool>  (cap=<n>)
+#    [PROF-RES] <stage>: n=<N> first=[..] last=[..] min=<r>@<it> final=<r>
+#               — the per-iter mass-residual trajectory (head/tail/min), to
+#               distinguish a slow-but-monotone descent from a plateau.
+#
+#  COST: gated behind _prof_3d_enabled(); when off, no perf_counter call, no
+#  array copy, no print — pure `if False:`. Safe to leave in production.
+#
+#  ENABLE: TPMSHX_PROFILE_3D=1  (or drop an empty `.profile_3d` file at the
+#  package root for GUI / IDE launches that carry no shell env).
+def _prof_3d_enabled():
+    """B1 profiler gate. Prints per-outer wall-clock + iteration counts for
+    each SIMPLE / LTNE solve so the 3D runtime can be attributed to a specific
+    solver. Zero cost when off. Enable by EITHER:
+      - env var:  TPMSHX_PROFILE_3D=1   (PowerShell: $env:TPMSHX_PROFILE_3D=1)
+      - flag file: drop an empty file named ``.profile_3d`` in the package root
+        (same dir as main.py) — handy when the GUI is launched without a shell
+        env (double-click, IDE run config, etc.)."""
+    if os.environ.get('TPMSHX_PROFILE_3D', '0') == '1':
+        return True
+    try:
+        _flag = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            '.profile_3d')
+        return os.path.exists(_flag)
+    except Exception:
+        return False
+
+
+def _prof_res_trace(tag, solver):
+    """B2a: print the SIMPLE mass-residual trajectory (per-iter ``residuals``
+    list) so we can tell a slow-but-monotone descent (raise cap / accelerate)
+    from a plateau / limit-cycle (needs a scheme change). Samples first 5,
+    last 5, and the min residual + the iter it occurred."""
+    try:
+        r = list(getattr(solver, 'residuals', []) or [])
+        if not r:
+            print(f"[PROF-RES] {tag}: (no residuals)", flush=True)
+            return
+        import numpy as _np
+        arr = _np.asarray(r, dtype=float)
+        i_min = int(_np.argmin(arr))
+        head = " ".join(f"{x:.2e}" for x in arr[:5])
+        tail = " ".join(f"{x:.2e}" for x in arr[-5:])
+        print(f"[PROF-RES] {tag}: n={len(arr)} first=[{head}] "
+              f"last=[{tail}] min={arr[i_min]:.2e}@{i_min} "
+              f"final={arr[-1]:.2e}", flush=True)
+    except Exception as _e:
+        print(f"[PROF-RES] {tag}: trace failed: {_e}", flush=True)
+
+
 def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
                              cancel_check=None):
     """Run SIMPLE A and SIMPLE B concurrently on two OS threads.
@@ -226,18 +294,21 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
         tol = _simple_tol_default()
 
     err = [None, None]
+    res = [None, None]   # (converged, iters) per fluid for the B1 profiler
+    _prof = _prof_3d_enabled()
+    _t0 = _time.perf_counter() if _prof else None
 
     def _solve_A():
         try:
-            sA.solve(max_iter=max_iter, tol=tol, verbose=False,
-                     cancel_check=cancel_check)
+            res[0] = sA.solve(max_iter=max_iter, tol=tol, verbose=False,
+                              cancel_check=cancel_check)
         except Exception as e:
             err[0] = e
 
     def _solve_B():
         try:
-            sB.solve(max_iter=max_iter, tol=tol, verbose=False,
-                     cancel_check=cancel_check)
+            res[1] = sB.solve(max_iter=max_iter, tol=tol, verbose=False,
+                              cancel_check=cancel_check)
         except Exception as e:
             err[1] = e
 
@@ -245,6 +316,13 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
     tB = threading.Thread(target=_solve_B, daemon=True)
     tA.start(); tB.start()
     tA.join();  tB.join()
+
+    if _prof:
+        _dt = _time.perf_counter() - _t0
+        print(f"[PROF] initial SIMPLE (A||B parallel) {_dt:7.2f}s  "
+              f"A={res[0]}  B={res[1]}  (cap={max_iter})", flush=True)
+        _prof_res_trace("initial SIMPLE_A", sA)
+        _prof_res_trace("initial SIMPLE_B", sB)
 
     if err[0] is not None:
         raise err[0]
@@ -1834,8 +1912,14 @@ def _run_3d_stack(cfg):
         Tb_presc = None  # let LTNE solve Tb from convection
     else:
         # No B: run A alone (serial)
-        sA.solve(max_iter=2000, tol=_simple_tol_default(), verbose=False,
-                 cancel_check=cfg.get('_cancel_check'))
+        _prof_t_a0 = _time.perf_counter() if _prof_3d_enabled() else None
+        _a0_conv, _a0_it = sA.solve(max_iter=2000, tol=_simple_tol_default(),
+                                    verbose=False,
+                                    cancel_check=cfg.get('_cancel_check'))
+        if _prof_t_a0 is not None:
+            print(f"[PROF] initial SIMPLE_A (serial, no-B) "
+                  f"{_time.perf_counter()-_prof_t_a0:7.2f}s  "
+                  f"iters={_a0_it}  conv={_a0_conv}  (cap=2000)", flush=True)
         ucB = np.zeros((Nx, Ny, Nz))
         vcB = np.zeros((Nx, Ny, Nz))
         wcB = np.zeros((Nx, Ny, Nz))
@@ -2261,6 +2345,7 @@ def _run_3d_stack(cfg):
         # half the LTNE fluid heat capacity). K_ffA/K_ffB stay built from
         # eps_f_arr (= ε_A, correct for diffusion); only the convective
         # epsilon arg must be FULL ε.
+        _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
         _ltne_result = solve_full_domain_3d(
             L, H, Lz, Nx, Ny, Nz, T_inA, T_inB,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
@@ -2297,6 +2382,13 @@ def _run_3d_stack(cfg):
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))
+        if _prof_t_ltne is not None:
+            _dt = _time.perf_counter() - _prof_t_ltne
+            print(f"[PROF] outer {outer}: LTNE {_dt:7.2f}s  "
+                  f"iters={_ltne_info_d.get('iterations',0)}  "
+                  f"conv={_ltne_info_d.get('converged',False)}  "
+                  f"res={_ltne_info_d.get('residual',0.0):.2e}  "
+                  f"(cap={_ltne_max_iter})", flush=True)
 
         if Ta_prev is not None:
             dT = float(np.max(np.abs(Ta - Ta_prev)))
@@ -2335,8 +2427,12 @@ def _run_3d_stack(cfg):
         # ρ/μ change is small (α_T=0.6 under-relaxation), so 150 iter is plenty
         # for the residual to re-sink to 1e-3. Saves ~50% of SIMPLE work in
         # outer iters 1-2.
-        sA.solve(max_iter=600, tol=_simple_tol_default(), verbose=False,
-                 cancel_check=_cancel_check)
+        _prof_t_sa = _time.perf_counter() if _prof_3d_enabled() else None
+        _sa_conv, _sa_it = sA.solve(max_iter=600, tol=_simple_tol_default(),
+                                    verbose=False, cancel_check=_cancel_check)
+        if _prof_t_sa is not None:
+            print(f"[PROF] outer {outer}: SIMPLE_A {_time.perf_counter()-_prof_t_sa:7.2f}s  "
+                  f"iters={_sa_it}  conv={_sa_conv}  (cap=600)", flush=True)
 
         # Refresh fluid-property fields using the *local* T field, keeping
         # the spatial structure built by the zoned-geometry pass up-front
@@ -2394,8 +2490,13 @@ def _run_3d_stack(cfg):
                 sB.P_ref_abs = float(np.sqrt(max(P_out_sq_B_new, 1.0e4)))
 
             sB.update_T_field(Tb_sB)
-            sB.solve(max_iter=600, tol=_simple_tol_default(), verbose=False,
-                     cancel_check=_cancel_check)
+            _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None
+            _sb_conv, _sb_it = sB.solve(max_iter=600, tol=_simple_tol_default(),
+                                        verbose=False, cancel_check=_cancel_check)
+            if _prof_t_sb is not None:
+                print(f"[PROF] outer {outer}: SIMPLE_B {_time.perf_counter()-_prof_t_sb:7.2f}s  "
+                      f"iters={_sb_it}  conv={_sb_conv}  (cap=600)", flush=True)
+                _prof_res_trace(f"outer {outer} SIMPLE_B", sB)
 
             # rho_cp_fB already refreshed above (P0/P1/P2 block)
 
