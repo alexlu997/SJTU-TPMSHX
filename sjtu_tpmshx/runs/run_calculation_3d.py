@@ -375,6 +375,8 @@ def finalize_plots_3d(window) -> bool:
     """
     res = getattr(window, '_result_3d', None)
     if res is None:
+        print("[3D vis] window._result_3d is None — solver produced no "
+              "stashed result dict; nothing to visualise.")
         return False
     _store_3d_result_labels(window, res)
     # Skeleton placeholder retires once real 3D data lands.
@@ -398,6 +400,9 @@ def finalize_plots_3d(window) -> bool:
         # Either lazy init failed, or offscreen mode left the placeholder
         # in place. Either way, the 3D visualisation cannot be displayed
         # and the caller must not switch the user to a blank tab.
+        print("[3D vis] no PyVistaQt panel (canvas_3d is None after lazy "
+              "init) — embedded 3D view cannot be populated. Check the "
+              "[3D vis] _lazy_init_3d_panel line above for the import error.")
         _3d_vis_ok = False
     if panel is not None:
         try:

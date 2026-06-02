@@ -426,16 +426,20 @@ class RunControllerMixin:
         mode = self.compute.current_mode()
         if mode == '3d':
             from runs.run_calculation_3d import finalize_plots_3d
-            # Audit C5 H5 fix (L-b, 2026-05-28): initialise the
-            # ``_has_results_3d`` / ``_3d_vis_ok`` flags BEFORE entering
-            # finalize_plots_3d.  If finalize crashes mid-way the
-            # function previously returned early without resetting the
-            # flag, leaving a stale ``True`` from a prior successful
-            # 3D run — the next 2D compute would then see the 3D tab
-            # marked ready and the user could be auto-switched to a
-            # blank canvas.  Set False at the top, flip True only after
-            # the embedded panel reports ok.
-            self._has_results_3d = False
+            # 2026-06-02 fix: do NOT pre-clear ``_has_results_3d`` here. In the
+            # live window that flag is a ResultCache bridge whose setter
+            # (main.Main_Menu._has_results_3d) DELETES ``_result_3d`` — which
+            # finalize_plots_3d must read to render the panel. The old C5 H5
+            # line ``self._has_results_3d = False`` destroyed the freshly-
+            # computed result *before* finalize ran, so finalize saw
+            # ``_result_3d is None`` and every 3D run rendered nothing. The
+            # worker always writes a fresh result before this slot fires, so
+            # there is no "stale True from a prior run" to guard against here;
+            # the H5 invariant (no stale flag after a finalize *crash*) is now
+            # enforced in the except branch below. (The H5 unit test passed
+            # despite the prod bug because its DummyWindow used plain attrs,
+            # decoupling the flag from the result — the real bridge couples
+            # them.)
             _finalize_ok = False
             _3d_vis_ok = False
             try:
@@ -453,11 +457,25 @@ class RunControllerMixin:
                 except Exception:
                     pass
                 _finalize_ok = True
-            except Exception:
+            except Exception as _fe3d:
                 # If finalise crashes, walk the button text back to a
                 # benign state — _end_compute_ui already restored it but
                 # the flag must reflect failure for downstream gating.
+                # Surface the traceback (the 3D path used to swallow it,
+                # leaving "status bar says done / canvas blank" with no
+                # console clue — matches the 2D path's diagnostics now).
+                import traceback
+                traceback.print_exc()
+                # H5 invariant: a finalize crash must not leave a stale
+                # ``_has_results_3d == True`` (which would auto-switch the next
+                # run to a blank 3D tab). Clear it here — in the live window
+                # this also drops the now-unrenderable result via the bridge,
+                # which is correct since the panel never populated.
+                self._has_results_3d = False
                 self._end_compute_ui(success=False)
+                self.statusBar().showMessage(
+                    f"3D visualisation failed: {_fe3d!r} — solver finished, "
+                    f"render crashed; check console.", 12000)
             if not _finalize_ok:
                 return
             self._has_results = True
@@ -480,22 +498,45 @@ class RunControllerMixin:
             if _3d_vis_ok:
                 self._switch_tab('3d')
             res = getattr(self, '_result_3d', {})
-            if res:
+            # Outer-coupling convergence note: the SIMPLE↔LTNE loop exits
+            # early once max|ΔTa| < tol, so it usually stops before the cap
+            # (e.g. "3/5"). Surface that as "converged after k/N" instead of a
+            # bare count, so the user does not read an early exit as an
+            # unfinished run. len(_ltne_info) = outers actually executed.
+            def _outer_note(r):
                 try:
-                    if _3d_vis_ok:
-                        self.statusBar().showMessage(
-                            f"3D done — Q={res.get('Q', 0):.1f} W  "
-                            f"dP={res.get('dP', 0):.0f} Pa", 6000)
-                    else:
-                        # Solver succeeded but visualisation did not —
-                        # surface explicitly so the user knows numbers
-                        # are valid but the rendered canvas is not.
-                        self.statusBar().showMessage(
-                            f"3D solve done (Q={res.get('Q', 0):.1f} W  "
-                            f"dP={res.get('dP', 0):.0f} Pa) — visualisation "
-                            f"failed; check console.", 10000)
+                    info = r.get('_ltne_info') or []
+                    n_run = len(info)
+                    n_max = int(r.get('_max_outer', n_run) or n_run)
+                    if n_run and n_run < n_max:
+                        return f"  ·  converged after {n_run}/{n_max} outer"
+                    if n_run:
+                        return f"  ·  ran full {n_run}/{n_max} outer (cap)"
                 except Exception:
                     pass
+                return ""
+            try:
+                if res and _3d_vis_ok:
+                    self.statusBar().showMessage(
+                        f"3D done — Q={res.get('Q', 0):.1f} W  "
+                        f"dP={res.get('dP', 0):.0f} Pa{_outer_note(res)}", 8000)
+                elif res:
+                    # Solver succeeded but visualisation did not — surface
+                    # explicitly so the user knows numbers are valid but the
+                    # rendered canvas is not.
+                    self.statusBar().showMessage(
+                        f"3D solve done (Q={res.get('Q', 0):.1f} W  "
+                        f"dP={res.get('dP', 0):.0f} Pa) — visualisation "
+                        f"failed; check console.", 10000)
+                else:
+                    # finalize returned False with no stashed result dict —
+                    # always clear the frozen "outer k/N running" left by the
+                    # last _tick_3d paint so the status bar reflects reality.
+                    self.statusBar().showMessage(
+                        "3D compute finished but produced no result — "
+                        "visualisation unavailable; check console.", 10000)
+            except Exception:
+                pass
             return
 
         # 2D mode (default) — _end_compute_ui already called above.
