@@ -1502,6 +1502,25 @@ class SIMPLESolver3D:
             acc = None
             prev_x = None
 
+        # ── A+B early-exit for low-Re / low-speed solves (e.g. water Re~33) ──
+        # The mass residual is an ABSOLUTE divergence norm; for slow water it
+        # plateaus ~1e-4 and never reaches the air-tuned tol=1e-5, so the loop
+        # burns all max_iter even though the velocity field is already settled
+        # (profiled: iter~100 field == iter600 field to machine precision).
+        # Two extra convergence tests, both gated by velocity STABILITY, so a
+        # still-moving field can never exit early:
+        #   (A) plateau-stall : residual barely improves for K consecutive iters
+        #   (B) velocity-delta : max|Δv|/scale < vtol between iterations
+        # Off → identical to the legacy behaviour. On (default) → only fires
+        # AFTER the field stops moving, so the converged result is unchanged.
+        _early = getattr(self, 'lowre_early_exit', True)
+        _vtol = float(getattr(self, 'lowre_vel_tol', 1e-4))
+        _stall_window = int(getattr(self, 'lowre_stall_window', 30))
+        _stall_ratio = float(getattr(self, 'lowre_stall_ratio', 1e-3))
+        _u_prev = self.u.copy(); _v_prev = self.v.copy(); _w_prev = self.w.copy()
+        _res_at_window_start = None
+        _window_start_it = 0
+
         for it in range(1, max_iter + 1):
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
             # fine enough that a water solve aborts in well under a second.
@@ -1615,8 +1634,41 @@ class SIMPLESolver3D:
             if verbose and it % 50 == 0:
                 print(f"  3D iter {it:5d}  |R| = {res:.3e}")
 
+            # Legacy strict exit (unchanged): absolute residual below tol.
             if res < tol and it >= 10:
                 return True, it
+
+            # ── A+B early-exit (low-Re / low-speed) ──────────────────────────
+            # Gate EVERYTHING on velocity stability so a moving field never
+            # exits early. _vd = max|Δv| this iter, normalised by the field's
+            # own velocity scale → dimensionless, scale-invariant (the whole
+            # point: the absolute mass residual is NOT scale-invariant, which
+            # is why low-speed water plateaus above the air-tuned tol).
+            if _early and it >= 10:
+                _du = np.max(np.abs(self.u - _u_prev))
+                _dv = np.max(np.abs(self.v - _v_prev))
+                _dw = np.max(np.abs(self.w - _w_prev))
+                _scale = max(np.max(np.abs(self.u)),
+                             np.max(np.abs(self.v)),
+                             np.max(np.abs(self.w)), 1e-30)
+                _vd = max(_du, _dv, _dw) / _scale
+                # (B) velocity-delta: field has stopped moving → converged.
+                if _vd < _vtol:
+                    return True, it
+                # (A) plateau-stall: residual flat for a full window AND the
+                # field is also barely moving (10× the velocity tol — looser,
+                # since this is the fallback for fields that creep but never
+                # meet (B)). Prevents exiting a slow-but-real descent.
+                if _res_at_window_start is None or (it - _window_start_it) >= _stall_window:
+                    if (_res_at_window_start is not None
+                            and _vd < 10.0 * _vtol
+                            and res > _res_at_window_start * (1.0 - _stall_ratio)):
+                        # residual improved < _stall_ratio over the window and
+                        # the field is near-static → plateau, no point grinding.
+                        return True, it
+                    _res_at_window_start = res
+                    _window_start_it = it
+            _u_prev[:] = self.u; _v_prev[:] = self.v; _w_prev[:] = self.w
 
         return False, max_iter
 
