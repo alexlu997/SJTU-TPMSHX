@@ -220,29 +220,13 @@ class RunControllerMixin:
                 "3D compute orchestrator rejected start — already running.")
             return
 
-        # ETA / status updater on a separate QTimer (orchestrator handles
-        # the thread; this is a UI-only ticker that polls solver progress
-        # + reports elapsed wall-clock + ETA).
-        #
-        # 2026-05-07 (UI report 2): hard budget bumped 600 s → 1800 s and
-        # ETA is now u-aware. The previous estimator (35k cells / 150 s)
-        # assumed Shanghai-typical low-Re cases; high-u runs (u > 10 m/s)
-        # take 5-10× longer on the Forchheimer branch and were hitting
-        # the 600 s cap mid-convergence.
+        # Status updater on a separate QTimer (orchestrator handles the
+        # thread; this is a UI-only ticker that reports elapsed wall-clock +
+        # the solver's outer-iteration label, and enforces a hard wall-clock
+        # budget). ETA *prediction* was dropped 2026-06-01 — see _tick_3d.
         wd = QTimer(self)
         self._compute_3d_watchdog = wd
         _hard_timeout_s = 1800.0   # 30 min — generous for high-u + dense grids
-        _ref_cells = 35000
-        _ref_sec = 150.0
-        # u-aware multiplier: V&V validates u ≤ 10 m/s; above that, scale
-        # ETA by (u_max / 10)^2 (matches the run_calculation preflight
-        # warning so user sees consistent expectations).
-        try:
-            _u_max = max(float(self.le_uA.text()),
-                          float(self.le_uB.text()))
-        except (ValueError, AttributeError):
-            _u_max = 10.0
-        _u_factor = max(1.0, (_u_max / 10.0) ** 2)
 
         def _tick_3d():
             if not self.compute.is_running():
@@ -256,19 +240,19 @@ class RunControllerMixin:
                 self.compute.cancel()
                 wd.stop()
                 return
-            eta_total = max(10.0,
-                             est_cells_r / _ref_cells * _ref_sec * _u_factor)
-            eta_remain = eta_total - elapsed
+            # ETA prediction removed 2026-06-01: the linear cell-scaling model
+            # (cells/35k × 150s × (u/10)²) was calibrated on low-Re Shanghai
+            # cases and wildly under-estimated high-u / dense-3D runs (e.g.
+            # 8k cells @ u=20 estimated ~2 min, actually 8 min+). 3D LTNE wall-
+            # clock is non-linear in cells AND Re, so any cheap projection
+            # misleads. Show honest live progress instead: elapsed + cells +
+            # the outer-iteration label (set by the solver via _iter_label_now).
             from ui.fmt import duration as _fmt
-            if eta_remain > 0:
-                eta_txt = f"ETA ~{_fmt(eta_remain)} (u-factor {_u_factor:.1f})"
-            else:
-                over = elapsed - eta_total
-                eta_txt = (f"past estimate by {_fmt(over)} — solver still "
-                           f"running (u-factor {_u_factor:.1f})")
+            label = getattr(self, '_iter_label_now', None)
+            iter_txt = f" • {label}" if label else ""
             self.statusBar().showMessage(
                 f"Computing 3D… {_fmt(elapsed)} elapsed "
-                f"({est_cells_r:,} cells) • {eta_txt}")
+                f"({est_cells_r:,} cells){iter_txt} • solver running")
         wd.timeout.connect(_tick_3d)
         wd.start(500)
         return
@@ -651,7 +635,17 @@ class RunControllerMixin:
         # interrupt point — JIT'd inner sweeps can't be killed mid-run).
         self._compute_cancel = False
         if hasattr(self, 'btn_compute'):
-            self._btn_compute_text_saved = self.btn_compute.text()
+            # Idempotent re-save guard: _begin_compute_ui is called twice per
+            # run — once directly from run_calculation/_run_calculation_3d, then
+            # again from _on_orch_started (the orchestrator's `started` signal,
+            # which fires BEFORE _compute_running is set). Never save a
+            # "Cancel…" string as the "original" text, else _end_compute_ui
+            # restores the button to "Cancel · 0.0s" instead of "▶ Compute"
+            # (button stuck frozen after the run). The real Compute label never
+            # starts with "Cancel", so this is order-independent.
+            _cur_btn_text = self.btn_compute.text()
+            if not _cur_btn_text.startswith("Cancel"):
+                self._btn_compute_text_saved = _cur_btn_text
             # ETA text removed 2026-05-14 — median-of-history misled when
             # config changed. Live elapsed + iter counter via _tick_btn.
             self._iter_label_now = None

@@ -294,6 +294,13 @@ def run_calculation_3d_inner_cfg(compute_cfg, window):
         window._compute_progress = pct
     cfg['_progress_cb'] = _prog
     cfg['_cancel_check'] = lambda: bool(getattr(window, '_compute_cancel', False))
+    # Outer-iteration label hook — the UI ticker (_tick_btn / _tick_3d) reads
+    # window._iter_label_now to show "outer k/N" so the user sees progress
+    # through the SIMPLE↔LTNE coupling loop (3D previously published none, so
+    # the button/status showed only elapsed time).
+    def _iter_cb(outer, n_outer):
+        window._iter_label_now = f"outer {outer}/{n_outer}"
+    cfg['_iter_cb'] = _iter_cb
     # Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
     # Phase A defaults ON (zero-loss); Phase B/C opt-in until full-sweep
     # validated. Set TPMSHX_PHASE_A=0 to disable A; TPMSHX_PHASE_B=1 / _C=1
@@ -2053,12 +2060,15 @@ def _run_3d_stack(cfg):
 
     _progress_cb = cfg.get('_progress_cb')
     _cancel_check = cfg.get('_cancel_check')
+    _iter_cb = cfg.get('_iter_cb')
     for outer in range(_max_outer):
         # Cooperative cancel: only safe boundary is between outer iterations
         # — a JIT'd SIMPLE inner sweep cannot be interrupted. The UI sets the
         # flag via the Cancel button or the wall-clock timeout.
         if _cancel_check is not None and _cancel_check():
             raise InterruptedError("compute cancelled by user")
+        if _iter_cb is not None:
+            _iter_cb(outer + 1, _max_outer)
         if _progress_cb is not None:
             _progress_cb(10 + int(80 * outer / _MAX_OUTER))
         ucA, vcA, wcA = _assemble_real_velocity()
