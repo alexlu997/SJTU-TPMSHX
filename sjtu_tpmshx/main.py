@@ -684,38 +684,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
 
         QTimer.singleShot(900, _start)
 
-    # ─────────────────────────────────────────────────────────
-    #  Top-level layout
-    # ─────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────
-    #  Param tabs container (3 tab buttons + QStackedWidget)
-    # ─────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────
-    #  Page 1 — Domain / TPMS / Material / Grid / Results
-    # ─────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────
-    #  Page 2 — Fluid A / Fluid B config + pipe geometry
-    # ─────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────
-    #  Page 3 — Zone configuration (expanding height)
-    # ─────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────
-    #  Canvas area — tab-switched, vertical scrolling
-    # ─────────────────────────────────────────────────────────
-
-
-    # ─────────────────────────────────────────────────────────
-    #  Theme toggle
-    # ─────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────
-    #  Layout helpers
-    # ─────────────────────────────────────────────────────────
-
 
     # ─────────────────────────────────────────────────────────
     #  TPMS geometry + time-constant helpers
@@ -784,11 +752,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
 
 
     # ─────────────────────────────────────────────────────────
-    #  Auto-fill callbacks
-    # ─────────────────────────────────────────────────────────
-
-
-    # ─────────────────────────────────────────────────────────
     #  Save / Load configuration
     # ─────────────────────────────────────────────────────────
     def save_config(self):
@@ -803,7 +766,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             "H":         self.le_H.text(),
             # Solid
             "rho_s":     self.le_rho_s.text(),
-            # Solver
             "Nx":        self.le_Nx.text(),
             "Ny":        self.le_Ny.text(),
             # TPMS
@@ -900,17 +862,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
 
     # Wall mapping moved to domain.validator.wall_for_dir (Phase 4 #4).
     # These shims keep call sites in main.py + ui/* working unchanged.
-
-
-    # ─────────────────────────────────────────────────────────
-    #  Solver
-    # ─────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────
-    #  Input validation (red border on blur when value is bad)
-    # ─────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────
-    #  Temperature unit handling
-    # ─────────────────────────────────────────────────────────
 
 
     # Auto-defaults applied when the user swaps the fluid type for a given
@@ -2349,9 +2300,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             pass
         self._maybe_show_onboarding()
 
-    # ─────────────────────────────────────────────────────────
-    #  Undo/Redo for input field edits (Ctrl+Z / Ctrl+Y)
-    # ─────────────────────────────────────────────────────────
 
     _FIELD_HELP = {
         'le_L': (
@@ -2695,10 +2643,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         finally:
             self._lazy_init_3d_running = False
 
-
-    # ─────────────────────────────────────────────────────────
-    #  Polygon domain solver
-    # ─────────────────────────────────────────────────────────
 
     # ─────────────────────────────────────────────────────────
     #  Slider callback
