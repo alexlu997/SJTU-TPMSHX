@@ -9,3 +9,9 @@ __pycache__/
 # runs/demo_optimizer_shanghai.py, runs/overlay_fast_vs_full.py)
 runs/demo_output/
 runs/production_output/
+
+# Test-run artefact: regenerated every `pytest tests/test_shanghai_regression.py`
+validation/shanghai_3d_baseline_pytest_h3.csv
+
+# 3D solver profiler trigger (opt-in; see runs/run_calculation_3d.py header)
+.profile_3d
