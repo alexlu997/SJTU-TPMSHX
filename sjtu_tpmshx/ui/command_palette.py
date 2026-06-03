@@ -336,40 +336,6 @@ def build_actions(w) -> list[Action]:
             w._toggle_coord_inspector,
             shortcut="Ctrl+I",
             keywords=("inspector", "probe", "hover", "values"))
-    if hasattr(w, '_param_search'):
-        add("Filter parameters…", "Appearance",
-            w._param_search.open_search,
-            shortcut="Ctrl+F",
-            keywords=("search", "find", "filter", "param"))
-    # 2026-05-20 UI sweep: dock toggle closures dereference `w.<dock>`
-    # lazily at call time. If the dock attribute is cleared / replaced
-    # between palette-registration and the user triggering the action,
-    # the closure would crash. Use `getattr` with a None guard inside
-    # the closure body instead of the freshly-captured reference.
-    if hasattr(w, '_quick_sliders_dock'):
-        def _tog_qs():
-            d = getattr(w, '_quick_sliders_dock', None)
-            if d is None:
-                return
-            d.hide() if d.isVisible() else (d.show(), d.raise_())
-        add("Toggle quick sliders", "Appearance", _tog_qs,
-            keywords=("slider", "sweep", "quick", "dock"))
-    if hasattr(w, '_bookmarks_dock'):
-        def _tog_bm():
-            d = getattr(w, '_bookmarks_dock', None)
-            if d is None:
-                return
-            d.hide() if d.isVisible() else (d.show(), d.raise_())
-        add("Toggle bookmarks ★", "Appearance", _tog_bm,
-            keywords=("bookmark", "star", "favorite", "preset", "dock"))
-    if hasattr(w, '_repl_dock'):
-        def _tog_repl():
-            d = getattr(w, '_repl_dock', None)
-            if d is None:
-                return
-            d.hide() if d.isVisible() else (d.show(), d.raise_())
-        add("Toggle Python REPL", "Appearance", _tog_repl,
-            keywords=("repl", "python", "console", "script", "dock"))
 
     # Tabs — 2026-05-20 UI sweep (Tier 19): skip entries whose tab
     # button is disabled (no results yet). Without this filter the
@@ -476,9 +442,6 @@ def build_actions(w) -> list[Action]:
 
     # Recent runs (top 5)
     recents = list(getattr(w, '_recent_runs', []) or [])[:5]
-    if len(recents) >= 2 and hasattr(w, '_open_run_diff'):
-        add("Compare last 2 runs…", "Recent", w._open_run_diff,
-            keywords=("diff", "compare", "change", "delta"))
     for i, e in enumerate(recents):
         def _load_run(entry=e):
             w._load_recent_run(entry)

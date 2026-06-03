@@ -309,8 +309,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         install_command_palette(self)
         from ui.coord_inspector import install_coord_inspector
         install_coord_inspector(self)
-        from ui.param_search import install_param_search
-        install_param_search(self)
         from ui.zone_editor import ZoneHandleManager
         self._zone_handle_mgr = ZoneHandleManager(self)
         self._zone_handle_mgr.wire()
@@ -318,14 +316,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         install_field_menus(self)
         from ui.expr_eval import install_expression_eval
         install_expression_eval(self)
-        from ui.quick_sliders import install_quick_sliders
-        install_quick_sliders(self)
-        from ui.canvas_tools import install_canvas_tools
-        install_canvas_tools(self)
-        from ui.bookmarks import install_bookmarks
-        install_bookmarks(self)
-        from ui.repl_dock import install_repl_dock
-        install_repl_dock(self)
         # Accept file drops on the whole window — users can drag a saved
         # `.json` preset onto the app to load it without going through the
         # preset combo. Only .json with the expected preset/session shape
@@ -2012,15 +2002,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             self._detached_canvases = {}
         except Exception:
             pass
-        # 3. Detach canvas-tools mpl_connect handlers (crosshair / pin /
-        #    line probe). Added 2026-05-20 UI sweep Tier 20 — pairs with
-        #    the binding-retention list installed by install_canvas_tools.
-        for _b in list(getattr(self, '_canvas_tool_bindings', []) or []):
-            try:
-                _b.disconnect()
-            except Exception:
-                pass
-        # 4. PyVistaQt GL context teardown — must happen before Qt
+        # 3. PyVistaQt GL context teardown — must happen before Qt
         #    destroys child widgets, otherwise vtkRenderWindow leaks.
         panel = getattr(self, 'canvas_3d', None)
         if panel is not None:

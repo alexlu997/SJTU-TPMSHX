@@ -294,14 +294,11 @@ class TabViewMixin:
 
     def _on_hover(self, event):
         """Show data value at mouse position on contour plots."""
-        # 2026-05-20 UI sweep (Tier 20): the unguarded `_on_hover`
-        # was the *real* hot-path. The Tier-19 canvas_tools throttle
-        # only governed the crosshair overlay; this label-updating
-        # handler also fired on every motion_notify_event and ran
-        # an axes scan + grid-index lookup + QLabel.setText + a
-        # coord_inspector update. At 144 Hz mouse polling that
-        # combined to >100 KB of churn per second of hover. Gate to
-        # ~30 Hz; the eye cannot read faster than that anyway.
+        # Throttle to ~30 Hz: this label-updating handler fires on every
+        # motion_notify_event and runs an axes scan + grid-index lookup +
+        # QLabel.setText + a coord_inspector update. At 144 Hz mouse polling
+        # that churned >100 KB/s of hover work; the eye can't read faster
+        # than ~30 Hz anyway.
         from time import monotonic as _now_hover
         _t_hover = _now_hover()
         if _t_hover - getattr(self, '_last_hover_t', 0.0) < 0.033:

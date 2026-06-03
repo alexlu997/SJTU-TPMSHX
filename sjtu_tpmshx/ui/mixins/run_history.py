@@ -114,9 +114,6 @@ class RunHistoryMixin:
                 act.triggered.connect(
                     lambda _checked=False, entry=e: self._load_recent_run(entry))
             menu.addSeparator()
-            if len(entries) >= 2:
-                diff = menu.addAction("Compare last 2 runs…")
-                diff.triggered.connect(self._open_run_diff)
             clr = menu.addAction("Clear recent")
             clr.triggered.connect(self._clear_recent_runs)
         self.btn_recent.setMenu(menu)
@@ -136,11 +133,6 @@ class RunHistoryMixin:
             self._recent_runs.clear()
         self._rebuild_recent_menu()
         self.statusBar().showMessage("Recent runs cleared.", TOAST_MS_SHORT)
-
-    def _open_run_diff(self):
-        """Open the Compare-runs dialog for the two most recent entries."""
-        from ui.run_diff import open_diff_of_recent
-        open_diff_of_recent(self)
 
     # ── persistent session timeline ──────────────────────────────────────
     def _show_full_timeline(self):
