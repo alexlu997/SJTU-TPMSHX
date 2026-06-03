@@ -484,7 +484,7 @@ class RunControllerMixin:
             # tab stays disabled and the user is not silently switched
             # to a blank canvas.
             self._has_results_3d = _3d_vis_ok
-            for _bname in ('btn_export_results', 'btn_export_figure'):
+            for _bname in ('btn_export',):
                 if hasattr(self, _bname):
                     getattr(self, _bname).setEnabled(True)
             drawn = getattr(self, '_drawn_tabs', set())
@@ -557,7 +557,7 @@ class RunControllerMixin:
         self._has_results = True
         self._has_results_2d = True
         self._update_tab_visibility()
-        for _bname in ('btn_export_results', 'btn_export_figure'):
+        for _bname in ('btn_export',):
             if hasattr(self, _bname):
                 getattr(self, _bname).setEnabled(True)
         self._switch_tab('temp')
@@ -588,7 +588,7 @@ class RunControllerMixin:
             self._has_results_3d = False
             if not getattr(self, '_has_results_2d', False):
                 self._has_results = False
-            for _bname in ('btn_export_results', 'btn_export_figure'):
+            for _bname in ('btn_export',):
                 if hasattr(self, _bname):
                     getattr(self, _bname).setEnabled(False)
             self._update_tab_visibility()
@@ -603,7 +603,7 @@ class RunControllerMixin:
         self._has_results_2d = False
         if not getattr(self, '_has_results_3d', False):
             self._has_results = False
-        for _bname in ('btn_export_results', 'btn_export_figure'):
+        for _bname in ('btn_export',):
             if hasattr(self, _bname):
                 getattr(self, _bname).setEnabled(False)
         self._update_tab_visibility()

@@ -212,9 +212,9 @@ def build_ui(window):
     header_row.addWidget(btn_temp_unit, 0)
     header_row.addSpacing(6)
 
-    btn_reset = QPushButton("\u21ba  &Reset")
+    btn_reset = QPushButton("\u21ba  \u91cd\u7f6e\u53c2\u6570")
     btn_reset.setFixedHeight(32)
-    btn_reset.setFixedWidth(100)
+    btn_reset.setFixedWidth(108)
     btn_reset.setStyleSheet(
         _hdr_btn_qss)
     btn_reset.setToolTip("Reset all parameters to Shanghai Electric preset (Ctrl+Shift+R)")
@@ -243,15 +243,6 @@ def build_ui(window):
     window.btn_compute = btn_run
     header_row.addWidget(btn_run, 0)
     header_row.addSpacing(6)
-    btn_export = QPushButton("&Export Results")
-    btn_export.setFixedHeight(32)
-    btn_export.setFixedWidth(120)
-    btn_export.setStyleSheet(t.style('BTN_SECONDARY'))
-    btn_export.setToolTip("Export results (CSV + NPZ) to file")
-    btn_export.setEnabled(False)
-    btn_export.clicked.connect(window._export_results)
-    window.btn_export_results = btn_export
-    header_row.addWidget(btn_export, 0)
     root.addWidget(header_widget, 0)
 
     # Splitter: 1px separator — narrow band that reads as a divider,
@@ -1411,14 +1402,26 @@ def build_canvas_area(window):
     btn_reset_view.clicked.connect(lambda: canvas_zoom_reset(window))
     toolbar.addWidget(btn_reset_view)
 
-    btn_export_fig = QPushButton("Export &Figure")
-    btn_export_fig.setFixedHeight(28)
-    btn_export_fig.setStyleSheet(t.style('BTN_SECONDARY'))
-    btn_export_fig.setToolTip("Save current canvas as PNG / SVG / PDF")
-    btn_export_fig.setEnabled(False)
-    btn_export_fig.clicked.connect(window._export_figure)
-    window.btn_export_figure = btn_export_fig
-    toolbar.addWidget(btn_export_fig)
+    # Single Export menu — Results (data) + Figure (image) in one entry, in
+    # the canvas toolbar next to the data it exports (the old header "Export
+    # Results" copy was easy to miss). Gated until a compute / layout fills it.
+    from PySide6.QtWidgets import QToolButton as _QTB, QMenu as _QMenu
+    btn_export = _QTB()
+    btn_export.setText("Export ▾")
+    btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    btn_export.setPopupMode(_QTB.ToolButtonPopupMode.InstantPopup)
+    btn_export.setFixedHeight(28)
+    btn_export.setStyleSheet(
+        t.style('BTN_SECONDARY').replace("QPushButton", "QToolButton"))
+    btn_export.setToolTip(
+        "Export results (CSV + NPZ) or the current figure (PNG / SVG / PDF)")
+    btn_export.setEnabled(False)
+    _ex_menu = _QMenu(btn_export)
+    _ex_menu.addAction("Results — CSV + NPZ", window._export_results)
+    _ex_menu.addAction("Figure — PNG / SVG / PDF", window._export_figure)
+    btn_export.setMenu(_ex_menu)
+    window.btn_export = btn_export
+    toolbar.addWidget(btn_export)
     vlay.addLayout(toolbar)
 
     # Result summary strip — a thin bar showing the headline numbers from the

@@ -65,8 +65,8 @@ def draw_layout(window):
         if not hasattr(window, '_drawn_tabs'):
             window._drawn_tabs = set()
         window._drawn_tabs.add('layout')
-    if hasattr(window, 'btn_export_figure'):
-        window.btn_export_figure.setEnabled(True)
+    if hasattr(window, 'btn_export'):
+        window.btn_export.setEnabled(True)
     # Switch tab so the Layout card is shown, then defer the draw() calls
     # to subsequent event-loop ticks. The issue fixed here: Matplotlib's
     # FigureCanvas needs a real (non-zero) geometry before draw() can flush

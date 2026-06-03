@@ -1486,8 +1486,8 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             self._update_tab_visibility()
         except Exception:
             pass
-        # Disable the export buttons — there is nothing to export.
-        for _bname in ('btn_export_results', 'btn_export_figure'):
+        # Disable the export button — there is nothing to export.
+        for _bname in ('btn_export',):
             _b = getattr(self, _bname, None)
             if _b is not None:
                 try:
