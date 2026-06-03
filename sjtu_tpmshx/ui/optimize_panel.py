@@ -361,6 +361,23 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
     dlg = QDialog(window)
     dlg.setWindowTitle("qNEHVI — Bayesian optimization parameters")
     dlg.setModal(True)
+    # Theme the dialog (previously raw Qt defaults — light-grey on dark theme).
+    from ui.theme import get_theme as _gt_opt
+    _t = _gt_opt()
+    dlg.setStyleSheet(
+        f"QDialog{{background:{_t['bg']};}}"
+        f"QLabel{{color:{_t['fg']}; background:transparent;}}"
+        f"QSpinBox{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+        f" border:1px solid {_t['inp_border']}; border-radius:6px; padding:3px 6px;}}"
+        f"QSpinBox:focus{{border:1px solid {_t['inp_focus']};}}"
+        f"QSpinBox::up-button, QSpinBox::down-button{{"
+        f" background:{_t['surface_elevated']}; border:none; width:16px;}}"
+        f"QFrame{{color:{_t['card_border']};}}"
+        f"QPushButton{{background:transparent; color:{_t['btn_sec_fg']};"
+        f" border:1px solid {_t['btn_sec_border']}; border-radius:6px;"
+        f" padding:5px 16px; font-weight:600;}}"
+        f"QPushButton:hover{{background:{_t['btn_sec_hover_bg']};}}"
+    )
     lay = QVBoxLayout(dlg)
 
     summary = QLabel(
@@ -370,7 +387,7 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
         f"T_inA={cfg.get('T_inA'):.0f} K, T_inB={cfg.get('T_inB'):.0f} K"
     )
     summary.setWordWrap(True)
-    summary.setStyleSheet("color:#666; font-size:9pt; padding:2px;")
+    summary.setStyleSheet(f"color:{_t['sub_fg']}; font-size:9pt; padding:2px;")
     lay.addWidget(summary)
 
     line = QFrame(); line.setFrameShape(QFrame.Shape.HLine)
@@ -407,7 +424,7 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
 
     # Eval count preview — recomputed on any spinbox change
     preview = QLabel("")
-    preview.setStyleSheet("color:#999; font-size:9pt; font-style:italic;")
+    preview.setStyleSheet(f"color:{_t['sub_fg']}; font-size:9pt; font-style:italic;")
     def _refresh_preview(*_):
         total = sp_init.value() + sp_iter.value() * sp_batch.value()
         # ~10 s per eval at n_rho=3 (warm; first eval ~30 s cold)

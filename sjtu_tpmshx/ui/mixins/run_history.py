@@ -201,6 +201,21 @@ class RunHistoryMixin:
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Session timeline — {len(entries)} runs")
         dlg.resize(760, 520)
+        from ui.theme import get_theme as _gt_tl
+        _t = _gt_tl()
+        dlg.setStyleSheet(
+            f"QDialog{{background:{_t['bg']};}}"
+            f"QTableWidget{{background:{_t['surface_raised']}; color:{_t['fg']};"
+            f" gridline-color:{_t['card_border']}; border:1px solid {_t['card_border']};"
+            f" border-radius:6px;}}"
+            f"QTableWidget::item:selected{{background:{_t['combo_sel']};}}"
+            f"QHeaderView::section{{background:{_t['surface_elevated']}; color:{_t['fg']};"
+            f" border:none; border-right:1px solid {_t['card_border']};"
+            f" border-bottom:1px solid {_t['card_border']}; padding:5px 8px; font-weight:600;}}"
+            f"QScrollBar:vertical, QScrollBar:horizontal{{background:transparent; border:none;}}"
+            f"QScrollBar::handle{{background:{_t['scroll_handle']}; border-radius:4px;"
+            f" min-height:24px; min-width:24px;}}"
+        )
         v = QVBoxLayout(dlg)
         table = QTableWidget(len(entries), 4)
         table.setHorizontalHeaderLabels(

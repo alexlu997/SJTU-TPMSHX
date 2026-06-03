@@ -378,6 +378,7 @@ class TabViewMixin:
         dlg.setWindowTitle("SJTU-TPMSHX — 3D View (detached)")
         dlg.resize(1200, 800)
         dlg.setModal(False)
+        dlg.setStyleSheet(f"QDialog{{background:{get_theme()['bg']};}}")
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(4, 4, 4, 4); lay.setSpacing(0)
         # Remember previous parent & layout position so re-docking restores
@@ -459,6 +460,7 @@ class TabViewMixin:
         dlg.setWindowTitle(f"SJTU-TPMSHX — {key} (detached)")
         dlg.resize(1200, 800)
         dlg.setModal(False)
+        dlg.setStyleSheet(f"QDialog{{background:{get_theme()['bg']};}}")
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(4, 4, 4, 4); lay.setSpacing(0)
         card = self._canvas_cards.get(key)
