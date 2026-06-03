@@ -7,7 +7,7 @@ from a CI runner) they fail with ModuleNotFoundError because pytest's
 auto-rootdir does not add `sjtu_tpmshx/` to sys.path.
 
 Some test files do have the boilerplate (test_3d_direction_invariance.py,
-test_compute_orchestrator.py, test_pressure_poisson_3d*.py). Running the
+test_compute_orchestrator.py, test_solve_full_3d.py). Running the
 full suite in one process incidentally populates sys.path via those
 modules, which masked the issue. Per-file subprocess runs surfaced it.
 

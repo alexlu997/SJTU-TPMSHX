@@ -2264,11 +2264,6 @@ def _run_3d_stack(cfg):
             vfB = np.zeros((Nx, Ny+1, Nz), dtype=np.float64)
             wfB = np.zeros((Nx, Ny, Nz+1), dtype=np.float64)
 
-        # 2026-04-26: face_centered Moukalled kernel opt-in via env var.
-        # When set, uses _gs_full_chunk_3d_moukalled (Patankar BC source +
-        # NET_OUT) instead of stag kernel. Goal: AB imbal < 5%.
-        _face_centered = os.environ.get('TPMSHX_FACE_CENTERED', '0') == '1'
-
         # H6 ghost-pin: pass chi_B_field + threshold to LTNE kernel. At cells
         # where chi_B_field < chi_B_kernel_threshold, kernel skips Tb update
         # (leaves Tb at init = T_inB). Prevents stagnant cells from relaxing
@@ -2317,7 +2312,6 @@ def _run_3d_stack(cfg):
             vfA=(None if cfg.get('force_cc_ltne', True) else vfA),
             wfA=(None if cfg.get('force_cc_ltne', True) else wfA),
             ufB=ufB, vfB=vfB, wfB=wfB,
-            face_centered=_face_centered,
             chi_B_field=chi_B,
             chi_B_kernel_threshold=_chi_B_kernel_thr,
             mms_S_A_field=_mms_S_A,
