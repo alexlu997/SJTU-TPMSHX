@@ -307,8 +307,12 @@ def build_param_tabs(window):
     # ★ fix #3 (2026-05-09) — disabled tabs explicitly drop bold + use a dimmer
     # foreground so the global QApplication Bold (Phase 3) doesn't make
     # disabled and enabled tabs visually identical.
+    # 2026-06-03 — was hardcoded rgba(255,255,255,40): a faint *white* that
+    # vanished on the light theme's near-white tab strip (disabled 2D/3D View
+    # rendered invisible). Use the per-theme disabled token so it stays dim
+    # yet legible on both palettes.
     window._PTAB_DISABLED = (
-        f"QPushButton{{color:rgba(255,255,255,40);"
+        f"QPushButton{{color:{_ts['tab_disabled_fg']};"
         "background:transparent; border:none;"
         "border-bottom:2px solid transparent;"
         "font-size:9pt; font-weight:normal; padding:6px 14px 4px 14px;}")
@@ -1344,12 +1348,18 @@ def build_canvas_area(window):
     window.combo_2d_field.setFixedWidth(120)            # ★ fix #4 (cap width)
     window.combo_2d_field.setEnabled(False)             # ★ fix #1 (gate w/ btn)
     # ★ fix #4 (thin 1px border, lighter weight, 9pt to match tab buttons)
+    # 2026-06-03 — was hardcoded rgba(255,255,255,*) (white border + white
+    # disabled text): invisible/jarring on the light theme's near-white tab
+    # strip (read as an empty white box). Theme-token it + transparent fill so
+    # it blends with the flat tab buttons in both palettes.
+    _ct = get_theme()
     window.combo_2d_field.setStyleSheet(
-        "QComboBox{padding:2px 6px; border:1px solid rgba(255,255,255,40);"
-        " border-radius:4px; font-weight:normal; font-size:9pt;}"
-        "QComboBox:hover{border-color:rgba(255,255,255,90);}"
-        "QComboBox:disabled{color:rgba(255,255,255,40);"
-        " border-color:rgba(255,255,255,15);}"
+        f"QComboBox{{padding:2px 6px; color:{_ct['inp_fg']}; background:transparent;"
+        f" border:1px solid {_ct['tab_off_border']}; border-radius:4px;"
+        f" font-weight:normal; font-size:9pt;}}"
+        f"QComboBox:hover{{border-color:{_ct['combo_hover_border']};}}"
+        f"QComboBox:disabled{{color:{_ct['tab_disabled_fg']};"
+        f" background:transparent; border-color:{_ct['border_subtle']};}}"
     )
     window.combo_2d_field.setToolTip(
         "Select which 2D field to display when '2D View' tab is active.")

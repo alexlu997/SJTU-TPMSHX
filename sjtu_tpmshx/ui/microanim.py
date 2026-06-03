@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 
-def pulse_glow(widget, color="#22C55E", blur_peak=24, duration_ms=260):
+def pulse_glow(widget, color="#22C55E", blur_peak=20, duration_ms=260):
     """Wrap `widget` in a short glow pulse. Sequential:
         0   → blur 0, alpha 0
         40% → blur peak, alpha 200
@@ -115,6 +115,7 @@ def toast(parent, text, kind="success", duration_ms=2200, copy_payload=None):
     a_in_op = QPropertyAnimation(op, b"opacity")
     a_in_op.setStartValue(0.0); a_in_op.setEndValue(1.0)
     a_in_op.setDuration(140)
+    a_in_op.setEasingCurve(QEasingCurve.Type.InOutCubic)
 
     # Hold — implemented as zero-value animation over `duration_ms - 280`
     hold = QPropertyAnimation(op, b"opacity")
@@ -124,7 +125,8 @@ def toast(parent, text, kind="success", duration_ms=2200, copy_payload=None):
     # Slide + fade out
     a_out_op = QPropertyAnimation(op, b"opacity")
     a_out_op.setStartValue(1.0); a_out_op.setEndValue(0.0)
-    a_out_op.setDuration(140)
+    a_out_op.setDuration(160)
+    a_out_op.setEasingCurve(QEasingCurve.Type.InCubic)
 
     # Run pos + opacity concurrently by grouping into parallel — simpler
     # to keep sequential using two passes + Qt's built-in ability to

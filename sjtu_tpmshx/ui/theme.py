@@ -4,25 +4,38 @@ Design tokens follow an 8dp spacing rhythm.
 Typography: modular scale 9 / 10 / 11 / 12 / 14 pt.
 """
 
-# ── Typography ───────────────────────────────────────────────
-FONT_HEADER = 12
-FONT_LABEL = 10
-FONT_INPUT = 10
-FONT_TAB = 9
-FONT_BTN = 9
-FONT_BTN_RUN = 12
-FONT_STATUS = 9
+# ── Typography — modular scale (pt), smallest → largest ──────
+# One coherent hierarchy. Section titles (FONT_SECTION) now sit one step
+# above field labels (was equal at 10pt) so panel groups read as headings
+# rather than just bold rows.
+FONT_CAPTION = 8     # COMPUTED divider, micro-captions
+FONT_STATUS = 9      # status bar text
+FONT_TAB = 9         # tab-button labels
+FONT_BTN = 9         # secondary / tertiary button text
+FONT_LABEL = 10      # field labels
+FONT_INPUT = 10      # input + value text
+FONT_SECTION = 11    # second-level section titles (panel groups)
+FONT_HEADER = 12     # primary headers
+FONT_BTN_RUN = 12    # primary CTA (Compute)
 
-# ── Sizing (8dp rhythm) ─────────────────────────────────────
+# ── Spacing — 4dp rhythm, single source ─────────────────────
+SPACE_XS = 4
+SPACE_SM = 6
+SPACE_MD = 10
+SPACE_LG = 16
+SPACE_XL = 24
+
+# ── Sizing ──────────────────────────────────────────────────
 BTN_H_PRIMARY = 32
 BTN_H_SECONDARY = 28
 BTN_H_SMALL = 26
 
+# ── Corner radii — 2-step system (SM 6 · MD 12 · pill 14) ────
+RADIUS_INPUT = 6     # inputs + small/secondary buttons
 RADIUS_BTN = 6
-RADIUS_CARD = 12
-RADIUS_INPUT = 6
-RADIUS_TAB = 14
+RADIUS_CARD = 12     # cards, primary CTA, header
 RADIUS_HEADER = 12
+RADIUS_TAB = 14      # pill tabs
 
 # ── Theme colour definitions ────────────────────────────────
 _THEMES = {
@@ -85,7 +98,9 @@ _THEMES = {
         chk_hover_bg="#eef2f6", chk_checked_bg="#2c5282", chk_checked_border="#1e3a5f",
         chk_indicator_border="#606870",
         shadow_alpha=15, shadow_blur=8,
-        canvas_accents=["#4F46E5", "#0D9488", "#c55a11", "#888888", "#7b4daa", "#2c5282"],
+        # Perceptually ordered series palette (indigo→sky→teal→violet→amber→
+        # slate); primary #4F46E5 unchanged so single-series plots match.
+        canvas_accents=["#4F46E5", "#0EA5E9", "#0D9488", "#7C3AED", "#D97706", "#64748B"],
         # 4-tier button semantics
         btn_primary_rgb="44,82,130",       # blue filled (Compute)
         btn_long_rgb="197,90,17",          # orange filled (NSGA-II)
@@ -167,7 +182,10 @@ _THEMES = {
         chk_checked_bg="#3B82F6", chk_checked_border="#2563EB",
         chk_indicator_border="#64748B",
         shadow_alpha=80, shadow_blur=16,
-        canvas_accents=["#3B82F6", "#22C55E", "#F97316", "#94A3B8", "#A78BFA", "#38BDF8"],
+        # Perceptually ordered series palette (blue→sky→emerald→violet→amber→
+        # slate). Primary stays #3B82F6 so single-series plots are unchanged;
+        # harsh orange softened to amber, neutral slate moved last.
+        canvas_accents=["#3B82F6", "#38BDF8", "#34D399", "#A78BFA", "#FBBF24", "#94A3B8"],
         # 4-tier button semantics
         btn_primary_rgb="59,130,246",      # blue filled (Compute)
         btn_long_rgb="249,115,22",         # orange filled (NSGA-II)
@@ -250,6 +268,7 @@ def _build_styles(theme_name=None):
     # Clamp font scaling so Compact doesn't render unreadable 8pt text.
     _fi = max(8, FONT_INPUT + font_bump)
     _fl = max(8, FONT_LABEL + font_bump)
+    _fsec = max(9, FONT_SECTION + font_bump)   # section titles, one step up
     _fs = max(7, FONT_STATUS + font_bump)
 
     def _px(base):
@@ -319,7 +338,7 @@ def _build_styles(theme_name=None):
         return (f"QLabel{{background:{t['card_bg']}; color:{_title_fg};"
                 f"border:1px solid {t['card_border']};"
                 f"border-left:4px solid rgba({rgb},255);"
-                f"border-radius:4px; font-weight:700; font-size:{_fl}pt;"
+                f"border-radius:4px; font-weight:700; font-size:{_fsec}pt;"
                 "padding:6px 12px; letter-spacing:0.3px;"
                 "qproperty-alignment: AlignLeft | AlignVCenter;}"
                 # More-specific override to beat any cascading color rule
@@ -328,7 +347,7 @@ def _build_styles(theme_name=None):
                 f"background:{t['card_bg']};"
                 f"border:1px solid {t['card_border']};"
                 f"border-left:4px solid rgba({rgb},255);"
-                f"border-radius:4px; font-weight:700; font-size:{_fl}pt;"
+                f"border-radius:4px; font-weight:700; font-size:{_fsec}pt;"
                 "padding:6px 12px; letter-spacing:0.3px;}")
 
     def _frame(rgba):
@@ -343,7 +362,7 @@ def _build_styles(theme_name=None):
     s['F_B'] = _frame(t['frame_b'])
 
     _btn = (f"border-radius:{RADIUS_BTN}px; color:white; font-weight:bold;"
-            f"font-size:{FONT_BTN}pt; padding:4px 10px;")
+            f"font-size:{FONT_BTN}pt; padding:{SPACE_XS}px {SPACE_MD}px;")
 
     # ── 4-tier button semantics (Primary/Secondary/Tertiary/Long-running) ──
     # `:focus` selector on every tier draws a thick accent ring when the user
@@ -355,7 +374,7 @@ def _build_styles(theme_name=None):
     # Primary: blue filled, big padding — main CTA (Compute)
     _rp = t['btn_primary_rgb']
     s['BTN_PRIMARY'] = (f"QPushButton{{border-radius:{RADIUS_CARD}px; color:white;"
-                        f"font-weight:bold; font-size:{FONT_BTN_RUN}pt; padding:6px 16px;"
+                        f"font-weight:bold; font-size:{FONT_BTN_RUN}pt; padding:{SPACE_SM}px {SPACE_LG}px;"
                         f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
                         f"stop:0 rgba({_rp},230), stop:1 rgba({_rp},190));"
                         f"border:1px solid rgba({_rp},210);}}"
@@ -382,7 +401,7 @@ def _build_styles(theme_name=None):
     # Secondary: blue outlined — Preview, Export, Auto-fill, Compute-TPMS
     s['BTN_SECONDARY'] = (f"QPushButton{{border-radius:{RADIUS_BTN}px;"
                           f"color:{t['btn_sec_fg']}; font-weight:bold;"
-                          f"font-size:{FONT_BTN}pt; padding:4px 10px;"
+                          f"font-size:{FONT_BTN}pt; padding:{SPACE_XS}px {SPACE_MD}px;"
                           f"background:transparent; border:1px solid {t['btn_sec_border']};}}"
                           f"QPushButton:hover{{background:{t['btn_sec_hover_bg']};"
                           f"color:{t['btn_sec_fg']};}}"
@@ -395,7 +414,7 @@ def _build_styles(theme_name=None):
     # Tertiary: gray outlined — Reset, +/-, zone row ops
     s['BTN_TERTIARY'] = (f"QPushButton{{border-radius:{RADIUS_BTN}px;"
                          f"color:{t['btn_tert_fg']}; font-weight:bold;"
-                         f"font-size:{FONT_BTN}pt; padding:4px 10px;"
+                         f"font-size:{FONT_BTN}pt; padding:{SPACE_XS}px {SPACE_MD}px;"
                          f"background:transparent; border:1px solid {t['btn_tert_border']};}}"
                          f"QPushButton:hover{{background:{t['btn_tert_hover_bg']};"
                          f"color:{t['fg']};}}"
@@ -444,6 +463,15 @@ def _build_styles(theme_name=None):
         f"border-left:5px solid transparent; border-right:5px solid transparent;"
         f"border-top:6px solid rgba({_ac},200);"
         "width:0; height:0;}"
+        # Disabled combo (e.g. the 2D-field selector before a result exists):
+        # flatten to a quiet ghost — transparent fill + muted text + subtle
+        # border — so it blends with the flat tab strip instead of reading as
+        # a solid white box on the light theme.
+        f"QComboBox:disabled{{color:{t['val_empty_fg']}; background:transparent;"
+        f"border:1px solid {t['border_subtle']};}}"
+        f"QComboBox::drop-down:disabled{{background:transparent;"
+        f"border-left:1px solid {t['border_subtle']};}}"
+        f"QComboBox::down-arrow:disabled{{border-top:6px solid {t['val_empty_fg']};}}"
         f"QComboBox QAbstractItemView{{"
         f"background:{t['combo_list_bg']}; color:{t['combo_list_fg']};"
         f"font-size:{FONT_INPUT}pt; font-weight:bold;"

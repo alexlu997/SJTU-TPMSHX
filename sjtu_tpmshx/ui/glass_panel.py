@@ -6,7 +6,7 @@ brush. A previous `GlassPanel` widget was removed — no translucent
 paintEvent is needed once the window background carries the mood.
 """
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QColor, QLinearGradient
+from PySide6.QtGui import QPainter, QColor, QLinearGradient, QRadialGradient
 
 
 def generate_blurred_bg(width=1920, height=1080):
@@ -23,23 +23,39 @@ def generate_blurred_bg(width=1920, height=1080):
     img = QImage(width, height, QImage.Format.Format_RGB32)
     painter = QPainter(img)
 
+    # Diagonal base — 4-stop, cooler mid so the panel chrome reads as
+    # floating over depth rather than a flat OLED black.
     grad = QLinearGradient(QPoint(0, 0), QPoint(width, height))
-    grad.setColorAt(0.0, QColor('#08090A'))
-    grad.setColorAt(0.5, QColor('#0D1526'))
-    grad.setColorAt(1.0, QColor('#08090A'))
+    grad.setColorAt(0.0, QColor('#070809'))
+    grad.setColorAt(0.42, QColor('#0C1322'))
+    grad.setColorAt(0.64, QColor('#0B0F1A'))
+    grad.setColorAt(1.0, QColor('#070809'))
     painter.fillRect(img.rect(), grad)
 
-    # Soft colored glow orbs for depth — subtle, not decorative.
+    # Soft colored glow orbs — radial falloff (no hard ellipse edge), two
+    # cool hues for a richer-but-restrained depth. Alphas stay ≤16/255.
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    for cx, cy, r, alpha in [
-        (0.2, 0.3, 400, 8), (0.7, 0.6, 350, 6),
-        (0.5, 0.8, 500, 5), (0.8, 0.2, 300, 7),
+    painter.setPen(Qt.PenStyle.NoPen)
+    for cx, cy, r, rgb, alpha in [
+        (0.18, 0.22, 520, (59, 130, 246), 16),   # blue, top-left
+        (0.82, 0.30, 460, (99, 102, 241), 12),    # indigo, top-right
+        (0.62, 0.78, 600, (45, 130, 170), 10),    # cool teal, lower
     ]:
-        c = QColor(59, 130, 246, alpha)
-        painter.setBrush(c)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(
-            int(cx * width - r), int(cy * height - r), r * 2, r * 2)
+        ox, oy = cx * width, cy * height
+        rg = QRadialGradient(ox, oy, r)
+        rg.setColorAt(0.0, QColor(rgb[0], rgb[1], rgb[2], alpha))
+        rg.setColorAt(1.0, QColor(rgb[0], rgb[1], rgb[2], 0))
+        painter.setBrush(rg)
+        painter.drawEllipse(int(ox - r), int(oy - r), r * 2, r * 2)
+
+    # Vignette — transparent center, gentle darken at the corners so the
+    # eye settles on the central viewport. Very low alpha; pure focus aid.
+    vig = QRadialGradient(width * 0.5, height * 0.42, max(width, height) * 0.78)
+    vig.setColorAt(0.0, QColor(0, 0, 0, 0))
+    vig.setColorAt(0.72, QColor(0, 0, 0, 0))
+    vig.setColorAt(1.0, QColor(0, 0, 0, 55))
+    painter.setBrush(vig)
+    painter.drawRect(img.rect())
     painter.end()
 
     # Film-grain noise overlay. Generated once, blended at ~4% opacity —
@@ -51,7 +67,7 @@ def generate_blurred_bg(width=1920, height=1080):
         # Coarse 3× downscaled noise then nearest-upsample for a softer,
         # film-stock grain rather than TV static.
         nw, nh = width // 3, height // 3
-        noise = rng.integers(0, 18, size=(nh, nw), dtype=_np.uint8)
+        noise = rng.integers(0, 12, size=(nh, nw), dtype=_np.uint8)
         noise_up = _np.repeat(_np.repeat(noise, 3, axis=0), 3, axis=1)
         # Clip to exact size (repeat may over-shoot)
         noise_up = noise_up[:height, :width]
