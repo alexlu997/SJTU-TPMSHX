@@ -21,6 +21,7 @@ so that coupling information propagates within a single sweep.
 
 import numpy as np
 from numba import njit
+from ._kernels_2d import minmod
 
 
 @njit(cache=True)
@@ -35,17 +36,13 @@ def _sou_corr_x(T, i, j, Nx, u_loc, Fx):
         if i > 1:
             gu = T[i-1,j] - T[i-2,j]
             gd = T[i,j] - T[i-1,j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         # East face (i+1/2): extra flux OUT OF cell
         phi_e = 0.0
         if i < Nx - 1 and i > 0:
             gu = T[i,j] - T[i-1,j]
             gd = T[i+1,j] - T[i,j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         return 0.5 * Fx * (phi_w - phi_e)
     else:
         # East face (i+1/2): extra flux INTO cell (u < 0)
@@ -53,17 +50,13 @@ def _sou_corr_x(T, i, j, Nx, u_loc, Fx):
         if i < Nx - 2:
             gu = T[i+1,j] - T[i+2,j]
             gd = T[i,j] - T[i+1,j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         # West face (i-1/2): extra flux OUT OF cell
         phi_w = 0.0
         if i > 0 and i < Nx - 1:
             gu = T[i,j] - T[i+1,j]
             gd = T[i-1,j] - T[i,j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         return 0.5 * Fx * (phi_e - phi_w)
 
 
@@ -78,17 +71,13 @@ def _sou_corr_y(T, i, j, Ny, v_loc, Fy):
         if j > 1:
             gu = T[i,j-1] - T[i,j-2]
             gd = T[i,j] - T[i,j-1]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         # North face (j+1/2): extra flux OUT OF cell
         phi_n = 0.0
         if j < Ny - 1 and j > 0:
             gu = T[i,j] - T[i,j-1]
             gd = T[i,j+1] - T[i,j]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         return 0.5 * Fy * (phi_s - phi_n)
     else:
         # North face (j+1/2): extra flux INTO cell (v < 0)
@@ -96,17 +85,13 @@ def _sou_corr_y(T, i, j, Ny, v_loc, Fy):
         if j < Ny - 2:
             gu = T[i,j+1] - T[i,j+2]
             gd = T[i,j] - T[i,j+1]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         # South face (j-1/2): extra flux OUT OF cell
         phi_s = 0.0
         if j > 0 and j < Ny - 1:
             gu = T[i,j] - T[i,j+1]
             gd = T[i,j-1] - T[i,j]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         return 0.5 * Fy * (phi_n - phi_s)
 
 

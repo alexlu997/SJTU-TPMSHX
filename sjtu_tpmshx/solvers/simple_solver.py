@@ -34,6 +34,7 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
 
 import numpy as np
 from numba import njit
+from ._kernels_2d import minmod
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 
 
@@ -54,32 +55,24 @@ def _sou_corr_u_x(u, i, j, Nx, Fe):
         if i > 2:
             gu = u[i - 1, j] - u[i - 2, j]
             gd = u[i, j] - u[i - 1, j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         phi_e = 0.0
         if i + 1 < Nx and i > 1:
             gu = u[i, j] - u[i - 1, j]
             gd = u[i + 1, j] - u[i, j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         return 0.5 * Fe * (phi_w - phi_e)
     else:
         phi_e = 0.0
         if i + 2 <= Nx:
             gu = u[i + 1, j] - u[min(i + 2, Nx), j]
             gd = u[i, j] - u[i + 1, j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         phi_w = 0.0
         if i > 1 and i + 1 <= Nx:
             gu = u[i, j] - u[i + 1, j]
             gd = u[i - 1, j] - u[i, j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         return 0.5 * Fe * (phi_e - phi_w)
 
 
@@ -91,32 +84,24 @@ def _sou_corr_u_y(u, i, j, Ny, Fn):
         if j > 1:
             gu = u[i, j - 1] - u[i, j - 2]
             gd = u[i, j] - u[i, j - 1]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         phi_n = 0.0
         if j < Ny - 1 and j > 0:
             gu = u[i, j] - u[i, j - 1]
             gd = u[i, j + 1] - u[i, j]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         return 0.5 * Fn * (phi_s - phi_n)
     else:
         phi_n = 0.0
         if j < Ny - 2:
             gu = u[i, j + 1] - u[i, j + 2]
             gd = u[i, j] - u[i, j + 1]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         phi_s = 0.0
         if j > 0 and j < Ny - 1:
             gu = u[i, j] - u[i, j + 1]
             gd = u[i, j - 1] - u[i, j]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         return 0.5 * Fn * (phi_n - phi_s)
 
 
@@ -128,32 +113,24 @@ def _sou_corr_v_x(v, i, j, Nx, Fe):
         if i > 1:
             gu = v[i - 1, j] - v[i - 2, j]
             gd = v[i, j] - v[i - 1, j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         phi_e = 0.0
         if i < Nx - 1 and i > 0:
             gu = v[i, j] - v[i - 1, j]
             gd = v[i + 1, j] - v[i, j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         return 0.5 * Fe * (phi_w - phi_e)
     else:
         phi_e = 0.0
         if i < Nx - 2:
             gu = v[i + 1, j] - v[i + 2, j]
             gd = v[i, j] - v[i + 1, j]
-            if gu * gd > 0:
-                phi_e = min(abs(gu), abs(gd))
-                if gu < 0: phi_e = -phi_e
+            phi_e = minmod(gu, gd)
         phi_w = 0.0
         if i > 0 and i < Nx - 1:
             gu = v[i, j] - v[i + 1, j]
             gd = v[i - 1, j] - v[i, j]
-            if gu * gd > 0:
-                phi_w = min(abs(gu), abs(gd))
-                if gu < 0: phi_w = -phi_w
+            phi_w = minmod(gu, gd)
         return 0.5 * Fe * (phi_e - phi_w)
 
 
@@ -168,32 +145,24 @@ def _sou_corr_v_y(v, i, j, Ny, Fn):
         if j > 2:
             gu = v[i, j - 1] - v[i, j - 2]
             gd = v[i, j] - v[i, j - 1]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         phi_n = 0.0
         if j + 1 <= Ny and j > 1:
             gu = v[i, j] - v[i, j - 1]
             gd = v[i, min(j + 1, Ny)] - v[i, j]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         return 0.5 * Fn * (phi_s - phi_n)
     else:
         phi_n = 0.0
         if j + 2 <= Ny:
             gu = v[i, j + 1] - v[i, min(j + 2, Ny)]
             gd = v[i, j] - v[i, j + 1]
-            if gu * gd > 0:
-                phi_n = min(abs(gu), abs(gd))
-                if gu < 0: phi_n = -phi_n
+            phi_n = minmod(gu, gd)
         phi_s = 0.0
         if j > 1 and j + 1 <= Ny:
             gu = v[i, j] - v[i, j + 1]
             gd = v[i, j - 1] - v[i, j]
-            if gu * gd > 0:
-                phi_s = min(abs(gu), abs(gd))
-                if gu < 0: phi_s = -phi_s
+            phi_s = minmod(gu, gd)
         return 0.5 * Fn * (phi_n - phi_s)
 
 
