@@ -889,6 +889,248 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
         window._zone_boundaries_y = None
 
 
+def _compute_Q_richardson(
+        Ta, Tb, Ts, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
+        simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
+        energy_dx, energy_dy, _x_breaks, _y_breaks,
+        T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
+        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list):
+    """Heat duty Q via Richardson extrapolation on the enthalpy balance.
+
+    Re-solves the coupled energy field on a 2x-refined grid, applies
+    per-side Richardson extrapolation to |Q_A|/|Q_B|, and falls back to
+    a 1D plate-average when the refined solve is unavailable. Extracted
+    verbatim from ``_run_solvers`` (#9-2D god-function split);
+    ``warnings_list`` is appended in place on fallback paths.
+
+    Returns ``(Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
+    richardson_warn)``.
+    """
+    from solvers.simple_solver import _aligned_grid
+    # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
+    _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
+    if za is not None and 'h_vB_arr' in za:
+        Q_solid_100 = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area))
+    else:
+        h_vB = window._h_vB
+        Q_solid_100 = float(np.sum(h_vB * (Ts - Tb) * _cell_area))
+
+    # Richardson: run energy at 200×100 for Q extrapolation
+    Nx2, Ny2 = N_x * 2, N_y * 2
+    energy_dx2 = _aligned_grid(Nx2, L, list(_x_breaks))
+    energy_dy2 = _aligned_grid(Ny2, H, list(_y_breaks))
+    # 2026-05-07: `_aligned_grid` silently expands the cell count when
+    # `min(2, ...)` per segment forces total > N (case: B partial pipe
+    # with 4 break points on x). Read back the actual length so Nx2/Ny2
+    # match the returned dx/dy arrays — otherwise solve_full_domain
+    # receives mismatched (Nx2, Ny2) vs dx_arr/dy_arr shapes and
+    # `h_vB_arr * (Ts - Tb)` broadcasts the wrong way.
+    Nx2 = int(len(energy_dx2))
+    Ny2 = int(len(energy_dy2))
+
+    # Interpolate fields from coarse to fine grid using actual coordinates
+    from scipy.interpolate import RegularGridInterpolator
+    x_c1 = np.cumsum(energy_dx) - energy_dx / 2   # coarse centres
+    y_c1 = np.cumsum(energy_dy) - energy_dy / 2
+    x_c2 = np.cumsum(energy_dx2) - energy_dx2 / 2  # fine centres
+    y_c2 = np.cumsum(energy_dy2) - energy_dy2 / 2
+    def _interp2(arr):
+        if np.ndim(arr) < 2:
+            return arr
+        f = RegularGridInterpolator((x_c1, y_c1), arr, method='linear',
+                                    bounds_error=False, fill_value=None)
+        pts = np.stack(np.meshgrid(x_c2, y_c2, indexing='ij'), axis=-1)
+        return f(pts)
+
+    ucA2 = _interp2(ucA); vcA2 = _interp2(vcA)
+    ucB2 = _interp2(ucB); vcB2 = _interp2(vcB)
+    rcp_A2 = _interp2(rho_cp_A if np.ndim(rho_cp_A) > 0 else
+                       np.full((N_x, N_y),
+                               _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)))
+    rcp_B2 = _interp2(rho_cp_B if np.ndim(rho_cp_B) > 0 else
+                       np.full((N_x, N_y),
+                               _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)))
+    if za is not None and 'h_vB_arr' in za:
+        h_vA2 = _interp2(za['h_vA_arr'])
+        h_vB2 = _interp2(za['h_vB_arr'])
+        K_ffA2 = _interp2(za['K_ffA_arr'])
+        K_ffB2 = _interp2(za['K_ffB_arr'])
+        K_ss2 = _interp2(za['K_ss_arr'])
+        eps2 = _interp2(za['eps_arr'])
+    else:
+        h_vA2 = window._h_vA; h_vB2 = window._h_vB
+        K_ffA2 = window._K_ffA; K_ffB2 = window._K_ffB
+        K_ss2 = window._K_ss; eps2 = eps
+    Ta2, Tb2, Ts2 = solve_full_domain(
+        L, H, Nx2, Ny2, T_inA, T_inB,
+        K_ffA2, K_ffB2, K_ss2, h_vA2, h_vB2,
+        rcp_A2, rcp_B2, eps2,
+        ucA2, vcA2, ucB2, vcB2,
+        dir_A, dir_B, tol=0.5, max_iter=5000,
+        dx_arr=energy_dx2, dy_arr=energy_dy2)
+    _area2 = energy_dx2[:, None] * energy_dy2[None, :]
+    if za is not None and 'h_vB_arr' in za:
+        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
+    else:
+        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
+    # Diagnostic only — solid-side Richardson retains the old signed
+    # convention and lets us track grid convergence on ∑h_vB·(Ts−Tb).
+    Q_solid_richardson = (4.0 * Q_solid_200 - Q_solid_100) / 3.0
+
+    # Primary Q_total via Richardson on enthalpy max(|Q_A|,|Q_B|) — signed-to-
+    # unsigned fix (Option C, 2026-04-24). Coarse grid has no SIMPLE, so mask
+    # is upsampled from the fine-grid inlet_frac (nearest-neighbor 2× repeat;
+    # exact since Nx2 = 2·N_x, Ny2 = 2·N_y).
+    mA_in  = simpA.inlet_frac.astype(np.float64)  if simpA is not None else None
+    mA_out = simpA.outlet_frac.astype(np.float64) if simpA is not None else None
+    mB_in  = simpB.inlet_frac.astype(np.float64)  if simpB is not None else None
+    mB_out = simpB.outlet_frac.astype(np.float64) if simpB is not None else None
+    # 2026-05-09 — np.repeat(m, 2) breaks when Nx2 != 2*N_x (which happens
+    # whenever the master refined grid uses wall-refinement: e.g.
+    # 20 + 2 * n_refine = 40 + 14 = 54 cells, not 40). Resample masks via
+    # linear interpolation onto the actual fine-grid axis length so the
+    # _enthalpy_balance_2d face arithmetic gets matching shapes.
+    def _resample_1d(arr_src, n_dst):
+        if arr_src is None or len(arr_src) == n_dst:
+            return arr_src
+        x_src = np.linspace(0.0, 1.0, len(arr_src))
+        x_dst = np.linspace(0.0, 1.0, n_dst)
+        return np.interp(x_dst, x_src, arr_src).astype(np.float64)
+    Nx2_real, Ny2_real = (energy_dx2.size, energy_dy2.size)
+    # mA_in/out is along the cross-stream axis of A's enthalpy face; for
+    # dir_A in {0,1} (x-flow) the cross axis is real y → length Ny2_real.
+    # For dir_A in {2,3} (y-flow) the cross axis is real x → length Nx2_real.
+    _A_cross_n = Ny2_real if dir_A in (0, 1) else Nx2_real
+    _B_cross_n = Ny2_real if dir_B in (0, 1) else Nx2_real
+    mA_in2  = _resample_1d(mA_in,  _A_cross_n)
+    mA_out2 = _resample_1d(mA_out, _A_cross_n)
+    mB_in2  = _resample_1d(mB_in,  _B_cross_n)
+    mB_out2 = _resample_1d(mB_out, _B_cross_n)
+
+    rho_cp_A_fld = (rho_cp_A if np.ndim(rho_cp_A) > 0
+                    else np.full((N_x, N_y), rho_cp_A))
+    rho_cp_B_fld = (rho_cp_B if np.ndim(rho_cp_B) > 0
+                    else np.full((N_x, N_y), rho_cp_B))
+
+    try:
+        Q_A_fine = _enthalpy_balance_2d(
+            Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
+            inlet_mask=mA_in, outlet_mask=mA_out)
+        Q_B_fine = _enthalpy_balance_2d(
+            Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
+            inlet_mask=mB_in, outlet_mask=mB_out)
+        Q_A_coarse = _enthalpy_balance_2d(
+            Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
+            inlet_mask=mA_in2, outlet_mask=mA_out2)
+        Q_B_coarse = _enthalpy_balance_2d(
+            Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
+            inlet_mask=mB_in2, outlet_mask=mB_out2)
+        # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
+        # separately, THEN take max. Each Richardson acts on a smooth
+        # (single-sign) function across refinement, so the formal
+        # 2nd-order extrapolation stays valid. Prior pipeline applied
+        # Richardson after max(), which fails if max-argument flips
+        # between the coarse and fine grids.
+        Q_A_ext = (4.0 * abs(Q_A_fine)   - abs(Q_A_coarse)  ) / 3.0
+        Q_B_ext = (4.0 * abs(Q_B_fine)   - abs(Q_B_coarse)  ) / 3.0
+        # 2026-05-09 — NaN-fallback: if either side's 2× refined solve
+        # NaN-blew up (e.g. ConstDF-v1 K extrapolation at t outside
+        # [0.3, 0.5] mm produces unphysical Brinkman coefficients on the
+        # finer grid), Richardson extrapolation propagates nan up to
+        # Q_total. Fall back to the directly-measured Q_fine value, which
+        # only depends on the user-grid Ta (already nan-guarded above).
+        # User still sees a finite Q in the UI; we set richardson_warn
+        # so the warning banner reflects degraded grid convergence.
+        if not np.isfinite(Q_A_ext):
+            Q_A_ext = abs(Q_A_fine) if np.isfinite(Q_A_fine) else float('nan')
+        if not np.isfinite(Q_B_ext):
+            Q_B_ext = abs(Q_B_fine) if np.isfinite(Q_B_fine) else float('nan')
+        # Robust max across (possibly nan) candidates: prefer finite values.
+        _q_candidates = [v for v in (Q_A_ext, Q_B_ext)
+                         if np.isfinite(v)]
+        Q_total = max(_q_candidates) if _q_candidates else float('nan')
+
+        Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
+        Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
+        # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
+        # assumption in doubt). Per-side unified metric: compare the side
+        # that dominates Q_total. Also flag when Richardson fell back to
+        # the direct Q_fine (means the 2× refined solve was unreliable).
+        _denom = max(Q_fine_max, 1e-12)
+        richardson_warn = (
+            (np.isfinite(Q_coarse_max)
+             and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
+            or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
+    except Exception as _q_exc:
+        import traceback as _tb
+        _tb.print_exc()
+        print(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
+              f"falling through to 1D-mean fallback.")
+        Q_A_fine = Q_B_fine = float('nan')
+        Q_A_ext = Q_B_ext = float('nan')
+        Q_fine_max = float('nan')
+        Q_total = float('nan')
+        richardson_warn = False
+
+    # 2026-05-09 — UNCONDITIONAL last-resort 1D fallback. Runs OUTSIDE the
+    # try/except above so an exception in the Richardson block doesn't
+    # short-circuit it. Computes
+    #     Q_A ≈ m_dot_A · cp_A · |T_inA − ⟨T_out_A⟩|
+    # using the same outlet-face mean convention the UI's T_OUT widget uses
+    # (np.mean over the outlet face with a finite-only filter). Q_total
+    # stays whatever Richardson / Q_*_fine produced when those are finite;
+    # if and only if Q_total is nan after the Richardson block, this
+    # bumps in. Guarantees Q_total is finite whenever T_OUT_A / T_OUT_B
+    # display finite (which is the same condition the UI advertises).
+    if not np.isfinite(Q_total):
+        try:
+            # Outlet face per side. dir_code: 0=+x 1=-x 2=+y 3=-y.
+            if dir_A == 0:    Tout_A_face = Ta[-1, :]
+            elif dir_A == 1:  Tout_A_face = Ta[0, :]
+            elif dir_A == 2:  Tout_A_face = Ta[:, -1]
+            else:             Tout_A_face = Ta[:, 0]
+            if dir_B == 0:    Tout_B_face = Tb[-1, :]
+            elif dir_B == 1:  Tout_B_face = Tb[0, :]
+            elif dir_B == 2:  Tout_B_face = Tb[:, -1]
+            else:             Tout_B_face = Tb[:, 0]
+            _Tout_A_finite = Tout_A_face[np.isfinite(Tout_A_face)]
+            _Tout_B_finite = Tout_B_face[np.isfinite(Tout_B_face)]
+            T_out_A_mean = (float(np.mean(_Tout_A_finite))
+                            if _Tout_A_finite.size else float(T_inA))
+            T_out_B_mean = (float(np.mean(_Tout_B_finite))
+                            if _Tout_B_finite.size else float(T_inB))
+            rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
+            rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
+            cp_A_in  = float(_pA['cp'](T_inA))
+            cp_B_in  = float(_pB['cp'](T_inB))
+            A_in_A = float(cfgA.get('in_w', H))
+            A_in_B = float(cfgB.get('in_w', L))
+            m_dot_A = rho_A_in * abs(u_A) * A_in_A
+            m_dot_B = rho_B_in * abs(u_B) * A_in_B
+            Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
+            Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
+            Q_total = max(Q_A_simple, Q_B_simple)
+            if np.isfinite(Q_total):
+                warnings_list.append(
+                    f"Q_total computed via 1D plate-average fallback "
+                    f"(m_dot · cp · |T_in − ⟨T_out⟩|) because the "
+                    f"cross-stream-resolved enthalpy integral was unavailable. "
+                    f"Q_A={Q_A_simple:.0f} W/m, Q_B={Q_B_simple:.0f} W/m. "
+                    f"Tighten tol or refine grid for production-grade Q.")
+                richardson_warn = True
+            print(f"[Q-calc] 1D fallback: Q_A={Q_A_simple:.1f}, "
+                  f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
+                  f"(T_out_A_mean={T_out_A_mean:.2f}K, "
+                  f"T_out_B_mean={T_out_B_mean:.2f}K)")
+        except Exception as _fb_exc:
+            import traceback as _tb2
+            _tb2.print_exc()
+            print(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
+                  f"Q_total stays nan.")
+    return (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
+            richardson_warn)
+
+
 def _run_solvers(window, cfg, fields):
     """Phase 3: run SIMPLE + coupling loop + pressure + Richardson Q."""
     L = cfg['L']; H = cfg['H']
@@ -1283,225 +1525,13 @@ def _run_solvers(window, cfg, fields):
         simpA, simpB, dir_A, dir_B, P_inA, P_inB, window)
 
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
-    _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
-    if za is not None and 'h_vB_arr' in za:
-        Q_solid_100 = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area))
-    else:
-        h_vB = window._h_vB
-        Q_solid_100 = float(np.sum(h_vB * (Ts - Tb) * _cell_area))
-
-    # Richardson: run energy at 200×100 for Q extrapolation
-    Nx2, Ny2 = N_x * 2, N_y * 2
-    energy_dx2 = _aligned_grid(Nx2, L, list(_x_breaks))
-    energy_dy2 = _aligned_grid(Ny2, H, list(_y_breaks))
-    # 2026-05-07: `_aligned_grid` silently expands the cell count when
-    # `min(2, ...)` per segment forces total > N (case: B partial pipe
-    # with 4 break points on x). Read back the actual length so Nx2/Ny2
-    # match the returned dx/dy arrays — otherwise solve_full_domain
-    # receives mismatched (Nx2, Ny2) vs dx_arr/dy_arr shapes and
-    # `h_vB_arr * (Ts - Tb)` broadcasts the wrong way.
-    Nx2 = int(len(energy_dx2))
-    Ny2 = int(len(energy_dy2))
-
-    # Interpolate fields from coarse to fine grid using actual coordinates
-    from scipy.interpolate import RegularGridInterpolator
-    x_c1 = np.cumsum(energy_dx) - energy_dx / 2   # coarse centres
-    y_c1 = np.cumsum(energy_dy) - energy_dy / 2
-    x_c2 = np.cumsum(energy_dx2) - energy_dx2 / 2  # fine centres
-    y_c2 = np.cumsum(energy_dy2) - energy_dy2 / 2
-    def _interp2(arr):
-        if np.ndim(arr) < 2:
-            return arr
-        f = RegularGridInterpolator((x_c1, y_c1), arr, method='linear',
-                                    bounds_error=False, fill_value=None)
-        pts = np.stack(np.meshgrid(x_c2, y_c2, indexing='ij'), axis=-1)
-        return f(pts)
-
-    ucA2 = _interp2(ucA); vcA2 = _interp2(vcA)
-    ucB2 = _interp2(ucB); vcB2 = _interp2(vcB)
-    rcp_A2 = _interp2(rho_cp_A if np.ndim(rho_cp_A) > 0 else
-                       np.full((N_x, N_y),
-                               _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)))
-    rcp_B2 = _interp2(rho_cp_B if np.ndim(rho_cp_B) > 0 else
-                       np.full((N_x, N_y),
-                               _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)))
-    if za is not None and 'h_vB_arr' in za:
-        h_vA2 = _interp2(za['h_vA_arr'])
-        h_vB2 = _interp2(za['h_vB_arr'])
-        K_ffA2 = _interp2(za['K_ffA_arr'])
-        K_ffB2 = _interp2(za['K_ffB_arr'])
-        K_ss2 = _interp2(za['K_ss_arr'])
-        eps2 = _interp2(za['eps_arr'])
-    else:
-        h_vA2 = window._h_vA; h_vB2 = window._h_vB
-        K_ffA2 = window._K_ffA; K_ffB2 = window._K_ffB
-        K_ss2 = window._K_ss; eps2 = eps
-    Ta2, Tb2, Ts2 = solve_full_domain(
-        L, H, Nx2, Ny2, T_inA, T_inB,
-        K_ffA2, K_ffB2, K_ss2, h_vA2, h_vB2,
-        rcp_A2, rcp_B2, eps2,
-        ucA2, vcA2, ucB2, vcB2,
-        dir_A, dir_B, tol=0.5, max_iter=5000,
-        dx_arr=energy_dx2, dy_arr=energy_dy2)
-    _area2 = energy_dx2[:, None] * energy_dy2[None, :]
-    if za is not None and 'h_vB_arr' in za:
-        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
-    else:
-        Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
-    # Diagnostic only — solid-side Richardson retains the old signed
-    # convention and lets us track grid convergence on ∑h_vB·(Ts−Tb).
-    Q_solid_richardson = (4.0 * Q_solid_200 - Q_solid_100) / 3.0
-
-    # Primary Q_total via Richardson on enthalpy max(|Q_A|,|Q_B|) — signed-to-
-    # unsigned fix (Option C, 2026-04-24). Coarse grid has no SIMPLE, so mask
-    # is upsampled from the fine-grid inlet_frac (nearest-neighbor 2× repeat;
-    # exact since Nx2 = 2·N_x, Ny2 = 2·N_y).
-    mA_in  = simpA.inlet_frac.astype(np.float64)  if simpA is not None else None
-    mA_out = simpA.outlet_frac.astype(np.float64) if simpA is not None else None
-    mB_in  = simpB.inlet_frac.astype(np.float64)  if simpB is not None else None
-    mB_out = simpB.outlet_frac.astype(np.float64) if simpB is not None else None
-    # 2026-05-09 — np.repeat(m, 2) breaks when Nx2 != 2*N_x (which happens
-    # whenever the master refined grid uses wall-refinement: e.g.
-    # 20 + 2 * n_refine = 40 + 14 = 54 cells, not 40). Resample masks via
-    # linear interpolation onto the actual fine-grid axis length so the
-    # _enthalpy_balance_2d face arithmetic gets matching shapes.
-    def _resample_1d(arr_src, n_dst):
-        if arr_src is None or len(arr_src) == n_dst:
-            return arr_src
-        x_src = np.linspace(0.0, 1.0, len(arr_src))
-        x_dst = np.linspace(0.0, 1.0, n_dst)
-        return np.interp(x_dst, x_src, arr_src).astype(np.float64)
-    Nx2_real, Ny2_real = (energy_dx2.size, energy_dy2.size)
-    # mA_in/out is along the cross-stream axis of A's enthalpy face; for
-    # dir_A in {0,1} (x-flow) the cross axis is real y → length Ny2_real.
-    # For dir_A in {2,3} (y-flow) the cross axis is real x → length Nx2_real.
-    _A_cross_n = Ny2_real if dir_A in (0, 1) else Nx2_real
-    _B_cross_n = Ny2_real if dir_B in (0, 1) else Nx2_real
-    mA_in2  = _resample_1d(mA_in,  _A_cross_n)
-    mA_out2 = _resample_1d(mA_out, _A_cross_n)
-    mB_in2  = _resample_1d(mB_in,  _B_cross_n)
-    mB_out2 = _resample_1d(mB_out, _B_cross_n)
-
-    rho_cp_A_fld = (rho_cp_A if np.ndim(rho_cp_A) > 0
-                    else np.full((N_x, N_y), rho_cp_A))
-    rho_cp_B_fld = (rho_cp_B if np.ndim(rho_cp_B) > 0
-                    else np.full((N_x, N_y), rho_cp_B))
-
-    try:
-        Q_A_fine = _enthalpy_balance_2d(
-            Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
-            inlet_mask=mA_in, outlet_mask=mA_out)
-        Q_B_fine = _enthalpy_balance_2d(
-            Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
-            inlet_mask=mB_in, outlet_mask=mB_out)
-        Q_A_coarse = _enthalpy_balance_2d(
-            Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
-            inlet_mask=mA_in2, outlet_mask=mA_out2)
-        Q_B_coarse = _enthalpy_balance_2d(
-            Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
-            inlet_mask=mB_in2, outlet_mask=mB_out2)
-        # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
-        # separately, THEN take max. Each Richardson acts on a smooth
-        # (single-sign) function across refinement, so the formal
-        # 2nd-order extrapolation stays valid. Prior pipeline applied
-        # Richardson after max(), which fails if max-argument flips
-        # between the coarse and fine grids.
-        Q_A_ext = (4.0 * abs(Q_A_fine)   - abs(Q_A_coarse)  ) / 3.0
-        Q_B_ext = (4.0 * abs(Q_B_fine)   - abs(Q_B_coarse)  ) / 3.0
-        # 2026-05-09 — NaN-fallback: if either side's 2× refined solve
-        # NaN-blew up (e.g. ConstDF-v1 K extrapolation at t outside
-        # [0.3, 0.5] mm produces unphysical Brinkman coefficients on the
-        # finer grid), Richardson extrapolation propagates nan up to
-        # Q_total. Fall back to the directly-measured Q_fine value, which
-        # only depends on the user-grid Ta (already nan-guarded above).
-        # User still sees a finite Q in the UI; we set richardson_warn
-        # so the warning banner reflects degraded grid convergence.
-        if not np.isfinite(Q_A_ext):
-            Q_A_ext = abs(Q_A_fine) if np.isfinite(Q_A_fine) else float('nan')
-        if not np.isfinite(Q_B_ext):
-            Q_B_ext = abs(Q_B_fine) if np.isfinite(Q_B_fine) else float('nan')
-        # Robust max across (possibly nan) candidates: prefer finite values.
-        _q_candidates = [v for v in (Q_A_ext, Q_B_ext)
-                         if np.isfinite(v)]
-        Q_total = max(_q_candidates) if _q_candidates else float('nan')
-
-        Q_fine_max = max(abs(Q_A_fine), abs(Q_B_fine))
-        Q_coarse_max = max(abs(Q_A_coarse), abs(Q_B_coarse))
-        # Flag when fine vs coarse grid differ a lot (Richardson 2nd-order
-        # assumption in doubt). Per-side unified metric: compare the side
-        # that dominates Q_total. Also flag when Richardson fell back to
-        # the direct Q_fine (means the 2× refined solve was unreliable).
-        _denom = max(Q_fine_max, 1e-12)
-        richardson_warn = (
-            (np.isfinite(Q_coarse_max)
-             and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
-            or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
-    except Exception as _q_exc:
-        import traceback as _tb
-        _tb.print_exc()
-        print(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
-              f"falling through to 1D-mean fallback.")
-        Q_A_fine = Q_B_fine = float('nan')
-        Q_A_ext = Q_B_ext = float('nan')
-        Q_fine_max = float('nan')
-        Q_total = float('nan')
-        richardson_warn = False
-
-    # 2026-05-09 — UNCONDITIONAL last-resort 1D fallback. Runs OUTSIDE the
-    # try/except above so an exception in the Richardson block doesn't
-    # short-circuit it. Computes
-    #     Q_A ≈ m_dot_A · cp_A · |T_inA − ⟨T_out_A⟩|
-    # using the same outlet-face mean convention the UI's T_OUT widget uses
-    # (np.mean over the outlet face with a finite-only filter). Q_total
-    # stays whatever Richardson / Q_*_fine produced when those are finite;
-    # if and only if Q_total is nan after the Richardson block, this
-    # bumps in. Guarantees Q_total is finite whenever T_OUT_A / T_OUT_B
-    # display finite (which is the same condition the UI advertises).
-    if not np.isfinite(Q_total):
-        try:
-            # Outlet face per side. dir_code: 0=+x 1=-x 2=+y 3=-y.
-            if dir_A == 0:    Tout_A_face = Ta[-1, :]
-            elif dir_A == 1:  Tout_A_face = Ta[0, :]
-            elif dir_A == 2:  Tout_A_face = Ta[:, -1]
-            else:             Tout_A_face = Ta[:, 0]
-            if dir_B == 0:    Tout_B_face = Tb[-1, :]
-            elif dir_B == 1:  Tout_B_face = Tb[0, :]
-            elif dir_B == 2:  Tout_B_face = Tb[:, -1]
-            else:             Tout_B_face = Tb[:, 0]
-            _Tout_A_finite = Tout_A_face[np.isfinite(Tout_A_face)]
-            _Tout_B_finite = Tout_B_face[np.isfinite(Tout_B_face)]
-            T_out_A_mean = (float(np.mean(_Tout_A_finite))
-                            if _Tout_A_finite.size else float(T_inA))
-            T_out_B_mean = (float(np.mean(_Tout_B_finite))
-                            if _Tout_B_finite.size else float(T_inB))
-            rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
-            rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
-            cp_A_in  = float(_pA['cp'](T_inA))
-            cp_B_in  = float(_pB['cp'](T_inB))
-            A_in_A = float(cfgA.get('in_w', H))
-            A_in_B = float(cfgB.get('in_w', L))
-            m_dot_A = rho_A_in * abs(u_A) * A_in_A
-            m_dot_B = rho_B_in * abs(u_B) * A_in_B
-            Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
-            Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
-            Q_total = max(Q_A_simple, Q_B_simple)
-            if np.isfinite(Q_total):
-                warnings_list.append(
-                    f"Q_total computed via 1D plate-average fallback "
-                    f"(m_dot · cp · |T_in − ⟨T_out⟩|) because the "
-                    f"cross-stream-resolved enthalpy integral was unavailable. "
-                    f"Q_A={Q_A_simple:.0f} W/m, Q_B={Q_B_simple:.0f} W/m. "
-                    f"Tighten tol or refine grid for production-grade Q.")
-                richardson_warn = True
-            print(f"[Q-calc] 1D fallback: Q_A={Q_A_simple:.1f}, "
-                  f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
-                  f"(T_out_A_mean={T_out_A_mean:.2f}K, "
-                  f"T_out_B_mean={T_out_B_mean:.2f}K)")
-        except Exception as _fb_exc:
-            import traceback as _tb2
-            _tb2.print_exc()
-            print(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
-                  f"Q_total stays nan.")
+    (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
+     richardson_warn) = _compute_Q_richardson(
+        Ta, Tb, Ts, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
+        simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
+        energy_dx, energy_dy, _x_breaks, _y_breaks,
+        T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
+        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list)
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
