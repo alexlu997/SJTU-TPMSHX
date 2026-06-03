@@ -1,27 +1,18 @@
 """Read-only info / help dialogs for ``Main_Menu``.
 
-Extracted from the ``main`` god object: the overview-dashboard launcher,
-the test-suite info box, and the solve-log viewer. Pure presentation glue —
-no solver / numeric path. Adopted via
-``class Main_Menu(RunHistoryMixin, DialogsMixin, ..., QMainWindow)``; methods
-resolve on the live window through the MRO, so external callers (command
-palette, Ctrl+D shortcut, status-bar badge) keep working unchanged.
+Extracted from the ``main`` god object: the overview-dashboard launcher and
+the solve-log viewer. Pure presentation glue — no solver / numeric path.
+Adopted via ``class Main_Menu(RunHistoryMixin, DialogsMixin, ..., QMainWindow)``;
+methods resolve on the live window through the MRO, so external callers
+(command palette, Ctrl+D shortcut) keep working unchanged.
 
-Host contract: ``_last_solve_log`` (str, optional), ``statusBar()``, and a
-``tests/`` dir at the package root (anchored via ``_PKG_ROOT`` below, NOT via
-``__file__`` — which from here would resolve to ui/mixins/, not the package
-root the original main.py used).
+Host contract: ``_last_solve_log`` (str, optional) and ``statusBar()``.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
-
-# tests/ lives at the package root: ui/mixins/dialogs.py -> parents[2].
-_PKG_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _btn_styles() -> dict:
@@ -44,33 +35,6 @@ class DialogsMixin:
         """Open the D7 overview dashboard dialog."""
         from ui.overview import open_overview
         open_overview(self)
-
-    def _show_test_info(self):
-        """Static info about the project's test suite. The count on the
-        status-bar badge is hand-maintained; this dialog surfaces the file
-        list for users curious about coverage."""
-        import os as _os_ti
-        tests_dir = str(_PKG_ROOT / 'tests')
-        files = []
-        try:
-            for f in sorted(_os_ti.listdir(tests_dir)):
-                if f.startswith('test_') and f.endswith('.py'):
-                    files.append(f)
-        except Exception:
-            pass
-        lines = [f"<b>{len(files)} test modules</b>", ""]
-        for f in files:
-            lines.append(f"<code>{f}</code>")
-        lines.append("")
-        lines.append("Run locally:")
-        lines.append(
-            "<code>QT_QPA_PLATFORM=offscreen pytest tests/ -q</code>")
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Test suite")
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText("<br>".join(lines))
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
 
     def _show_solve_log(self):
         """Modal text viewer for the last captured solver stdout."""

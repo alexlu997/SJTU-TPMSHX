@@ -1401,31 +1401,15 @@ def build_canvas_area(window):
     window.btn_tab_vel.hide()
     toolbar.addStretch()
 
-    btn_zoom_in = QPushButton("+")
-    btn_zoom_out = QPushButton("-")
-    btn_reset_view = QPushButton("Reset View")
-    for b in (btn_zoom_in, btn_zoom_out, btn_reset_view):
-        b.setFixedHeight(28); b.setStyleSheet(t.style('BTN_TERTIARY'))
-    btn_zoom_in.setFixedWidth(32); btn_zoom_out.setFixedWidth(32)
-    btn_zoom_in.setToolTip("Zoom current canvas card in (Ctrl+Wheel)")
-    btn_zoom_out.setToolTip("Zoom current canvas card out (Ctrl+Wheel)")
-    btn_reset_view.setToolTip("Reset current canvas card to default size")
-    btn_zoom_in.clicked.connect(lambda: canvas_zoom(window, 1.2))
-    btn_zoom_out.clicked.connect(lambda: canvas_zoom(window, 0.8))
+    # Fit View — restore the current canvas card to its default size after
+    # Ctrl+Wheel zooming. (The +/- buttons were redundant with the wheel;
+    # the 1↔2 column toggle was niche — both removed in the 2026-06 declutter.)
+    btn_reset_view = QPushButton("Fit View")
+    btn_reset_view.setFixedHeight(28)
+    btn_reset_view.setStyleSheet(t.style('BTN_TERTIARY'))
+    btn_reset_view.setToolTip("Fit current canvas card to its default size")
     btn_reset_view.clicked.connect(lambda: canvas_zoom_reset(window))
-    toolbar.addWidget(btn_zoom_in)
-    toolbar.addWidget(btn_zoom_out)
     toolbar.addWidget(btn_reset_view)
-
-    # Canvas column toggle (1 ↔ 2 cols). Lives next to the zoom buttons
-    # since both affect canvas presentation rather than data.
-    btn_canvas_cols = QPushButton("⊞")
-    btn_canvas_cols.setFixedSize(32, 28)
-    btn_canvas_cols.setStyleSheet(t.style('BTN_TERTIARY'))
-    btn_canvas_cols.setToolTip("Switch to two-column canvas layout")
-    btn_canvas_cols.clicked.connect(lambda: toggle_canvas_cols(window))
-    window.btn_canvas_cols = btn_canvas_cols
-    toolbar.addWidget(btn_canvas_cols)
 
     btn_export_fig = QPushButton("Export &Figure")
     btn_export_fig.setFixedHeight(28)
@@ -2010,19 +1994,6 @@ def _relayout_canvas_cards(window, cols):
         r, c = divmod(i, cols)
         lay.addWidget(card, r, c)
     window._canvas_cols = cols
-
-
-def toggle_canvas_cols(window):
-    """Flip between single-column and two-column canvas layouts. Wired from
-    the canvas-area toolbar button."""
-    current = getattr(window, '_canvas_cols', 1)
-    new = 2 if current == 1 else 1
-    _relayout_canvas_cards(window, new)
-    if hasattr(window, 'btn_canvas_cols'):
-        window.btn_canvas_cols.setText("⊟" if new == 2 else "⊞")
-        window.btn_canvas_cols.setToolTip(
-            "Switch to single-column canvas layout" if new == 2
-            else "Switch to two-column canvas layout")
 
 
 def canvas_zoom(window, factor):

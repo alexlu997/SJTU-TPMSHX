@@ -881,21 +881,11 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
     # ─────────────────────────────────────────────────────────
 
     def _refresh_status_bar(self):
-        """Re-read preset / workspace / Re / clock values and repaint the
-        persistent status-bar widgets. Safe to call before the widgets
-        exist (early startup) — silently no-ops."""
-        if not hasattr(self, '_sb_preset'):
+        """Re-read Re / clock values and repaint the persistent status-bar
+        widgets. Safe to call before the widgets exist (early startup) —
+        silently no-ops."""
+        if not hasattr(self, '_sb_re'):
             return
-        preset_name = getattr(self, '_active_preset_name', None) or "—"
-        try:
-            self._sb_preset.setText(f"Preset: {preset_name}")
-        except Exception:
-            pass
-        try:
-            self._sb_ws.setText(
-                f"WS: {getattr(self, '_active_workspace', 'A')}")
-        except Exception:
-            pass
         # Re values come from the `_v_ReA`/`_v_ReB` result labels when a
         # compute has populated them. Fall back to "—" before first run.
         try:

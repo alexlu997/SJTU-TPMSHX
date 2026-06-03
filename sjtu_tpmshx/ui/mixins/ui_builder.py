@@ -87,8 +87,6 @@ class UIBuilderMixin:
             f"border-top:1px solid {_t['card_border']};}}"
             f"QStatusBar QLabel{{color:{_t['fg']};}}"
             "QStatusBar::item{border:none;}")
-        self._sb_preset = _mk("Preset: —")
-        self._sb_ws = _mk(f"WS: {getattr(self, '_active_workspace', 'A')}")
         self._sb_re = _mk("Re: —")
         self._sb_clock = _mk("⏱ —")
 
@@ -111,24 +109,7 @@ class UIBuilderMixin:
         self._sb_live_resid.setFixedWidth(120)
         self._sb_live_resid.hide()
 
-        # Test-coverage badge — mouse-click opens a summary dialog. Count
-        # is sampled from the project's known pytest collection; update
-        # here when the suite grows significantly.
-        self._sb_tests = _mk("✓ 37 tests")
-        self._sb_tests.setStyleSheet(
-            _mono_css.replace(
-                f"color:{_t.get('sub_fg', _t['fg'])};",
-                f"color:{_t.get('accent_green', '#22C55E')};")
-            + "font-weight:bold;")
-        self._sb_tests.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._sb_tests.setToolTip(
-            "37 pytest tests pass locally — click for details")
-        self._sb_tests.mousePressEvent = (
-            lambda _ev: self._show_test_info())
-
-        for w in (self._sb_preset, _sep(), self._sb_ws, _sep(),
-                  self._sb_re, _sep(), self._sb_clock,
-                  _sep(), self._sb_tests,
+        for w in (self._sb_re, _sep(), self._sb_clock,
                   _sep(), self._sb_live_resid):
             sb.addPermanentWidget(w)
         self._refresh_status_bar()
