@@ -42,8 +42,8 @@ DEFAULT_SYMMETRIC_Y = True
 # (no extrapolation), which collapses SIMPLE convergence and produces
 # 100% rejected designs. See df_fit/surrogate_domain.py for the same
 # limits enforced on the UI Compute path.
-DEFAULT_L_BOUNDS = (4.0, 8.0)    # mm
-DEFAULT_T_BOUNDS = (0.3, 0.5)    # mm
+# Training convex hull [mm] — single source in df_fit/_domain.py.
+from df_fit._domain import TRAIN_L as DEFAULT_L_BOUNDS, TRAIN_T as DEFAULT_T_BOUNDS
 # Manufacturability ratio: lower-bounded slightly below 0.3/8 = 0.0375 so
 # the corner (L=8, t=0.3) does not trip the penalty; upper-bounded loose.
 DEFAULT_RATIO_BOUNDS = (0.035, 0.20)   # t / L

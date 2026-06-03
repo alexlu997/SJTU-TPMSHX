@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from df_fit._domain import TRAIN_L_NODES, TRAIN_T_NODES
+
 
 # ---------------------------------------------------------------- types
 
@@ -161,8 +163,8 @@ def geometry_extrapolation_warning(L_cell_mm: float,
     Lighter-weight than full ``validate_geometry`` — used by the live
     UI to flash an inline tip without recomputing every check.
     """
-    L_train = (4.0, 5.0, 6.0, 8.0)
-    t_train = (0.3, 0.4, 0.5)
+    L_train = TRAIN_L_NODES
+    t_train = TRAIN_T_NODES
     in_L = any(abs(L_cell_mm - v) < 1e-6 for v in L_train)
     in_t = any(abs(t_mm - v) < 1e-6 for v in t_train)
     if in_L and in_t:

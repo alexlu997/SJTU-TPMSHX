@@ -13,10 +13,12 @@ patch-zoning optimizer was retired in favor of the continuous-field design.
 from __future__ import annotations
 from typing import List, Tuple
 
-# ConstDF-v1 surrogate fitted window (Diamond + Gyroid)
-_SURROGATE_L_MM: Tuple[float, float] = (4.0, 8.0)         # unit cell size [mm]
-_SURROGATE_T_MM: Tuple[float, float] = (0.3, 0.5)         # wall thickness [mm]
-_SURROGATE_RE:   Tuple[float, float] = (400.0, 16000.0)   # Re ρ·u·D_h/μ
+# ConstDF-v1 surrogate fitted window — single source in df_fit/_domain.py.
+from ._domain import (
+    TRAIN_L as _SURROGATE_L_MM,
+    TRAIN_T as _SURROGATE_T_MM,
+    TRAIN_RE as _SURROGATE_RE,
+)
 
 
 def check_surrogate_domain_at_point(tpms_type: str,
