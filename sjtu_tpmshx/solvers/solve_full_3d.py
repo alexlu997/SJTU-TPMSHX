@@ -23,6 +23,7 @@ Phase 1 additions (2026-04-20):
   * Conservation probes: energy_balance_3d, mass_balance_3d helpers.
 """
 
+import os
 import numpy as np
 from numba import njit
 
@@ -186,7 +187,8 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             n_iters, freeze_Tb,
                             alpha_fA, alpha_s, alpha_fB,
                             chi_B_arr, chi_B_kernel_threshold,
-                            mms_S_A_arr, mms_S_B_arr, mms_S_s_arr):
+                            mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
+                            conservative):
     max_chg = 0.0
 
     if bc_A == 1:
@@ -288,24 +290,41 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                         tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
                         tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
 
-                        # SOU deferred correction with cell-center velocity
-                        u_c_sou = 0.5*(u_e + u_w)
-                        v_c_sou = 0.5*(v_n + v_s)
-                        w_c_sou = 0.5*(w_t + w_b)
-                        Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
-                        Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
-                        Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
-                        sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c_sou, Fx_mag)
-                               + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c_sou, Fy_mag)
-                               + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c_sou, Fz_mag))
-
-                        # aP = Σa_nb + hvA. NET_OUT (mass-imbal) tried in
-                        # multiple variants (full, interior-only, BC pin
-                        # penalty, source split): all destabilise because BC
-                        # face flux ≠ adjacent interior face flux when SIMPLE
-                        # has any per-cell residual. cell-local stable + 13-22%
-                        # AB imbal accepted as discretisation limit.
-                        aP = aE + aW + aN + aS + aT + aB + hvA
+                        if conservative == 1:
+                            # Strict-conservation (B-plan B2): the SIMPLE
+                            # staggered face flux is the SAME value for the two
+                            # cells sharing a face (F_e of cell i ≡ F_w of cell
+                            # i+1), so advection telescopes. Adding the signed
+                            # net-mass-out term to aP completes the Patankar
+                            # conservative form — summing the discrete per-cell
+                            # balance over the domain then collapses to
+                            # ∮F·n dA = ∫S dV (machine-accurate, see 1D PoC).
+                            # Pure upwind only: the cell-local SOU deferred
+                            # correction does NOT telescope across the shared
+                            # face and would reintroduce non-conservation.
+                            sou = 0.0
+                            net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
+                            aP = aE + aW + aN + aS + aT + aB + net_out + hvA
+                        else:
+                            # SOU deferred correction with cell-center velocity
+                            u_c_sou = 0.5*(u_e + u_w)
+                            v_c_sou = 0.5*(v_n + v_s)
+                            w_c_sou = 0.5*(w_t + w_b)
+                            Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
+                            Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
+                            Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
+                            sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c_sou, Fx_mag)
+                                   + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c_sou, Fy_mag)
+                                   + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c_sou, Fz_mag))
+                            # aP = Σa_nb + hvA. NET_OUT (mass-imbal) tried in
+                            # multiple variants (full, interior-only, BC pin
+                            # penalty, source split): all destabilise because BC
+                            # face flux ≠ adjacent interior face flux when SIMPLE
+                            # has any per-cell residual. cell-local stable + 13-22%
+                            # AB imbal accepted as discretisation limit.
+                            aP = aE + aW + aN + aS + aT + aB + hvA
+                        if aP < 1e-30:
+                            aP = 1e-30
                         # MMS source injection (volume-integrated, units W).
                         # Default zero-array → production no-op.
                         S_A_cell = mms_S_A_arr[i, j, k] * vol
@@ -438,17 +457,26 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
                             tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
 
-                            uBc_sou = 0.5*(uB_e + uB_w)
-                            vBc_sou = 0.5*(vB_n + vB_s)
-                            wBc_sou = 0.5*(wB_t + wB_b)
-                            FxB_mag = efB_c * rcpB_c * abs(uBc_sou) * Ax
-                            FyB_mag = efB_c * rcpB_c * abs(vBc_sou) * Ay
-                            FzB_mag = efB_c * rcpB_c * abs(wBc_sou) * Az
-                            soub = (_sou_corr_x_3d(Tb, i, j, k, Nx, uBc_sou, FxB_mag)
-                                    + _sou_corr_y_3d(Tb, i, j, k, Ny, vBc_sou, FyB_mag)
-                                    + _sou_corr_z_3d(Tb, i, j, k, Nz, wBc_sou, FzB_mag))
-
-                            aPb = aEb + aWb + aNb + aSb + aTb + aBb + hvB
+                            if conservative == 1:
+                                # Strict-conservation B side (mirror of A).
+                                soub = 0.0
+                                net_outB = ((FB_e - FB_w) + (FB_n - FB_s)
+                                            + (FB_t - FB_b))
+                                aPb = (aEb + aWb + aNb + aSb + aTb + aBb
+                                       + net_outB + hvB)
+                            else:
+                                uBc_sou = 0.5*(uB_e + uB_w)
+                                vBc_sou = 0.5*(vB_n + vB_s)
+                                wBc_sou = 0.5*(wB_t + wB_b)
+                                FxB_mag = efB_c * rcpB_c * abs(uBc_sou) * Ax
+                                FyB_mag = efB_c * rcpB_c * abs(vBc_sou) * Ay
+                                FzB_mag = efB_c * rcpB_c * abs(wBc_sou) * Az
+                                soub = (_sou_corr_x_3d(Tb, i, j, k, Nx, uBc_sou, FxB_mag)
+                                        + _sou_corr_y_3d(Tb, i, j, k, Ny, vBc_sou, FyB_mag)
+                                        + _sou_corr_z_3d(Tb, i, j, k, Nz, wBc_sou, FzB_mag))
+                                aPb = aEb + aWb + aNb + aSb + aTb + aBb + hvB
+                            if aPb < 1e-30:
+                                aPb = 1e-30
                             # MMS source for B (vol-integrated, [W]).
                             S_B_cell = mms_S_B_arr[i, j, k] * vol_b
                             new_b = (aEb*tEb + aWb*tWb + aNb*tNb + aSb*tSb
@@ -889,6 +917,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           mms_S_A_field=None,
                           mms_S_B_field=None,
                           mms_S_s_field=None,
+                          conservative_ltne=False,
                           cancel_check=None,
                           q_rel_tol=None, conv_chunk=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
@@ -1099,6 +1128,14 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     # drift on ρ-varying flows due to cell-averaged face u).
     use_stag = (ufA is not None and vfA is not None and wfA is not None
                 and ufB is not None and vfB is not None and wfB is not None)
+    # Strict energy-conservation path (B-plan B2): only the staggered kernel
+    # carries the shared face fluxes needed for telescoping, so it is a hard
+    # prerequisite for the conservative form.
+    _cons = 1 if conservative_ltne else 0
+    if conservative_ltne and not use_stag:
+        raise ValueError(
+            "conservative_ltne=True requires staggered face velocities "
+            "(ufA/vfA/wfA + ufB/vfB/wfB); pass them (force_cc_ltne=False).")
     if use_stag:
         ufA = np.ascontiguousarray(ufA, dtype=np.float64)
         vfA = np.ascontiguousarray(vfA, dtype=np.float64)
@@ -1136,6 +1173,42 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     mms_S_B_arr = _mms_arr(mms_S_B_field)
     mms_S_s_arr = _mms_arr(mms_S_s_field)
 
+    if use_stag and os.environ.get('TPMSHX_CONS_DIAG'):
+        Ax3 = (dy_arr[None, :, None] * dz_arr[None, None, :])
+        Ay3 = (dx_arr[:, None, None] * dz_arr[None, None, :])
+        Az3 = (dx_arr[:, None, None] * dy_arr[None, :, None])
+
+        def _facemean(c, ax):
+            lo = [slice(None)] * 3
+            hi = [slice(None)] * 3
+            n = c.shape[ax]
+            inner = 0.5 * (np.take(c, range(0, n - 1), ax)
+                           + np.take(c, range(1, n), ax))
+            first = np.take(c, [0], ax)
+            last = np.take(c, [n - 1], ax)
+            return np.concatenate([first, inner, last], axis=ax)
+
+        def _netout(uf, vf, wf, rcp):
+            Fx = (_facemean(eps_f_arr, 0) * _facemean(rcp, 0) * uf
+                  * np.broadcast_to(Ax3, uf.shape))
+            Fy = (_facemean(eps_f_arr, 1) * _facemean(rcp, 1) * vf
+                  * np.broadcast_to(Ay3, vf.shape))
+            Fz = (_facemean(eps_f_arr, 2) * _facemean(rcp, 2) * wf
+                  * np.broadcast_to(Az3, wf.shape))
+            return (Fx[1:, :, :] - Fx[:-1, :, :]
+                    + Fy[:, 1:, :] - Fy[:, :-1, :]
+                    + Fz[:, :, 1:] - Fz[:, :, :-1])
+        noA = _netout(ufA, vfA, wfA, rho_cp_fA_arr)
+        noB = _netout(ufB, vfB, wfB, rho_cp_fB_arr)
+        hvA_scale = float(np.sum(np.abs(h_vA_arr * cell_vol)))
+        hvB_scale = float(np.sum(np.abs(h_vB_arr * cell_vol)))
+        print(f"[CONS-DIAG] A net_out: sum={np.sum(noA):.3e} "
+              f"abs_sum={np.sum(np.abs(noA)):.3e} max={np.max(np.abs(noA)):.3e} "
+              f"hvA_scale={hvA_scale:.3e}", flush=True)
+        print(f"[CONS-DIAG] B net_out: sum={np.sum(noB):.3e} "
+              f"abs_sum={np.sum(np.abs(noB)):.3e} max={np.max(np.abs(noB)):.3e} "
+              f"hvB_scale={hvB_scale:.3e}", flush=True)
+
     while done < max_iter:
         n = min(chunk, max_iter - done)
         if use_stag:
@@ -1150,7 +1223,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 ifrac_A, ifrac_B,
                 n, freeze_Tb, a_fA, a_s, a_fB,
                 chi_B_arr, chi_B_thr,
-                mms_S_A_arr, mms_S_B_arr, mms_S_s_arr)
+                mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
+                _cons)
         else:
             chg = _gs_full_chunk_3d(
                 Ta, Tb, Ts, Nx, Ny, Nz,

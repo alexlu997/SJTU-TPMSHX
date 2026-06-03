@@ -2274,6 +2274,8 @@ def _run_3d_stack(cfg):
         # (7% imbalance between m_in and m_out). Default restored to 0.0;
         # tuning requires re-validation before re-enabling.
         _chi_B_kernel_thr = float(cfg.get('chi_B_kernel_threshold', 0.0))
+        # B-plan B2: strict face-centered energy conservation (telescoping aP).
+        _conservative_ltne = bool(cfg.get('conservative_ltne', False))
 
         # MMS source fields (Air-Air V&V Phase A.1). Default None → no-op.
         # Solver accepts (Nx, Ny, Nz) arrays; volume-integrated source per
@@ -2308,15 +2310,19 @@ def _run_3d_stack(cfg):
             # The face (stag) chunk's SOU uses a cc-reconstructed flux magnitude
             # inconsistent with its face base fluxes, which limit-cycles the
             # deferred correction for stiff low-Re water (point-0 root cause).
-            ufA=(None if cfg.get('force_cc_ltne', True) else ufA),
-            vfA=(None if cfg.get('force_cc_ltne', True) else vfA),
-            wfA=(None if cfg.get('force_cc_ltne', True) else wfA),
+            # conservative_ltne (B-plan B2) overrides force_cc_ltne: the strict
+            # face-centered conservation form lives in the stag kernel, so the
+            # SIMPLE face velocities MUST flow through regardless.
+            ufA=(ufA if _conservative_ltne or not cfg.get('force_cc_ltne', True) else None),
+            vfA=(vfA if _conservative_ltne or not cfg.get('force_cc_ltne', True) else None),
+            wfA=(wfA if _conservative_ltne or not cfg.get('force_cc_ltne', True) else None),
             ufB=ufB, vfB=vfB, wfB=wfB,
             chi_B_field=chi_B,
             chi_B_kernel_threshold=_chi_B_kernel_thr,
             mms_S_A_field=_mms_S_A,
             mms_S_B_field=_mms_S_B,
             mms_S_s_field=_mms_S_s,
+            conservative_ltne=_conservative_ltne,
             cancel_check=_cancel_check,
             return_info=True)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result

@@ -240,6 +240,7 @@ def run_mms(case='3d', Nx=20, Ny=20, Nz=20,
             alpha_f, alpha_s, alpha_f,         # under-relaxation (SOU at high Pe)
             chi_B_arr, 0.0,                    # kernel chi threshold = 0 (no skip)
             mms_S_A, mms_S_B, mms_S_s,
+            0,                                 # conservative=0 → keep SOU (2nd-order MMS)
         )
         last_chg = float(chg)
         if last_chg < tol:
