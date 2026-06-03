@@ -158,8 +158,12 @@ def _eval_grid(fn, X, Y, Z):
 # ─────────────────────────────────────────────────────────────────────────
 def run_mms(case='3d', Nx=20, Ny=20, Nz=20,
             max_outer=5000, inner=50,
-            tol=1e-10, alpha_f=0.7, alpha_s=1.0, verbose=True):
-    """Run MMS test on grid Nx x Ny x Nz; return error metrics dict."""
+            tol=1e-10, alpha_f=0.7, alpha_s=1.0, verbose=True,
+            conservative=0):
+    """Run MMS test on grid Nx x Ny x Nz; return error metrics dict.
+
+    conservative=1 drives the face-shared conservative HO kernel branch
+    (B-plan B4 order verification); 0 keeps the legacy cell-local SOU path."""
     mms = _build_mms(case)
 
     dx = L_DOM / Nx
@@ -240,7 +244,7 @@ def run_mms(case='3d', Nx=20, Ny=20, Nz=20,
             alpha_f, alpha_s, alpha_f,         # under-relaxation (SOU at high Pe)
             chi_B_arr, 0.0,                    # kernel chi threshold = 0 (no skip)
             mms_S_A, mms_S_B, mms_S_s,
-            0,                                 # conservative=0 → keep SOU (2nd-order MMS)
+            conservative,                      # 0=cell-local SOU; 1=face-shared conservative HO
         )
         last_chg = float(chg)
         if last_chg < tol:

@@ -216,6 +216,11 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     TB = T.copy(); TB[:, :, 1:] = T[:, :, :-1]
     r = (aP * T - aE * TE - aW * TW - aN * TN - aS * TS - aT * TT - aB * TB
          - hv * vol * Ts)
+    # Subtract the conservative HO deferred source so this measures the TRUE
+    # residual of the equation the kernel actually solves (FO implicit + sou).
+    # The sou itself telescopes, so conservation is preserved; r → 0 at
+    # convergence. (For pure-upwind it is identically 0 ⇒ no-op.)
+    r = r - _sou_field_cons(T, Fx, Fy, Fz)
 
     # Interior mask: drop inlet-pinned + outlet zero-grad cell layers.
     interior = np.ones((Nx, Ny, Nz), dtype=bool)
@@ -317,6 +322,106 @@ def _sou_corr_z_3d(T, i, j, k, Nz, w_loc, Fz):
             phi_b = _va_limit(T[i, j, k] - T[i, j, k+1],
                               T[i, j, k-1] - T[i, j, k])
         return 0.5 * Fz * (phi_t - phi_b)
+
+
+# ---------------------------------------------------------------------------
+# Conservative (telescoping) SOU deferred correction — face-shared.
+#
+# Unlike _sou_corr_*_3d (cell-local: each cell uses its own |u_c| magnitude, so
+# the correction at a shared face differs between the two adjacent cells and
+# breaks conservation), these use the SIGNED shared face flux to pick the
+# upwind side. The HO increment (T_HO_face − T_up_face) = 0.5·minmod(...) is a
+# pure function of the face + neighbour T values, identical from both cells'
+# view, so the deferred source Σ_faces ∓F_face·inc telescopes ⇒ strictly
+# conservative AND 2nd-order. Source convention matches the kernel:
+#   sou = −Σ_faces F_face·(T_HO−T_up)·(outward sign)
+# ---------------------------------------------------------------------------
+
+@njit(cache=True, fastmath=True)
+def _sou_face_x_cons(T, i, j, k, Nx, Fw, Fe):
+    inc_e = 0.0
+    if Fe >= 0.0:                      # east face upwind = cell i
+        if 0 < i < Nx - 1:
+            inc_e = 0.5 * _va_limit(T[i, j, k] - T[i-1, j, k],
+                                    T[i+1, j, k] - T[i, j, k])
+    else:                              # east face upwind = cell i+1
+        if i < Nx - 2:
+            inc_e = 0.5 * _va_limit(T[i+1, j, k] - T[i+2, j, k],
+                                    T[i, j, k] - T[i+1, j, k])
+    inc_w = 0.0
+    if Fw >= 0.0:                      # west face upwind = cell i-1
+        if i > 1:
+            inc_w = 0.5 * _va_limit(T[i-1, j, k] - T[i-2, j, k],
+                                    T[i, j, k] - T[i-1, j, k])
+    else:                              # west face upwind = cell i
+        if 0 < i < Nx - 1:
+            inc_w = 0.5 * _va_limit(T[i, j, k] - T[i+1, j, k],
+                                    T[i-1, j, k] - T[i, j, k])
+    return -Fe * inc_e + Fw * inc_w
+
+
+@njit(cache=True, fastmath=True)
+def _sou_face_y_cons(T, i, j, k, Ny, Fs, Fn):
+    inc_n = 0.0
+    if Fn >= 0.0:
+        if 0 < j < Ny - 1:
+            inc_n = 0.5 * _va_limit(T[i, j, k] - T[i, j-1, k],
+                                    T[i, j+1, k] - T[i, j, k])
+    else:
+        if j < Ny - 2:
+            inc_n = 0.5 * _va_limit(T[i, j+1, k] - T[i, j+2, k],
+                                    T[i, j, k] - T[i, j+1, k])
+    inc_s = 0.0
+    if Fs >= 0.0:
+        if j > 1:
+            inc_s = 0.5 * _va_limit(T[i, j-1, k] - T[i, j-2, k],
+                                    T[i, j, k] - T[i, j-1, k])
+    else:
+        if 0 < j < Ny - 1:
+            inc_s = 0.5 * _va_limit(T[i, j, k] - T[i, j+1, k],
+                                    T[i, j-1, k] - T[i, j, k])
+    return -Fn * inc_n + Fs * inc_s
+
+
+@njit(cache=True, fastmath=True)
+def _sou_face_z_cons(T, i, j, k, Nz, Fb, Ft):
+    inc_t = 0.0
+    if Ft >= 0.0:
+        if 0 < k < Nz - 1:
+            inc_t = 0.5 * _va_limit(T[i, j, k] - T[i, j, k-1],
+                                    T[i, j, k+1] - T[i, j, k])
+    else:
+        if k < Nz - 2:
+            inc_t = 0.5 * _va_limit(T[i, j, k+1] - T[i, j, k+2],
+                                    T[i, j, k] - T[i, j, k+1])
+    inc_b = 0.0
+    if Fb >= 0.0:
+        if k > 1:
+            inc_b = 0.5 * _va_limit(T[i, j, k-1] - T[i, j, k-2],
+                                    T[i, j, k] - T[i, j, k-1])
+    else:
+        if 0 < k < Nz - 1:
+            inc_b = 0.5 * _va_limit(T[i, j, k] - T[i, j, k+1],
+                                    T[i, j, k-1] - T[i, j, k])
+    return -Ft * inc_t + Fb * inc_b
+
+
+@njit(cache=True, fastmath=True)
+def _sou_field_cons(T, Fx, Fy, Fz):
+    """Per-cell face-shared SOU deferred-correction field, using the SAME
+    helpers as the conservative kernel. Lets the strict-conservation metric
+    subtract the exact deferred source so the certificate stays valid with HO
+    active (converged: r_FO = sou ⇒ true residual r_FO − sou → 0)."""
+    Nx, Ny, Nz = T.shape
+    sou = np.zeros_like(T)
+    for i in range(Nx):
+        for j in range(Ny):
+            for k in range(Nz):
+                sou[i, j, k] = (
+                    _sou_face_x_cons(T, i, j, k, Nx, Fx[i, j, k], Fx[i+1, j, k])
+                    + _sou_face_y_cons(T, i, j, k, Ny, Fy[i, j, k], Fy[i, j+1, k])
+                    + _sou_face_z_cons(T, i, j, k, Nz, Fz[i, j, k], Fz[i, j, k+1]))
+    return sou
 
 
 # ---------------------------------------------------------------------------
@@ -500,10 +605,14 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             # conservative form — summing the discrete per-cell
                             # balance over the domain then collapses to
                             # ∮F·n dA = ∫S dV (machine-accurate, see 1D PoC).
-                            # Pure upwind only: the cell-local SOU deferred
-                            # correction does NOT telescope across the shared
-                            # face and would reintroduce non-conservation.
-                            sou = 0.0
+                            # HO accuracy via face-SHARED SOU deferred
+                            # correction (B-plan B4): the increment uses the
+                            # signed shared face flux to pick the upwind side,
+                            # so it telescopes ⇒ conservation preserved AND
+                            # 2nd-order. (cell-local _sou_corr_* would break it.)
+                            sou = (_sou_face_x_cons(Ta, i, j, k, Nx, F_w, F_e)
+                                   + _sou_face_y_cons(Ta, i, j, k, Ny, F_s, F_n)
+                                   + _sou_face_z_cons(Ta, i, j, k, Nz, F_b, F_t))
                             net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
                             aP = aE + aW + aN + aS + aT + aB + net_out + hvA
                         else:
@@ -659,8 +768,11 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
 
                             if conservative == 1:
-                                # Strict-conservation B side (mirror of A).
-                                soub = 0.0
+                                # Strict-conservation B side (mirror of A):
+                                # face-shared SOU deferred correction (HO + telescoping).
+                                soub = (_sou_face_x_cons(Tb, i, j, k, Nx, FB_w, FB_e)
+                                        + _sou_face_y_cons(Tb, i, j, k, Ny, FB_s, FB_n)
+                                        + _sou_face_z_cons(Tb, i, j, k, Nz, FB_b, FB_t))
                                 net_outB = ((FB_e - FB_w) + (FB_n - FB_s)
                                             + (FB_t - FB_b))
                                 aPb = (aEb + aWb + aNb + aSb + aTb + aBb
