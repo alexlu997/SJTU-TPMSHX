@@ -247,6 +247,62 @@ def build_quick_design_dialog(parent=None):
     dlg.resize(800, 680)
     dlg.setMinimumSize(640, 520)
 
+    # ── Theme styling ────────────────────────────────────────────────
+    # Quick-design previously used raw Qt defaults (it only inherited the
+    # window palette, so it didn't match the app's design tokens and looked
+    # wrong on the light theme). One cascading stylesheet from the active
+    # theme styles every child widget to match the main UI in both palettes.
+    from ui.theme import get_theme as _gt_qd, _build_styles as _bs_qd
+    _t = _gt_qd()
+    _qd_styles = _bs_qd()
+    dlg.setStyleSheet(
+        f"QDialog{{background:{_t['bg']};}}"
+        f"QWidget{{color:{_t['fg']}; font-size:10pt;}}"
+        f"QLabel{{color:{_t['fg']}; background:transparent;}}"
+        f"QToolTip{{color:{_t['fg']}; background:{_t['surface_elevated']};"
+        f" border:1px solid {_t['card_border']}; padding:4px;}}"
+        f"QLineEdit{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+        f" border:1px solid {_t['inp_border']}; border-radius:6px; padding:4px 8px;}}"
+        f"QLineEdit:focus{{border:1px solid {_t['inp_focus']};}}"
+        f"QLineEdit:disabled{{color:{_t['val_empty_fg']}; background:{_t['scroll_bg']};}}"
+        f"QComboBox{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+        f" border:1px solid {_t['inp_border']}; border-radius:6px; padding:3px 22px 3px 8px;}}"
+        f"QComboBox:hover{{border:1px solid {_t['combo_hover_border']};}}"
+        f"QComboBox::drop-down{{border:none; width:20px;}}"
+        f"QComboBox::down-arrow{{width:0; height:0;"
+        f" border-left:5px solid transparent; border-right:5px solid transparent;"
+        f" border-top:6px solid rgba({_t['combo_arrow']},220);}}"
+        f"QComboBox QAbstractItemView{{background:{_t['combo_list_bg']};"
+        f" color:{_t['combo_list_fg']}; selection-background-color:{_t['combo_sel']};"
+        f" border:1px solid {_t['combo_border']}; outline:none;}}"
+        f"QGroupBox{{color:{_t['fg']}; background:{_t['surface_raised']};"
+        f" border:1px solid {_t['card_border']}; border-radius:8px;"
+        f" margin-top:12px; padding:12px 8px 8px 8px; font-weight:600;}}"
+        f"QGroupBox::title{{subcontrol-origin:margin; subcontrol-position:top left;"
+        f" left:10px; padding:0 5px; color:{_t['sub_fg']};}}"
+        f"QCheckBox{{color:{_t['fg']}; spacing:6px;}}"
+        f"QCheckBox::indicator{{width:15px; height:15px; border-radius:4px;"
+        f" border:1px solid {_t['chk_border']}; background:{_t['chk_bg']};}}"
+        f"QCheckBox::indicator:hover{{border:1px solid {_t['chk_hover_border']};}}"
+        f"QCheckBox::indicator:checked{{background:{_t['chk_checked_bg']};"
+        f" border:1px solid {_t['chk_checked_border']};}}"
+        f"QPushButton{{background:transparent; color:{_t['btn_sec_fg']};"
+        f" border:1px solid {_t['btn_sec_border']}; border-radius:6px;"
+        f" padding:5px 14px; font-weight:600;}}"
+        f"QPushButton:hover{{background:{_t['btn_sec_hover_bg']};}}"
+        f"QTableWidget{{background:{_t['surface_raised']}; color:{_t['fg']};"
+        f" gridline-color:{_t['card_border']}; border:1px solid {_t['card_border']};"
+        f" border-radius:6px;}}"
+        f"QTableWidget::item:selected{{background:{_t['combo_sel']};}}"
+        f"QHeaderView::section{{background:{_t['surface_elevated']}; color:{_t['fg']};"
+        f" border:none; border-right:1px solid {_t['card_border']};"
+        f" border-bottom:1px solid {_t['card_border']}; padding:5px 8px; font-weight:600;}}"
+        f"QScrollBar:vertical, QScrollBar:horizontal{{background:transparent; border:none;}}"
+        f"QScrollBar::handle{{background:{_t['scroll_handle']}; border-radius:4px;"
+        f" min-height:24px; min-width:24px;}}"
+        f"QScrollBar::add-line, QScrollBar::sub-line{{height:0; width:0;}}"
+    )
+
     root = QVBoxLayout(dlg)
     root.setContentsMargins(14, 12, 14, 12)
     root.setSpacing(8)
@@ -365,6 +421,7 @@ def build_quick_design_dialog(parent=None):
     btn_row = QHBoxLayout()
     btn_run = QPushButton("▶ 运行设计")
     btn_run.setMinimumWidth(120)
+    btn_run.setStyleSheet(_qd_styles['BTN_PRIMARY'])   # main action — blue CTA
     btn_run.clicked.connect(lambda: run_quick_design(dlg))
     btn_row.addWidget(btn_run)
 
