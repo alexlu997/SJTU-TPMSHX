@@ -67,7 +67,7 @@ class OverviewDialog(QDialog):
             card = QFrame()
             card.setStyleSheet(
                 f"QFrame{{background:{_elev}; border:1px solid {_border};"
-                "border-radius:12px;}}")
+                "border-radius:12px;}")
             card.setFixedHeight(130)
             v = QVBoxLayout(card)
             v.setContentsMargins(18, 12, 18, 12); v.setSpacing(2)
@@ -111,7 +111,7 @@ class OverviewDialog(QDialog):
         trend_card = QFrame()
         trend_card.setStyleSheet(
             f"QFrame{{background:{_elev}; border:1px solid {_border};"
-            "border-radius:10px;}}")
+            "border-radius:10px;}")
         trend_card.setFixedHeight(110)
         tv = QVBoxLayout(trend_card)
         tv.setContentsMargins(18, 10, 18, 10); tv.setSpacing(4)

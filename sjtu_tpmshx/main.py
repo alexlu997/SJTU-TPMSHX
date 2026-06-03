@@ -2279,7 +2279,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             f"QPlainTextEdit{{background:{get_theme()['inp_bg']};"
             f"color:{get_theme()['inp_fg']};"
             f"border:1px solid {get_theme()['card_border']};"
-            "font-family:'Fira Code', 'Consolas', monospace; font-size:9pt;}}")
+            "font-family:'Fira Code', 'Consolas', monospace; font-size:9pt;}")
         lines = list(getattr(self, '_log_history', []))
         txt.setPlainText("\n".join(lines) if lines
                          else "(no status messages yet)")

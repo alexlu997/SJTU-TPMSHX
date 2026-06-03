@@ -58,7 +58,7 @@ class DialogsMixin:
             f"QPlainTextEdit{{background:{_tsl.get('surface_raised', _tsl['card_bg'])};"
             f"color:{_tsl['fg']}; border:1px solid {_tsl['card_border']};"
             f"font-family:'Fira Code','Consolas',monospace; font-size:10pt;"
-            "padding:8px;}}")
+            "padding:8px;}")
         v.addWidget(edit, 1)
         btn_row = QHBoxLayout(); btn_row.addStretch(1)
         btn_copy = QPushButton("Copy all")
