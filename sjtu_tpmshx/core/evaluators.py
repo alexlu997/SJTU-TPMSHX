@@ -310,6 +310,20 @@ def evaluate_3d(x_decision: np.ndarray,
         ucB_real = np.zeros_like(vcB_real)
         wcB_real = np.zeros_like(vcB_real)
 
+        # Full SIMPLE staggered faces → real coords, to drive the conservative
+        # kernel (B-plan; matches the production run_calculation_3d path so the
+        # optimizer/Pareto evaluator uses the SAME strict-conservation solver
+        # as the UI). sA maps solver→real via transpose(1,0,2) (A streamwise
+        # +x); sB is reverse-y, so its faces mirror along y (axis 1) with the
+        # streamwise (v) component negated — the divergence-preserving
+        # transform, leaving the faces discretely solenoidal.
+        ufA = np.ascontiguousarray(sA.v.transpose(1, 0, 2))   # (Nx+1,Ny,Nz)
+        vfA = np.ascontiguousarray(sA.u.transpose(1, 0, 2))   # (Nx,Ny+1,Nz)
+        wfA = np.ascontiguousarray(sA.w.transpose(1, 0, 2))   # (Nx,Ny,Nz+1)
+        ufB = np.ascontiguousarray(sB.u[:, ::-1, :])          # (Nx+1,Ny,Nz)
+        vfB = np.ascontiguousarray(-sB.v[:, ::-1, :])         # (Nx,Ny+1,Nz)
+        wfB = np.ascontiguousarray(sB.w[:, ::-1, :])          # (Nx,Ny,Nz+1)
+
         if verbose:
             print(f"[3D] outer {outer_it+1}/{max_outer} … ", end='', flush=True)
         t0 = time.perf_counter()
@@ -328,6 +342,8 @@ def evaluate_3d(x_decision: np.ndarray,
             max_iter=max_iter_energy, tol=outer_tol_K,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             alpha_T=0.7,
+            ufA=ufA, vfA=vfA, wfA=wfA, ufB=ufB, vfB=vfB, wfB=wfB,
+            conservative_ltne=True,
         )
         if verbose:
             print(f"{time.perf_counter()-t0:.0f}s")
