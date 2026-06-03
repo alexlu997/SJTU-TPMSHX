@@ -839,6 +839,56 @@ def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     return P_fA, P_fB, dP_A, dP_B
 
 
+def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
+                         energy_dx, energy_dy, Ta, Tb, Ts):
+    """Compute per-zone statistics + boundary lines and stash them on
+    ``window`` (read back by the Pipeline shim after ``_run_solvers``).
+
+    Extracted verbatim from ``_run_solvers`` (#9-2D god-function split).
+    Writes ``window._zone_{axis_dir,stats,boundaries,boundaries_x,
+    boundaries_y}``; returns nothing.
+    """
+    if zone_config is not None and za is not None:
+        window._zone_axis_dir = z_axis
+        if z_axis == 'grid':
+            # Grid mode: boundaries from zone_config
+            window._zone_boundaries = []
+            window._zone_boundaries_x = [b * L for b in za.get('x_bounds', [])]
+            window._zone_boundaries_y = [b * H for b in za.get('y_bounds', [])]
+            # Build dummy Zone objects for statistics
+            from solvers.zone_config import Zone
+            dummy_zones = [Zone(f'g{r}', gc['y0'], gc['y1'], gc['L'], gc['t'])
+                           for r, gc in enumerate(za.get('grid_cells', []))]
+            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            _ca = energy_dx[:, None] * energy_dy[None, :]
+            stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
+                                            cell_area=_ca)
+            print("\n[ZONE STATISTICS]")
+            print(format_zone_report(stats))
+            window._zone_stats = stats
+        else:
+            # 1D mode
+            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            _ca = energy_dx[:, None] * energy_dy[None, :]
+            stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
+                                            zone_config.zones, cell_area=_ca)
+            print("\n[ZONE STATISTICS]")
+            print(format_zone_report(stats))
+            window._zone_stats = stats
+            window._zone_boundaries_x = None
+            window._zone_boundaries_y = None
+            if z_axis == 'y':
+                window._zone_boundaries = [z.y_frac_end * H for z in zone_config.zones[:-1]]
+            else:
+                window._zone_boundaries = [z.y_frac_end * L for z in zone_config.zones[:-1]]
+    else:
+        window._zone_stats = None
+        window._zone_axis_dir = None
+        window._zone_boundaries = None
+        window._zone_boundaries_x = None
+        window._zone_boundaries_y = None
+
+
 def _run_solvers(window, cfg, fields):
     """Phase 3: run SIMPLE + coupling loop + pressure + Richardson Q."""
     L = cfg['L']; H = cfg['H']
@@ -1209,45 +1259,8 @@ def _run_solvers(window, cfg, fields):
 
     # Zone statistics and boundary lines
     z_axis = cfg['z_axis']
-    if zone_config is not None and za is not None:
-        window._zone_axis_dir = z_axis
-        if z_axis == 'grid':
-            # Grid mode: boundaries from zone_config
-            window._zone_boundaries = []
-            window._zone_boundaries_x = [b * L for b in za.get('x_bounds', [])]
-            window._zone_boundaries_y = [b * H for b in za.get('y_bounds', [])]
-            # Build dummy Zone objects for statistics
-            from solvers.zone_config import Zone
-            dummy_zones = [Zone(f'g{r}', gc['y0'], gc['y1'], gc['L'], gc['t'])
-                           for r, gc in enumerate(za.get('grid_cells', []))]
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
-            _ca = energy_dx[:, None] * energy_dy[None, :]
-            stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
-                                            cell_area=_ca)
-            print("\n[ZONE STATISTICS]")
-            print(format_zone_report(stats))
-            window._zone_stats = stats
-        else:
-            # 1D mode
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
-            _ca = energy_dx[:, None] * energy_dy[None, :]
-            stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
-                                            zone_config.zones, cell_area=_ca)
-            print("\n[ZONE STATISTICS]")
-            print(format_zone_report(stats))
-            window._zone_stats = stats
-            window._zone_boundaries_x = None
-            window._zone_boundaries_y = None
-            if z_axis == 'y':
-                window._zone_boundaries = [z.y_frac_end * H for z in zone_config.zones[:-1]]
-            else:
-                window._zone_boundaries = [z.y_frac_end * L for z in zone_config.zones[:-1]]
-    else:
-        window._zone_stats = None
-        window._zone_axis_dir = None
-        window._zone_boundaries = None
-        window._zone_boundaries_x = None
-        window._zone_boundaries_y = None
+    _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
+                         energy_dx, energy_dy, Ta, Tb, Ts)
 
     # Smooth temperature fields for display if partial-width inlets exist
     # (removes Brinkman-induced stripes; Q/dP already computed from raw fields)
