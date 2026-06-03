@@ -783,6 +783,62 @@ def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None):
     return result
 
 
+def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
+    """Real-coordinate pressure fields + pipe-weighted dP from converged SIMPLE.
+
+    Extracted verbatim from ``_run_solvers`` (#9-2D god-function split).
+    Returns ``(P_fA, P_fB, dP_A, dP_B)``.
+    """
+    # Pipe-weighted pressure references (exclude wall cells under partial BC).
+    # SIMPLE convention: inlet row = P[:, 0], outlet row = P[:, -1]; inlet_frac
+    # / outlet_frac are 1-D (length = SIMPLE's perpendicular dim) indicating the
+    # open fraction of each cell at the boundary. A plain row mean mixes wall
+    # and pipe cells, severely diluting dP for partial-BC flows (validation
+    # showed B's dP under-estimated by >10x in default cross-flow cases).
+    def _pipe_weighted(P_row, w):
+        s = float(w.sum())
+        return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
+
+    _wA_in  = simpA.inlet_frac.astype(np.float64)
+    _wA_out = simpA.outlet_frac.astype(np.float64)
+    _wB_in  = simpB.inlet_frac.astype(np.float64)
+    _wB_out = simpB.outlet_frac.astype(np.float64)
+
+    P_ref_A       = _pipe_weighted(simpA.P[:,  0], _wA_in)   # pipe-inlet gauge
+    P_ref_B       = _pipe_weighted(simpB.P[:,  0], _wB_in)
+    P_out_gauge_A = _pipe_weighted(simpA.P[:, -1], _wA_out)  # pipe-outlet gauge
+    P_out_gauge_B = _pipe_weighted(simpB.P[:, -1], _wB_out)
+
+    is_xA = window._is_x_dir(dir_A)
+    if is_xA:
+        P_gA = simpA.P.T.copy()          # transpose to real coords
+        if dir_A == 1:                     # -x: inlet at right
+            P_gA = P_gA[::-1, :]
+    else:
+        P_gA = simpA.P.copy()
+        if dir_A == 3:                     # -y: inlet at top
+            P_gA = P_gA[:, ::-1]
+    P_fA = P_inA + (P_gA - P_ref_A)
+
+    is_xB = window._is_x_dir(dir_B)
+    if is_xB:
+        P_gB = simpB.P.T.copy()
+        if dir_B == 1:
+            P_gB = P_gB[::-1, :]
+    else:
+        P_gB = simpB.P.copy()
+        if dir_B == 3:
+            P_gB = P_gB[:, ::-1]
+    P_fB = P_inB + (P_gB - P_ref_B)
+
+    # Pressure drop = pipe-inlet minus pipe-outlet gauge pressure. The
+    # P_inA/P_inB shift cancels in this difference, so using gauge directly
+    # is equivalent and avoids double-counting the reference.
+    dP_A = P_ref_A - P_out_gauge_A
+    dP_B = P_ref_B - P_out_gauge_B
+    return P_fA, P_fB, dP_A, dP_B
+
+
 def _run_solvers(window, cfg, fields):
     """Phase 3: run SIMPLE + coupling loop + pressure + Richardson Q."""
     L = cfg['L']; H = cfg['H']
@@ -1210,56 +1266,8 @@ def _run_solvers(window, cfg, fields):
     # ── Step 3: Pressure from SIMPLE ──
     P_inA = cfg['compute_cfg'].fluid_A.P_in_Pa
     P_inB = cfg['compute_cfg'].fluid_B.P_in_Pa
-    dir_flow_A = window._DIR_MAP[dir_A]
-    dir_flow_B = window._DIR_MAP[dir_B]
-
-    # Pipe-weighted pressure references (exclude wall cells under partial BC).
-    # SIMPLE convention: inlet row = P[:, 0], outlet row = P[:, -1]; inlet_frac
-    # / outlet_frac are 1-D (length = SIMPLE's perpendicular dim) indicating the
-    # open fraction of each cell at the boundary. A plain row mean mixes wall
-    # and pipe cells, severely diluting dP for partial-BC flows (validation
-    # showed B's dP under-estimated by >10x in default cross-flow cases).
-    def _pipe_weighted(P_row, w):
-        s = float(w.sum())
-        return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
-
-    _wA_in  = simpA.inlet_frac.astype(np.float64)
-    _wA_out = simpA.outlet_frac.astype(np.float64)
-    _wB_in  = simpB.inlet_frac.astype(np.float64)
-    _wB_out = simpB.outlet_frac.astype(np.float64)
-
-    P_ref_A       = _pipe_weighted(simpA.P[:,  0], _wA_in)   # pipe-inlet gauge
-    P_ref_B       = _pipe_weighted(simpB.P[:,  0], _wB_in)
-    P_out_gauge_A = _pipe_weighted(simpA.P[:, -1], _wA_out)  # pipe-outlet gauge
-    P_out_gauge_B = _pipe_weighted(simpB.P[:, -1], _wB_out)
-
-    is_xA = window._is_x_dir(dir_A)
-    if is_xA:
-        P_gA = simpA.P.T.copy()          # transpose to real coords
-        if dir_A == 1:                     # -x: inlet at right
-            P_gA = P_gA[::-1, :]
-    else:
-        P_gA = simpA.P.copy()
-        if dir_A == 3:                     # -y: inlet at top
-            P_gA = P_gA[:, ::-1]
-    P_fA = P_inA + (P_gA - P_ref_A)
-
-    is_xB = window._is_x_dir(dir_B)
-    if is_xB:
-        P_gB = simpB.P.T.copy()
-        if dir_B == 1:
-            P_gB = P_gB[::-1, :]
-    else:
-        P_gB = simpB.P.copy()
-        if dir_B == 3:
-            P_gB = P_gB[:, ::-1]
-    P_fB = P_inB + (P_gB - P_ref_B)
-
-    # Pressure drop = pipe-inlet minus pipe-outlet gauge pressure. The
-    # P_inA/P_inB shift cancels in this difference, so using gauge directly
-    # is equivalent and avoids double-counting the reference.
-    dP_A = P_ref_A - P_out_gauge_A
-    dP_B = P_ref_B - P_out_gauge_B
+    P_fA, P_fB, dP_A, dP_B = _compute_pressure_2d(
+        simpA, simpB, dir_A, dir_B, P_inA, P_inB, window)
 
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
