@@ -177,8 +177,6 @@ def _run_solvers(window, cfg, fields, _log):
 
 def _store_results(window, cfg, fields, result, _log):
     """Phase 4: build plots, update result labels and status bar."""
-    import main as _main
-
     mesh = cfg['mesh']
     shape = cfg['shape']
     tpms_type = cfg['tpms_type']

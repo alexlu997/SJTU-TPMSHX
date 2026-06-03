@@ -23,7 +23,6 @@ Only the training Excel is used; Shanghai data is deliberately excluded.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 

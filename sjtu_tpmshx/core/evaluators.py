@@ -25,7 +25,6 @@ Public API
 from __future__ import annotations
 
 import time
-import warnings
 
 import numpy as np
 

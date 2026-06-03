@@ -103,10 +103,6 @@ def air_density(T_K, P_Pa: float = 101325.0):
 def air_cp(T_K):
     """Specific heat capacity of air [J/(kg·K)] (250-1000 K, < 0.5% error).
     Accepts scalar or ndarray T_K; return type matches input shape."""
-    """Specific heat capacity of air at constant pressure [J/(kg·K)].
-    Polynomial fit valid 250-1000K, error < 0.5%.
-    Supports scalar or numpy array input.
-    """
     _warn_range_once('air_cp', T_K, *_AIR_CP_RANGE)
     dT = T_K - 273.15
     return 1004.5 + 0.172 * dT - 7.56e-5 * dT**2

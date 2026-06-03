@@ -69,6 +69,10 @@ def _eval_worker(x: np.ndarray, cfg: dict, dp_cap: float,
             Q_neg, dP, _mass = evaluator_fn(x, cfg)
         Q = float(-Q_neg)
         dP_c = float(np.clip(dP, 1.0, dp_cap))
+        # Infeasible 3D designs return NaN Q (P_out²≤0 choke). Keep NaN out of
+        # the qNEHVI train_Y or fit_gpytorch_mll can fail; treat as bad design.
+        if not (np.isfinite(Q) and np.isfinite(dP_c)):
+            return (1e-6, dp_cap, 'infeasible')
         return (Q, dP_c, None)
     except Exception as e:
         return (1e-6, dp_cap, repr(e))

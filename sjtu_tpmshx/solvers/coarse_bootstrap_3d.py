@@ -31,15 +31,6 @@ def _block_average_2d(arr: np.ndarray, fy: int, fz: int) -> np.ndarray:
     return trim.reshape(Ny_c, fy, Nz_c, fz).mean(axis=(1, 3))
 
 
-def _block_average_2d_xz(arr: np.ndarray, fx: int, fz: int) -> np.ndarray:
-    """Average (fx × fz) blocks for a (Nx, Nz) face-centred field."""
-    Nx, Nz = arr.shape
-    Nx_c = Nx // fx
-    Nz_c = Nz // fz
-    trim = arr[:Nx_c * fx, :Nz_c * fz]
-    return trim.reshape(Nx_c, fx, Nz_c, fz).mean(axis=(1, 3))
-
-
 def _block_average_3d(arr: np.ndarray, fx: int, fy: int, fz: int) -> np.ndarray:
     """Average non-overlapping (fx × fy × fz) blocks of a 3-D array."""
     Nx, Ny, Nz = arr.shape
@@ -103,7 +94,7 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
     cF_arr_c = _block_average_2d(solver_fine.cF_arr, fy, fz)
 
     # v_inlet_field is shaped (Nx, Nz) on solver — average accordingly.
-    v_inlet_c = _block_average_2d_xz(solver_fine.v_inlet_field, fx, fz)
+    v_inlet_c = _block_average_2d(solver_fine.v_inlet_field, fx, fz)
 
     # eps may be uniform (scalar) or zoned (3D array).
     eps_uniform = float(solver_fine.eps)

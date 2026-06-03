@@ -669,9 +669,7 @@ def _solve_temp_jit(Tf, Ts, u, v, inlet_mask,
                 dxi = dx_arr[i]; dyj = dy_arr[j]
                 vol = dxi * dyj
                 Df_e = K_ff * dyj / dxi; Df_n = K_ff * dxi / dyj
-                Ds_e = K_ss * dyj / dxi; Ds_n = K_ss * dxi / dyj
                 hv  = h_v * vol
-                hv2_loc = h_v2 * vol
 
                 # Diffusion coefficients (0 at boundaries = adiabatic)
                 dE = Df_e if i < Nx - 1 else 0.0
@@ -1422,10 +1420,12 @@ class SIMPLESolver:
         out = {
             'v_exit': self.v[:, j].copy(),
             'u_exit': self.u[1:Nx, j].copy(),
-            'x_v':   (np.arange(Nx) + 0.5) * self.dx,
-            'x_u':   np.arange(1, Nx) * self.dx,
+            # cell-center / face x-coords from per-cell dx_arr (correct on
+            # non-uniform grids; == arange*dx on uniform grids).
+            'x_v':   np.cumsum(self.dx_arr) - 0.5 * self.dx_arr,
+            'x_u':   np.cumsum(self.dx_arr)[:Nx - 1],
             'j_row':  j,
-            'depth':  j * self.dy,
+            'depth':  float(np.sum(self.dy_arr[:j])),
         }
         if self.Tf is not None:
             out['Tf_exit'] = self.Tf[:, j].copy()
@@ -1438,8 +1438,8 @@ class SIMPLESolver:
         out = {
             'v_exit': self.v[:, Ny - 1].copy(),
             'u_exit': self.u[1:Nx, Ny - 1].copy(),
-            'x_v':   (np.arange(Nx) + 0.5) * self.dx,
-            'x_u':   np.arange(1, Nx) * self.dx,
+            'x_v':   np.cumsum(self.dx_arr) - 0.5 * self.dx_arr,
+            'x_u':   np.cumsum(self.dx_arr)[:Nx - 1],
         }
         if self.Tf is not None:
             out['Tf_exit'] = self.Tf[:, Ny - 1].copy()
@@ -1515,10 +1515,12 @@ class SIMPLESolver:
         }
 
     def mass_flow_in(self):
-        return self.rho * np.sum(self.v[self.inlet_mask, 0]) * self.dx
+        # Weight by per-cell dx_arr (== scalar dx on uniform grids).
+        return self.rho * np.sum(self.v[self.inlet_mask, 0]
+                                 * self.dx_arr[self.inlet_mask])
 
     def mass_flow_out(self):
-        return self.rho * np.sum(self.v[:, self.Ny]) * self.dx
+        return self.rho * np.sum(self.v[:, self.Ny] * self.dx_arr)
 
 
 # ===================================================================

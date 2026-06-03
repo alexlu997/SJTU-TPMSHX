@@ -175,24 +175,6 @@ class ResidualCorrector:
             return 0.0
         return float(np.clip(g, -self._g_clamp, self._g_clamp))
 
-    def correction_vec(self, Re: np.ndarray, eps_f: np.ndarray) -> np.ndarray:
-        """Vectorised correction.
-
-        Re, eps_f arrays of compatible shapes. Returns g array clipped to
-        ±g_clamp.
-        """
-        Re_arr = np.asarray(Re, dtype=np.float64)
-        eps_arr = np.asarray(eps_f, dtype=np.float64)
-        shape = np.broadcast(Re_arr, eps_arr).shape
-        Re_b = np.broadcast_to(Re_arr, shape).ravel()
-        eps_b = np.broadcast_to(eps_arr, shape).ravel()
-        log_Re = np.log10(np.maximum(Re_b, 1.0))
-        X = np.column_stack([log_Re, eps_b])
-        g = self._rbf(X)
-        g = np.where(np.isfinite(g), g, 0.0)
-        g = np.clip(g, -self._g_clamp, self._g_clamp)
-        return g.reshape(shape)
-
     def summary(self) -> dict:
         return dict(
             tpms=self.tpms,
@@ -264,29 +246,6 @@ def predict_dP_compressible_corrected(tpms_type: str, L_mm: float, t_mm: float,
     g = corr.correction(Re, eps_f)
     dP_corrected = dP_baseline * (1.0 + g)
     return max(dP_corrected, 0.0)
-
-
-def predict_K_cF_corrected_simple_source(tpms_type: str, L_mm: float, t_mm: float,
-                                          eps_f: float, Re: float
-                                          ) -> tuple[float, float]:
-    """Return (K_eff, cF_eff) for SIMPLE source-term use, with residual scaling.
-
-    Uniform multiplicative scaling: K_eff = K / (1 + g), cF_eff = cF * (1 + g).
-    Matches dP_baseline · (1 + g) on the analytical 1D case.
-
-    Note: SIMPLE-side use requires Re per cell (computed from local u at
-    runtime). Caller passes the local Re estimate.
-    """
-    from .predict import predict_K_cF
-    K, c_F = predict_K_cF(tpms_type, L_mm, t_mm, eps_f)
-    corr = get_corrector(tpms_type)
-    g = corr.correction(Re, eps_f)
-    factor = 1.0 + g
-    if factor <= 0.05:  # safety floor
-        factor = 0.05
-    K_eff = K / factor
-    cF_eff = c_F * factor
-    return float(K_eff), float(cF_eff)
 
 
 # ============================================================
