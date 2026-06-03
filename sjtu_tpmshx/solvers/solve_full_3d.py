@@ -137,6 +137,14 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
             np.ascontiguousarray(wf))
 
 
+# Denominator floor (W) for the relative strict-conservation metric. Guards the
+# degenerate no-net-heat-exchange cases (equi-T, or one fluid disabled so solid
+# equilibrates to the live fluid) where ∫S → 0 and a relative residual divides
+# by ~0. Real audit/production sources are O(100 W) ≫ floor, so unaffected; in
+# the degenerate cases the absolute residual is machine-level, so eps → ~0.
+_Q_FLOOR_W = 1.0
+
+
 def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
                                dx, dy, dz, dir_code):
     """Rigorous strict-conservation certificate for one fluid phase (B-plan B2).
@@ -219,7 +227,8 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
         interior[tuple(sl)] = False
 
     src = hv * vol * (Ts - T)
-    return float(np.sum(r[interior])), float(np.sum(src[interior]))
+    max_abs_r = float(np.max(np.abs(r[interior]))) if np.any(interior) else 0.0
+    return float(np.sum(r[interior])), float(np.sum(src[interior])), max_abs_r
 
 
 # ---------------------------------------------------------------------------
@@ -1444,18 +1453,24 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     }
     if _cons == 1:
         # Strict-conservation certificate: residual of the conservative
-        # discretisation on the converged field, ∮_∂ − ∫S over interior cells.
-        rA, QA = _conservation_residual_sum(
+        # discretisation on the converged field. The summed form is the global
+        # balance ∮_∂interior − ∫interior S; the cell-max form (normalised by
+        # the mean per-cell source) certifies per-cell ∮F·n = ∫S.
+        ncell = Ta.size
+        rA, QA, mA = _conservation_residual_sum(
             Ta, Ts, ufA, vfA, wfA, eps_f_arr, K_ffA_arr, rho_cp_fA_arr,
             h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A)
-        info['eps_A_strict'] = abs(rA) / max(abs(QA), 1e-30)
+        info['eps_A_strict'] = abs(rA) / max(abs(QA), _Q_FLOOR_W)
+        info['eps_A_strict_cellmax'] = mA * ncell / max(abs(QA), _Q_FLOOR_W)
         if freeze_Tb == 0:
-            rB, QB = _conservation_residual_sum(
+            rB, QB, mB = _conservation_residual_sum(
                 Tb, Ts, ufB, vfB, wfB, eps_f_arr, K_ffB_arr, rho_cp_fB_arr,
                 h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B)
-            info['eps_B_strict'] = abs(rB) / max(abs(QB), 1e-30)
+            info['eps_B_strict'] = abs(rB) / max(abs(QB), _Q_FLOOR_W)
+            info['eps_B_strict_cellmax'] = mB * ncell / max(abs(QB), _Q_FLOOR_W)
         else:
             info['eps_B_strict'] = 0.0
+            info['eps_B_strict_cellmax'] = 0.0
     if return_info:
         return Ta, Tb, Ts, info
     return Ta, Tb, Ts

@@ -1,63 +1,75 @@
-"""B-plan B1/B2 — strict energy-conservation golden.
+"""B-plan B1/B2/B3 — strict energy-conservation golden, all 6 audit cases.
 
 Conservation contract (vault: 2026-06-03-3d-strict-energy-conservation-B-plan-CN.md):
-  the discrete FV energy balance per phase must satisfy ∮_∂Ω F·n dA = ∫_Ω S dV
-  for BOTH full-face cross-flow (T2) and offset partial-B (T4).
+  the discrete FV energy balance must satisfy ∮_∂Ω F·n dA = ∫_Ω S dV per phase,
+  for EVERY geometry: full-face parallel (T1), full-face cross-flow (T2),
+  aligned partial-B (T3), offset partial-B / Shanghai-like (T4), B-isolated
+  (T5) and equi-temperature (T6).
 
-Metric — `eps_B_strict` (and `eps_A_strict`), computed by the solver when
-cfg['conservative_ltne']=True. It is the residual of the *conservative*
-discretisation evaluated on the converged field, summed over interior cells:
+Metrics — emitted by the solver when cfg['conservative_ltne']=True:
+  eps_{A,B}_strict          global balance |Σ_interior r| / max(|∫_interior S|, floor)
+  eps_{A,B}_strict_cellmax  per-cell      max|r[c]|·N / max(|∫S|, floor)
+  where r[c] = a_P·T_c − Σ a_nb·T_nb − h_v·V·Ts is the residual of the
+  *conservative* discretisation (a_P carries the (F_e−F_w+…) net-out term) on
+  the converged field. Shared SIMPLE face fluxes make internal faces telescope,
+  so a solution that solves the conservative balance drives both to ~0; a
+  non-conservative field leaves them O(1) (validated: synthetic non-solution
+  → 100 %). The relative denominator carries a physical floor so the degenerate
+  no-net-heat-exchange cases (T5 solid↔single-fluid equilibrium, T6 equi-T,
+  both ∫S → 0) do not divide by ~0 — there the absolute residual is
+  machine-level, i.e. trivially conserving.
 
-    r[c] = a_P·T_c − Σ a_nb·T_nb − h_v·V·Ts        (a_P carries the (F_e−F_w+…) net-out term)
-    eps_strict = |Σ_interior r| / |∫_interior S|
-
-Because the conservative kernel uses the SAME shared SIMPLE face flux for the
-two cells adjacent to every face, internal faces telescope, so Σ_interior r =
-∮_∂(interior) flux − ∫ source. A solution that actually solves the conservative
-balance drives this to ~0 (solver tol); a non-conservative solution evaluated
-against the same discretisation leaves it large. This supersedes the earlier
-`compute_phase2a_interior` heuristic (advective enthalpy m·cp·ΔT vs interior
-source), which silently dropped the boundary-diffusion term and so read ~8.5 %
-for the cold fluid even when the scheme conserved — a metric artifact, not a
-conservation failure.
+This supersedes the earlier compute_phase2a_interior heuristic (advective
+enthalpy m·cp·ΔT vs interior source), which dropped the boundary-diffusion
+term and so read ~8.5 % for a cold fluid even when the scheme conserved.
 
 The legacy cell-local-|u_c| upwind kernel (cfg default) does NOT satisfy this
-balance: the shared face carries two different fluxes in the two adjacent
-cells' equations. The face-centered Patankar rewrite (SIMPLE staggered fluxes,
+balance. The face-centered Patankar rewrite (SIMPLE staggered fluxes,
 (F_e−F_w) telescoping in a_P, MAC projection to discrete solenoidality) drives
-both T2 and T4 < 1 %.
+all six cases < 1 % on BOTH the global and per-cell certificate AND keeps mass
+conservation intact.
 """
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from validation.audit_3d_conservation import make_T2, make_T4
+from validation.audit_3d_conservation import (
+    make_T1, make_T2, make_T3, make_T4, make_T5, make_T6,
+)
 from runs.run_calculation_3d import _run_3d_stack
 
-_EPS_GATE = 0.01  # < 1 %
+_GATE = 0.01  # < 1 %
+
+_CASES = [
+    ("T1_full_parallel", make_T1),
+    ("T2_full_cross", make_T2),
+    ("T3_partial_aligned", make_T3),
+    ("T4_partial_offset", make_T4),
+    ("T5_B_isolated", make_T5),
+    ("T6_equi_temperature", make_T6),
+]
 
 
-def _strict_eps(maker, grid=20):
-    cfg = maker(grid)
+@pytest.mark.parametrize("name,maker", _CASES, ids=[c[0] for c in _CASES])
+def test_strict_energy_conservation(name, maker):
+    """Conservative discretisation balances per phase — global + per-cell — and
+    does not break mass conservation, for every audit geometry."""
+    cfg = maker(20)
     cfg["conservative_ltne"] = True
     res = _run_3d_stack(cfg)
-    return res["eps_A_strict"], res["eps_B_strict"]
 
+    # Strict-conservation certificate must be emitted on the conservative path.
+    for key in ("eps_A_strict", "eps_B_strict",
+                "eps_A_strict_cellmax", "eps_B_strict_cellmax"):
+        v = res.get(key)
+        assert v is not None, f"{name}: {key} not emitted by conservative path"
+        assert v < _GATE, f"{name}: {key}={v*100:.3f}% not < 1%"
 
-def test_conservative_ltne_T2_full_face():
-    """Full-face cross-flow: conservative discretisation balances per phase."""
-    eps_A, eps_B = _strict_eps(make_T2)
-    assert eps_A is not None and eps_B is not None, \
-        "conservative_ltne path did not emit strict-conservation metrics"
-    assert eps_A < _EPS_GATE, f"T2 ε_A_strict={eps_A*100:.3f}% not < 1%"
-    assert eps_B < _EPS_GATE, f"T2 ε_B_strict={eps_B*100:.3f}% not < 1%"
-
-
-def test_conservative_ltne_T4_partial_offset():
-    """Offset partial-B (Shanghai-like): conservative discretisation balances."""
-    eps_A, eps_B = _strict_eps(make_T4)
-    assert eps_A is not None and eps_B is not None, \
-        "conservative_ltne path did not emit strict-conservation metrics"
-    assert eps_A < _EPS_GATE, f"T4 ε_A_strict={eps_A*100:.3f}% not < 1%"
-    assert eps_B < _EPS_GATE, f"T4 ε_B_strict={eps_B*100:.3f}% not < 1%"
+    # Conservation of energy must not come at the cost of mass conservation.
+    assert res["mass_imbalance_rel_A"] < _GATE, \
+        f"{name}: mass_imbalance_A={res['mass_imbalance_rel_A']*100:.3f}% not < 1%"
+    assert res["mass_imbalance_rel_B"] < _GATE, \
+        f"{name}: mass_imbalance_B={res['mass_imbalance_rel_B']*100:.3f}% not < 1%"

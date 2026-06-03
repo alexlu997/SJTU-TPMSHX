@@ -2329,6 +2329,8 @@ def _run_3d_stack(cfg):
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')
         _eps_B_strict = _ltne_info_d.get('eps_B_strict')
+        _eps_A_strict_cellmax = _ltne_info_d.get('eps_A_strict_cellmax')
+        _eps_B_strict_cellmax = _ltne_info_d.get('eps_B_strict_cellmax')
         if _cancel_check is not None and _cancel_check():
             raise InterruptedError("compute cancelled by user")
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
@@ -2783,6 +2785,8 @@ def _run_3d_stack(cfg):
         # B2 strict-conservation certificate (None unless conservative_ltne)
         eps_A_strict=_eps_A_strict,
         eps_B_strict=_eps_B_strict,
+        eps_A_strict_cellmax=_eps_A_strict_cellmax,
+        eps_B_strict_cellmax=_eps_B_strict_cellmax,
         # Plan C v2: B flow-path indicator field (χ_B) for visualization
         chi_B=chi_B,
         # Sweep profile diagnostics
