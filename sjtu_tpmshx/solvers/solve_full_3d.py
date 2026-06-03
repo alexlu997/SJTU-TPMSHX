@@ -31,6 +31,114 @@ from solvers.solve_full import solve_full_domain as _solve_full_2d
 
 
 # ---------------------------------------------------------------------------
+# Helmholtz/MAC divergence cleaner (B-plan B2)
+# ---------------------------------------------------------------------------
+
+def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
+    """Project staggered real-coords face velocities onto a discretely
+    solenoidal field so the conservative LTNE kernel telescopes exactly.
+
+    SIMPLE's solver-frame face fluxes are divergence-free, but
+    `_solver_staggered_to_real` negates the stream component for reverse-dir
+    fluids without reordering the shared cell fields, leaving a per-cell
+    real-coords mass divergence of −2·(stream div) (≈17–69 % of the h_v
+    scale, measured 2026-06-03). A single MAC/Helmholtz projection removes it:
+
+        F_face = (ε·ρcp·u·A)_face                      (energy mass flux)
+        D[c]   = Σ_faces F  (outward)                  (per-cell divergence)
+        L φ = D    with L the 7-point graph Laplacian over INTERIOR faces
+                   only (homogeneous-Neumann; boundary faces never corrected,
+                   so inlet/outlet mass flow + the BC stay untouched)
+        F*_face = F_face − (φ[nb] − φ[c])              (interior faces)
+        u*_face = u_face + (F*_face − F_face) / C_face
+
+    Returns corrected (uf, vf, wf). Forward-dir fluids are already
+    solenoidal (D≈0 ⇒ φ≈0 ⇒ ~no change), so this is safe to apply to all.
+    """
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.linalg import spsolve
+
+    Nx, Ny, Nz = eps_f.shape
+    Ax = (dy[None, :, None] * dz[None, None, :])   # (1,Ny,Nz)
+    Ay = (dx[:, None, None] * dz[None, None, :])   # (Nx,1,Nz)
+    Az = (dx[:, None, None] * dy[None, :, None])   # (Nx,Ny,1)
+
+    coef = eps_f * rcp                              # cell ε·ρcp
+
+    # Interior-face coefficients C = ε_f·ρcp·A (arithmetic-mean face value,
+    # matching the kernel's face interpolation).
+    Cx = 0.5 * (coef[:-1, :, :] + coef[1:, :, :]) * np.broadcast_to(Ax, (Nx-1, Ny, Nz))
+    Cy = 0.5 * (coef[:, :-1, :] + coef[:, 1:, :]) * np.broadcast_to(Ay, (Nx, Ny-1, Nz))
+    Cz = 0.5 * (coef[:, :, :-1] + coef[:, :, 1:]) * np.broadcast_to(Az, (Nx, Ny, Nz-1))
+
+    # Per-cell divergence from current fluxes (interior + boundary faces).
+    AxF = np.broadcast_to(Ax, uf.shape)
+    AyF = np.broadcast_to(Ay, vf.shape)
+    AzF = np.broadcast_to(Az, wf.shape)
+    cf_x = np.empty_like(uf)
+    cf_x[1:-1, :, :] = 0.5 * (coef[:-1, :, :] + coef[1:, :, :])
+    cf_x[0, :, :] = coef[0, :, :]; cf_x[-1, :, :] = coef[-1, :, :]
+    cf_y = np.empty_like(vf)
+    cf_y[:, 1:-1, :] = 0.5 * (coef[:, :-1, :] + coef[:, 1:, :])
+    cf_y[:, 0, :] = coef[:, 0, :]; cf_y[:, -1, :] = coef[:, -1, :]
+    cf_z = np.empty_like(wf)
+    cf_z[:, :, 1:-1] = 0.5 * (coef[:, :, :-1] + coef[:, :, 1:])
+    cf_z[:, :, 0] = coef[:, :, 0]; cf_z[:, :, -1] = coef[:, :, -1]
+    Fx = cf_x * uf * AxF
+    Fy = cf_y * vf * AyF
+    Fz = cf_z * wf * AzF
+    D = ((Fx[1:, :, :] - Fx[:-1, :, :])
+         + (Fy[:, 1:, :] - Fy[:, :-1, :])
+         + (Fz[:, :, 1:] - Fz[:, :, :-1])).ravel()
+
+    n = Nx * Ny * Nz
+    if n == 0:
+        return uf, vf, wf
+    idx = np.arange(n).reshape(Nx, Ny, Nz)
+    rows = []; cols = []; vals = []
+
+    def _add(a, b):
+        # Symmetric Laplacian coupling for an interior face between cells a,b
+        a = a.ravel(); b = b.ravel()
+        rows.append(a); cols.append(a); vals.append(np.ones_like(a, np.float64))
+        rows.append(a); cols.append(b); vals.append(-np.ones_like(a, np.float64))
+        rows.append(b); cols.append(b); vals.append(np.ones_like(b, np.float64))
+        rows.append(b); cols.append(a); vals.append(-np.ones_like(b, np.float64))
+
+    if Nx > 1: _add(idx[:-1, :, :], idx[1:, :, :])
+    if Ny > 1: _add(idx[:, :-1, :], idx[:, 1:, :])
+    if Nz > 1: _add(idx[:, :, :-1], idx[:, :, 1:])
+    rows = np.concatenate(rows); cols = np.concatenate(cols)
+    vals = np.concatenate(vals)
+    L = csr_matrix((vals, (rows, cols)), shape=(n, n))
+
+    # Homogeneous-Neumann Laplacian is singular (constant null space). Pin one
+    # reference cell to remove it; the residual global imbalance (Σ D ≈ 0) is
+    # absorbed there with negligible magnitude.
+    L = L.tolil()
+    L.rows[0] = [0]; L.data[0] = [1.0]
+    L = L.tocsr()
+    rhs = D.copy(); rhs[0] = 0.0
+    phi = spsolve(L, rhs).reshape(Nx, Ny, Nz)
+
+    # Correct interior faces only. With L φ = D (L = graph Laplacian), the
+    # per-cell post-correction divergence is D − Lφ = 0 iff the face flux is
+    # adjusted by δF_face = +(φ[c+] − φ[c−]) along +axis ⇒ u* = u + δF/C.
+    uf = uf.copy(); vf = vf.copy(); wf = wf.copy()
+    if Nx > 1:
+        dF = phi[1:, :, :] - phi[:-1, :, :]
+        uf[1:-1, :, :] += dF / (Cx + 1e-30)
+    if Ny > 1:
+        dF = phi[:, 1:, :] - phi[:, :-1, :]
+        vf[:, 1:-1, :] += dF / (Cy + 1e-30)
+    if Nz > 1:
+        dF = phi[:, :, 1:] - phi[:, :, :-1]
+        wf[:, :, 1:-1] += dF / (Cz + 1e-30)
+    return (np.ascontiguousarray(uf), np.ascontiguousarray(vf),
+            np.ascontiguousarray(wf))
+
+
+# ---------------------------------------------------------------------------
 # SOU limiter — three axes
 # ---------------------------------------------------------------------------
 
@@ -1172,6 +1280,15 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     mms_S_A_arr = _mms_arr(mms_S_A_field)
     mms_S_B_arr = _mms_arr(mms_S_B_field)
     mms_S_s_arr = _mms_arr(mms_S_s_field)
+
+    # B-plan B2: make the real-coords face fluxes discretely solenoidal so the
+    # conservative kernel telescopes exactly. Required because the reverse-dir
+    # transform leaves a per-cell mass divergence; forward fluids are unchanged.
+    if _cons == 1:
+        ufA, vfA, wfA = _project_faces_div_free(
+            ufA, vfA, wfA, eps_f_arr, rho_cp_fA_arr, dx_arr, dy_arr, dz_arr)
+        ufB, vfB, wfB = _project_faces_div_free(
+            ufB, vfB, wfB, eps_f_arr, rho_cp_fB_arr, dx_arr, dy_arr, dz_arr)
 
     if use_stag and os.environ.get('TPMSHX_CONS_DIAG'):
         Ax3 = (dy_arr[None, :, None] * dz_arr[None, None, :])
