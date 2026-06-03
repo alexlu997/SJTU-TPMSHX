@@ -263,7 +263,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         # converted fields.
         self._attach_field_validation()
         self._install_status_log()
-        self._rebuild_preset_combo()
+        self._rebuild_recent_menu()
         self._install_undo_stack()
         # First-run guidance. Deferred 1.2 s after showMaximized so the window
         # is already on screen when the overlay appears.
@@ -1390,7 +1390,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         "Shanghai (2D Gyroid)",
         "Shanghai (3D Diamond)",
     ]
-    _SAVE_PRESET_LABEL = "— Save current as preset… —"
 
     def _load_user_presets(self):
         """Return the list of user-defined preset dicts (possibly empty).
@@ -1402,27 +1401,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
     def _save_user_presets(self, presets):
         """Persist user preset list. Delegates to SessionManager (P2.3)."""
         self.sm.save_user_presets(presets)
-
-    def _rebuild_preset_combo(self):
-        """Refresh the header preset dropdown with builtins + user presets +
-        the trailing 'Save current…' action row. Called on startup and after
-        any save operation.
-        """
-        if not hasattr(self, 'combo_preset'):
-            return
-        combo = self.combo_preset
-        blocker = combo.blockSignals(True)
-        combo.clear()
-        combo.addItem("Preset…")
-        for name in self._BUILTIN_PRESETS:
-            combo.addItem(name)
-        user = self._load_user_presets()
-        for p in user:
-            n = p.get('name')
-            if n:
-                combo.addItem(f"★ {n}")
-        combo.addItem(self._SAVE_PRESET_LABEL)
-        combo.blockSignals(blocker)
 
     def _resync_undo_baseline(self):
         """Reset the undo baseline (`_undo_last`) to the CURRENT text of
@@ -1567,62 +1545,26 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                 except Exception: pass
         return payload
 
-    def _on_preset_selected(self, idx):
-        """Header preset dropdown handler.
-
-        Layout of the combo:
-          0                  prompt ("Preset…") — no-op
-          1..N_BUILTIN       canonical Shanghai variants
-          N_BUILTIN+1..M     user-saved presets (prefixed ★)
-          last               'Save current as preset…' action
-        """
-        if idx == 0:
+    def _load_named_preset(self, name):
+        """Load a built-in canonical preset by name. Wired from the header
+        载入 ▾ menu and the command palette (replaces the old index-based
+        combo handler)."""
+        if name not in self._BUILTIN_PRESETS:
             return
-        combo = self.combo_preset
-        label = combo.itemText(idx)
-        # Reset combo back to prompt regardless of what happens below.
-        def _debounce():
-            blocker = combo.blockSignals(True)
-            combo.setCurrentIndex(0)
-            combo.blockSignals(blocker)
-        try:
-            if label == self._SAVE_PRESET_LABEL:
-                self._save_current_as_preset()
-                return
-            n_builtin = len(self._BUILTIN_PRESETS)
-            if 1 <= idx <= n_builtin:
-                name = self._BUILTIN_PRESETS[idx - 1]
-                self._active_preset_name = name
-                if hasattr(self, '_refresh_status_bar'):
-                    self._refresh_status_bar()
-                # Tier 25: builtin presets rewrite inputs via
-                # _apply_shanghai_defaults, which does NOT route through
-                # _apply_user_preset (where the Tier-18 invalidate lives).
-                # Invalidate here so stale result tabs/plots/export from a
-                # prior compute don't survive a builtin-preset switch.
-                self._invalidate_results_for_preset_load()
-                if name == "Shanghai (3D Gyroid)":
-                    self._apply_shanghai_defaults()
-                elif name == "Shanghai (2D Gyroid)":
-                    self._apply_shanghai_defaults()
-                    self.combo_dim.setCurrentIndex(0)
-                    self.statusBar().showMessage(
-                        "Preset: Shanghai (2D Gyroid).", 5000)
-                elif name == "Shanghai (3D Diamond)":
-                    self._apply_shanghai_defaults()
-                    self.combo_tpms.setCurrentIndex(0)
-                    self.statusBar().showMessage(
-                        "Preset: Shanghai (3D Diamond).", 5000)
-                return
-            # User preset: star-prefixed item past the builtin block
-            user = self._load_user_presets()
-            u_idx = idx - 1 - n_builtin
-            if 0 <= u_idx < len(user):
-                self._apply_user_preset(user[u_idx])
-                self.statusBar().showMessage(
-                    f"Loaded preset: {user[u_idx].get('name', '?')}.", 5000)
-        finally:
-            _debounce()
+        self._active_preset_name = name
+        if hasattr(self, '_refresh_status_bar'):
+            self._refresh_status_bar()
+        # Builtin presets rewrite inputs via _apply_shanghai_defaults, which
+        # does NOT route through _apply_user_preset (where the result-cache
+        # invalidate lives). Invalidate here so stale result tabs/plots/export
+        # from a prior compute don't survive a builtin-preset switch.
+        self._invalidate_results_for_preset_load()
+        self._apply_shanghai_defaults()
+        if name == "Shanghai (2D Gyroid)":
+            self.combo_dim.setCurrentIndex(0)
+        elif name == "Shanghai (3D Diamond)":
+            self.combo_tpms.setCurrentIndex(0)
+        self.statusBar().showMessage(f"Preset: {name}.", 5000)
 
     def _save_current_as_preset(self):
         """Prompt for a name and persist the full current field state as a
@@ -1637,7 +1579,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         presets = [p for p in presets if p.get('name') != name]  # overwrite
         presets.append(self._capture_current_preset(name))
         self._save_user_presets(presets)
-        self._rebuild_preset_combo()
+        self._rebuild_recent_menu()
         self.statusBar().showMessage(
             f"Saved preset: {name}.", 5000)
 
@@ -2060,8 +2002,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
              "Open help menu — About, keyboard shortcuts, and quick tour"),
             ('btn_toggle_left', "Parameter panel",
              "Collapse or expand the left parameter panel"),
-            ('combo_preset', "Preset picker",
-             "Load a canonical or user-saved case preset"),
             ('combo_tpms', "TPMS type",
              "Triply-Periodic Minimal Surface lattice type"),
             ('combo_dim', "Dimensionality",

@@ -98,25 +98,69 @@ class RunHistoryMixin:
             self._rebuild_recent_menu()
 
     def _rebuild_recent_menu(self):
-        """Populate the Recent ▾ header menu with up to N entries."""
+        """Rebuild the header 载入 ▾ menu: built-in canonical presets, user-
+        saved presets, recent runs, and the save/clear actions. Consolidates
+        the former header preset dropdown into this single entry."""
         from PySide6.QtWidgets import QMenu
         if not hasattr(self, "btn_recent"):
             return
         menu = QMenu(self)
+
+        # — Built-in canonical presets —
+        hdr = menu.addAction("标准工况")
+        hdr.setEnabled(False)
+        for name in getattr(self, "_BUILTIN_PRESETS", ()):
+            act = menu.addAction(f"   {name}")
+            act.triggered.connect(
+                lambda _c=False, n=name: self._load_named_preset(n))
+
+        # — User-saved presets —
+        try:
+            user = self._load_user_presets()
+        except Exception:
+            user = []
+        if user:
+            menu.addSeparator()
+            uh = menu.addAction("我的预设")
+            uh.setEnabled(False)
+            for p in user:
+                n = p.get('name')
+                if not n:
+                    continue
+                act = menu.addAction(f"   ★ {n}")
+                act.triggered.connect(
+                    lambda _c=False, pp=p: self._load_user_preset(pp))
+
+        # — Recent runs —
         entries = getattr(self, "_recent_runs", None) or []
+        menu.addSeparator()
+        rh = menu.addAction("最近运行")
+        rh.setEnabled(False)
         if not entries:
-            empty = menu.addAction("(no recent runs)")
-            empty.setEnabled(False)
+            e0 = menu.addAction("   (暂无)")
+            e0.setEnabled(False)
         else:
             for i, e in enumerate(entries):
-                label = f"#{i + 1}  {e['label']}   Q={e['Q']} · ΔP(A)={e['dP_A']}"
+                label = (f"   #{i + 1}  {e['label']}   "
+                         f"Q={e['Q']} · ΔP(A)={e['dP_A']}")
                 act = menu.addAction(label)
                 act.triggered.connect(
                     lambda _checked=False, entry=e: self._load_recent_run(entry))
-            menu.addSeparator()
-            clr = menu.addAction("Clear recent")
+
+        # — Actions —
+        menu.addSeparator()
+        save = menu.addAction("保存当前为预设…")
+        save.triggered.connect(self._save_current_as_preset)
+        if entries:
+            clr = menu.addAction("清除最近")
             clr.triggered.connect(self._clear_recent_runs)
         self.btn_recent.setMenu(menu)
+
+    def _load_user_preset(self, p):
+        """Apply a user-saved preset dict + status note (header 载入 menu)."""
+        self._apply_user_preset(p)
+        self.statusBar().showMessage(
+            f"Loaded preset: {p.get('name', '?')}.", 5000)
 
     def _load_recent_run(self, entry):
         """Restore inputs from a recent-run snapshot. User hits Compute to

@@ -371,17 +371,8 @@ def build_actions(w) -> list[Action]:
 
     # Presets
     for name in getattr(w, '_BUILTIN_PRESETS', ()):
-        def _load_preset(combo_label=name):
-            # Find the combo index that matches this label and trigger the
-            # existing handler so we reuse its side-effects verbatim.
-            cb = getattr(w, 'combo_preset', None)
-            if cb is None:
-                return
-            for i in range(cb.count()):
-                if cb.itemText(i) == combo_label:
-                    cb.setCurrentIndex(i)
-                    return
-        add(f"Preset: {name}", "Preset", _load_preset,
+        add(f"Preset: {name}", "Preset",
+            (lambda n=name: w._load_named_preset(n)),
             keywords=("preset", "load", name.lower()))
 
     # Fluid type switches

@@ -181,13 +181,8 @@ class OverviewDialog(QDialog):
         root.addLayout(close_row)
 
     def _load_preset(self, name):
-        combo = getattr(self._w, 'combo_preset', None)
-        if combo is None:
-            return
-        for i in range(combo.count()):
-            if combo.itemText(i) == name:
-                combo.setCurrentIndex(i)
-                break
+        if hasattr(self._w, '_load_named_preset'):
+            self._w._load_named_preset(name)
         self.accept()
 
     def _load_recent(self, entry):

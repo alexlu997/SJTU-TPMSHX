@@ -118,22 +118,6 @@ def build_ui(window):
         hdr.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         header_row.addWidget(hdr, 0)
     header_row.addStretch(1)
-    # Preset picker — one-click load of canonical case configurations
-    combo_preset = QComboBox()
-    combo_preset.addItems([
-        "Preset…",
-        "Shanghai (3D Gyroid)",
-        "Shanghai (2D Gyroid)",
-        "Shanghai (3D Diamond)",
-    ])
-    combo_preset.setFixedHeight(32)
-    combo_preset.setFixedWidth(190)
-    combo_preset.setStyleSheet(t.style('COMBO'))
-    combo_preset.setToolTip("Load a canonical case configuration")
-    combo_preset.currentIndexChanged.connect(window._on_preset_selected)
-    window.combo_preset = combo_preset
-    header_row.addWidget(combo_preset, 0)
-    header_row.addSpacing(6)
 
     # Theme toggle — icon reflects the theme you will switch TO, not the
     # current one (consistent with most desktop apps).
@@ -161,19 +145,20 @@ def build_ui(window):
     header_row.addWidget(btn_help, 0)
     header_row.addSpacing(6)
 
-    # Recent runs dropdown — populated after each successful compute so the
-    # user can jump back to the last 5 parameter snapshots. QToolButton
-    # because QPushButton can't render a persistent ▾ that opens on first
-    # click; instantPopup keeps the menu one-click.
+    # 载入 ▾ menu — consolidates the canonical presets, user-saved presets,
+    # and the last 5 run snapshots into one header entry (the separate preset
+    # dropdown was removed in the 2026-06 declutter). QToolButton + InstantPopup
+    # so the ▾ opens the menu on first click.
     btn_recent = QToolButton()
-    btn_recent.setText("Recent ▾")
+    btn_recent.setText("载入 ▾")
     btn_recent.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     btn_recent.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     btn_recent.setFixedHeight(32)
-    btn_recent.setFixedWidth(92)
+    btn_recent.setFixedWidth(84)
     btn_recent.setStyleSheet(
         _hdr_btn_qss.replace("QPushButton", "QToolButton"))
-    btn_recent.setToolTip("Last 5 Compute runs — click to restore inputs")
+    btn_recent.setToolTip(
+        "载入标准工况 / 我的预设 / 最近运行,或保存当前为预设")
     window.btn_recent = btn_recent
     header_row.addWidget(btn_recent, 0)
     header_row.addSpacing(6)
