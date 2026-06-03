@@ -34,6 +34,7 @@ from solvers.tpms_calc import (
     air_conductivity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
 )
+from solvers import fluid_props
 from df_fit.predict import predict_K_cF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
@@ -1972,29 +1973,22 @@ def _run_3d_stack(cfg):
     u_B_val = cfg.get('u_B', u_A)
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
-        if fluid_type == 'water':
-            rho = float(water_density(T_side))
-            mu = float(water_viscosity(T_side))
-            k_f = float(water_conductivity(T_side))
-            Pr_f = float(water_cp(T_side)) * mu / max(k_f, 1e-30)
+        m = fluid_props.get(fluid_type)
+        rho = float(m.rho(T_side, P_side))   # water.rho ignores P (incompressible)
+        mu = float(m.mu(T_side))
+        k_f = float(m.k(T_side))
+        if not m.compressible:               # water: Pr-substitution (3D: k guard)
+            Pr_f = float(m.cp(T_side)) * mu / max(k_f, 1e-30)
             return rho, mu, k_f, Pr_f
-        rho = float(air_density(T_side, P_side))
-        mu = float(air_viscosity(T_side))
-        k_f = float(air_conductivity(T_side))
         return rho, mu, k_f, None
 
     def _nu_for_fluid(fluid_type, Re_val, eps_f_val, L_mm_val, D_h_mm_val, Pr_val=None):
         Re_eff = max(float(Re_val), 1.0)
-        if fluid_type == 'water':
-            Nu_val = _nu_water_from_Re(
-                tpms_type, Re_eff, float(eps_f_val), float(L_mm_val),
-                float(D_h_mm_val), float(Pr_val if Pr_val is not None else 7.0),
-            )
-        else:
-            Nu_val = _nu_from_Re(
-                tpms_type, Re_eff, float(eps_f_val), float(L_mm_val),
-                float(D_h_mm_val),
-            )
+        m = fluid_props.get(fluid_type)
+        # water: Pr-substitution with 7.0 fallback; air ignores Pr (built-in default).
+        Pr = float(Pr_val if Pr_val is not None else 7.0) if not m.compressible else None
+        Nu_val = m.nu(tpms_type, Re_eff, float(eps_f_val), float(L_mm_val),
+                      float(D_h_mm_val), Pr)
         return max(float(Nu_val), _NU_LAM_FLOOR)
 
     def _build_hv_field_3d(L_fld, t_fld, u_side, T_side, P_side, fluid_type='air'):

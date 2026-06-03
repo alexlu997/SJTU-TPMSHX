@@ -824,6 +824,7 @@ def _run_solvers(window, cfg, fields):
     # ── Outer velocity-temperature coupling loop ──
     import warnings as _warn
     from solvers import tpms_calc as _tc
+    from solvers import fluid_props
     from solvers.simple_solver import _aligned_grid
 
     # 2026-05-09 (option B) — per-side fluid property accessors. Air uses
@@ -831,21 +832,10 @@ def _run_solvers(window, cfg, fields):
     # Returns (rho_fn, cp_fn, mu_fn, k_fn) — each accepts a scalar or
     # ndarray T (K) and P (Pa, optional) with broadcast semantics.
     def _props_for(fluid: str):
-        if fluid == 'water':
-            return dict(
-                rho=(lambda T, P=None: _tc.water_density(T)),
-                cp=_tc.water_cp,
-                mu=_tc.water_viscosity,
-                k=_tc.water_conductivity,
-                name='water',
-            )
-        return dict(
-            rho=(lambda T, P=101325.0: _tc.air_density(T, P)),
-            cp=_tc.air_cp,
-            mu=_tc.air_viscosity,
-            k=_tc.air_conductivity,
-            name='air',
-        )
+        # Primitives from the single fluid registry; dict shape kept for the
+        # downstream ['name']/['rho']/... consumers (behavior-identical).
+        m = fluid_props.get(fluid)
+        return dict(rho=m.rho, cp=m.cp, mu=m.mu, k=m.k, name=m.name)
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
 
@@ -868,14 +858,16 @@ def _run_solvers(window, cfg, fields):
     def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm):
         """Per-side Nu: water uses Pr-substitution onto air-fit correlation
         (option B, 2026-05-09). Air uses native Nu correlation."""
+        m = fluid_props.get(side_props['name'])
+        Pr = None
         if side_props['name'] == 'water':
+            # Pr-substitution (2D convention: no k guard) computed here so the
+            # registry stays free of the 2D-vs-3D Prandtl differences.
             mu_w = float(side_props['mu'](side_T_for_Pr))
             k_w  = float(side_props['k'](side_T_for_Pr))
             cp_w = float(side_props['cp'](side_T_for_Pr))
-            Pr_w = mu_w * cp_w / k_w
-            return _tc.nu_water_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm,
-                                        Pr_w)
-        return _tc.nu_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm)
+            Pr = mu_w * cp_w / k_w
+        return m.nu(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr)
 
     def _build_hv_local_2d(rho_scalar, mu_scalar, k_f_scalar,
                             u_mag_field, L_mm_field, t_mm_field,
