@@ -2274,8 +2274,11 @@ def _run_3d_stack(cfg):
         # (7% imbalance between m_in and m_out). Default restored to 0.0;
         # tuning requires re-validation before re-enabling.
         _chi_B_kernel_thr = float(cfg.get('chi_B_kernel_threshold', 0.0))
-        # B-plan B2: strict face-centered energy conservation (telescoping aP).
-        _conservative_ltne = bool(cfg.get('conservative_ltne', False))
+        # B-plan B5: strict face-centered energy conservation is now the 3D
+        # production default (telescoping aP + face-shared HO + MAC projection).
+        # The legacy cell-local-|u_c| kernel remains an explicit fallback via
+        # cfg['conservative_ltne']=False.
+        _conservative_ltne = bool(cfg.get('conservative_ltne', True))
 
         # MMS source fields (Air-Air V&V Phase A.1). Default None → no-op.
         # Solver accepts (Nx, Ny, Nz) arrays; volume-integrated source per
