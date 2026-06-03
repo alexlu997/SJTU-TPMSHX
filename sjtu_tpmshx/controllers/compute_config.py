@@ -383,6 +383,42 @@ class PartialBCConfig:
     out_z_w: Optional[float] = None
 
 
+def bc_to_dict(bc: 'PartialBCConfig', L_dom: float, H_dom: float,
+               *, side: str = 'A', with_z: bool = False):
+    """Convert a :class:`PartialBCConfig` into the legacy solver BC dict.
+
+    Single source for the 2D + 3D conversions (was three near-duplicate
+    ``_bc_cfg_to_dict_*`` functions). The side-B asymmetry is INTENTIONAL —
+    it reproduces the legacy ValueError fallback in ``_parse_inputs``:
+
+    * ``side='A'`` — a degenerate BC (``in_w<=0`` or ``out_w<=0``) falls back
+      to a full-face inlet/outlet spanning the cross-stream axis. Used by the
+      2D path (both sides) and 3D side A.
+    * ``side='B'`` — a *fully* degenerate BC (``in_w<=0`` AND ``out_w<=0``)
+      returns ``None``, which the 3D solver reads as "full-face cross-flow";
+      a partially-degenerate BC returns the raw partial dict (no full-face
+      fallback). 3D side B only.
+    * ``with_z=True`` — append the ``in_z_*``/``out_z_*`` overlay when the cfg
+      captured 3D z-partial fields (``None`` = full face along z).
+    """
+    is_x_flow = bc.dir in (0, 1)
+    cross_dim = H_dom if is_x_flow else L_dom
+    if side == 'B' and bc.in_w <= 0 and bc.out_w <= 0:
+        return None
+    if (bc.in_w > 0 and bc.out_w > 0) or side == 'B':
+        d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
+                 out_ctr=bc.out_ctr, out_w=bc.out_w)
+    else:
+        d = dict(dir=bc.dir, in_ctr=cross_dim / 2, in_w=cross_dim,
+                 out_ctr=cross_dim / 2, out_w=cross_dim)
+    if with_z and bc.in_z_ctr is not None:
+        d['in_z_ctr'] = bc.in_z_ctr
+        d['in_z_w'] = bc.in_z_w
+        d['out_z_ctr'] = bc.out_z_ctr
+        d['out_z_w'] = bc.out_z_w
+    return d
+
+
 @dataclass
 class ZoneInputConfig:
     """Zone / sigmoid-field control state.

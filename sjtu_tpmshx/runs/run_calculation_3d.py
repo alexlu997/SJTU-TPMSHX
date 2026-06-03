@@ -26,7 +26,7 @@ import os
 import time as _time
 import numpy as np
 
-from controllers.compute_config import ComputeConfig
+from controllers.compute_config import ComputeConfig, bc_to_dict
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.solve_full_3d import solve_full_domain_3d
 from solvers.tpms_calc import (
@@ -786,51 +786,6 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
 
 # ─────────────────────────── internals ────────────────────────────
 
-def _bc_cfg_to_dict_3d_A(bc, L_dom, H_dom):
-    """Convert :class:`PartialBCConfig` (side A) → legacy 3D BC dict.
-
-    Mirrors the 2D fallback ``dict(dir=0, in_ctr=H/2, in_w=H, …)`` when
-    ``bc.in_w == 0``. Adds ``in_z_*`` / ``out_z_*`` only when the cfg
-    captured 3D z-partial fields.
-    """
-    is_x_flow = bc.dir in (0, 1)
-    cross_dim = H_dom if is_x_flow else L_dom
-    if bc.in_w > 0 and bc.out_w > 0:
-        d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
-                 out_ctr=bc.out_ctr, out_w=bc.out_w)
-    else:
-        d = dict(dir=bc.dir, in_ctr=cross_dim / 2, in_w=cross_dim,
-                 out_ctr=cross_dim / 2, out_w=cross_dim)
-    # 3D z-partial overlay (None = full-face along z).
-    if bc.in_z_ctr is not None:
-        d['in_z_ctr'] = bc.in_z_ctr
-        d['in_z_w'] = bc.in_z_w
-        d['out_z_ctr'] = bc.out_z_ctr
-        d['out_z_w'] = bc.out_z_w
-    return d
-
-
-def _bc_cfg_to_dict_3d_B(bc):
-    """Convert :class:`PartialBCConfig` (side B) → legacy 3D BC dict
-    or ``None``.
-
-    The 3D solver treats ``fluid_B_cfg=None`` as "B has no partial-pipe
-    overlay, use full-face cross-flow"; this is the legacy ValueError
-    fallback in ``_parse_inputs`` (side B only — side A always falls
-    back to a full-face dict).  Reproduce that asymmetry exactly.
-    """
-    if bc.in_w <= 0 and bc.out_w <= 0:
-        return None
-    d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
-             out_ctr=bc.out_ctr, out_w=bc.out_w)
-    if bc.in_z_ctr is not None:
-        d['in_z_ctr'] = bc.in_z_ctr
-        d['in_z_w'] = bc.in_z_w
-        d['out_z_ctr'] = bc.out_z_ctr
-        d['out_z_w'] = bc.out_z_w
-    return d
-
-
 def _parse_inputs_3d_cfg(compute_cfg):
     """Phase 1 (Qt-free) 3D mirror of ``_parse_inputs(window, compute_cfg)``.
 
@@ -882,8 +837,8 @@ def _parse_inputs_3d_cfg(compute_cfg):
     D_h = g['D_h']
 
     # Partial-pipe BC dicts — side A full-face fallback, side B None.
-    fluid_A_cfg = _bc_cfg_to_dict_3d_A(compute_cfg.bc_A, L, H)
-    fluid_B_cfg = _bc_cfg_to_dict_3d_B(compute_cfg.bc_B)
+    fluid_A_cfg = bc_to_dict(compute_cfg.bc_A, L, H, side='A', with_z=True)
+    fluid_B_cfg = bc_to_dict(compute_cfg.bc_B, L, H, side='B', with_z=True)
 
     # Surrogate-domain extrap guard — cfg.extrap.allow drives it.
     extrap_reasons = []

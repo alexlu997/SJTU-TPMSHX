@@ -11,7 +11,7 @@ _DIR_MAP, etc.) — C4 task to extract that into a SessionState object.
 """
 import numpy as np
 import matplotlib.pyplot as plt
-from controllers.compute_config import ComputeConfig
+from controllers.compute_config import ComputeConfig, bc_to_dict
 from solvers.simple_solver import SIMPLESolver
 from solvers.solve_full import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
@@ -87,24 +87,6 @@ def run_calculation_inner_cfg(compute_cfg, window):
     fields = _build_fields_cfg(cfg)
     result = _run_solvers(window, cfg, fields)
     _store_results(window, cfg, result)
-
-
-def _bc_cfg_to_dict_2d(bc, L_dom, H_dom):
-    """Convert :class:`PartialBCConfig` into the legacy 2D BC dict.
-
-    Full-face fallback (``in_w==0`` or ``out_w==0``) produces an
-    inlet/outlet that spans the entire cross-stream axis (``H`` for
-    x-flow, ``L`` for y-flow), matching the legacy ``ValueError``
-    fallback inside the old ``_parse_inputs`` ``window._fluid_config``
-    block.
-    """
-    is_x_flow = bc.dir in (0, 1)
-    cross_dim = H_dom if is_x_flow else L_dom
-    if bc.in_w > 0 and bc.out_w > 0:
-        return dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
-                    out_ctr=bc.out_ctr, out_w=bc.out_w)
-    return dict(dir=bc.dir, in_ctr=cross_dim / 2, in_w=cross_dim,
-                out_ctr=cross_dim / 2, out_w=cross_dim)
 
 
 def _parse_inputs_cfg(compute_cfg):
@@ -189,8 +171,8 @@ def _parse_inputs_cfg(compute_cfg):
 
     dx = L / N_x
     dy = H / N_y
-    cfgA = _bc_cfg_to_dict_2d(compute_cfg.bc_A, L, H)
-    cfgB = _bc_cfg_to_dict_2d(compute_cfg.bc_B, L, H)
+    cfgA = bc_to_dict(compute_cfg.bc_A, L, H, side='A')
+    cfgB = bc_to_dict(compute_cfg.bc_B, L, H, side='A')
     dir_A = cfgA['dir']
     dir_B = cfgB['dir']
 
