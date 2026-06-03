@@ -305,6 +305,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         # ``_attach_field_validation`` at line 257 (audit C5 H4 fix).
         self._wire_fluid_defaults()
         self._install_status_bar_widgets()
+        self._install_dialog_theme()
         from ui.command_palette import install_command_palette
         install_command_palette(self)
         from ui.coord_inspector import install_coord_inspector
@@ -2264,6 +2265,35 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             "Wall-refine multiplies actual cells; keep modest for interactive runs."),
     }
 
+
+    def _install_dialog_theme(self):
+        """Apply a narrowly-scoped app-level stylesheet so transient
+        QMessageBox / QInputDialog popups follow the active theme. The
+        selectors only match those dialog classes, so the explicitly-styled
+        main UI is unaffected. Rebuilt on the theme-switch restart (__init__).
+        """
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return
+        t = get_theme()
+        app.setStyleSheet(
+            f"QMessageBox{{background:{t['bg']};}}"
+            f"QMessageBox QLabel{{color:{t['fg']}; background:transparent;}}"
+            f"QInputDialog{{background:{t['bg']};}}"
+            f"QInputDialog QLabel{{color:{t['fg']}; background:transparent;}}"
+            f"QInputDialog QLineEdit{{background:{t['inp_bg']}; color:{t['inp_fg']};"
+            f" border:1px solid {t['inp_border']}; border-radius:6px; padding:4px 8px;}}"
+            f"QInputDialog QComboBox, QInputDialog QSpinBox{{background:{t['inp_bg']};"
+            f" color:{t['inp_fg']}; border:1px solid {t['inp_border']};"
+            f" border-radius:6px; padding:3px 6px;}}"
+            f"QMessageBox QPushButton, QInputDialog QPushButton{{"
+            f" background:transparent; color:{t['btn_sec_fg']};"
+            f" border:1px solid {t['btn_sec_border']}; border-radius:6px;"
+            f" padding:5px 16px; font-weight:600; min-width:72px;}}"
+            f"QMessageBox QPushButton:hover, QInputDialog QPushButton:hover{{"
+            f" background:{t['btn_sec_hover_bg']};}}"
+        )
 
     def _show_status_log(self):
         """Pop up the last 50 status-bar messages in a read-only dialog."""
