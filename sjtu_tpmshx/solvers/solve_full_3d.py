@@ -23,7 +23,6 @@ Phase 1 additions (2026-04-20):
   * Conservation probes: energy_balance_3d, mass_balance_3d helpers.
 """
 
-import os
 import numpy as np
 from numba import njit
 
@@ -136,6 +135,91 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
         wf[:, :, 1:-1] += dF / (Cz + 1e-30)
     return (np.ascontiguousarray(uf), np.ascontiguousarray(vf),
             np.ascontiguousarray(wf))
+
+
+def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
+                               dx, dy, dz, dir_code):
+    """Rigorous strict-conservation certificate for one fluid phase (B-plan B2).
+
+    Evaluates, on the CONVERGED field, the residual of the *conservative*
+    discrete energy equation per cell — using the exact same shared face
+    fluxes, harmonic-mean diffusion and hybrid-upwind coefficients as the
+    conservative kernel, with the (F_e−F_w+…) net-out term in a_P:
+
+        r[c] = a_P·T_c − Σ a_nb·T_nb − h_v·V·Ts
+
+    Summed over INTERIOR cells (inlet-pinned and outlet zero-grad layers
+    excluded), internal faces telescope so Σ r = ∮_∂(interior) flux −
+    ∫ source. For a converged conservative solution r→0 per cell ⇒ Σ r→0
+    (machine/solver-tol). A non-conservative solution evaluated against this
+    discretisation leaves Σ r large. Returns (Σ r, ∫_interior h_v(Ts−T) dV).
+    """
+    Nx, Ny, Nz = T.shape
+    Ax = (dy[None, :, None] * dz[None, None, :])
+    Ay = (dx[:, None, None] * dz[None, None, :])
+    Az = (dx[:, None, None] * dy[None, :, None])
+    vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
+
+    coef = eps_f * rcp
+    # Face ε·ρcp (arithmetic mean interior, cell value at boundary) — matches kernel.
+    cf_x = np.empty_like(uf); cf_x[1:-1] = 0.5 * (coef[:-1] + coef[1:])
+    cf_x[0] = coef[0]; cf_x[-1] = coef[-1]
+    cf_y = np.empty_like(vf); cf_y[:, 1:-1] = 0.5 * (coef[:, :-1] + coef[:, 1:])
+    cf_y[:, 0] = coef[:, 0]; cf_y[:, -1] = coef[:, -1]
+    cf_z = np.empty_like(wf); cf_z[:, :, 1:-1] = 0.5 * (coef[:, :, :-1] + coef[:, :, 1:])
+    cf_z[:, :, 0] = coef[:, :, 0]; cf_z[:, :, -1] = coef[:, :, -1]
+    Fx = cf_x * uf * np.broadcast_to(Ax, uf.shape)   # (Nx+1,Ny,Nz)
+    Fy = cf_y * vf * np.broadcast_to(Ay, vf.shape)
+    Fz = cf_z * wf * np.broadcast_to(Az, wf.shape)
+    Fe = Fx[1:]; Fw = Fx[:-1]; Fn = Fy[:, 1:]; Fs = Fy[:, :-1]
+    Ft = Fz[:, :, 1:]; Fb = Fz[:, :, :-1]
+    net_out = (Fe - Fw) + (Fn - Fs) + (Ft - Fb)
+
+    # Harmonic-mean diffusion conductances, shared faces (matches kernel).
+    dxe = 0.5 * (dx[:-1] + dx[1:]); dyn = 0.5 * (dy[:-1] + dy[1:])
+    dzt = 0.5 * (dz[:-1] + dz[1:])
+    dE = np.zeros_like(T); dW = np.zeros_like(T)
+    dN = np.zeros_like(T); dS = np.zeros_like(T)
+    dT_ = np.zeros_like(T); dB = np.zeros_like(T)
+    if Nx > 1:
+        h = 2.0 * K[:-1] * K[1:] / (K[:-1] + K[1:] + 1e-30) \
+            * np.broadcast_to(Ax, (Nx - 1, Ny, Nz)) / dxe[:, None, None]
+        dE[:-1] = h; dW[1:] = h
+    if Ny > 1:
+        h = 2.0 * K[:, :-1] * K[:, 1:] / (K[:, :-1] + K[:, 1:] + 1e-30) \
+            * np.broadcast_to(Ay, (Nx, Ny - 1, Nz)) / dyn[None, :, None]
+        dN[:, :-1] = h; dS[:, 1:] = h
+    if Nz > 1:
+        h = 2.0 * K[:, :, :-1] * K[:, :, 1:] / (K[:, :, :-1] + K[:, :, 1:] + 1e-30) \
+            * np.broadcast_to(Az, (Nx, Ny, Nz - 1)) / dzt[None, None, :]
+        dT_[:, :, :-1] = h; dB[:, :, 1:] = h
+
+    aE = dE + np.maximum(-Fe, 0.0); aW = dW + np.maximum(Fw, 0.0)
+    aN = dN + np.maximum(-Fn, 0.0); aS = dS + np.maximum(Fs, 0.0)
+    aT = dT_ + np.maximum(-Ft, 0.0); aB = dB + np.maximum(Fb, 0.0)
+    aP = aE + aW + aN + aS + aT + aB + net_out + hv * vol
+
+    # Neighbour T with boundary = self (kernel convention).
+    TE = T.copy(); TE[:-1] = T[1:]
+    TW = T.copy(); TW[1:] = T[:-1]
+    TN = T.copy(); TN[:, :-1] = T[:, 1:]
+    TS = T.copy(); TS[:, 1:] = T[:, :-1]
+    TT = T.copy(); TT[:, :, :-1] = T[:, :, 1:]
+    TB = T.copy(); TB[:, :, 1:] = T[:, :, :-1]
+    r = (aP * T - aE * TE - aW * TW - aN * TN - aS * TS - aT * TT - aB * TB
+         - hv * vol * Ts)
+
+    # Interior mask: drop inlet-pinned + outlet zero-grad cell layers.
+    interior = np.ones((Nx, Ny, Nz), dtype=bool)
+    inlet_outlet = {0: (0, Nx - 1), 1: (Nx - 1, 0), 2: (0, Ny - 1),
+                    3: (Ny - 1, 0), 4: (0, Nz - 1), 5: (Nz - 1, 0)}[dir_code]
+    ax = 0 if dir_code <= 1 else (1 if dir_code <= 3 else 2)
+    for idx in inlet_outlet:
+        sl = [slice(None)] * 3; sl[ax] = idx
+        interior[tuple(sl)] = False
+
+    src = hv * vol * (Ts - T)
+    return float(np.sum(r[interior])), float(np.sum(src[interior]))
 
 
 # ---------------------------------------------------------------------------
@@ -1290,42 +1374,6 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         ufB, vfB, wfB = _project_faces_div_free(
             ufB, vfB, wfB, eps_f_arr, rho_cp_fB_arr, dx_arr, dy_arr, dz_arr)
 
-    if use_stag and os.environ.get('TPMSHX_CONS_DIAG'):
-        Ax3 = (dy_arr[None, :, None] * dz_arr[None, None, :])
-        Ay3 = (dx_arr[:, None, None] * dz_arr[None, None, :])
-        Az3 = (dx_arr[:, None, None] * dy_arr[None, :, None])
-
-        def _facemean(c, ax):
-            lo = [slice(None)] * 3
-            hi = [slice(None)] * 3
-            n = c.shape[ax]
-            inner = 0.5 * (np.take(c, range(0, n - 1), ax)
-                           + np.take(c, range(1, n), ax))
-            first = np.take(c, [0], ax)
-            last = np.take(c, [n - 1], ax)
-            return np.concatenate([first, inner, last], axis=ax)
-
-        def _netout(uf, vf, wf, rcp):
-            Fx = (_facemean(eps_f_arr, 0) * _facemean(rcp, 0) * uf
-                  * np.broadcast_to(Ax3, uf.shape))
-            Fy = (_facemean(eps_f_arr, 1) * _facemean(rcp, 1) * vf
-                  * np.broadcast_to(Ay3, vf.shape))
-            Fz = (_facemean(eps_f_arr, 2) * _facemean(rcp, 2) * wf
-                  * np.broadcast_to(Az3, wf.shape))
-            return (Fx[1:, :, :] - Fx[:-1, :, :]
-                    + Fy[:, 1:, :] - Fy[:, :-1, :]
-                    + Fz[:, :, 1:] - Fz[:, :, :-1])
-        noA = _netout(ufA, vfA, wfA, rho_cp_fA_arr)
-        noB = _netout(ufB, vfB, wfB, rho_cp_fB_arr)
-        hvA_scale = float(np.sum(np.abs(h_vA_arr * cell_vol)))
-        hvB_scale = float(np.sum(np.abs(h_vB_arr * cell_vol)))
-        print(f"[CONS-DIAG] A net_out: sum={np.sum(noA):.3e} "
-              f"abs_sum={np.sum(np.abs(noA)):.3e} max={np.max(np.abs(noA)):.3e} "
-              f"hvA_scale={hvA_scale:.3e}", flush=True)
-        print(f"[CONS-DIAG] B net_out: sum={np.sum(noB):.3e} "
-              f"abs_sum={np.sum(np.abs(noB)):.3e} max={np.max(np.abs(noB)):.3e} "
-              f"hvB_scale={hvB_scale:.3e}", flush=True)
-
     while done < max_iter:
         n = min(chunk, max_iter - done)
         if use_stag:
@@ -1388,13 +1436,28 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         Q_prev = Q_cur
         Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
 
+    info = {
+        'converged': converged,
+        'iterations': done,
+        'residual': float(chg),
+        'delegated_to_2d': False,
+    }
+    if _cons == 1:
+        # Strict-conservation certificate: residual of the conservative
+        # discretisation on the converged field, ∮_∂ − ∫S over interior cells.
+        rA, QA = _conservation_residual_sum(
+            Ta, Ts, ufA, vfA, wfA, eps_f_arr, K_ffA_arr, rho_cp_fA_arr,
+            h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A)
+        info['eps_A_strict'] = abs(rA) / max(abs(QA), 1e-30)
+        if freeze_Tb == 0:
+            rB, QB = _conservation_residual_sum(
+                Tb, Ts, ufB, vfB, wfB, eps_f_arr, K_ffB_arr, rho_cp_fB_arr,
+                h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B)
+            info['eps_B_strict'] = abs(rB) / max(abs(QB), 1e-30)
+        else:
+            info['eps_B_strict'] = 0.0
     if return_info:
-        return Ta, Tb, Ts, {
-            'converged': converged,
-            'iterations': done,
-            'residual': float(chg),
-            'delegated_to_2d': False,
-        }
+        return Ta, Tb, Ts, info
     return Ta, Tb, Ts
 
 

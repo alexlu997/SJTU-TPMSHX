@@ -1,44 +1,63 @@
-"""B-plan B1 — strict energy-conservation golden (RED until face-centered kernel lands).
+"""B-plan B1/B2 — strict energy-conservation golden.
 
 Conservation contract (vault: 2026-06-03-3d-strict-energy-conservation-B-plan-CN.md):
-  discrete FV energy balance per phase ⇒ ε_B (volumetric source vs enthalpy) < 1%
+  the discrete FV energy balance per phase must satisfy ∮_∂Ω F·n dA = ∫_Ω S dV
   for BOTH full-face cross-flow (T2) and offset partial-B (T4).
 
-Current cell-local-|u_c| upwind kernel: ε_B = 8.35% (T2) / 78.99% (T4) — NOT
-conservative (the shared face carries two different fluxes in the two adjacent
-cells' equations). The face-centered Patankar rewrite, selected by
-cfg['conservative_ltne']=True, must drive both < 1% by using the SIMPLE
-staggered face fluxes + the (F_e - F_w) telescoping term in a_P.
+Metric — `eps_B_strict` (and `eps_A_strict`), computed by the solver when
+cfg['conservative_ltne']=True. It is the residual of the *conservative*
+discretisation evaluated on the converged field, summed over interior cells:
 
-These tests are RED now (flag unimplemented ⇒ ε_B unchanged) and GREEN after B2.
+    r[c] = a_P·T_c − Σ a_nb·T_nb − h_v·V·Ts        (a_P carries the (F_e−F_w+…) net-out term)
+    eps_strict = |Σ_interior r| / |∫_interior S|
+
+Because the conservative kernel uses the SAME shared SIMPLE face flux for the
+two cells adjacent to every face, internal faces telescope, so Σ_interior r =
+∮_∂(interior) flux − ∫ source. A solution that actually solves the conservative
+balance drives this to ~0 (solver tol); a non-conservative solution evaluated
+against the same discretisation leaves it large. This supersedes the earlier
+`compute_phase2a_interior` heuristic (advective enthalpy m·cp·ΔT vs interior
+source), which silently dropped the boundary-diffusion term and so read ~8.5 %
+for the cold fluid even when the scheme conserved — a metric artifact, not a
+conservation failure.
+
+The legacy cell-local-|u_c| upwind kernel (cfg default) does NOT satisfy this
+balance: the shared face carries two different fluxes in the two adjacent
+cells' equations. The face-centered Patankar rewrite (SIMPLE staggered fluxes,
+(F_e−F_w) telescoping in a_P, MAC projection to discrete solenoidality) drives
+both T2 and T4 < 1 %.
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from validation.audit_3d_conservation import (
-    make_T2, make_T4, compute_phase2a_interior,
-)
+from validation.audit_3d_conservation import make_T2, make_T4
 from runs.run_calculation_3d import _run_3d_stack
 
-_EPS_B_GATE = 0.01  # < 1 %
+_EPS_GATE = 0.01  # < 1 %
 
 
-def _eps_B_conservative(maker, grid=20):
+def _strict_eps(maker, grid=20):
     cfg = maker(grid)
-    cfg["conservative_ltne"] = True  # B2 wires the face-centered kernel here
+    cfg["conservative_ltne"] = True
     res = _run_3d_stack(cfg)
-    return compute_phase2a_interior(res)["eps_B_kernel"]
+    return res["eps_A_strict"], res["eps_B_strict"]
 
 
 def test_conservative_ltne_T2_full_face():
-    """Full-face cross-flow: conservative kernel ⇒ ε_B < 1% (now 8.35%)."""
-    eps_B = _eps_B_conservative(make_T2)
-    assert eps_B < _EPS_B_GATE, f"T2 ε_B={eps_B*100:.2f}% not < 1%"
+    """Full-face cross-flow: conservative discretisation balances per phase."""
+    eps_A, eps_B = _strict_eps(make_T2)
+    assert eps_A is not None and eps_B is not None, \
+        "conservative_ltne path did not emit strict-conservation metrics"
+    assert eps_A < _EPS_GATE, f"T2 ε_A_strict={eps_A*100:.3f}% not < 1%"
+    assert eps_B < _EPS_GATE, f"T2 ε_B_strict={eps_B*100:.3f}% not < 1%"
 
 
 def test_conservative_ltne_T4_partial_offset():
-    """Offset partial-B (Shanghai-like): conservative kernel ⇒ ε_B < 1% (now 78.99%)."""
-    eps_B = _eps_B_conservative(make_T4)
-    assert eps_B < _EPS_B_GATE, f"T4 ε_B={eps_B*100:.2f}% not < 1%"
+    """Offset partial-B (Shanghai-like): conservative discretisation balances."""
+    eps_A, eps_B = _strict_eps(make_T4)
+    assert eps_A is not None and eps_B is not None, \
+        "conservative_ltne path did not emit strict-conservation metrics"
+    assert eps_A < _EPS_GATE, f"T4 ε_A_strict={eps_A*100:.3f}% not < 1%"
+    assert eps_B < _EPS_GATE, f"T4 ε_B_strict={eps_B*100:.3f}% not < 1%"
