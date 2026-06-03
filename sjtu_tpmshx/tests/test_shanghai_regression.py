@@ -146,7 +146,13 @@ def test_shanghai_3d_baseline():
     rmsre_dP = _rmsre_from_pct(df['err_dP%'])
     rmsre_Q = _rmsre_from_pct(df['err_Q%'])
 
-    BASELINE_DP = 17.32
+    # B-plan B6 (2026-06-03): now measured on the strict-conservation kernel
+    # (conservative_ltne defaults True). dP/Q are essentially unchanged — dP is
+    # SIMPLE momentum (energy-kernel-independent) and Q is a boundary enthalpy
+    # metric insensitive to the internal B-field non-conservation that the
+    # conservative kernel fixes. Conservative Nz=3: dP 17.43% / Q 3.74%
+    # (was cc 17.32% / 3.74%); Nz=10: dP 21.49% / Q 3.88% (identical to cc).
+    BASELINE_DP = 17.43
     BASELINE_Q = 3.74
     tol_dp = 0.05
     tol_q = 0.10
