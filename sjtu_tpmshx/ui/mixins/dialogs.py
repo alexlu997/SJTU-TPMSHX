@@ -49,11 +49,14 @@ class DialogsMixin:
         dlg = QDialog(self)
         dlg.setWindowTitle("Solve log — SIMPLE / coupling output")
         dlg.resize(820, 640)
+        from ui.theme import get_theme as _gt_sl
+        _tsl = _gt_sl()
+        # Theme the dialog chrome too, not just the editor (else the surround
+        # falls back to the parent palette and mismatches on the light theme).
+        dlg.setStyleSheet(f"QDialog{{background:{_tsl['bg']};}}")
         v = QVBoxLayout(dlg)
         edit = QPlainTextEdit(text)
         edit.setReadOnly(True)
-        from ui.theme import get_theme as _gt_sl
-        _tsl = _gt_sl()
         edit.setStyleSheet(
             f"QPlainTextEdit{{background:{_tsl.get('surface_raised', _tsl['card_bg'])};"
             f"color:{_tsl['fg']}; border:1px solid {_tsl['card_border']};"

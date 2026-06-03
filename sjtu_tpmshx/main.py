@@ -2272,14 +2272,23 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         dlg = QDialog(self)
         dlg.setWindowTitle("Status Log")
         dlg.resize(640, 380)
+        # Theme the whole dialog (not just the text area) so the chrome around
+        # the editor matches it in both palettes — otherwise the dialog
+        # background falls back to the parent palette (white editor + dark
+        # surround on the light theme).
+        _t = get_theme()
+        dlg.setStyleSheet(
+            f"QDialog{{background:{_t['bg']};}}"
+            f"QPlainTextEdit{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+            f" border:1px solid {_t['card_border']}; border-radius:6px;"
+            f" font-family:'Fira Code','Consolas',monospace; font-size:9pt;}}"
+            f"QPushButton{{background:transparent; color:{_t['btn_sec_fg']};"
+            f" border:1px solid {_t['btn_sec_border']}; border-radius:6px;"
+            f" padding:5px 16px; font-weight:600;}}"
+            f"QPushButton:hover{{background:{_t['btn_sec_hover_bg']};}}")
         lay = QVBoxLayout(dlg)
         txt = QPlainTextEdit()
         txt.setReadOnly(True)
-        txt.setStyleSheet(
-            f"QPlainTextEdit{{background:{get_theme()['inp_bg']};"
-            f"color:{get_theme()['inp_fg']};"
-            f"border:1px solid {get_theme()['card_border']};"
-            "font-family:'Fira Code', 'Consolas', monospace; font-size:9pt;}")
         lines = list(getattr(self, '_log_history', []))
         txt.setPlainText("\n".join(lines) if lines
                          else "(no status messages yet)")
