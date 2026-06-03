@@ -1171,8 +1171,15 @@ class SIMPLESolver:
             # multiplicative constant (no functional change). Zoned ε →
             # captures macroscopic ∇·(ε·ρ·u)=0 form. Momentum unchanged
             # (uses interstitial u with ε encoded in K).
-            rho_eps_field = np.ascontiguousarray(
-                self.rho_field * self.eps_field, dtype=np.float64)
+            # Reuse a persistent buffer instead of allocating ε·ρ every outer
+            # iteration. Bit-identical to ascontiguousarray(rho*eps): same
+            # float64 products, and rho_eps_field is only read (PP solve + mass
+            # residual) within this iteration, never retained across iters.
+            if getattr(self, '_rho_eps', None) is None or \
+                    self._rho_eps.shape != self.rho_field.shape:
+                self._rho_eps = np.empty_like(self.rho_field)
+            np.multiply(self.rho_field, self.eps_field, out=self._rho_eps)
+            rho_eps_field = self._rho_eps
             _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                             self.inlet_frac, self.outlet_frac,
                             Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,

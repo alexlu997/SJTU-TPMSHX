@@ -47,7 +47,7 @@ from time import perf_counter as _perf_counter
 import numpy as np
 from numba import njit, prange
 from scipy import sparse
-from scipy.sparse.linalg import bicgstab, spilu, LinearOperator
+from scipy.sparse.linalg import bicgstab
 
 try:
     import pyamg
@@ -1530,8 +1530,14 @@ class SIMPLESolver3D:
             # Effective density for continuity: ε·ρ. Uniform ε → multiplicative
             # constant (no functional change). Zoned ε → captures macroscopic
             # ∇·(ε·ρ·u)=0 form; without this the ∇ε contribution is dropped.
-            rho_eps_field = np.ascontiguousarray(
-                self.rho_field * self.eps_field, dtype=np.float64)
+            # Reuse a persistent buffer instead of allocating ε·ρ every outer
+            # iteration. Bit-identical to ascontiguousarray(rho*eps); rho_eps_field
+            # is only read (PP solve + mass residual) within this iteration.
+            if getattr(self, '_rho_eps', None) is None or \
+                    self._rho_eps.shape != self.rho_field.shape:
+                self._rho_eps = np.empty_like(self.rho_field)
+            np.multiply(self.rho_field, self.eps_field, out=self._rho_eps)
+            rho_eps_field = self._rho_eps
             _sweep_u(self.u, self.v, self.w, self.P, self.d_u,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
@@ -1676,7 +1682,17 @@ class SIMPLESolver3D:
 # ── JIT warmup — pay the compile cost at module-import time, not on first
 #    Run-Calculation click. Every @njit kernel called once on a tiny grid.
 def _warmup_simple_3d():
-    """Compile all Numba kernels on import so the first solve is responsive."""
+    """Compile the Numba momentum/mass kernels on import so the first real
+    solve() doesn't pay the JIT cost.
+
+    Args MUST match the kernel signatures exactly. The previous version
+    mis-ordered them (dx/dy/dz fell into the Nx/Ny/Nz int slots, eps into
+    n_sweeps), so every call raised a TypeError that was silently swallowed
+    — the warmup compiled nothing and the first Run ate the full compile.
+    Both the serial and red-black ``_parallel`` variants are warmed because
+    solve() dispatches either one depending on grid size
+    (see ``_should_parallelize``).
+    """
     try:
         Nx, Ny, Nz = 3, 3, 3
         zeros3 = lambda shp: np.zeros(shp, dtype=np.float64)
@@ -1697,31 +1713,26 @@ def _warmup_simple_3d():
         v_inlet = ones3((Nx, Nz))
         out_frac = ones3((Nx, Nz))
         in_frac = ones3((Nx, Nz))
-        eps_val = 0.7368; alpha_u = 0.5
-        try:
-            _sweep_u_jit_df_3d(
-                u, v, w, P, d_u,
-                dx, dy, dz, rho, mu, mu_eff,
-                K_arr, cF_arr, out_frac, in_frac,
-                Nx, Ny, Nz, alpha_u, eps_val)
-            _sweep_v_jit_df_3d(
-                u, v, w, P, d_v,
-                dx, dy, dz, rho, mu, mu_eff,
-                K_arr, cF_arr, v_inlet, out_frac, in_frac,
-                Nx, Ny, Nz, alpha_u, eps_val)
-            _sweep_w_jit_df_3d(
-                u, v, w, P, d_w,
-                dx, dy, dz, rho, mu, mu_eff,
-                K_arr, cF_arr, out_frac, in_frac,
-                Nx, Ny, Nz, alpha_u, eps_val)
-        except Exception:
-            pass
-        try:
-            _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho)
-        except Exception:
-            pass
-    except Exception:
-        pass
+        alpha_u = 0.5
+        n = 1
+        # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu, K,cF, out,in, alpha,n)
+        for ku in (_sweep_u_jit_df_3d, _sweep_u_jit_df_3d_parallel):
+            ku(u, v, w, P, d_u, Nx, Ny, Nz, dx, dy, dz,
+               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+        # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz.
+        for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
+            kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
+               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+        for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
+            kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
+               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+        _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho)
+    except Exception as e:
+        import os
+        if os.environ.get('TPMSHX_DEBUG'):
+            import warnings
+            warnings.warn(
+                f"3D JIT warmup failed (kernels compile on first solve): {e!r}")
 
 
 _warmup_simple_3d()

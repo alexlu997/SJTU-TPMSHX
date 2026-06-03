@@ -267,27 +267,36 @@ class ContinuousFieldConfig:
         r_h_arr   = np.empty((Nx, Ny), dtype=np.float64)
         A_0_arr   = np.empty((Nx, Ny), dtype=np.float64)
 
-        cache: dict = {}
-        for i in range(Nx):
-            for j in range(Ny):
-                key = (round(float(L_q[i, j]), 4),
-                       round(float(t_q[i, j]), 4))
-                if key not in cache:
-                    pA = tpms_calc.compute(self.tpms_type, key[0], key[1],
-                                           u_A, T_inA, P_in, self.k_s)
-                    pB = tpms_calc.compute(self.tpms_type, key[0], key[1],
-                                           u_B, T_inB, P_in, self.k_s)
-                    cache[key] = (pA, pB)
-                pA, pB = cache[key]
-                eps_arr[i, j]   = pA['epsilon']
-                eps_f_arr[i, j] = pA['epsilon_A']
-                K_ffA_arr[i, j] = pA['K_ff']
-                K_ffB_arr[i, j] = pB['K_ff']
-                K_ss_arr[i, j]  = pA['K_ss']
-                h_vA_arr[i, j]  = pA['H_sf'] * pA['A_0']
-                h_vB_arr[i, j]  = pB['H_sf'] * pB['A_0']
-                r_h_arr[i, j]   = pA['D_h'] / 2.0
-                A_0_arr[i, j]   = pA['A_0']
+        # Vectorised scatter: evaluate each unique quantised (L, t) once, then
+        # broadcast into the output arrays via a boolean mask. Bit-identical to
+        # the previous per-cell dict-cached loop (same quantisation + same
+        # tpms_calc.compute inputs), but calls compute() n_unique times instead
+        # of Nx*Ny — the quantised field has only a few hundred unique pairs.
+        L_key = np.round(L_q, 4)
+        t_key = np.round(t_q, 4)
+        pairs = np.stack([L_key.ravel(), t_key.ravel()], axis=1)
+        uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
+        inv = inv.reshape(-1)
+        # ravel() returns views of the C-contiguous output arrays.
+        f_eps  = eps_arr.ravel();   f_epsf = eps_f_arr.ravel()
+        f_KffA = K_ffA_arr.ravel(); f_KffB = K_ffB_arr.ravel()
+        f_Kss  = K_ss_arr.ravel()
+        f_hvA  = h_vA_arr.ravel();  f_hvB  = h_vB_arr.ravel()
+        f_rh   = r_h_arr.ravel();   f_A0   = A_0_arr.ravel()
+        for u_idx in range(uniq.shape[0]):
+            L_u = float(uniq[u_idx, 0]); t_u = float(uniq[u_idx, 1])
+            pA = tpms_calc.compute(self.tpms_type, L_u, t_u,
+                                   u_A, T_inA, P_in, self.k_s)
+            pB = tpms_calc.compute(self.tpms_type, L_u, t_u,
+                                   u_B, T_inB, P_in, self.k_s)
+            m = (inv == u_idx)
+            f_eps[m]  = pA['epsilon'];   f_epsf[m] = pA['epsilon_A']
+            f_KffA[m] = pA['K_ff'];      f_KffB[m] = pB['K_ff']
+            f_Kss[m]  = pA['K_ss']
+            f_hvA[m]  = pA['H_sf'] * pA['A_0']
+            f_hvB[m]  = pB['H_sf'] * pB['A_0']
+            f_rh[m]   = pA['D_h'] / 2.0; f_A0[m]   = pA['A_0']
+        n_unique = int(uniq.shape[0])
 
         return {
             'zone_id':   np.zeros((Nx, Ny), dtype=np.int32),  # not used downstream
@@ -303,7 +312,7 @@ class ContinuousFieldConfig:
             'axis': 'continuous',
             'L_field': L_field,
             't_field': t_field,
-            'cache_size': len(cache),
+            'cache_size': n_unique,
         }
 
     # ─── Manufacturability checks ────────────────────────────────────
