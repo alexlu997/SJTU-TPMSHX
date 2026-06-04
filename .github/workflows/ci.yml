@@ -1,0 +1,42 @@
+name: CI
+
+# Runs the pytest suite on every push to master and on every PR.
+# Targets windows-latest to match the developer environment where the suite
+# is validated (730 passed). Qt tests run headless via tests/conftest.py
+# (QT_QPA_PLATFORM=offscreen). The Shanghai regression tests are opt-in
+# (TPMSHX_RUN_SHANGHAI_REGRESSION, default off) and need the experiment Excel
+# which is not in the repo, so they auto-skip here.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: sjtu_tpmshx
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest pyamg PySide6 pyvista pyvistaqt
+
+      - name: Run test suite
+        # --ignore the one test needing torch/botorch (heavy; not installed here).
+        # Shanghai regression auto-skips (opt-in env var off + no data file).
+        run: pytest -q --ignore=tests/test_optimizer_qnehvi_helpers.py
