@@ -14,8 +14,11 @@ from runs.run_calculation_3d import _mass_weighted_T_out  # after refactor
 def _mock_solver(NX=12, NY=6, NZ=12, eps=0.5, rho=1000.0):
     """Minimal solver-shaped object exposing only what _face_flux_weights uses."""
     v = np.zeros((NX, NY + 1, NZ))
-    # outflow (-y) at j=0 only in left-third stripe (active outlet)
-    v[:4, 0, :] = -0.05
+    # outflow at the solver outlet face (j=-1) only in the left-third stripe.
+    # approach-(a): _face_flux_weights reads the REAL outlet at solver j=-1
+    # with outlet_frac for ALL dirs (the reverse-dir spatial flip lives in the
+    # velocity transforms, not the accounting). Was j=0 under approach-(b).
+    v[:4, -1, :] = -0.05
     rho_field = np.full((NX, NY, NZ), rho)
     eps_field = np.full((NX, NY, NZ), eps)
     dx = np.full(NX, 0.04 / NX)
@@ -35,7 +38,7 @@ def test_q_enth_b_excludes_stagnant_corners():
     T_face[:4, :] = 350.0   # cold active stripe
     sol = _mock_solver(NX=NX, NZ=NZ)
 
-    # dir_code=3 -> -y direction outlet (real_outlet -> solver j=0 for is_reverse)
+    # dir_code=3 (-y): approach-(a) real_outlet -> solver j=-1 + outlet_frac.
     T_bulk = _mass_weighted_T_out(T_face, sol, dir_code=3, eps_f_scalar=0.5)
 
     assert abs(T_bulk - 350.0) < 0.1, f"bulk T_b leaked stagnant: {T_bulk:.2f}"
