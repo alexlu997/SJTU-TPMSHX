@@ -146,14 +146,21 @@ def test_shanghai_3d_baseline():
     rmsre_dP = _rmsre_from_pct(df['err_dP%'])
     rmsre_Q = _rmsre_from_pct(df['err_Q%'])
 
-    # B-plan B6 (2026-06-03): now measured on the strict-conservation kernel
-    # (conservative_ltne defaults True). dP/Q are essentially unchanged — dP is
-    # SIMPLE momentum (energy-kernel-independent) and Q is a boundary enthalpy
-    # metric insensitive to the internal B-field non-conservation that the
-    # conservative kernel fixes. Conservative Nz=3: dP 17.43% / Q 3.74%
-    # (was cc 17.32% / 3.74%); Nz=10: dP 21.49% / Q 3.88% (identical to cc).
-    BASELINE_DP = 17.43
-    BASELINE_Q = 3.74
+    # 2026-06-04 — MASS-FLUX inlet BC fix. The Shanghai experiment fixes the
+    # air MASS FLOW (m_air; u_A = m_air/(ρ_A·A_FLOW) is derived). The legacy
+    # velocity-inlet held v constant but let ρ_inlet float, so at high-dP
+    # compressible cases it injected the WRONG (systematically LOW) mass flow
+    # (case 16: 0.84× the target) → systematically under-predicted dP. The
+    # mass-flux inlet (hold ρ·v = m_air, SIMPLESolver3D.massflux_inlet, default
+    # True for ideal_gas) injects the experimentally-correct mass flow → dP
+    # RMSRE 17.43%→7.19%, Q 3.74%→3.22%. The residual is the true closure +
+    # geometry floor (incl. the low-dP case-1 +16% regime). Verified: injected
+    # ∑ρv·A is locked at the m_air ratio across all 16 cases (was drifting).
+    # See vault 2026-06-04-reverse-dir-convention-fix-plan-CN.md §6 and
+    # [[feedback_dp_gap_attribution]] (the "inlet convention" contributor is
+    # now the identified+fixed part of the gap). Conservative kernel, Nz=3.
+    BASELINE_DP = 7.19
+    BASELINE_Q = 3.22
     tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (

@@ -58,12 +58,36 @@ def _compute_epsilon(r):
 
 
 def test_epsilon_ntu_bound():
-    """ε_obs ≤ ε_max for partial-BC ghost-B case."""
+    """ε_obs ≤ ε_max for partial-BC ghost-B case.
+
+    Part 2 fix (2026-06-04): the air-air OFFSET case (in_ctr=0.154 wide,
+    out_ctr=0.028 narrow, dir=3) previously ran away (v_out~2912 m/s, P~120
+    atm, ε_obs~2.94) — a compressible velocity-inlet + Forchheimer POSITIVE
+    feedback (dP∝ρ∝P) that never converged. The mass-flux inlet BC holds ρ·v
+    constant (negative feedback) so the solve converges to a physical state
+    (v_out~30 m/s, dP~0.7 bar) and ε_obs returns below the bound. See
+    test_air_air_offset_outlet_subsonic for the direct velocity gate.
+    """
     from runs.run_calculation_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     eps = _compute_epsilon(r)
     # ε_max for cross-flow C_r≈0.74, NTU≈7: ≈0.87
     assert eps <= 0.90, f"ε_obs={eps:.4f} exceeds ε_max bound"
+
+
+def test_air_air_offset_outlet_subsonic():
+    """BUG B fix gate (Part 2): air-air OFFSET partial-B outlet must stay well
+    below sonic. Pre-fix the compressible velocity-inlet feedback blew the
+    narrow offset outlet to ~2912 m/s (M~8); the mass-flux inlet BC breaks the
+    feedback so the solve converges physically. Gate: v_out < 5·u_inlet=100."""
+    from runs.run_calculation_3d import _run_3d_stack
+    r = _run_3d_stack(_partial_bc_air_air_cfg())
+    sb = r.get('_audit_sB_face')
+    assert sb is not None, "B-side audit face missing"
+    v_out = float(np.abs(sb['v'][:, -1, :]).max())
+    assert v_out < 100.0, (
+        f"air-air offset outlet supersonic spike not contained: "
+        f"v_out={v_out:.1f} m/s (gate 100; pre-fix ≈2912)")
 
 
 # ── Historical ghost-B fixture (regression warning only) ────────────

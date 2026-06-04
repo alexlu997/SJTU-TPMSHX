@@ -1394,6 +1394,32 @@ class SIMPLESolver3D:
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
+        # Compressible inlet: hold the inlet MASS FLUX (ρ·v) constant, not v.
+        self._apply_massflux_inlet()
+
+    def _apply_massflux_inlet(self):
+        """Re-impose a mass-flux inlet: v_inlet = G_target / ρ_inlet.
+
+        Velocity-inlet (fixed v) + compressible ρ=P/(RT) + Forchheimer
+        (dP∝ρ·u² at fixed u) is a POSITIVE feedback (dP↑→P↑→ρ↑→dP↑) that runs
+        away for high-resistance configs (air-air narrow offset outlet:
+        v_out~2912 m/s, P~120 atm, no convergence — Bug B, 2026-06-04).
+        Holding the mass flux G=ρ·v constant makes it NEGATIVE feedback
+        (ρ↑→v=G/ρ↓→dP∝1/ρ↓) → stable, and is the physically-correct
+        compressible inlet. `G_target` is captured once at solve start from
+        the prescribed (v, ρ_ref). For low-dP runs (water, aligned air)
+        ρ≈ρ_ref so v≈v_specified — behaviour ≈ the legacy velocity-inlet.
+
+        No-op when disabled, before the target is captured, or for
+        incompressible fluids (the ideal_gas guard in _update_density returns
+        first; the flag guard here keeps the method self-safe for unit tests).
+        """
+        if not getattr(self, 'massflux_inlet', True):
+            return
+        if not hasattr(self, '_massflux_target'):
+            return
+        rho_in = np.maximum(self.rho_field[:, 0, :], 1e-9)
+        self.v_inlet_field = self._massflux_target / rho_in
 
     def update_T_field(self, T_field):
         """Refresh T_field (and derived mu / mu_eff) for non-iso coupling.
@@ -1437,6 +1463,18 @@ class SIMPLESolver3D:
         """
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self.dx, self.dy, self.dz
+
+        # Capture the mass-flux inlet target ONCE, at reference inlet
+        # conditions (prescribed v × initial ρ), before any pressure build-up.
+        # Reused across outer-loop warm restarts so the target never drifts
+        # with the elevated ρ. See _apply_massflux_inlet.
+        if (getattr(self, 'massflux_inlet', True)
+                and self.fluid_type == 'ideal_gas'
+                and self.v_inlet_field is not None
+                and not hasattr(self, '_massflux_target')):
+            self._massflux_target = (np.asarray(self.v_inlet_field,
+                                                dtype=np.float64)
+                                     * self.rho_field[:, 0, :]).copy()
 
         # Phase C — coarse-grid bootstrap. Halves grid each axis, solves to
         # loose tol (1e-3), prolongates (u,v,w,P) back as initial guess.
