@@ -24,10 +24,15 @@ concurrency:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 55  # cold numba JIT + 3D solves on Windows ~38 min
+    timeout-minutes: 55  # safety ceiling; warm numba cache + xdist target <15 min
     defaults:
       run:
         working-directory: sjtu_tpmshx
+    env:
+      # Pin numba's on-disk compiled cache to a fixed dir so actions/cache can
+      # persist it across runs. 54/55 @njit kernels use cache=True, so a warm
+      # cache eliminates the cold-JIT cost that dominated the ~38 min runtime.
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/sjtu_tpmshx/.numba_cache
     steps:
       - uses: actions/checkout@v4
 
@@ -36,13 +41,29 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      - name: Cache numba compiled kernels
+        # Rolling cache: exact key never pre-exists (run_id is unique) so the
+        # job always saves a fresh cache, while restore-keys restores the most
+        # recent prior cache. numba self-invalidates per-function on source or
+        # version change, so a stale restore just recompiles the few changed
+        # kernels and reuses the rest.
+        uses: actions/cache@v4
+        with:
+          path: sjtu_tpmshx/.numba_cache
+          key: numba-${{ runner.os }}-py3.12-${{ github.run_id }}
+          restore-keys: |
+            numba-${{ runner.os }}-py3.12-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest joblib pyamg PySide6 pyvista pyvistaqt
+          pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest pytest-xdist joblib pyamg PySide6 pyvista pyvistaqt
 
       - name: Run test suite
+        # -n auto: parallelize across the runner's 4 vCPUs.
+        # --dist loadfile: keep each test file on one worker, preserving
+        #   intra-file order (guards against module-global state coupling).
         # --ignore the one test needing torch/botorch (heavy; not installed).
         # Surrogate-dependent tests run via the committed pre-built CSVs;
         # raw-data tests skip (no Excel); Shanghai regression auto-skips.
-        run: pytest -q --ignore=tests/test_optimizer_qnehvi_helpers.py
+        run: pytest -q -n auto --dist loadfile --ignore=tests/test_optimizer_qnehvi_helpers.py
