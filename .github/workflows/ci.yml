@@ -28,13 +28,6 @@ jobs:
     defaults:
       run:
         working-directory: sjtu_tpmshx
-    env:
-      # Pin numba's on-disk compiled cache to a fixed dir so actions/cache can
-      # persist it across runs. 54/55 @njit kernels use cache=True, so a warm
-      # cache eliminates the cold-JIT cost that dominated the ~38 min runtime.
-      # Kept in the runner temp area (outside the source tree) so nothing is
-      # ever written into the checked-out sjtu_tpmshx/ folder.
-      NUMBA_CACHE_DIR: ${{ runner.temp }}/numba_cache
     steps:
       - uses: actions/checkout@v4
 
@@ -62,10 +55,19 @@ jobs:
           pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest pytest-xdist joblib pyamg PySide6 pyvista pyvistaqt
 
       - name: Run test suite
+        # NUMBA_CACHE_DIR is set here (step level) not at job level: the
+        # `runner` context is only available in step contexts, so a job-level
+        # env referencing runner.temp fails workflow validation. Kept in the
+        # runner temp area (outside the source tree) so nothing is ever written
+        # into the checked-out sjtu_tpmshx/ folder. 54/55 @njit kernels use
+        # cache=True, so the persisted warm cache kills the cold-JIT cost.
+        #
         # -n auto: parallelize across the runner's 4 vCPUs.
         # --dist loadfile: keep each test file on one worker, preserving
         #   intra-file order (guards against module-global state coupling).
         # --ignore the one test needing torch/botorch (heavy; not installed).
         # Surrogate-dependent tests run via the committed pre-built CSVs;
         # raw-data tests skip (no Excel); Shanghai regression auto-skips.
+        env:
+          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba_cache
         run: pytest -q -n auto --dist loadfile --ignore=tests/test_optimizer_qnehvi_helpers.py
