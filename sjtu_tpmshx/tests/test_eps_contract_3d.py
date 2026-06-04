@@ -11,9 +11,17 @@ NOT the pre-halved ε_A (≈0.368).
 These tests pin the contract end-to-end so a caller can never silently
 re-introduce the pre-halving.
 """
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
+
+# The Shanghai validate Excel is gitignored (data/ + *.xlsx). Skip the one test
+# below that reads it when absent (CI, fresh clones).
+_VALIDATE_XLSX = (pathlib.Path(__file__).resolve().parents[1].parent
+                  / "data" / "raw_data"
+                  / "20260401-上海电气天然气加热器实验工况.xlsx")
 
 
 def _shanghai_df():
@@ -30,6 +38,8 @@ def _shanghai_df():
                          sheet_name="Sheet1", header=None, skiprows=2)
 
 
+@pytest.mark.skipif(not _VALIDATE_XLSX.exists(),
+                    reason="Shanghai validate Excel (gitignored) not present")
 def test_validate_shanghai_passes_full_epsilon(monkeypatch):
     """validate_shanghai_3d_real must hand the kernel FULL ε, not ε_A."""
     import validation.validate_shanghai_3d_real as V

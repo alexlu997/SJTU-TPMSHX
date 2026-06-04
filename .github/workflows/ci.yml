@@ -24,7 +24,7 @@ concurrency:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 55  # cold numba JIT + 3D solves on Windows ~38 min
     defaults:
       run:
         working-directory: sjtu_tpmshx
@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest pyamg PySide6 pyvista pyvistaqt
+          pip install numpy scipy pandas openpyxl numba sympy matplotlib pytest joblib pyamg PySide6 pyvista pyvistaqt
 
       - name: Run test suite
         # --ignore the one test needing torch/botorch (heavy; not installed).
