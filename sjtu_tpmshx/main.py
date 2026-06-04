@@ -38,7 +38,7 @@ from ui.theme import (
     apply_mpl_theme, get_density, set_density,
 )
 
-__version__ = "1.0.8"
+__version__ = "1.2.0"
 
 
 def _git_commit_hash():
@@ -593,6 +593,22 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                 self.combo_dim.setCurrentIndex(1)
         except Exception:
             pass
+        # Flow topology → canonical Shanghai crossflow. This method used to
+        # leave the direction/fluid-B combos at whatever the session had set,
+        # so a stale session could open in a ROTATED topology (e.g. A:+y B:-x)
+        # even after Reset. Pin them here:
+        #   A air  → +x (index 0), streams along the 182 mm length
+        #   B water→ -y (index 3), crossflow across the 42 mm width
+        #   Fluid B→ Water (index 1), the gas-heater cold side
+        for combo_attr, idx in (('combo_dirA', 0),
+                                ('combo_dirB', 3),
+                                ('combo_fluidB', 1)):
+            try:
+                c = getattr(self, combo_attr, None)
+                if c is not None and 0 <= idx < c.count():
+                    c.setCurrentIndex(idx)
+            except Exception:
+                pass
         # Treat preset Nx/Ny/Nz as authoritative — without this flag the next
         # `compute_tpms` call would auto-overwrite the preset values with
         # D_h-derived suggestions (e.g. 20/20/20 → 14/25/25).
@@ -1774,11 +1790,14 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             if hasattr(self, '_sync_temp_unit_labels'):
                 self._sync_temp_unit_labels()
         for name, idx in (payload.get('combos') or {}).items():
-            # User preference: app must open with both fluids defaulted to
-            # Air, regardless of what the previous session stored. Skip
-            # restoring combo_fluidA/B and let the construction-time index 0
-            # (Air) stand.
-            if name in ('combo_fluidA', 'combo_fluidB'):
+            # The app must open in the canonical Shanghai topology regardless
+            # of what the previous session stored: fluids A=Air / B=Water and
+            # crossflow directions A:+x / B:-y. Skip restoring these four so
+            # the construction + _apply_shanghai_defaults values stand — a
+            # stale session must not rotate the case (A:+y B:-x) or swap the
+            # cold fluid back to Air.
+            if name in ('combo_fluidA', 'combo_fluidB',
+                        'combo_dirA', 'combo_dirB'):
                 continue
             c = getattr(self, name, None)
             if c is None:

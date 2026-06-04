@@ -85,30 +85,22 @@ def _face_flux_weights(solver, dir_code, face='real_outlet',
     w : 2D ndarray — face flux weights [kg/s] or eps_f·[kg/s].
         sum(w) = effective mass flow through this face.
     """
-    is_reverse = dir_code in (1, 3, 5)
+    # approach-(a): the solver is direction-agnostic — it always injects at
+    # j=0 (inlet_frac) and exhausts at j=-1 (outlet_frac). The reverse-dir
+    # spatial flip lives in the velocity transforms, NOT here, so the real
+    # inlet maps to solver j=0 and the real outlet to j=-1 for ALL dirs.
+    # (Was: an is_reverse branch swapping faces/masks — that was approach-(b)
+    # and double-counted the flip, mirroring the reverse accounting.)
     if face == 'real_outlet':
-        # real outlet ≡ solver j=0 for reverse, j=-1 for forward
-        if is_reverse:
-            v_face = solver.v[:, 0, :]
-            rho_face = solver.rho_field[:, 0, :]
-            mask_face = getattr(solver, 'inlet_frac', None)
-            face_idx = 0
-        else:
-            v_face = solver.v[:, -1, :]
-            rho_face = solver.rho_field[:, -1, :]
-            mask_face = getattr(solver, 'outlet_frac', None)
-            face_idx = -1
+        v_face = solver.v[:, -1, :]
+        rho_face = solver.rho_field[:, -1, :]
+        mask_face = getattr(solver, 'outlet_frac', None)
+        face_idx = -1
     else:  # real_inlet
-        if is_reverse:
-            v_face = solver.v[:, -1, :]
-            rho_face = solver.rho_field[:, -1, :]
-            mask_face = getattr(solver, 'outlet_frac', None)
-            face_idx = -1
-        else:
-            v_face = solver.v[:, 0, :]
-            rho_face = solver.rho_field[:, 0, :]
-            mask_face = getattr(solver, 'inlet_frac', None)
-            face_idx = 0
+        v_face = solver.v[:, 0, :]
+        rho_face = solver.rho_field[:, 0, :]
+        mask_face = getattr(solver, 'inlet_frac', None)
+        face_idx = 0
     dx_sol = solver.dx[:, None]; dz_sol = solver.dz[None, :]
     w = rho_face * np.abs(v_face) * dx_sol * dz_sol
     if eps_mode == 'ltne':
@@ -1191,10 +1183,12 @@ def _build_partial_masks(fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse):
     else:
         in_c2 = np.ones(N_cross2, dtype=bool)
         out_c2 = np.ones(N_cross2, dtype=bool)
-    # Reverse dir swaps which face the solver calls "inlet"
-    if is_reverse:
-        in_c1, out_c1 = out_c1, in_c1
-        in_c2, out_c2 = out_c2, in_c2
+    # approach-(a) reverse convention: NO in/out swap. The solver always
+    # injects at j=0 with inlet_frac and exhausts at j=-1 with outlet_frac;
+    # the reverse-dir spatial flip (in the velocity transforms) maps solver
+    # j=0 onto the real inlet end, so in_mask must carry the PHYSICAL inlet
+    # patch (in_ctr) regardless of direction. (Was: swap in_c<->out_c for
+    # is_reverse — that was approach-(b) and contradicted the LTNE kernel.)
     in_mask = np.outer(in_c1, in_c2).astype(np.float64)   # (N_cross1, N_cross2)
     out_mask = np.outer(out_c1, out_c2).astype(np.float64)
     return in_mask, out_mask
@@ -1216,6 +1210,15 @@ def _solver_velocity_to_real(solver, axis_map, real_shape):
     comps[axis_map['stream_real_axis']] = stream
     comps[axis_map['cross2_real_axis']] = np.ascontiguousarray(
         w_cc.transpose(perm))
+    # approach-(a) reverse convention: y-reflection of the velocity field.
+    # The solver injects at j=0 (its +stream); for a reverse-dir fluid the
+    # real inlet is at the OPPOSITE stream end, so the field is spatially
+    # flipped along the real stream axis (stream component already negated
+    # above). Matches evaluate_3d's -vB_cc[:, ::-1, :] and the LTNE kernel's
+    # approach-(a) inlet/outlet placement.
+    if axis_map['is_reverse']:
+        sax = axis_map['stream_real_axis']
+        comps = [np.flip(c, axis=sax) for c in comps]
     return tuple(np.ascontiguousarray(c) for c in comps)
 
 
@@ -1277,6 +1280,15 @@ def _solver_staggered_to_real(solver, axis_map, real_shape):
     stream_arr = v_real if not is_reverse else -v_real
     out[stream_ax] = stream_arr
     out[cross2_ax] = w_real
+
+    # approach-(a) reverse convention: spatially flip the staggered face
+    # arrays along the real stream axis (the stream component is already
+    # negated above). A staggered array of size N+1 along the flip axis
+    # reverses so the +1 face lands on the mirrored boundary — matches
+    # evaluate_3d's sB.u/-sB.v/sB.w [:, ::-1, :] and keeps the face fluxes
+    # discretely solenoidal for the conservative LTNE kernel.
+    if is_reverse:
+        out = [np.flip(o, axis=stream_ax) for o in out]
 
     uf_real = np.ascontiguousarray(out[0], dtype=np.float64)
     vf_real = np.ascontiguousarray(out[1], dtype=np.float64)
@@ -1511,6 +1523,13 @@ def _build_chi_B_mass_flux_threshold(sB, axis_map_B, shape,
     # Transpose solver-coord chi to real-coord chi using axis_map_B perm
     perm = axis_map_B['solver_to_real_perm']
     chi_3d = np.ascontiguousarray(chi_binary_solver.transpose(perm))
+    # approach-(a) reverse convention: the solver is direction-agnostic, so the
+    # solver-coord χ is identical for ±stream; the real-coord χ for a reverse
+    # dir must be spatially flipped along the real stream axis to track the
+    # mirrored flow corridor (same flip the velocity transforms apply).
+    if axis_map_B.get('is_reverse'):
+        chi_3d = np.ascontiguousarray(
+            np.flip(chi_3d, axis=axis_map_B['stream_real_axis']))
     if chi_3d.shape != shape:
         # Fallback: identity if shape mismatch (shouldn't happen)
         chi_3d = np.ones(shape, dtype=np.float64)
@@ -2119,11 +2138,14 @@ def _run_3d_stack(cfg):
             L_mm_field, t_field_3d, u_stream_A, T_inA, P_inA, fluid_type_A)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
-        # Pre-compute LTNE inlet masks (needed by χ_B block and LTNE solve)
-        _ltne_mask_A = (out_mask_2d if fA['dir'] in (1, 3, 5) else in_mask_2d)
+        # Pre-compute LTNE inlet masks (needed by χ_B block and LTNE solve).
+        # approach-(a): the kernel applies the inlet BC at its inlet face using
+        # this mask; with the reverse spatial flip + no mask swap, the physical
+        # inlet patch is in_mask for BOTH forward and reverse dirs.
+        _ltne_mask_A = in_mask_2d
         _ltne_mask_B = None
         if fB is not None:
-            _ltne_mask_B = (out_mask_B if fB['dir'] in (1, 3, 5) else in_mask_B)
+            _ltne_mask_B = in_mask_B
 
         if sB is not None:
             u_stream_B = _stream_component(ucB, vcB, wcB, fB['dir'])
@@ -2737,7 +2759,8 @@ def _run_3d_stack(cfg):
         elif fB['dir'] == 3:  chi_B_in_face = chi_B[:, -1, :]
         elif fB['dir'] == 4:  chi_B_in_face = chi_B[:, :, 0]
         else:                 chi_B_in_face = chi_B[:, :, -1]
-        # Inlet patch mask: _ltne_mask_B is the pre-swap inlet mask in 2D
+        # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
+        # (in_mask_B; approach-(a), no in/out swap).
         _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
         if _ltne_mask_B_val is not None:
             chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
