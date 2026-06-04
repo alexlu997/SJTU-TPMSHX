@@ -24,6 +24,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# These tests load and validate the raw training Excel directly (training-set
+# integrity / Shanghai-leakage guard), so they need the proprietary data file
+# — which is gitignored (data/ + *.xlsx). When it is absent (CI, fresh clones)
+# skip the module: the surrogate-dependent suite still runs via the committed
+# pre-built calibrated CSVs (df_fit/_prebuilt), which need no raw data.
+_TRAIN_XLSX = ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
+pytestmark = pytest.mark.skipif(
+    not _TRAIN_XLSX.exists(),
+    reason="training Excel (gitignored raw data) not present")
+
 
 # ---------------------------------------------------------------- live load
 

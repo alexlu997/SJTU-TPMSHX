@@ -61,6 +61,19 @@ K_MIN = 1e-8  # TEMPORARY: lowered from 1e-7 to let L>=5 use real K. Revisit lat
 
 XLSX = _PROJECT / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 
+# Pre-built calibrated coefficients (derived, NOT raw experiment data). The
+# raw training Excel is gitignored (data/ + *.xlsx). To let CI and any clone
+# without the proprietary data run the surrogate-dependent suite, the per-
+# geometry calibrated (K, c_F) — the model output, ~10-15 rows — is committed
+# as CSV here and the RBF is rebuilt from it when the Excel is absent. The
+# Excel path stays authoritative when the data is present; regenerate the CSVs
+# with `python -m df_fit.build_prebuilt_surrogate` if the surrogate changes.
+_PREBUILT_DIR = _PROJECT_ROOT / "df_fit" / "_prebuilt"
+
+
+def _prebuilt_csv(tpms: str) -> Path:
+    return _PREBUILT_DIR / f"{tpms}_surrogate_ref.csv"
+
 
 class SurrogateV3:
     """Production surrogate: RBF(c_F) + RBF(K) with K clamp."""
@@ -68,7 +81,10 @@ class SurrogateV3:
     def __init__(self, tpms: str = "Gyroid", K_min: float = K_MIN):
         self.tpms = tpms
         self.K_min = K_min
-        self._build()
+        if XLSX.exists():
+            self._build()                 # authoritative: calibrate from Excel
+        else:
+            self._build_from_prebuilt()   # fallback: committed calibrated CSV
 
     def _build(self) -> None:
         """Load data, calibrate, build RBF interpolators."""
@@ -175,14 +191,65 @@ class SurrogateV3:
                 if not has_K[i]:
                     K_arr[i] = 10.0 ** (cpw[0] + cpw[1] * np.log10(D_h_arr[i]))
 
-        # Build RBF interpolators
+        # Build RBF interpolators from the final calibrated fit points.
         X_feat = self.ref[["L_mm", "t_mm", "eps_f"]].to_numpy(dtype=float)
+        cF_arr = self.ref["c_F"].to_numpy(dtype=float)
+        self._fit_rbf(X_feat, K_arr, cF_arr)
+
+    def _fit_rbf(self, X_feat: np.ndarray, K_arr: np.ndarray,
+                 cF_arr: np.ndarray) -> None:
+        """Build the (K, c_F) RBF interpolators from calibrated fit points.
+
+        Shared by the Excel-calibration path and the pre-built CSV path so the
+        two produce a bit-identical model from identical inputs. `_fit_*` are
+        retained so the calibrated points can be serialized via dump_prebuilt.
+        """
+        self._fit_X = np.ascontiguousarray(X_feat, dtype=float)
+        self._fit_K = np.ascontiguousarray(K_arr, dtype=float)
+        self._fit_cF = np.ascontiguousarray(cF_arr, dtype=float)
         self._rbf_K = RBFInterpolator(
-            X_feat, np.log10(K_arr),
+            self._fit_X, np.log10(self._fit_K),
             kernel="cubic", smoothing=0.1)
         self._rbf_cF = RBFInterpolator(
-            X_feat, np.log10(self.ref["c_F"].to_numpy()),
+            self._fit_X, np.log10(self._fit_cF),
             kernel="cubic", smoothing=0.1)
+
+    def _build_from_prebuilt(self) -> None:
+        """Build from the committed calibrated CSV (no raw Excel needed).
+
+        Used when the gitignored training Excel is absent (CI, fresh clones).
+        Loads the per-geometry calibrated (K, c_F) and rebuilds the same RBF.
+        `rows_df` is left empty — the residual-correction path (opt-in,
+        TPMSHX_DF_RESIDUAL_CORR) needs the raw Excel and is unavailable here.
+        """
+        path = _prebuilt_csv(self.tpms)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"SurrogateV3: no training Excel ({XLSX}) and no pre-built "
+                f"calibrated CSV ({path}). Run "
+                f"`python -m df_fit.build_prebuilt_surrogate` where the Excel "
+                f"is available to generate it.")
+        df = pd.read_csv(path)
+        self.ref = df
+        self.rows_df = pd.DataFrame()
+        self._geom_cache = {}
+        self._fit_rbf(df[["L_mm", "t_mm", "eps_f"]].to_numpy(dtype=float),
+                      df["K"].to_numpy(dtype=float),
+                      df["c_F"].to_numpy(dtype=float))
+
+    def dump_prebuilt(self, path: Path | None = None) -> Path:
+        """Serialize the calibrated fit points (L, t, eps_f, K, c_F) to CSV.
+
+        Full float precision so the CSV-rebuilt RBF is bit-identical to the
+        Excel-built one. Writes derived coefficients only, never raw data.
+        """
+        path = Path(path) if path is not None else _prebuilt_csv(self.tpms)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out = pd.DataFrame({
+            "L_mm": self._fit_X[:, 0], "t_mm": self._fit_X[:, 1],
+            "eps_f": self._fit_X[:, 2], "K": self._fit_K, "c_F": self._fit_cF})
+        out.to_csv(path, index=False, float_format="%.17g")
+        return path
 
     def predict(self, L_mm: float, t_mm: float,
                 eps_f: float | None = None) -> tuple[float, float]:
