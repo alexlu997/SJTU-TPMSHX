@@ -32,7 +32,9 @@ jobs:
       # Pin numba's on-disk compiled cache to a fixed dir so actions/cache can
       # persist it across runs. 54/55 @njit kernels use cache=True, so a warm
       # cache eliminates the cold-JIT cost that dominated the ~38 min runtime.
-      NUMBA_CACHE_DIR: ${{ github.workspace }}/sjtu_tpmshx/.numba_cache
+      # Kept in the runner temp area (outside the source tree) so nothing is
+      # ever written into the checked-out sjtu_tpmshx/ folder.
+      NUMBA_CACHE_DIR: ${{ runner.temp }}/numba_cache
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +51,7 @@ jobs:
         # kernels and reuses the rest.
         uses: actions/cache@v4
         with:
-          path: sjtu_tpmshx/.numba_cache
+          path: ${{ runner.temp }}/numba_cache
           key: numba-${{ runner.os }}-py3.12-${{ github.run_id }}
           restore-keys: |
             numba-${{ runner.os }}-py3.12-
