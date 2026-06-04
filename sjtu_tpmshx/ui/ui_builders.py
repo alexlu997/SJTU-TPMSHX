@@ -461,13 +461,13 @@ def build_page_domain(window):
     window.combo_tpms.setStyleSheet(_COMBO)
     add_row(window, g0, 0, "Type", window.combo_tpms)
     window.le_Lcell = row(window, g0, 1, "<i>L</i><sub>cell</sub> [mm]", "7.0")
-    # t default: 0.5 mm sits at the upper bound of the ConstDF-v1 surrogate
-    # training window [0.3, 0.5] so the default GUI run does NOT trigger
-    # the extrapolation watermark every time. Users wanting t=0.6 mm (the
-    # original Shanghai geometry) must edit explicitly and acknowledge the
-    # extrap warning that follows. Re-train the surrogate to expand the
-    # range when new CFD data arrives.
-    window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.5")
+    # t default: 0.6 mm = the Shanghai Electric specimen wall thickness
+    # (canonical geometry). This is 20% above the ConstDF-v1 surrogate
+    # training window [0.3, 0.5], so the default GUI run WILL show the
+    # extrapolation watermark — `chk_allow_extrap` defaults ON, so it warns
+    # rather than aborts. Re-train the surrogate to expand the range when
+    # new CFD data arrives.
+    window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.6")
     window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m\u00b7K)]", "16.0")
     btn_tpms = QPushButton("Compute TPMS &Geometry")
     btn_tpms.setFixedHeight(28); btn_tpms.setStyleSheet(t.style('BTN_SECONDARY'))
@@ -733,7 +733,7 @@ def build_page_fluids(window):
     # a real-gas property table is added.
     window.combo_fluidB = QComboBox()
     window.combo_fluidB.addItems(_FLUID_TYPES)
-    window.combo_fluidB.setCurrentIndex(0)
+    window.combo_fluidB.setCurrentIndex(1)  # default Water (Shanghai cold side)
     window.combo_fluidB.setStyleSheet(_COMBO)
     window.combo_fluidB.setToolTip(
         "Fluid B supports Air and Water.\n"
@@ -749,17 +749,17 @@ def build_page_fluids(window):
     except Exception:
         pass
     add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)
-    # Fluid B defaults: air-air startup scenario with B as the cold side.
-    # u_B=10.0 m/s sits in the same magnitude as Fluid A (20.0 m/s) and
-    # keeps Re inside the validated correlation range [600, 30000] for
-    # typical TPMS D_h. T_inB=293.15 K (20 °C) and P_inB=101325 Pa
-    # (standard atmosphere) give a clean reference cold-side ambient.
-    # Driving ΔT = T_inA − T_inB ≈ 129 K provides enough thermal headroom
-    # for an LTNE air-air run without further user tuning.
-    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "10.0")
-    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "293.15")
+    # Fluid B defaults: Shanghai Electric cold side = Water (case 8,
+    # Re_water≈400). Raw values from data/raw_data/20260401-上海电气天然气
+    # 加热器实验工况.xlsx Sheet1 row 9: water_in 26.89 °C → 300.0 K (col 24),
+    # water_P 647.6 Pa gauge → 101973 Pa abs (col 26), water_flow 5193 ml/min
+    # → u_B ≈ 0.133 m/s interstitial (col 11). Driving ΔT = T_inA − T_inB
+    # ≈ 122 K (hot air 422 K cooled by cold water 300 K), matching the
+    # gas-heater duty.
+    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "0.133")
+    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "300.0")
     window._lbl_TinB_unit = g2b.itemAtPosition(2, 0).widget()
-    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101325")
+    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101973")
     _computed_divider(g2b, 4)
     window._v_rhoB = res_row(window, g2b, 5, "<i>&rho;</i> [kg/m\u00b3]")
     window._v_ReB  = res_row(window, g2b, 6, "Re")
