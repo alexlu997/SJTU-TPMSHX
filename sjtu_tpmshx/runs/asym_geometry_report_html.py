@@ -1,18 +1,18 @@
 """
-Phase 0 可视化：读 asym_geom_scan CSV → 生成自包含 HTML（手绘 SVG，离线可渲染）→ 桌面。
-
-头牌：r(δ)↑ 与 壁厚 t(δ)↓ 并排同 δ 轴 = 偏置-壁厚 tradeoff。
-用法：python -u runs/asym_geometry_report_html.py
+Phase 0 完整流程报告：读 asym_geom_scan CSV → 自包含 HTML（手绘 SVG + Task 0-5 全流程）→ 桌面。
+蓝色简约风。用法：python -u runs/asym_geometry_report_html.py
 """
 import csv
+import html as _html
 from pathlib import Path
 
 CSV = Path(__file__).resolve().parents[1] / "runs" / "_out" / "asym_geom_scan_2026-06-05.csv"
 OUT_HTML = Path(r"C:\Users\ALEX\Desktop") / "TPMS-非对称孔隙率-Phase0-扫描图.html"
 
-A_COL, B_COL = "#0d6f7a", "#a84c26"          # 流体 A / B
-TP_COL = {"Diamond": "#0d6f7a", "Gyroid": "#9a7b2e"}   # 两族区分色
+A_COL, B_COL = "#2563eb", "#94a3b8"                 # 流体 A 得益 / B 挤压
+TP_COL = {"Diamond": "#2563eb", "Gyroid": "#0ea5e9"}  # 两族（双蓝）
 FLOOR_MM = 0.3
+RED = "#ef4444"
 
 
 def load():
@@ -33,8 +33,8 @@ def _poly(xs, ys, px, py):
 
 def svg_chart(series, title, ylabel, xlabel="δ (φ-offset)",
               y_min=None, y_max=None, hlines=None, vlines=None,
-              width=520, height=330):
-    ml, mr, mt, mb = 60, 16, 26, 48
+              width=520, height=320):
+    ml, mr, mt, mb = 58, 16, 26, 46
     pw, ph = width - ml - mr, height - mt - mb
     xs_all = [v for s in series for v in s["x"]]
     ys_all = [v for s in series for v in s["y"]]
@@ -51,182 +51,313 @@ def svg_chart(series, title, ylabel, xlabel="δ (φ-offset)",
         y = min(max(y, ymin), ymax)
         return mt + (1 - (y - ymin) / (ymax - ymin)) * ph
 
-    out = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">']
-    out.append(f'<text x="{ml}" y="16" class="ctitle">{title}</text>')
-    # gridlines + y ticks
+    o = [f'<svg viewBox="0 0 {width} {height}" class="chart" role="img">']
+    o.append(f'<text x="{ml}" y="15" class="ctitle">{title}</text>')
     for i in range(5):
         yv = ymin + (ymax - ymin) * i / 4
         yy = py(yv)
-        out.append(f'<line x1="{ml}" y1="{yy:.1f}" x2="{width-mr}" y2="{yy:.1f}" class="grid"/>')
-        out.append(f'<text x="{ml-6}" y="{yy+3:.1f}" class="tick ty">{yv:.2f}</text>')
-    # x ticks
+        o.append(f'<line x1="{ml}" y1="{yy:.1f}" x2="{width-mr}" y2="{yy:.1f}" class="grid"/>')
+        o.append(f'<text x="{ml-7}" y="{yy+3:.1f}" class="tick ty">{yv:.2f}</text>')
     for i in range(5):
         xv = xmin + (xmax - xmin) * i / 4
-        xx = px(xv)
-        out.append(f'<text x="{xx:.1f}" y="{height-mb+16}" class="tick tx">{xv:.2f}</text>')
-    # hlines (e.g. floor, gate)
+        o.append(f'<text x="{px(xv):.1f}" y="{height-mb+16}" class="tick tx">{xv:.2f}</text>')
     for hl in (hlines or []):
         yv, col, lab, dash = hl
         if ymin <= yv <= ymax:
             yy = py(yv)
-            out.append(f'<line x1="{ml}" y1="{yy:.1f}" x2="{width-mr}" y2="{yy:.1f}" '
-                       f'stroke="{col}" stroke-width="1.4" stroke-dasharray="{dash}"/>')
-            out.append(f'<text x="{width-mr-4}" y="{yy-4:.1f}" class="hlab" fill="{col}">{lab}</text>')
-    # vlines (e.g. δ_max)
+            o.append(f'<line x1="{ml}" y1="{yy:.1f}" x2="{width-mr}" y2="{yy:.1f}" '
+                     f'stroke="{col}" stroke-width="1.4" stroke-dasharray="{dash}"/>')
+            o.append(f'<text x="{width-mr-3}" y="{yy-4:.1f}" class="hlab" fill="{col}">{lab}</text>')
     for vl in (vlines or []):
         xv, col, lab = vl
         if xmin <= xv <= xmax:
             xx = px(xv)
-            out.append(f'<line x1="{xx:.1f}" y1="{mt}" x2="{xx:.1f}" y2="{mt+ph}" '
-                       f'stroke="{col}" stroke-width="1.2" stroke-dasharray="3 3"/>')
-            out.append(f'<text x="{xx+3:.1f}" y="{mt+12}" class="vlab" fill="{col}">{lab}</text>')
-    # axes
-    out.append(f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt+ph}" class="axis"/>')
-    out.append(f'<line x1="{ml}" y1="{mt+ph}" x2="{width-mr}" y2="{mt+ph}" class="axis"/>')
-    out.append(f'<text x="{ml-44}" y="{mt+ph/2}" class="axlab" '
-               f'transform="rotate(-90 {ml-44} {mt+ph/2})">{ylabel}</text>')
-    out.append(f'<text x="{ml+pw/2}" y="{height-6}" class="axlab">{xlabel}</text>')
-    # series
+            o.append(f'<line x1="{xx:.1f}" y1="{mt}" x2="{xx:.1f}" y2="{mt+ph}" '
+                     f'stroke="{col}" stroke-width="1.2" stroke-dasharray="3 3"/>')
+            o.append(f'<text x="{xx+3:.1f}" y="{mt+12}" class="vlab" fill="{col}">{lab}</text>')
+    o.append(f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt+ph}" class="axis"/>')
+    o.append(f'<line x1="{ml}" y1="{mt+ph}" x2="{width-mr}" y2="{mt+ph}" class="axis"/>')
+    o.append(f'<text x="{ml-42}" y="{mt+ph/2}" class="axlab" '
+             f'transform="rotate(-90 {ml-42} {mt+ph/2})">{ylabel}</text>')
+    o.append(f'<text x="{ml+pw/2}" y="{height-5}" class="axlab">{xlabel}</text>')
     for s in series:
-        dash = s.get("dash", "")
-        out.append(f'<polyline points="{_poly(s["x"], s["y"], px, py)}" fill="none" '
-                   f'stroke="{s["color"]}" stroke-width="2.4" '
-                   f'stroke-dasharray="{dash}" stroke-linejoin="round"/>')
-    # legend
-    lx, ly = ml + 8, mt + 10
+        o.append(f'<polyline points="{_poly(s["x"], s["y"], px, py)}" fill="none" '
+                 f'stroke="{s["color"]}" stroke-width="2.4" '
+                 f'stroke-dasharray="{s.get("dash","")}" stroke-linejoin="round"/>')
+    lx, ly = ml + 10, mt + 12
     for s in series:
-        out.append(f'<line x1="{lx}" y1="{ly}" x2="{lx+18}" y2="{ly}" stroke="{s["color"]}" '
-                   f'stroke-width="2.4" stroke-dasharray="{s.get("dash","")}"/>')
-        out.append(f'<text x="{lx+23}" y="{ly+3}" class="leg">{s["label"]}</text>')
+        o.append(f'<line x1="{lx}" y1="{ly}" x2="{lx+18}" y2="{ly}" stroke="{s["color"]}" '
+                 f'stroke-width="2.4" stroke-dasharray="{s.get("dash","")}"/>')
+        o.append(f'<text x="{lx+23}" y="{ly+3}" class="leg">{s["label"]}</text>')
         ly += 15
-    out.append("</svg>")
-    return "\n".join(out)
+    o.append("</svg>")
+    return "\n".join(o)
+
+
+# ── Task 0-5 流程内容（事实即实际执行）──────────────────────────────
+def esc(s):
+    return _html.escape(s)
+
+
+TASKS = [
+    dict(num="0", tag="设置", title="几何模型 + 参数化 + 计划", commit="—",
+         purpose="把「偏移等值面」机制定成可计算的契约，确定要扫什么、闸门怎么判。不写代码。",
+         code="# 偏移带：solid = { δ−C ≤ φ ≤ δ+C }，δ=中心偏移，C=半宽(壁厚)\n"
+              "void_A = { φ < δ−C }   # 得益侧（气侧），δ↑ → 增大\n"
+              "void_B = { φ > δ+C }   # 挤压侧（液侧）\n"
+              "δ = 0  →  ε_A = ε_B = ε/2   # 退化回现状 50/50（零回归锚）",
+         tests=["新文件 solvers/asym_geometry.py（只读复用 tpms_geometry，不碰生产路径）",
+                "驱动 runs/asym_geometry_scan.py + 报告 runs/asym_geometry_report_html.py",
+                "测试 tests/test_asym_geometry.py（9 测守护）"],
+         result="计划落 vault/reports/engineering/2026-06-05-asym-porosity-phase0-PLAN-CN.md（6 TDD 任务 + 闸门标准）"),
+    dict(num="1", tag="TDD", title="孔隙切分 eps_sides", commit="6ea52c1",
+         purpose="造第一个几何原子：给 φ 场、半宽 C、偏移 δ → 算两侧孔隙 (ε_A, ε_B, ε)。整个方案的地基。",
+         code="def eps_sides(phi, C, delta=0.0):\n"
+              "    eps_A = float(np.mean(phi < (delta - C)))   # 得益侧\n"
+              "    eps_B = float(np.mean(phi > (delta + C)))   # 挤压侧\n"
+              "    return eps_A, eps_B, eps_A + eps_B",
+         tests=["δ=0 → ε_A == ε_B（均分，退回 50/50）",
+                "δ>0 → ε_A 涨、ε_B 降（验符号：上轮 doc 写反、已纠）",
+                "小 δ → 总 ε 漂 < 2%（验 O(δ²) 微漂）"],
+         result="3 passed。地基浇正：δ 怎么分孔隙、符号对。"),
+    dict(num="2", tag="TDD", title="per-side 面积 / D_h + δ=0 硬锚", commit="6ceb500",
+         purpose="每侧单侧比表面积 A0 与水力直径 D_h；并设 δ=0 退化硬锚——必须逐位复现现有 compute_geometry。",
+         code="def a0_sides(phi, C, delta, L_m, N):\n"
+              "    solid  = (phi >= delta-C) & (phi <= delta+C)\n"
+              "    void_A = phi < (delta-C);  void_B = phi > (delta+C)\n"
+              "    norm = (L_m**3) * 1.553       # 无额外 ÷2（F_side 已是单面）\n"
+              "    A0_A = _count_interface(solid, void_A) * dx**2 / norm\n"
+              "    ...  # D_h = 4·ε_side / A0_side",
+         tests=["δ=0 → A0_A == A0_B == compute_geometry['A_0']（rel 2e-2）",
+                "δ=0 → D_h == compute_geometry['D_h']（rel 3e-2）"],
+         result="5 passed。硬锚通过 → 偏移机制在 δ=0 逐位复现现状几何，归一化验对。"),
+    dict(num="3", tag="TDD", title="连通性 + 壁厚 + δ_max 搜索", commit="c135844",
+         purpose="判通道是否还通（连通分量）、量物理壁厚、搜可行偏移上界 δ_max。δ_max 定可达偏置上界。",
+         code="def percolates_z(mask):           # void 沿流向 z 是否单块贯穿\n"
+              "    lab,_ = ndimage.label(mask); ...\n"
+              "def wall_thickness(...):           # slab 近似 t = (1−ε)/A0_wall\n"
+              "def find_delta_max(...):           # 两侧 percolate + t≥0.3mm 的最大 |δ|",
+         tests=["δ=0 两侧空腔都贯穿（双连通 sheet 拓扑）",
+                "全固体块 → 不贯穿",
+                "壁厚为正且 < 胞元",
+                "find_delta_max 返回 > 0 的可行带"],
+         result="9 passed。核心几何模块完整（ε/A0/D_h/连通/δ_max 全 TDD 守护）。"),
+    dict(num="4", tag="出数", title="扫描驱动 + CSV + 闸门", commit="41c7030",
+         purpose="拿工具真去扫：δ × {Diamond, Gyroid}（L5 t0.4, N128）→ CSV 82 行 + 闸门判定。Phase 0 的答案在这。",
+         code="# 诚实指标 r_healthy = r @ 壁厚漂 ≤15%（避开 pinch 处 ε_B→0 把 r_max 抬虚）\n"
+              "healthy = [x for x in feas if abs(x.t_phys-t0)/t0 <= 0.15]\n"
+              "r_healthy = max(x.r for x in healthy)\n"
+              "verdict = PASS if (r_healthy >= 2.0 and anchor_ok) else HOLD",
+         tests=["anchor=OK（δ=0 行 A0 == compute_geometry，端到端验归一化）",
+                "脚本跑通，CSV 生成，闸门表打印"],
+         result="闸门 PASS（两族）。Diamond r_healthy 3.77 / Gyroid 3.40，均 ≫ 2:1。"),
+    dict(num="5", tag="可视化", title="HTML 流程报告（本页）", commit="d5b2cd4",
+         purpose="读 CSV → 自包含 HTML（手绘 SVG 折线，离线渲染，无 JS 依赖）→ 桌面。即本页。",
+         code="svg_chart(series, ...)   # 手绘 SVG 折线 + 网格 + 标注线\n"
+              "# 头牌：r(δ)↑ 与 壁厚 t(δ)↓ 并排同 δ 轴 = 偏置-壁厚 tradeoff",
+         tests=["6 图 / 12 折线 / 闸门数值入表 / 0.3mm 地板线 / δ_max 竖线 全渲染"],
+         result="本页生成，落桌面。"),
+]
 
 
 def main():
     by = load()
-    tpms_list = list(by.keys())
 
-    # ---- 头牌：r(δ) ----
+    # 图
     r_series = [dict(x=[r["delta"] for r in rows], y=[min(r["r"], 8.0) for r in rows],
                      color=TP_COL[t], label=t) for t, rows in by.items()]
-    r_vlines = [(max(r["delta"] for r in rows if r["feasible"]), TP_COL[t], f"{t} δ_max")
-                for t, rows in by.items()]
-    chart_r = svg_chart(r_series, "① 偏置比 r 随 δ ↑（y 截顶 8，pinch 处更高）",
-                        "r = ε_A / ε_B", y_min=0.0, y_max=8.0,
-                        hlines=[(2.0, "#a8322a", "r=2 闸门", "5 4")],
-                        vlines=r_vlines)
-
-    # ---- 头牌：壁厚 t(δ) ----
+    vlines = [(max(r["delta"] for r in rows if r["feasible"]), TP_COL[t], f"{t} δ_max")
+              for t, rows in by.items()]
+    chart_r = svg_chart(r_series, "① 偏置比 r 随 δ ↑（y 截顶 8）", "r = ε_A / ε_B",
+                        y_min=0, y_max=8.0, hlines=[(2.0, RED, "r=2 闸门", "5 4")], vlines=vlines)
     t_series = [dict(x=[r["delta"] for r in rows], y=[r["t_phys_mm"] for r in rows],
                      color=TP_COL[t], label=t) for t, rows in by.items()]
-    t_vlines = [(max(r["delta"] for r in rows if r["feasible"]), TP_COL[t], f"{t} δ_max")
-                for t, rows in by.items()]
-    chart_t = svg_chart(t_series, "② 壁厚 t 随 δ ↓（撞 0.3mm 地板 = δ_max）",
-                        "t_phys [mm]", hlines=[(FLOOR_MM, "#a8322a", "0.3mm 水密地板", "5 4")],
-                        vlines=t_vlines)
-
-    # ---- ε_A/ε_B 每族 ----
-    eps_charts = []
+    chart_t = svg_chart(t_series, "② 壁厚 t 随 δ ↓（撞 0.3mm 地板=δ_max）", "t_phys [mm]",
+                        hlines=[(FLOOR_MM, RED, "0.3mm 水密地板", "5 4")], vlines=vlines)
+    eps_charts, dh_charts = [], []
     for t, rows in by.items():
-        s = [dict(x=[r["delta"] for r in rows], y=[r["eps_A"] for r in rows], color=A_COL, label="ε_A 得益"),
-             dict(x=[r["delta"] for r in rows], y=[r["eps_B"] for r in rows], color=B_COL, label="ε_B 挤压")]
-        eps_charts.append(svg_chart(s, f"③ {t}: ε_A / ε_B 分化", "ε_side"))
-
-    # ---- D_h 每族 ----
-    dh_charts = []
-    for t, rows in by.items():
-        s = [dict(x=[r["delta"] for r in rows], y=[r["Dh_A"] * 1e3 for r in rows], color=A_COL, label="D_h,A"),
-             dict(x=[r["delta"] for r in rows], y=[r["Dh_B"] * 1e3 for r in rows], color=B_COL, label="D_h,B")]
-        dh_charts.append(svg_chart(s, f"④ {t}: D_h 每侧 [mm]", "D_h [mm]"))
+        eps_charts.append(svg_chart(
+            [dict(x=[r["delta"] for r in rows], y=[r["eps_A"] for r in rows], color=A_COL, label="ε_A 得益"),
+             dict(x=[r["delta"] for r in rows], y=[r["eps_B"] for r in rows], color=B_COL, label="ε_B 挤压")],
+            f"③ {t}: ε_A / ε_B 分化", "ε_side"))
+        dh_charts.append(svg_chart(
+            [dict(x=[r["delta"] for r in rows], y=[r["Dh_A"]*1e3 for r in rows], color=A_COL, label="D_h,A"),
+             dict(x=[r["delta"] for r in rows], y=[r["Dh_B"]*1e3 for r in rows], color=B_COL, label="D_h,B")],
+            f"④ {t}: D_h 每侧 [mm]", "D_h [mm]"))
 
     # summary
     summ = []
     for t, rows in by.items():
         feas = [r for r in rows if r["feasible"]]
         t0 = rows[0]["t_phys_mm"]
-        healthy = [r for r in feas if abs(r["t_phys_mm"] - t0) / t0 <= 0.15]
-        r_h = max((r["r"] for r in healthy), default=0.0)
+        r_h = max((r["r"] for r in feas if abs(r["t_phys_mm"]-t0)/t0 <= 0.15), default=0.0)
         r_m = max((r["r"] for r in feas), default=0.0)
         dmax = max(r["delta"] for r in feas)
-        e0 = rows[0]["eps"]
         last = feas[-1]
-        summ.append((t, dmax, r_h, r_m, abs(last["eps"]-e0)/e0*100,
+        summ.append((t, dmax, r_h, r_m, abs(last["eps"]-rows[0]["eps"])/rows[0]["eps"]*100,
                      abs(last["t_phys_mm"]-t0)/t0*100))
-
-    rowshtml = "\n".join(
+    summ_rows = "\n".join(
         f'<tr><td><b>{t}</b></td><td>{dmax:.3f}</td><td class="hl">{rh:.2f}:1</td>'
         f'<td class="muted">{rm:.1f}:1</td><td>{ed:.1f}%</td><td>{td:.0f}%</td>'
-        f'<td class="ok">PASS</td></tr>'
-        for (t, dmax, rh, rm, ed, td) in summ)
+        f'<td class="ok">PASS</td></tr>' for (t, dmax, rh, rm, ed, td) in summ)
+
+    # 时间线 + 任务卡
+    steps = "".join(
+        f'<div class="step{" done" if x["commit"]!="—" else " setup"}">'
+        f'<span class="sdot"></span><span class="snum">T{x["num"]}</span>'
+        f'<span class="stitle">{esc(x["title"])}</span>'
+        f'<span class="scommit">{x["commit"]}</span></div>' for x in TASKS)
+
+    cards = ""
+    for x in TASKS:
+        tests = "".join(f'<li>{esc(t)}</li>' for t in x["tests"])
+        cards += f"""
+<div class="task">
+  <div class="thead">
+    <span class="tnum">Task {x['num']}</span>
+    <span class="ttag">{esc(x['tag'])}</span>
+    <span class="ttitle">{esc(x['title'])}</span>
+    <span class="tcommit">{x['commit']}</span>
+  </div>
+  <div class="tbody">
+    <div class="tlabel">目的</div><p class="tpurpose">{esc(x['purpose'])}</p>
+    <div class="tlabel">实现</div><pre class="code">{esc(x['code'])}</pre>
+    <div class="tlabel">{'验证 / 测试' if x['num']!='0' else '产出物'}</div><ul class="tlist">{tests}</ul>
+    <div class="tresult">✓ {esc(x['result'])}</div>
+  </div>
+</div>"""
 
     html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TPMS 非对称孔隙率 · Phase 0 扫描图</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,900&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet">
+<title>TPMS 非对称孔隙率 · Phase 0 完整流程</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-:root{{--paper:#f4f1ea;--ink:#1d1b16;--soft:#4a463c;--faint:#7c7768;--rule:#cfc7b4;--A:#0d6f7a;--B:#a84c26}}
+:root{{--bg:#fafbfd;--card:#fff;--ink:#0f172a;--soft:#475569;--faint:#94a3b8;--line:#e6ebf2;
+--blue:#2563eb;--blue-d:#1e40af;--sky:#0ea5e9;--soft-blue:#eff6ff;--amber:#f59e0b;--red:#ef4444;--green:#16a34a}}
 *{{box-sizing:border-box}}
-body{{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans','Noto Sans SC',sans-serif;line-height:1.6;
-background-image:linear-gradient(rgba(29,27,22,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(29,27,22,.025) 1px,transparent 1px);background-size:26px 26px}}
-.wrap{{max-width:1140px;margin:0 auto;padding:40px 28px 90px}}
-h1{{font-family:'Fraunces','Noto Sans SC',serif;font-weight:900;font-size:clamp(2rem,5vw,3rem);line-height:1.05;margin:0 0 .1em}}
-h1 .em{{font-style:italic;color:var(--B)}}
-.sub{{color:var(--soft);max-width:60ch;margin:.3em 0 1.4em}}
-.kick{{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--faint)}}
-.tbl{{margin:18px 0 30px;border:1.5px solid var(--ink);border-radius:5px;overflow:hidden}}
+body{{margin:0;background:var(--bg);color:var(--ink);
+font-family:'Noto Sans SC',-apple-system,'Segoe UI',sans-serif;font-size:15.5px;line-height:1.7;-webkit-font-smoothing:antialiased}}
+.wrap{{max-width:1080px;margin:0 auto;padding:52px 26px 100px}}
+.kick{{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--blue);font-weight:500}}
+h1{{font-family:'Manrope','Noto Sans SC',sans-serif;font-weight:800;font-size:clamp(2rem,5vw,3.2rem);line-height:1.06;letter-spacing:-.02em;margin:.18em 0 .12em}}
+h1 .em{{color:var(--blue)}}
+.sub{{color:var(--soft);max-width:64ch;margin:.3em 0 0}}
+h2{{font-family:'Manrope','Noto Sans SC',sans-serif;font-weight:700;font-size:1.5rem;letter-spacing:-.01em;margin:3em 0 .2em;display:flex;align-items:center;gap:10px}}
+h2::before{{content:"";width:9px;height:22px;background:var(--blue);border-radius:2px}}
+.lead{{color:var(--soft);margin:.2em 0 0}}
+
+/* verdict */
+.verdict{{margin:30px 0 0;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-radius:14px;padding:28px 30px;box-shadow:0 18px 40px -18px rgba(37,99,235,.5)}}
+.verdict .vk{{font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:#bfdbfe}}
+.verdict .vmain{{font-family:'Manrope',sans-serif;font-weight:700;font-size:clamp(1.3rem,3vw,1.8rem);margin:.3em 0 .5em;line-height:1.3}}
+.verdict .vmain b{{color:#fde68a}}
+.verdict p{{margin:0;color:#dbeafe;font-size:.95rem}}
+
+.tbl{{margin:22px 0 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}}
 table{{width:100%;border-collapse:collapse;font-size:14px}}
-th,td{{padding:9px 13px;text-align:left;border-bottom:1px solid var(--rule)}}
-thead th{{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase}}
+th,td{{padding:11px 15px;text-align:left;border-bottom:1px solid var(--line)}}
+thead th{{background:var(--soft-blue);color:var(--blue-d);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.05em;text-transform:uppercase;font-weight:600}}
 tbody tr:last-child td{{border-bottom:none}}
-td.hl{{font-weight:700;color:var(--A)}}td.muted{{color:var(--faint)}}td.ok{{color:#3f7d34;font-weight:700}}
-.grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:22px}}
-.card{{background:#fff;border:1.5px solid var(--rule);border-radius:8px;padding:14px 16px 8px;box-shadow:18px 18px 0 -10px rgba(29,27,22,.05)}}
+td.hl{{font-weight:700;color:var(--blue)}}td.muted{{color:var(--faint)}}td.ok{{color:var(--green);font-weight:700}}
+
+/* timeline */
+.timeline{{display:flex;flex-wrap:wrap;gap:0;margin:24px 0 0;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden}}
+.step{{flex:1 1 150px;min-width:150px;padding:16px 18px;border-right:1px solid var(--line);position:relative}}
+.step:last-child{{border-right:none}}
+.step .sdot{{width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block;margin-right:7px}}
+.step.setup .sdot{{background:var(--faint)}}
+.step .snum{{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;color:var(--blue)}}
+.step.setup .snum{{color:var(--faint)}}
+.step .stitle{{display:block;font-size:13px;font-weight:500;margin:6px 0 4px;color:var(--ink)}}
+.step .scommit{{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--faint)}}
+
+/* task card */
+.task{{background:var(--card);border:1px solid var(--line);border-radius:14px;margin:18px 0;overflow:hidden}}
+.thead{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:15px 22px;background:var(--soft-blue);border-bottom:1px solid var(--line)}}
+.thead .tnum{{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;color:#fff;background:var(--blue);padding:3px 9px;border-radius:5px}}
+.thead .ttag{{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-d);border:1px solid #bfdbfe;padding:2px 8px;border-radius:20px}}
+.thead .ttitle{{font-family:'Manrope','Noto Sans SC',sans-serif;font-weight:700;font-size:1.08rem}}
+.thead .tcommit{{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)}}
+.tbody{{padding:18px 22px}}
+.tlabel{{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);font-weight:600;margin:14px 0 5px}}
+.tlabel:first-child{{margin-top:0}}
+.tpurpose{{margin:0;color:var(--soft)}}
+pre.code{{margin:0;background:#0f172a;color:#e2e8f0;border-radius:9px;padding:14px 16px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.65;overflow-x:auto;white-space:pre}}
+.tlist{{margin:.3em 0;padding-left:1.3em;color:var(--soft);font-size:.93rem}}
+.tlist li{{margin:.3em 0}}
+.tresult{{margin-top:14px;background:#f0fdf4;border-left:3px solid var(--green);color:#15803d;padding:9px 14px;border-radius:0 7px 7px 0;font-size:.93rem;font-weight:500}}
+
+/* charts */
+.rowlabel{{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--blue);letter-spacing:.06em;margin:26px 0 10px;font-weight:600}}
+.grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:20px}}
+.cchart{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 14px 6px}}
 .chart{{width:100%;height:auto}}
-.ctitle{{font-family:'IBM Plex Sans','Noto Sans SC',sans-serif;font-size:13.5px;font-weight:700;fill:var(--ink)}}
-.grid{{stroke:#e7e1d4;stroke-width:1}} .axis{{stroke:var(--ink);stroke-width:1.4}}
+.ctitle{{font-family:'Manrope','Noto Sans SC',sans-serif;font-size:13px;font-weight:700;fill:var(--ink)}}
+.grid{{stroke:#eef2f7;stroke-width:1}} .axis{{stroke:#cbd5e1;stroke-width:1.3}}
 .tick{{font-family:'IBM Plex Mono',monospace;font-size:10px;fill:var(--faint)}}
 .ty{{text-anchor:end}} .tx{{text-anchor:middle}}
-.axlab{{font-family:'IBM Plex Mono',monospace;font-size:11px;fill:var(--soft);text-anchor:middle}}
+.axlab{{font-family:'IBM Plex Mono',monospace;font-size:10.5px;fill:var(--soft);text-anchor:middle}}
 .leg{{font-family:'IBM Plex Mono',monospace;font-size:11px;fill:var(--ink)}}
 .hlab{{font-family:'IBM Plex Mono',monospace;font-size:10px;text-anchor:end;font-weight:600}}
 .vlab{{font-family:'IBM Plex Mono',monospace;font-size:9.5px;font-weight:600}}
-.note{{background:#ece7db;border-left:4px solid var(--B);padding:14px 18px;border-radius:0 5px 5px 0;margin:30px 0;font-size:.95rem}}
-.note b{{color:var(--B)}}
-.rowlabel{{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--B);letter-spacing:.08em;margin:26px 0 8px;font-weight:600}}
-footer{{margin-top:50px;padding-top:20px;border-top:3px double var(--ink);font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--faint)}}
+
+.note{{background:var(--soft-blue);border:1px solid #bfdbfe;border-radius:12px;padding:16px 20px;margin:22px 0 0;font-size:.95rem;color:var(--soft)}}
+.note b{{color:var(--blue-d)}}
+.next{{margin:26px 0 0;border:1px dashed var(--blue);border-radius:12px;padding:18px 22px;background:#fff}}
+.next .nk{{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);font-weight:600}}
+footer{{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--faint)}}
+@media(max-width:560px){{.wrap{{padding:34px 16px 70px}}}}
 </style></head><body><div class="wrap">
-<div class="kick">SJTU-TPMSHX · Phase 0 纯几何扫描 · 2026-06-05</div>
-<h1>非对称孔隙率 · <span class="em">偏置 ↔ 壁厚</span> tradeoff</h1>
-<p class="sub">偏移等值面 δ 把孔隙非对称分配两侧。扫 δ × {{Diamond, Gyroid}}（L=5mm, t=0.4mm, N=128 体素）。闸门按 <b>r_healthy</b>（壁厚漂 ≤15% 的诚实工作点）判。</p>
 
-<div class="tbl"><table>
-<thead><tr><th>TPMS</th><th>δ_max</th><th>r_healthy (壁漂≤15%)</th><th>r_max (pinch)</th><th>ε 漂</th><th>t 漂 @δ_max</th><th>闸门</th></tr></thead>
-<tbody>
-{rowshtml}
-</tbody></table></div>
+<div class="kick">SJTU-TPMSHX · 均质化求解器 · Phase 0 纯几何 PoC</div>
+<h1>非对称孔隙率 · <span class="em">完整执行流程</span></h1>
+<p class="sub">偏移等值面 δ 把一个 TPMS 胞元的孔隙非对称分给两股流体（ε_A≠ε_B）。本页记录 Task 0→5 的全过程：模型、每步代码、TDD 验证、扫描结果与闸门判定。</p>
 
-<div class="rowlabel">▌头牌：同一根 δ 轴，左图 r 往上爬，右图壁厚往下掉 —— 这就是 tradeoff</div>
-<div class="grid2">
-<div class="card">{chart_r}</div>
-<div class="card">{chart_t}</div>
+<div class="verdict">
+  <div class="vk">Phase 0 闸门 · Gate</div>
+  <div class="vmain">几何门 <b>PASS</b> —— 健康壁下可达偏置 <b>3.4–3.8 : 1</b>，远超 2:1 闸门。</div>
+  <p>δ=0 端到端复现现有 compute_geometry（anchor OK）· 总孔隙 ε 微漂 1–3%（O(δ²)）· 9 个单测全绿 · 6 commit。纯几何证「能造这么不对称」；下游换热/降 dP 收益须 Phase 1（CFD）+ Phase 3（优化）。</p>
 </div>
 
-<div class="note"><b>怎么读这两张：</b>往右推 δ，偏置比 r 单调↑（①），但壁厚 t 单调↓（②），直到撞 0.3mm 水密地板 = δ_max（红虚线交点）。所以「能偏多少」由「能接受多薄壁」定，不是无限。r_healthy（壁漂≤15%）才是诚实可用偏置：Diamond 3.77:1 / Gyroid 3.40:1，均 ≫ 2:1 闸门。①里 y 截顶 8；近 δ_max 处 ε_B→0 使 r 飙到 7-24（pinch 虚高，无用）。</div>
+<div class="tbl"><table>
+<thead><tr><th>TPMS</th><th>δ_max</th><th>r_healthy（壁漂≤15%）</th><th>r_max（pinch）</th><th>ε 漂</th><th>t 漂 @δ_max</th><th>闸门</th></tr></thead>
+<tbody>{summ_rows}</tbody></table></div>
+
+<h2>执行时间线</h2>
+<p class="lead">6 步：T0 设置（无代码）→ T1–3 TDD 建几何核 → T4 扫描出数 → T5 本报告。T6（结论回写 vault）待做。</p>
+<div class="timeline">{steps}</div>
+
+<h2>逐步详解</h2>
+{cards}
+
+<h2>结果可视化</h2>
+<div class="rowlabel">▌头牌：同一根 δ 轴 — 左 r 往上爬，右壁厚往下掉 = tradeoff</div>
+<div class="grid2">
+<div class="cchart">{chart_r}</div>
+<div class="cchart">{chart_t}</div>
+</div>
+<div class="note"><b>怎么读：</b>往右推 δ，偏置比 r 单调↑（①），但壁厚 t 单调↓（②），直到撞 0.3mm 水密地板 = δ_max。所以「能偏多少」由「能接受多薄壁」定，非无限。<b>r_healthy</b>（壁漂≤15%）才是诚实可用偏置 3.4–3.8:1。① y 截顶 8；近 δ_max 处 ε_B→0 使 r 飙到 7–24（pinch 虚高，无用工作点）。</div>
 
 <div class="rowlabel">▌两侧孔隙怎么分化</div>
 <div class="grid2">
-<div class="card">{eps_charts[0]}</div>
-<div class="card">{eps_charts[1] if len(eps_charts) > 1 else ''}</div>
+<div class="cchart">{eps_charts[0]}</div>
+<div class="cchart">{eps_charts[1] if len(eps_charts) > 1 else ''}</div>
 </div>
 
 <div class="rowlabel">▌每侧水力直径 D_h（→ 影响 h 与 dP）</div>
 <div class="grid2">
-<div class="card">{dh_charts[0]}</div>
-<div class="card">{dh_charts[1] if len(dh_charts) > 1 else ''}</div>
+<div class="cchart">{dh_charts[0]}</div>
+<div class="cchart">{dh_charts[1] if len(dh_charts) > 1 else ''}</div>
 </div>
 
-<footer>纯几何 PoC · 数据 runs/_out/asym_geom_scan_2026-06-05.csv (82 行) · 壁厚为 slab 近似 t=(1−ε)/A0 · 闸门 PASS（两族）· 下游收益须 Phase 1/3 CFD+优化</footer>
+<div class="next">
+  <div class="nk">下一步 · T6 + Phase 1</div>
+  <p style="margin:.4em 0 0;color:var(--soft)"><b>T6</b>：把本闸门结论回写 vault feasibility 文档 §5 + 更新 memory，给 Phase 0 盖章。<br>
+  <b>Phase 1（CFD，数周）</b>：从可行 δ 选 2–3 点跑 detailed CFD，重标 per-side Nu/f；利用 void_A(+δ)≅void_B(−δ) 对称 → 单闭合面覆盖两侧（标定砍半）。<br>
+  <b>真问号</b>：r=3.4–3.8 对你气-液工况能换多少降 dP / 缩机 —— Phase 1/3 才落定。</p>
+</div>
+
+<footer>纯几何 PoC · 数据 runs/_out/asym_geom_scan_2026-06-05.csv（82 行）· 壁厚为 slab 近似 t=(1−ε)/A0 · 9 测全绿 · 分支 feat/asym-porosity-phase0 · 2026-06-05</footer>
 </div></body></html>"""
 
     OUT_HTML.write_text(html, encoding="utf-8")
