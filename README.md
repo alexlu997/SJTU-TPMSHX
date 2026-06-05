@@ -1,118 +1,164 @@
-# SJTU-TPMSHX
+<div align="center">
 
-A research code for **Triply Periodic Minimal Surface (TPMS) heat-exchanger**
-analysis: 2D/3D porous-media CFD with LTNE energy, dual-Nu air/water
-correlations, and a ε-NTU lumped solver. Validated against the Shanghai
-16-case experimental dataset.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE 8.69%, 3D heat-duty Q RMSRE 3.33%, MMS observed order 1.975." width="100%">
+</picture>
 
-> **Status**: research / dissertation code. APIs evolve; expect rough edges.
-> **Repo**: <https://github.com/alexlu997/SJTU-TPMSHX>
+<br><br>
+
+![Python](https://img.shields.io/badge/python-3.11%20|%203.12-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D6?logo=windows&logoColor=white)
+![V&V](https://img.shields.io/badge/ASME%20V%26V%2020-Standard%20Tier-2ea44f)
+![Status](https://img.shields.io/badge/status-research%20%2F%20dissertation-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+🔗 **[github.com/alexlu997/SJTU-TPMSHX](https://github.com/alexlu997/SJTU-TPMSHX)**
+
+</div>
+
+> [!IMPORTANT]
+> Research / dissertation code — APIs evolve and rough edges are expected.
+> Porous-media CFD with LTNE energy, dual air/water Nusselt closures, and an
+> ε-NTU lumped solver, benchmarked against the **Shanghai 16-case** experimental dataset.
 
 ---
 
-## What it does
+## 🚀 Headline results
+
+<div align="center">
+
+| Metric | Value | Where |
+|:------:|:-----:|:------|
+| **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
+| **3D pressure drop** RMSRE | **8.69 %** | full SIMPLE 3D, `Nz = 10`, mass-flux inlet |
+| **3D heat duty Q** RMSRE | **3.33 %** | full SIMPLE 3D, `Nz = 10` |
+| **MMS** observed order `p_obs` | **1.975** | code verification, SOU 2nd-order |
+
+</div>
+
+> [!NOTE]
+> The 3D Δp gap was cut from the earlier ~24–45 % down to **≈ 7–9 %** by switching the
+> air inlet to a **mass-flux** boundary condition (removing a compressible velocity-inlet
+> artifact). The residual is a **geometry / closure floor** — SLM surface roughness is already
+> embedded in the experiment-trained Darcy–Forchheimer closure, so no extra friction multiplier
+> is applied (doing so would double-count).
+
+---
+
+## 🧩 What it does
 
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (RBF over CFD micro-runs); dual Nusselt (air-side v4.1 ×1.28 / water-side Yan 2024); 3D adds Norris-1a roughness consistency (f × 1.46), env-toggleable `solvers/roughness.py` |
-| **2D solver** | SIMPLE Patankar, ideal-gas air, Brinkman–Forchheimer porous core (no roughness lift — over-corrects there) |
-| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with 3D Pressure-Poisson (Helmholtz machine-eps mass conservation); Norris-1a roughness default |
-| **Lumped** | ε-NTU dual-Nu cross-flow, `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case (Q air RMSRE **1.71 %** lumped; 3D dP **24.15 %** with Norris-1a / 44.74 % baseline; 2D dP **28.25 %**) |
-| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (p_obs ≈ 1.97), GCI grid convergence, tolerance sweep |
-| **GUI** | PySide6 + pyvistaqt 3D viewer, 3-workspace session persistence, glassmorphism dark theme |
+| **Closures** | Darcy–Forchheimer surrogate (RBF over CFD micro-runs) · dual Nusselt: **air-side** v4.1 (×1.28 roughness-calibrated) / **water-side** Yan 2024 |
+| **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
+| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
+| **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **8.69 %** / Q **3.33 %** (`Nz=10`) · 2D Δp **≈ 28 %** |
+| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
+| **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
 ---
 
-## Install
+## ⚙️ Install
 
-Tested: **Python 3.11 / 3.12, Windows 11**. Linux should work; macOS untested.
+> Tested on **Python 3.11 / 3.12, Windows 11**. Linux should work; macOS untested.
 
 ```bash
 git clone https://github.com/alexlu997/SJTU-TPMSHX.git
 cd SJTU-TPMSHX
+
 python -m venv .venv
-.venv\Scripts\activate         # PowerShell
-# source .venv/bin/activate    # bash
+.venv\Scripts\activate          # PowerShell
+# source .venv/bin/activate     # bash
+
 pip install -r requirements.txt
 ```
 
-GPU PyTorch is optional (only needed if you re-train the D-F surrogate); the
-runtime path uses an exported joblib RBF model.
+GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate.
+The runtime path loads an exported joblib RBF model.
 
 ---
 
-## Run
+## ▶️ Run
 
-### GUI
+> [!TIP]
+> New here? Launch the **GUI** to explore geometry + solvers interactively, then
+> reproduce the paper numbers headless with the **validation** scripts below.
+
+#### 🖥️ GUI
 
 ```bash
 python -m sjtu_tpmshx.main
 ```
 
-### Headless validation (Shanghai 16-case)
+#### 🧪 Headless validation — Shanghai 16-case
 
 ```bash
 # Lumped ε-NTU dual-Nu — current paper baseline
 python sjtu_tpmshx/validation/validate_shanghai_lumped_dual_nu.py
 
-# 3D real solver (SIMPLE, Nz=10)
+# 3D real solver (SIMPLE, Nz=10, mass-flux inlet)
 python sjtu_tpmshx/validation/validate_shanghai_3d_real.py
 
 # 3-path 3D comparison: SIMPLE vs SF-axial vs SF-Poisson
 python sjtu_tpmshx/validation/validate_shanghai_3d_pp_compare.py
 ```
 
-### Tests
+#### ✔️ Tests
 
 ```bash
-pytest sjtu_tpmshx/tests/ -v
+pytest sjtu_tpmshx/tests/ -v        # 67 test files
 ```
 
 ---
 
-## Repo layout
+## 🗂️ Repo layout
 
-```
+```text
 sjtu_tpmshx/
-├── solvers/                     # SIMPLE 2D/3D, streamfunction-pressure, PPE, tpms_calc
-├── controllers/                 # Qt: ComputeOrchestrator, ResultCache, SessionManager
-├── ui/                          # PySide6 widgets, themes, ui_builders
-├── df_fit/                      # Darcy-Forchheimer RBF surrogate fitting
-├── optimization/                # NSGA-II Pareto (2D)
-├── validation/                  # Shanghai-case scripts (+ legacy/ archive)
-├── tests/                       # pytest suite (24 files)
-├── examples/, benchmarks/, poc/ # exploratory
-└── main.py                      # GUI entrypoint
+├── solvers/        # SIMPLE 2D/3D, streamfunction-pressure, PPE, tpms_calc, roughness
+├── controllers/    # Qt: ComputeOrchestrator, ResultCache, SessionManager, pipelines
+├── core/           # Qt-free evaluators + shared numerics
+├── ui/             # PySide6 widgets, themes, ui_builders
+├── df_fit/         # Darcy–Forchheimer RBF surrogate fitting
+├── design/         # quick multi-case TPMS sizing tool
+├── optimization/   # NSGA-II Pareto (2D)
+├── domain/         # domain / unit validators
+├── validation/     # Shanghai-case scripts (+ legacy archive)
+├── configs/        # canonical case JSON (shanghai_baseline.json)
+├── tests/          # pytest suite (67 files)
+├── examples/, benchmarks/, poc/, runs/   # exploratory + batch runs
+└── main.py         # GUI entrypoint
 ```
 
-Reports + experiment notes live in **`vault/`** (research notebook, see
-`vault/reports/README.md` for the index of 38 reports across 6 sub-topics).
+Research notes & experiment reports live in **[`vault/`](vault/)** — organised into
+`method/`, `validation/`, and `engineering/` buckets (plus `_deferred/`, `_archive/`).
+See `vault/reports/README.md` for the index.
 
 ---
 
-## V&V
+## ✅ V&V
 
-Standard Tier complete (ASME V&V 20, single-day closure 2026-05-04):
+ASME V&V 20 **Standard Tier** complete (single-day closure, 2026-05-04):
 
 | Phase | Result |
 |-------|--------|
-| **A — MMS code verification** | Phase A.1–A.4, 5-grid h-refinement, p_obs ≥ 2.07 (gate ≥ 1.5) |
-| **B — Grid convergence (GCI)** | T2 0.86 %, T4 H=8 grid 30 1.37 % |
-| **C — Tolerance / iteration sweep** | spread 0.02 % |
-| **D — Domain sweep** | 18 / 20 PASS, applicability `u ≤ 10 m/s` |
-| **E — Validation vs experiment** | Shanghai lumped Q RMSRE 1.71 % |
+| **A — MMS code verification** | A.1–A.4, 5-grid h-refinement, `p_obs ≥ 2.07` (gate ≥ 1.5) |
+| **B — Grid convergence (GCI)** | T2 **0.86 %**, T4 `H=8` grid-30 **1.37 %** |
+| **C — Tolerance / iteration sweep** | spread **0.02 %** |
+| **D — Domain sweep** | **18 / 20** PASS, applicability `u ≤ 10 m/s` |
+| **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.71 %** |
 
-For Streamfunction–Pressure formulation: 3D PPE Phase A MMS p_obs = 1.975
-(SOU 2nd-order verified).
+Streamfunction–Pressure formulation: 3D PPE Phase-A MMS `p_obs = 1.975` (SOU 2nd-order verified).
 
 ---
 
-## Cite
+## 📖 Cite
 
-If you use this code, please cite the dissertation (in preparation).
-Provisional BibTeX:
+If you use this code, please cite the dissertation (in preparation). Provisional BibTeX:
 
 ```bibtex
 @misc{lu_sjtu_tpmshx_2026,
@@ -125,6 +171,10 @@ Provisional BibTeX:
 
 ---
 
-## Licence
+## 📜 License
 
-MIT — see [LICENSE](LICENSE).
+**MIT** — see [LICENSE](LICENSE).
+
+<div align="center">
+<sub>Research / dissertation code · APIs evolve, expect rough edges · contributions & issues welcome</sub>
+</div>
