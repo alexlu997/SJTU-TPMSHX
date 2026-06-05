@@ -511,8 +511,14 @@ def finalize_plots_3d(window) -> bool:
             )
             # Surrogate-extrapolation watermark — lower-left viewport.
             if res.get('extrapolated'):
-                _reasons = res.get('extrap_reasons', [])
-                _txt = "⚠ ConstDF-v1 extrapolated\n" + "\n".join(_reasons)
+                # Dedupe + condense: fluid A/B repeat the same "Wall thickness"
+                # line (drop exact dups), strip the verbose "(u=…,T=…,P=…)" tail
+                # and the redundant "ConstDF-v1 " (already in the header) so the
+                # watermark is 2–3 short lines, not a wall of text.
+                _reasons = list(dict.fromkeys(res.get('extrap_reasons', [])))
+                _short = [r.split(' (')[0].rstrip('.').replace('ConstDF-v1 ', '')
+                          for r in _reasons]
+                _txt = "⚠ ConstDF-v1 extrapolated\n" + "\n".join(_short)
                 try:
                     panel.set_watermark(_txt)
                 except Exception:

@@ -88,6 +88,7 @@ def _label_qss():
 def _status_qss():
     t = get_theme()
     return (f"color: {t['mpl_subtitle']}; font-size: 9pt; font-weight: 500; "
+            f"font-family: 'Microsoft YaHei','Segoe UI',sans-serif; "
             f"background: {t['scroll_bg']}; border-top: 1px solid {t['card_border']}; "
             "padding: 6px 12px;")
 
@@ -633,12 +634,30 @@ class ThreeDVisPanel(QWidget):
             return
         t = get_theme()
         try:
-            pl.add_text(
+            _wm = pl.add_text(
                 str(text),
-                position='lower_left', font_size=9,
+                # upper_left, not lower_left: the lower-left corner already holds
+                # the XYZ orientation triad + the Qt status strip below, so the
+                # watermark there read as a cramped pile. Top-left is clear.
+                position='upper_left', font_size=8,
                 color=t.get('warn', '#F59E0B'),
                 name='_extrap_watermark', shadow=False,
+                font='arial',   # VTK GL text only knows arial/courier/times
             )
+            # Prefer Microsoft YaHei. VTK add_text can't name it, so set the
+            # actor's text property to a font FILE. Guarded: if the .ttc fails
+            # to load, VTK falls back to the embedded arial above.
+            try:
+                import os as _os
+                for _fp in (r'C:\Windows\Fonts\msyh.ttc',
+                            r'C:\Windows\Fonts\msyhl.ttc'):
+                    if _os.path.exists(_fp):
+                        _tp = _wm.GetTextProperty()
+                        _tp.SetFontFamily(4)          # VTK_FONT_FILE
+                        _tp.SetFontFile(_fp)
+                        break
+            except Exception:
+                pass
         except Exception:
             pass
         pl.render()
@@ -883,7 +902,7 @@ class ThreeDVisPanel(QWidget):
             pl.view_yz()
         else:
             pl.view_isometric()
-        pl.camera.zoom(1.35)
+        pl.camera.zoom(1.55)   # fill more (was 1.35); matches initial framing
         end = (tuple(cam.position), tuple(cam.focal_point), tuple(cam.up))
 
         import os as _os
@@ -1126,9 +1145,11 @@ class ThreeDVisPanel(QWidget):
         self._add_flow_glyph()
         pl.view_isometric()
         # Auto-fit zoom: 182×42×42 mm aspect is very flat → camera framed
-        # too loose at 1.35 default. 1.55 packs the bounding box into ~85%
-        # of viewport without clipping edges.
-        pl.camera.zoom(1.55)
+        # too loose by default. 1.75 fills the viewport more (less white
+        # margin) while staying clear of clipping the long edges. (A flat
+        # object in iso inherently leaves corner space; Front / Top / Fit View
+        # fill better when inspecting a broad face.)
+        pl.camera.zoom(1.75)
 
     def _add_flow_glyph(self):
         """Place faint inlet/outlet cone arrows on domain faces per flow_dir.
@@ -1225,9 +1246,12 @@ class ThreeDVisPanel(QWidget):
             return self._grid, raw_min
         Nx, Ny, Nz = next(iter(self._arrays.values())).shape
         ncells = max(Nx * Ny * Nz, 1)
-        # Cap total fine cells ~5e5 so the GPU upload + ray-cast stay light
-        # enough for responsive rotation (AutoAdjust still coarsens during drag).
-        f = int(np.clip(round((5.0e5 / ncells) ** (1.0 / 3.0)), 1, 4))
+        # Cap total fine cells ~3e5 so the GPU upload + ray-cast stay light
+        # enough that scroll-zoom / rotation re-renders feel responsive (the
+        # trilinear upsample — not the raw cell count — is what kills banding,
+        # so a smaller cap keeps smoothness while cutting the per-frame cost).
+        # AutoAdjust still coarsens the ray step during active interaction.
+        f = int(np.clip(round((3.0e5 / ncells) ** (1.0 / 3.0)), 1, 3))
         if f <= 1:
             return self._grid, raw_min
         Lx, Ly, Lz = self._L_mm
@@ -1329,22 +1353,51 @@ class ThreeDVisPanel(QWidget):
             bar_x = 0.905 if win_w >= 800 else 0.920
             mono = t.get('mono_family',
                          "'Fira Code','Consolas','Courier New',monospace")
-            pl.add_scalar_bar(
+            _sbar = pl.add_scalar_bar(
+                # Shorter (0.55) + lower (0.24) bar centred in the right
+                # margin; smaller title (10) so the field label clears the top
+                # value instead of overlapping it. Was height 0.76 / pos_y 0.12
+                # / title 12 → a too-tall bar pinned to the edge with the title
+                # sitting on the max-value label.
                 title=meta['title'],
                 n_labels=5, vertical=True,
-                position_x=bar_x, position_y=0.12,
-                width=bar_width, height=0.76,
+                position_x=bar_x, position_y=0.24,
+                width=bar_width, height=0.55,
                 fmt=meta['fmt'],
-                title_font_size=12, label_font_size=11,
+                title_font_size=10, label_font_size=11,
                 color=t['ax_text'], font_family='arial',
                 bold=False, italic=False,
                 shadow=False, outline=False,
             )
-            # VTK's scalar-bar accepts only a small enum of font_family names
-            # ('arial'/'courier'/'times'); we route through 'arial' for mixed
-            # copy and rely on system font fallback for localised labels. The
-            # theme `mono_family` is consumed by Qt widgets around it.
+            # Prefer Microsoft YaHei for the title + value labels (VTK's
+            # font_family enum only has arial/courier/times, so route through a
+            # font FILE). Guarded: if the .ttc fails to load, the 'arial' above
+            # stands. `mono` is consumed by surrounding Qt widgets, not here.
             _ = mono
+            try:
+                import os as _os
+                for _fp in (r'C:\Windows\Fonts\msyh.ttc',
+                            r'C:\Windows\Fonts\msyhl.ttc'):
+                    if _os.path.exists(_fp):
+                        for _getp in ('GetTitleTextProperty',
+                                      'GetLabelTextProperty'):
+                            _tp = getattr(_sbar, _getp)()
+                            _tp.SetFontFamily(4)      # VTK_FONT_FILE
+                            _tp.SetFontFile(_fp)
+                        break
+            except Exception:
+                pass
+            # Solid colour bar. The volume's opacity transfer function bled into
+            # the scalar bar (semi-transparent over white → washed-out pastel,
+            # worst at the hot end). Attach an independent OPAQUE turbo LUT over
+            # the clim so the legend reads vivid, decoupled from voxel opacity.
+            try:
+                import pyvista as _pv
+                _lut = _pv.LookupTable(cmap=meta['cmap'])
+                _lut.scalar_range = clim
+                _sbar.SetLookupTable(_lut)
+            except Exception:
+                pass
 
         except Exception as e:
             # GPU/VTK volume rendering may fail on some driver combos; fall

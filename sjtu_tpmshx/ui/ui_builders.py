@@ -1433,11 +1433,14 @@ def build_canvas_area(window):
         f"font-family:'Fira Code','Consolas',monospace;"
         f"font-size:9pt; font-weight:600;")
     window._res_chips = {}
-    for label_text, key in [("Q", 'Q'), ("ΔP A", 'dPA'),
-                             ("ΔP B", 'dPB'),
-                             ("T_out A", 'ToutA'),
-                             ("T_out B", 'ToutB')]:
-        _cap = QLabel(label_text.upper())
+    # (name, unit, key) — unit kept lowercase (NOT .upper()'d) so "[Pa]"/"[K]"
+    # read correctly. Q carries no caption unit: it is W/m in 2D but W in 3D
+    # (mode-dependent), so a fixed unit would mislabel one mode.
+    for label_text, unit, key in [("Q", '', 'Q'), ("ΔP A", 'Pa', 'dPA'),
+                                  ("ΔP B", 'Pa', 'dPB'),
+                                  ("T_out A", 'K', 'ToutA'),
+                                  ("T_out B", 'K', 'ToutB')]:
+        _cap = QLabel(label_text.upper() + (f"  [{unit}]" if unit else ""))
         _cap.setStyleSheet(_cap_qss)
         _val = QLabel("—")
         _val.setStyleSheet(_chip_num_qss)
@@ -1901,6 +1904,52 @@ def build_canvas_area(window):
 
     window._canvas_scroll.setWidget(canvas_container)
     vlay.addWidget(window._canvas_scroll, 1)
+
+    # ── 3D card fits the scroll viewport (no forced vertical scrollbar) ──
+    # The fixed card heights suit the stacked 2D canvases, but the lone 3D card
+    # (1144 px) overflowed shorter screens → a scrollbar the user had to drag to
+    # reach a usable size. Refit it to the visible viewport height on every
+    # scroll-resize and whenever the card is shown (tab switch) so it lands
+    # correctly sized with no scroll.
+    def _fit_3d_card_to_viewport():
+        c3d = window._canvas_cards.get('3d')
+        sc = getattr(window, '_canvas_scroll', None)
+        if c3d is None or sc is None or not c3d.isVisible():
+            return
+        vh = sc.viewport().height()
+        if vh > 240:
+            c3d.setFixedHeight(vh - 4)
+    window._fit_3d_card_to_viewport = _fit_3d_card_to_viewport
+
+    _sc = window._canvas_scroll
+    _orig_sc_resize = _sc.resizeEvent
+    def _sc_resize(ev, _o=_orig_sc_resize):
+        if _o is not None:
+            _o(ev)
+        _fit_3d_card_to_viewport()
+    _sc.resizeEvent = _sc_resize
+
+    _c3d = window._canvas_cards.get('3d')
+    if _c3d is not None:
+        _orig_show = _c3d.showEvent
+        def _c3d_show(ev, _o=_orig_show):
+            if _o is not None:
+                _o(ev)
+            # 3D fills one card → no scroll needed. Hide the vertical bar so a
+            # few px of layout slack can't trigger a stray scrollbar, and refit
+            # the card to the viewport.
+            window._canvas_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            _fit_3d_card_to_viewport()
+        _c3d.showEvent = _c3d_show
+        _orig_hide = _c3d.hideEvent
+        def _c3d_hide(ev, _o=_orig_hide):
+            if _o is not None:
+                _o(ev)
+            # Restore for the stacked, taller 2D-canvas tabs.
+            window._canvas_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        _c3d.hideEvent = _c3d_hide
 
     # ── Hover data label ──
     window._hover_label = QLabel("")
