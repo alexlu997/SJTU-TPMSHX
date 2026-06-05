@@ -674,7 +674,7 @@ def _plot_3d_temperature(canvas, Ta_slice, Tb_slice, Ts_slice, xc, yc, z_info):
         (Ts_slice, r'$T_s$ [K] — Solid'),
     ]
     for ax, (field, title) in zip(axes, datasets):
-        cf = ax.contourf(X, Y, field, levels=100, cmap='turbo',
+        cf = ax.contourf(X, Y, field, levels=256, cmap='turbo',
                           vmin=vmin_unified, vmax=vmax_unified)
         cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.85, aspect=18, format='%.1f')
         cb.ax.tick_params(labelsize=8, colors=_T['ax_text'])
@@ -718,11 +718,10 @@ def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
     if p_max_kpa - p_min_kpa < 1e-12:
         p_max_kpa = p_min_kpa + 1.0
     for ax, (p, tag, dp) in zip(axes, P_data):
-        # levels=128 (was 512) — 2026-05-20 UI sweep perf fix. Turbo
-        # has 256 distinct quantised colours so 512 contour levels were
-        # already over-sampling; the extra levels just multiplied
-        # triangulation cost (~4× slower per panel) for no visible gain.
-        cf = ax.contourf(X, Y, p / 1000.0, levels=128, cmap='turbo',
+        # levels=256 matches turbo's 256 distinct colours exactly — finer
+        # banding than the prior 128 (which under-sampled the cmap by half),
+        # still well below the wasteful 512 (2026-05-20 perf note).
+        cf = ax.contourf(X, Y, p / 1000.0, levels=256, cmap='turbo',
                           vmin=p_min_kpa, vmax=p_max_kpa)
         cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.1f')
         cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
@@ -762,7 +761,7 @@ def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
     if vmax_v <= 0.0:
         vmax_v = 1.0
     for ax, vmag, (u, v, w, tag) in zip(axes, vmags, V_data):
-        cf = ax.contourf(X, Y, vmag, levels=128, cmap='turbo',
+        cf = ax.contourf(X, Y, vmag, levels=256, cmap='turbo',
                           vmin=0.0, vmax=vmax_v)
         cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.2f')
         cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
@@ -2572,15 +2571,31 @@ def _run_3d_stack(cfg):
     # |Q_sB| ~25% above the NTU upper bound. The LTNE Q_sA+Q_sB ≈ 0 internal
     # check still holds (<1%) — it's the magnitude that over-estimates, not
     # the conservation.
-    Q = 0.5 * (Q_enthalpy_A + Q_enthalpy_B) if Q_enthalpy_B > 0 else Q_enthalpy_A
+    # Headline heat duty = AIR/A-side advective enthalpy ONLY. The B/water-side
+    # advective enthalpy (Q_enthalpy_B = m_B·cp·ΔT_B) drops the boundary-
+    # conduction flux, so it over/under-reads by ~8 % even when the scheme
+    # conserves. The old 0.5·(Q_A+Q_B) average therefore drifted non-physically
+    # (e.g. the displayed Q ROSE when coolant flow FELL — the B term polluting
+    # it). Q_enthalpy_A matches the experiment-validated duty: validation/
+    # validate_shanghai_3d_real computes the same m_air·cp·ΔT_A (RMSRE ~3 %).
+    # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
+    Q = Q_enthalpy_A
 
     dP = float(SIMPLESolver3D.extract_dP_weighted(sA))
 
     uc_real, vc_real, wc_real = _assemble_real_velocity()
     vmag = np.sqrt(uc_real ** 2 + vc_real ** 2 + wc_real ** 2)
 
-    # P field → real coords via solver perm
-    P_real = np.ascontiguousarray(sA.P.transpose(solver_to_real_perm))
+    # P field → real coords via solver perm. DISPLAY ABSOLUTE pressure anchored
+    # so the INLET reads exactly the user-input P_in — identical convention to
+    # the 2D-native path (run_calculation.py:821, P_fA = P_inA + (P_g - P_ref
+    # _inlet)). SIMPLE's self.P is the gauge field (outlet pinned ~0, inlet ≈
+    # dP); abs = (P_in - dP) + gauge ⇒ inlet=P_in, outlet=P_in-dP. Pure baseline
+    # shift, physics-free — dP itself is reported via extract_dP_weighted, and
+    # this anchor does NOT depend on the P_ref_abs reconstruction (which for
+    # water is a fixed 1D seed, not loop-converged → would over-shoot the inlet).
+    P_disp_A = (P_inA - dP) + sA.P
+    P_real = np.ascontiguousarray(P_disp_A.transpose(solver_to_real_perm))
     P_kPa = P_real / 1000.0
     L_mm = (L_mm_field.copy() if L_mm_field is not None
             else np.full((Nx, Ny, Nz), Lcell, dtype=np.float64))
@@ -2589,7 +2604,12 @@ def _run_3d_stack(cfg):
     if sB is not None:
         axis_map_B = sB_info['axis_map']
         perm_B = axis_map_B['solver_to_real_perm']
-        P_real_B = np.ascontiguousarray(sB.P.transpose(perm_B))
+        dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
+        # ABSOLUTE pressure anchored so inlet == input P_inB (same convention as
+        # fluid A and the 2D path). Works for both water (incompressible) and
+        # air B without depending on the P_ref_abs reconstruction.
+        P_disp_B = (P_inB - dP_B) + sB.P
+        P_real_B = np.ascontiguousarray(P_disp_B.transpose(perm_B))
         # approach-(a) reverse convention: sB.P is in SOLVER coords (inlet at
         # solver y=0, high P). For a reverse-dir fluid the real inlet is at the
         # OPPOSITE stream end, so the pressure must be spatially flipped along
@@ -2597,12 +2617,12 @@ def _run_3d_stack(cfg):
         # LTNE temperature solve. Pressure is a scalar, so NO sign change
         # (unlike the stream velocity component). Without this flip the
         # displayed P_B put the inlet's high pressure at the real OUTLET end.
+        # The constant baseline shift commutes with transpose+flip.
         # Display-only field (feeds the vis panels; no physics consumes it).
         if axis_map_B.get('is_reverse'):
             P_real_B = np.ascontiguousarray(
                 np.flip(P_real_B, axis=axis_map_B['stream_real_axis']))
         vmag_B = np.sqrt(ucB ** 2 + vcB ** 2 + wcB ** 2)
-        dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
     else:
         P_real_B = None
         vmag_B = None

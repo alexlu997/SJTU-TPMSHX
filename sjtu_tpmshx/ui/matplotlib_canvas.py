@@ -136,12 +136,12 @@ class MatplotlibCanvas(FigureCanvas):
                     y = np.linspace(0, Nyf * dy * 1000, Nyf)
                     Y, X = np.meshgrid(y, x)
                     if r < 2:  # fluid
-                        # levels=128 (was 512) — 2026-05-20 UI sweep perf
-                        # fix; 512 over-sampled turbo's 256-colour LUT
-                        # and ~4× the triangulation cost per panel.
-                        kw = dict(levels=128, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
+                        # levels=256 = turbo's full 256-colour LUT (128 under-
+                        # sampled it by half); still half the wasteful 512
+                        # (2026-05-20 perf note) so banding is finer, not slower.
+                        kw = dict(levels=256, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
                     else:      # solid — unified turbo for cross-field parity
-                        kw = dict(levels=128, cmap='turbo')
+                        kw = dict(levels=256, cmap='turbo')
                     try:
                         cf = ax.contourf(X, Y, field, **kw)
                         cb = self.fig.colorbar(cf, ax=ax, shrink=0.8, aspect=15, format="%.0f")
@@ -188,8 +188,8 @@ class MatplotlibCanvas(FigureCanvas):
         y = np.linspace(0, H, N_y)
         self.Y, self.X = np.meshgrid(y, x)
 
-        kw_f = dict(levels=100, cmap="turbo", vmin=self.min_temp, vmax=self.max_temp)
-        kw_s = dict(levels=100, cmap="turbo", vmin=self.min_s,    vmax=self.max_s)
+        kw_f = dict(levels=256, cmap="turbo", vmin=self.min_temp, vmax=self.max_temp)
+        kw_s = dict(levels=256, cmap="turbo", vmin=self.min_s,    vmax=self.max_s)
 
         datasets = [
             (T_fA[-1], r"$T_{f,A}$ [K] — Fluid A", kw_f),
@@ -252,7 +252,7 @@ class MatplotlibCanvas(FigureCanvas):
         for ax, (field, main_title, subtitle) in zip(axes_p, p_data):
             ax.set_facecolor(_t['ax_bg'])
             _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, _Lmm, _Hmm)
-            cf = ax.contourf(_Xp, _Yp, _Fp, levels=128, cmap="turbo")
+            cf = ax.contourf(_Xp, _Yp, _Fp, levels=256, cmap="turbo")
             ax.set_xlim(0, _Lmm); ax.set_ylim(0, _Hmm)
             cb = self.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format="%.0f")
             cb.ax.tick_params(labelsize=8, colors=_t['ax_text'], length=3)

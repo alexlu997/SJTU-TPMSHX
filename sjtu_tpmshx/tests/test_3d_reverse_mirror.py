@@ -107,3 +107,33 @@ def test_reverse_y_is_mirror_of_forward_y():
         f"<= outlet end (y=0)={prof_rev[0]:.1f} Pa — high pressure on the "
         f"WRONG (outlet) end, the un-flipped-pressure symptom."
     )
+
+
+def test_displayed_pressure_is_absolute_matches_inlet():
+    """The 3D vis pressure field must be ABSOLUTE (P_ref_abs + gauge), so the
+    inlet high-pressure end reads ~ the user-input inlet pressure — matching
+    the 2D-native path (run_calculation.py:821 P_fA = P_inA + (P_g - P_ref)).
+
+    Pre-change the 3D path exported GAUGE (outlet pinned 0, inlet ~ dP of a few
+    kPa), so the plotted inlet did NOT match the input P_in. Gate distinguishes
+    absolute (max ~ P_in) from gauge (max ~ dP << 0.5·P_in).
+    """
+    P_inA, P_inB = 150000.0, 120000.0   # must match _cfg() FluidConfig P_in_Pa
+    res = R._run_3d_stack(_cfg(dir_B=2, in_ctr=0.07, out_ctr=0.03))
+    P_A = np.asarray(res['P_Pa'])         # fluid A (air, +x)
+    P_B = np.asarray(res['P_Pa_B'])       # fluid B (water, +y)
+
+    # Inlet is anchored to the input P_in (abs = P_in - dP + gauge), so the
+    # high-pressure end reads ~ input within ~3 % (residual = gauge-max vs
+    # weighted-dP + outlet-pin). Gauge would be ~dP (few kPa) << 0.5·P_in.
+    assert P_A.max() > 0.5 * P_inA, (
+        f"P_A looks like GAUGE not ABSOLUTE: max={P_A.max():.0f} Pa "
+        f"<< P_inA={P_inA:.0f}")
+    assert abs(P_A.max() - P_inA) < 0.03 * P_inA, (
+        f"P_A inlet abs {P_A.max():.0f} Pa != input P_inA {P_inA:.0f} Pa")
+
+    assert P_B.max() > 0.5 * P_inB, (
+        f"P_B looks like GAUGE not ABSOLUTE: max={P_B.max():.0f} Pa "
+        f"<< P_inB={P_inB:.0f}")
+    assert abs(P_B.max() - P_inB) < 0.03 * P_inB, (
+        f"P_B inlet abs {P_B.max():.0f} Pa != input P_inB {P_inB:.0f} Pa")

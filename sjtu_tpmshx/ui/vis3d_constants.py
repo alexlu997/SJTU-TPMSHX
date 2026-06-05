@@ -24,6 +24,9 @@ FIELD_ORDER = [
     'L_mm',
 ]
 FIELD_META = {
+    # Colormap: 'turbo' kept by user preference (2026-06-05) — its non-uniform
+    # local contrast makes small features pop (perceptually-uniform maps like
+    # viridis wash them out for detail inspection). Trade-off accepted.
     'Ta':      {'cmap': 'turbo',    'title': 'T_a (K)',         'fmt': '%.1f',
                 'label': 'Temperature A'},
     'Tb':      {'cmap': 'turbo',    'title': 'T_b (K)',         'fmt': '%.1f',
@@ -34,9 +37,9 @@ FIELD_META = {
                 'label': 'Velocity A'},
     'vmag_B':  {'cmap': 'turbo',    'title': 'speed B (m/s)',   'fmt': '%.2f',
                 'label': 'Velocity B'},
-    'P_kPa':   {'cmap': 'turbo',    'title': 'P_A gauge (kPa)', 'fmt': '%.1f',
+    'P_kPa':   {'cmap': 'turbo',    'title': 'P_A abs (kPa)',   'fmt': '%.1f',
                 'label': 'Pressure A'},
-    'P_B_kPa': {'cmap': 'turbo',    'title': 'P_B gauge (kPa)', 'fmt': '%.1f',
+    'P_B_kPa': {'cmap': 'turbo',    'title': 'P_B abs (kPa)',   'fmt': '%.1f',
                 'label': 'Pressure B'},
     'L_mm':    {'cmap': 'cividis',  'title': 'L (mm)',          'fmt': '%.2f',
                 'label': 'Design L'},

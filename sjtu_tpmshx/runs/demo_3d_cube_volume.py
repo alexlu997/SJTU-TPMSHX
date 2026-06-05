@@ -212,7 +212,7 @@ if __name__ == '__main__':
         ('Ta',    'Ta (Fluid A, hot, +x) [K]'),
         ('Tb',    'Tb (Fluid B, cold, -y) [K]'),
         ('vmag',  '|v|_A [m/s]'),
-        ('P_kPa', 'P_A gauge [kPa]'),
+        ('P_kPa', 'P_A abs [kPa]'),
     ]
     print("\nRendering 3D scenes...")
     for fkey, fname in fields:

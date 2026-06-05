@@ -55,7 +55,7 @@ def plot_cube_ortho(res, cfg, outdir):
         ('Tb',  res['Tb'],  '[K]', 'Tb — Fluid B (cold, -y)'),
         ('Ts',  res['Ts'],  '[K]', 'Ts — Solid (LTNE coupling)'),
         ('vmag', res['vmag'], '[m/s]', '|v|_A — Fluid A speed'),
-        ('P_kPa', res['P_kPa'], '[kPa]', 'P_A — Fluid A gauge'),
+        ('P_kPa', res['P_kPa'], '[kPa]', 'P_A — Fluid A abs'),
     ]
     paths = []
     for fkey, F, unit, title in fields:
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     print(f"Solver wall-clock: {time.time()-t0:.1f} s")
     print()
     print("  PRIMARY METRICS")
-    print(f"    Q (mean A,B)        : {res['Q']:.2f}  W")
+    print(f"    Q (air-side duty)   : {res['Q']:.2f}  W")
     print(f"    Q_enthalpy_A        : {res['Q_enthalpy_A']:.2f}  W")
     print(f"    Q_enthalpy_B        : {res['Q_enthalpy_B']:.2f}  W")
     print(f"    dP_A                : {res['dP']:.1f}  Pa")

@@ -58,7 +58,7 @@ def print_metrics(res, cfg):
     print(f"  D_h            : {cfg['D_h']*1000:.3f} mm")
     print()
     print("  PRIMARY METRICS")
-    print(f"    Q (mean A,B)        : {res['Q']:.2f}  W")
+    print(f"    Q (air-side duty)   : {res['Q']:.2f}  W")
     print(f"    Q_enthalpy_A        : {res['Q_enthalpy_A']:.2f}  W   "
           f"(m_dot·cp·|T_inA-T_A_out|)")
     print(f"    Q_enthalpy_B        : {res['Q_enthalpy_B']:.2f}  W")
@@ -181,8 +181,8 @@ def plot_clouds(res, cfg, outdir):
         p_max = p_min + 1.0
     levels_p = np.linspace(p_min, p_max, 80)
     for ax, (field, title) in zip(axes, [
-        (P_A, 'P_A gauge — Fluid A (+x)'),
-        (P_B, 'P_B gauge — Fluid B (-y)'),
+        (P_A, 'P_A abs — Fluid A (+x)'),
+        (P_B, 'P_B abs — Fluid B (-y)'),
     ]):
         if field is None:
             ax.set_visible(False); continue
@@ -221,7 +221,7 @@ def plot_orthogonal_3d_slices(res, cfg, outdir):
         ('Tb',  res['Tb'],  'turbo', '[K]', 'Tb — Fluid B (cold, -y stream)'),
         ('Ts',  res['Ts'],  'turbo', '[K]', 'Ts — Solid (LTNE coupling)'),
         ('vmag', res['vmag'], 'turbo', '[m/s]', '|v|_A — Fluid A speed'),
-        ('P_kPa', res['P_kPa'], 'turbo', '[kPa]', 'P_A gauge — Fluid A pressure'),
+        ('P_kPa', res['P_kPa'], 'turbo', '[kPa]', 'P_A abs — Fluid A pressure'),
     ]
     paths = []
     for fkey, F, cmap, unit, title in fields:

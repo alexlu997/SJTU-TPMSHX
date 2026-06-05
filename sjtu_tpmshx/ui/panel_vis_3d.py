@@ -13,8 +13,8 @@ actually provides):
     Ts       : solid temperature [K]
     vmag     : fluid A speed magnitude [m/s]
     vmag_B   : fluid B speed magnitude [m/s]     (cross-flow only)
-    P_kPa    : fluid A gauge pressure [kPa]
-    P_B_kPa  : fluid B gauge pressure [kPa]      (cross-flow only)
+    P_kPa    : fluid A absolute pressure [kPa]   (P_ref_abs + gauge)
+    P_B_kPa  : fluid B absolute pressure [kPa]   (cross-flow only)
     L_mm     : design zoning L-field [mm]
 
 Data entry points:
@@ -531,6 +531,15 @@ class ThreeDVisPanel(QWidget):
             grid.cell_data[key] = arr.flatten(order='F')
         self._grid = grid.cell_data_to_point_data()
 
+        # Display-only UPSAMPLED grid for smooth volume rendering. The compute
+        # grid is coarse (e.g. 46×11×5); a volume ray-cast of coarse point data
+        # shows per-cell colour blocks ("一块一块"). Trilinearly upsampling each
+        # field onto a finer uniform grid bakes smooth gradients into the data
+        # so the volume reads continuous regardless of mesh coarseness — the
+        # root fix vs fighting ray sample distance. Slices / hover / clim keep
+        # using the RAW self._grid (real values, no interpolation).
+        self._grid_vol, self._vol_min_cell_mm = self._build_volume_grid()
+
         self._global_clim = self._build_global_clim()
         self._real_dims = tuple(real_dims)
 
@@ -595,7 +604,9 @@ class ThreeDVisPanel(QWidget):
         wA_cc = 0.5 * (sA.w[:, :, :-1] + sA.w[:, :, 1:])
         wc_real = wA_cc.transpose(1, 0, 2).copy()
         vmag = np.sqrt(uc_real**2 + vc_real**2 + wc_real**2)
-        P_kPa = sA.P.transpose(1, 0, 2).copy() / 1000.0
+        # Absolute pressure (P_ref_abs + gauge), matching the production
+        # run_calculation_3d path so the inlet reads ~ the input P_in.
+        P_kPa = (sA.P_ref_abs + sA.P).transpose(1, 0, 2).copy() / 1000.0
 
         L_mm = build_demo_zoning_field(nx, ny, nz, dx, dy, dz)
 
@@ -669,6 +680,17 @@ class ThreeDVisPanel(QWidget):
             hi = max(clim[f][1] for f in present)
             if hi - lo < 1e-12:
                 hi = lo + 1.0
+            # Skip sharing when magnitudes differ too much: a shared range would
+            # crush the smaller field into the colormap's dark/low end, where it
+            # renders near-black and (with the velocity transparent-low opacity)
+            # nearly invisible. Classic case: fast air A vs slow fluid B speed —
+            # forcing B onto A's range made "Velocity B" a dark/empty volume
+            # while its slice popup (autoscaled) looked fine. If ANY field's
+            # whole range sits in the bottom 40 % of the shared span, keep each
+            # field on its OWN clim so its structure is visible.
+            span = hi - lo
+            if any(clim[f][1] < lo + 0.4 * span for f in present):
+                return
             for f in present:
                 clim[f] = (lo, hi)
 
@@ -967,6 +989,22 @@ class ThreeDVisPanel(QWidget):
         # 100×40×30 grids).
         self._opacity_debounce.start()
 
+    def _opacity_ramp(self):
+        """(lo_alpha, hi_alpha) opacity-transfer endpoints for the current field.
+
+        Velocity (vmag / vmag_B) is a localized jet in a large stagnant bulk:
+        a non-zero low floor turns the bulk into a dark-blue haze that swallows
+        the jet (reads as a black blob). So velocity fades low speed to
+        TRANSPARENT (lo=0) — only moving fluid is drawn, the jet stands out.
+        Temperature / pressure span the whole domain, so they keep a 0.4 low
+        floor to keep the cold/low half visible (else it reads as "all red").
+        """
+        if self._opacity <= 1e-6:
+            return 0.0, 0.0
+        if self._field in ('vmag', 'vmag_B'):
+            return 0.0, self._opacity
+        return self._opacity * 0.4, self._opacity
+
     def _apply_opacity_now(self):
         """Apply current `self._opacity` to the volume actor + render once."""
         if self._volume_actor is not None and self._field is not None:
@@ -976,13 +1014,8 @@ class ThreeDVisPanel(QWidget):
                 if abs(hi - lo) < 1e-12:
                     hi = lo + 1.0
                 pw = vtkPiecewiseFunction()
-                if self._opacity <= 1e-6:
-                    pw.AddPoint(lo, 0.0); pw.AddPoint(hi, 0.0)
-                else:
-                    # Match _rebuild_volume: lo floor = op*0.4, NOT zero, so
-                    # cold voxels stay visible (otherwise user sees "all red").
-                    pw.AddPoint(lo, self._opacity * 0.4)
-                    pw.AddPoint(hi, self._opacity)
+                lo_a, hi_a = self._opacity_ramp()
+                pw.AddPoint(lo, lo_a); pw.AddPoint(hi, hi_a)
                 self._volume_actor.GetProperty().SetScalarOpacity(pw)
                 self.plotter.render()
                 return
@@ -1173,6 +1206,40 @@ class ThreeDVisPanel(QWidget):
             hi = lo + 1.0
         return lo, hi
 
+    def _build_volume_grid(self):
+        """Trilinearly upsample every field onto a finer UNIFORM grid so the
+        volume render is smooth on coarse compute meshes. Returns
+        (grid_with_point_data, fine_min_cell_mm). The upsample factor is chosen
+        per-axis-equal to cap total fine cells ~1.5M (large grids get a smaller
+        factor, tiny grids up to 5×). Falls back to the raw grid if SciPy is
+        missing or the factor is 1. Uniform fine edges assume ~uniform compute
+        spacing (true when wall_refine_3d is off — the default); display-only.
+        """
+        raw_min = float(min(self._dx_mm.min(), self._dy_mm.min(),
+                            self._dz_mm.min()))
+        try:
+            from scipy.ndimage import zoom
+        except Exception:
+            return self._grid, raw_min
+        if not self._arrays:
+            return self._grid, raw_min
+        Nx, Ny, Nz = next(iter(self._arrays.values())).shape
+        ncells = max(Nx * Ny * Nz, 1)
+        # Cap total fine cells ~5e5 so the GPU upload + ray-cast stay light
+        # enough for responsive rotation (AutoAdjust still coarsens during drag).
+        f = int(np.clip(round((5.0e5 / ncells) ** (1.0 / 3.0)), 1, 4))
+        if f <= 1:
+            return self._grid, raw_min
+        Lx, Ly, Lz = self._L_mm
+        fine = {k: zoom(a, (f, f, f), order=1) for k, a in self._arrays.items()}
+        nx, ny, nz = next(iter(fine.values())).shape
+        gv = pv.RectilinearGrid(np.linspace(0.0, Lx, nx + 1),
+                                np.linspace(0.0, Ly, ny + 1),
+                                np.linspace(0.0, Lz, nz + 1))
+        for k, a in fine.items():
+            gv.cell_data[k] = a.flatten(order='F')
+        return gv.cell_data_to_point_data(), float(min(Lx/nx, Ly/ny, Lz/nz))
+
     def _rebuild_volume(self, render: bool = True):
         """Redraw the volume-rendered cube for the current field.
 
@@ -1183,6 +1250,10 @@ class ThreeDVisPanel(QWidget):
         """
         if self._grid is None or self._field is None:
             return
+        # Smooth volume uses the upsampled display grid (falls back to raw).
+        vol_grid = getattr(self, '_grid_vol', None)
+        if vol_grid is None:
+            vol_grid = self._grid
         pl = self.plotter
         # Remove previous volume + scalar bars (but keep slice if any)
         try:
@@ -1211,27 +1282,11 @@ class ThreeDVisPanel(QWidget):
         self._volume_actor = None
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
-        # Opacity ramp:
-        #   slider==0 → pure transparent (true 0, not 0.05) so a dark bg
-        #               shows a clean bounding box without colour haze.
-        #   slider>0  → lo = max(0.08, op*0.55), hi = op.
-        #               Scaling the floor with the slider (instead of hard 5%)
-        #               keeps cold voxels legible on the slate viewport bg —
-        #               a hard 5% floor at 40% opacity made cold regions
-        #               disappear into the background (read as "black cube").
-        if self._opacity <= 1e-6:
-            opacity_list = [0.0, 0.0]
-        else:
-            # Two-point ramp: lo end = op*0.4 (NOT zero) so cold voxels stay
-            # visible. Pure 0 floor made the cold half (e.g. B-inlet thermal
-            # layer) totally transparent — user reads the volume as "all red".
-            # 0.4× factor preserves hot/cold contrast while keeping cold
-            # legible on the slate viewport bg.
-            opacity_list = [self._opacity * 0.4, self._opacity]
+        opacity_list = list(self._opacity_ramp())
         t = get_theme()
         try:
             self._volume_actor = pl.add_volume(
-                self._grid, scalars=self._field,
+                vol_grid, scalars=self._field,
                 cmap=meta['cmap'], clim=clim,
                 opacity=opacity_list,
                 # shade=True + mild ambient/diffuse/specular gives the
@@ -1244,25 +1299,21 @@ class ThreeDVisPanel(QWidget):
                 name='main_volume',
                 show_scalar_bar=False,     # suppress volume's built-in bar
             )
-            # Refine ray-cast sampling for smoother colour transitions.
-            # Default VTK sample distance = ~1 cell diagonal → visible
-            # colour banding. Sub-cell sampling (0.25× min cell) gives
-            # trilinear-interpolated smooth gradients matching 2D contourf.
+            # Ray sampling on the UPSAMPLED grid. Smoothness now comes from the
+            # trilinearly-upsampled DATA (fine cells), which DECOUPLES it from
+            # the ray sample distance — so AutoAdjust can be ON: VTK coarsens
+            # the ray step only DURING camera/slider interaction (responsive
+            # rotation, fixes the lag) and still renders the full-quality still
+            # frame on settle. Even the coarse interactive step looks smooth
+            # because adjacent fine cells barely differ. `0.005` floor guards
+            # degenerate grids.
             try:
                 vol_mapper = self._volume_actor.GetMapper()
-                min_cell = min(float(self._dx_mm.min()),
-                               float(self._dy_mm.min()),
-                               float(self._dz_mm.min()))
-                # 2026-05-20 UI sweep (Tier 19): was `min_cell * 0.25`,
-                # which super-samples each voxel ~4× along the ray. On
-                # 100×40×30 grids that quadrupled GPU work for no
-                # perceptible quality gain (turbo's 256-entry LUT
-                # already quantises the result). Drop to one ray sample
-                # per cell — matches VTK's auto-adjust default. The
-                # `0.01` floor prevents zero-distance pathologies on
-                # degenerate grids.
-                vol_mapper.SetAutoAdjustSampleDistances(False)
-                vol_mapper.SetSampleDistance(max(0.01, min_cell))
+                min_cell = float(getattr(self, '_vol_min_cell_mm', 0.0)) or min(
+                    float(self._dx_mm.min()), float(self._dy_mm.min()),
+                    float(self._dz_mm.min()))
+                vol_mapper.SetAutoAdjustSampleDistances(True)
+                vol_mapper.SetSampleDistance(max(0.005, min_cell))
             except Exception:
                 pass
             # Scalar bar — responsive placement + theme mono font. Narrow
@@ -1401,13 +1452,28 @@ class ThreeDVisPanel(QWidget):
         dlg.setWindowTitle(
             f"Slice {axis.upper()}={coord_mm:.2f} mm  |  {meta['label']}")
         dlg.setStyleSheet(f"QDialog {{ background: {t['bg']}; color: {t['fg']}; }}")
-        fig = Figure(figsize=(7.2, 5.4), dpi=110)
+        # Size the figure to the slice's data aspect so an equal-aspect plot of
+        # a wide-short domain fills the frame instead of leaving a big vertical
+        # whitespace band. Clamp extreme aspects to keep the dialog usable.
+        _w = float(np.ptp(horiz)); _h = float(np.ptp(vert))
+        _asp = min(max(_w / _h, 0.4), 7.0) if _h > 0 else 3.0
+        _plot_w = 7.0
+        _fig_w = _plot_w + 1.9                       # axes + colorbar + y-label
+        _fig_h = max(_plot_w / _asp + 1.5, 2.8)      # axes + title + x-label
+        fig = Figure(figsize=(_fig_w, _fig_h), dpi=110)
         fig.patch.set_facecolor(t['fig_bg'])
         canvas = FigureCanvasQTAgg(fig)
         ax = fig.add_subplot(111)
         ax.set_facecolor(t['ax_bg'])
-        im = ax.contourf(horiz, vert, slc2d.T, levels=30, cmap=meta['cmap'])
-        cbar = fig.colorbar(im, ax=ax)
+        # contourf with 256 levels (turbo's full LUT) — iso-bands keep small
+        # local features (jets, hot/cold spots) crisp for detail inspection,
+        # which Gouraud smoothing softened on the coarse grid. horiz/vert are
+        # cell centres; meshgrid builds the matching X/Y mesh.
+        Hx, Vy = np.meshgrid(horiz, vert)
+        im = ax.contourf(Hx, Vy, slc2d.T, levels=256, cmap=meta['cmap'])
+        # fraction/pad keep the colorbar height matched to the (possibly short)
+        # axes instead of the tall thin default bar.
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.set_label(meta['title'], color=t['ax_text'])
         cbar.ax.tick_params(colors=t['ax_text'])
         cbar.outline.set_edgecolor(t['ax_spine'])

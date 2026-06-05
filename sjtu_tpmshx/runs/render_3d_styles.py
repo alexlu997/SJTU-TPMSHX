@@ -400,7 +400,7 @@ if __name__ == '__main__':
         ('Ta',    'Ta (Fluid A, hot, +x) [K]', '[K]', False),
         ('Tb',    'Tb (Fluid B, cold, -y) [K]', '[K]', False),
         ('vmag',  '|v|_A [m/s]', '[m/s]', False),
-        ('P_kPa', 'P_A gauge [kPa]', '[kPa]', False),
+        ('P_kPa', 'P_A abs [kPa]', '[kPa]', False),
     ]
     print("\nGenerating publication-quality outputs:")
     for fkey, fname, unit, full_set in fields:
