@@ -2587,8 +2587,20 @@ def _run_3d_stack(cfg):
 
     # Fluid B fields (if sB solved): real-coord P + velocity magnitude
     if sB is not None:
-        perm_B = sB_info['axis_map']['solver_to_real_perm']
+        axis_map_B = sB_info['axis_map']
+        perm_B = axis_map_B['solver_to_real_perm']
         P_real_B = np.ascontiguousarray(sB.P.transpose(perm_B))
+        # approach-(a) reverse convention: sB.P is in SOLVER coords (inlet at
+        # solver y=0, high P). For a reverse-dir fluid the real inlet is at the
+        # OPPOSITE stream end, so the pressure must be spatially flipped along
+        # the real stream axis — exactly like _solver_velocity_to_real and the
+        # LTNE temperature solve. Pressure is a scalar, so NO sign change
+        # (unlike the stream velocity component). Without this flip the
+        # displayed P_B put the inlet's high pressure at the real OUTLET end.
+        # Display-only field (feeds the vis panels; no physics consumes it).
+        if axis_map_B.get('is_reverse'):
+            P_real_B = np.ascontiguousarray(
+                np.flip(P_real_B, axis=axis_map_B['stream_real_axis']))
         vmag_B = np.sqrt(ucB ** 2 + vcB ** 2 + wcB ** 2)
         dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
     else:

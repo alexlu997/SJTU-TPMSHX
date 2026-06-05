@@ -80,3 +80,30 @@ def test_reverse_y_is_mirror_of_forward_y():
         f"Tb_fwd[max/min]={Tb_fwd.max()-273.15:.1f}/{Tb_fwd.min()-273.15:.1f}C "
         f"Tb_rev[max/min]={Tb_rev.max()-273.15:.1f}/{Tb_rev.min()-273.15:.1f}C"
     )
+
+    # ── Pressure-B must mirror too (approach-(a) reverse flip) ──────────
+    # sB.P lives in SOLVER coords; the real-coord map must spatially flip
+    # along the stream axis for is_reverse, exactly like the velocity
+    # transforms. Bug regime (transpose-only, no flip): rel ≈ 0.17 AND the
+    # reverse-fluid high-pressure end lands at the real OUTLET (y=0) instead
+    # of the real INLET (y=H). Both checks below.
+    Pb_fwd = res_fwd['P_Pa_B']
+    Pb_rev = res_rev['P_Pa_B']
+    Pb_fwd_mirrored = Pb_fwd[:, ::-1, :]
+    p_span = float(Pb_fwd.max() - Pb_fwd.min())
+    assert p_span > 1.0, "degenerate: no pressure variation to compare"
+    rel_p = float(np.sqrt(np.mean((Pb_rev - Pb_fwd_mirrored) ** 2)) / p_span)
+    assert rel_p < 0.05, (
+        f"Pressure-B reverse(-y) is NOT the y-mirror of forward(+y): "
+        f"rel L2 = {rel_p:.4f} (gate 0.05; transpose-only bug ≈ 0.17). "
+        f"P_real_B missing the is_reverse stream-axis np.flip (run_calc 3D)."
+    )
+
+    # Physical direction check: reverse(-y) real inlet is at y=H (last idx).
+    # Pressure must DROP from inlet (y=H) to outlet (y=0): P[y=H] > P[y=0].
+    prof_rev = Pb_rev.mean(axis=(0, 2))
+    assert prof_rev[-1] > prof_rev[0], (
+        f"reverse(-y) B pressure inverted: inlet end (y=H)={prof_rev[-1]:.1f} Pa "
+        f"<= outlet end (y=0)={prof_rev[0]:.1f} Pa — high pressure on the "
+        f"WRONG (outlet) end, the un-flipped-pressure symptom."
+    )
