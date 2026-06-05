@@ -5,7 +5,9 @@
 import numpy as np
 import pytest
 
-from solvers.asym_geometry import eps_sides, a0_sides, dh_sides
+from solvers.asym_geometry import (
+    eps_sides, a0_sides, dh_sides, percolates_z, wall_thickness, find_delta_max,
+)
 from solvers.tpms_geometry import _phi_grid, compute_geometry, _C_from_tL
 
 N = 64  # 测试用小网格（快）
@@ -58,3 +60,35 @@ def test_dh_sides_delta0_matches_compute_geometry():
     Dh_A, Dh_B = dh_sides(phi, C, 0.0, L_m, Nf)
     ref = compute_geometry('Gyroid', L_mm, t_mm, Nf)['D_h']
     assert Dh_A == pytest.approx(ref, rel=3e-2)
+
+
+def test_percolates_z_delta0_both_sides_open():
+    """δ=0 两侧空腔都沿流向贯穿（双连通 sheet 拓扑）。"""
+    phi = _phi_grid('Gyroid', N)
+    C = 0.5
+    assert percolates_z(phi < -C) is True
+    assert percolates_z(phi > C) is True
+
+
+def test_percolates_z_solid_block_is_false():
+    """全固体 → 无通道 → 不贯穿。"""
+    block = np.zeros((8, 8, 8), dtype=bool)
+    assert percolates_z(block) is False
+
+
+def test_wall_thickness_delta0_positive_subcell():
+    """壁厚为正且薄于胞元。"""
+    Nf = 128
+    phi = _phi_grid('Gyroid', Nf)
+    C = _C_from_tL('Gyroid', 0.4 / 5.0)
+    L_m = 0.005
+    t = wall_thickness(phi, C, 0.0, L_m, Nf)
+    assert 0.0 < t < L_m
+
+
+def test_find_delta_max_returns_positive_band():
+    """δ=0 周围存在可行偏移带。"""
+    phi = _phi_grid('Gyroid', N)
+    C = 0.5
+    dmax = find_delta_max(phi, C, 0.005, N, wall_floor_m=0.0)
+    assert dmax > 0.0

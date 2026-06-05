@@ -9,6 +9,7 @@ asym_geometry.py — 非对称孔隙率 PoC 核心（Phase 0）。
 计划：vault/reports/engineering/2026-06-05-asym-porosity-phase0-PLAN-CN.md
 """
 import numpy as np
+from scipy import ndimage
 
 # 与 tpms_geometry._A0_from_C 内的体素面积校正常量一致（来源：该函数注释）。
 _AREA_CORRECTION = 1.553
@@ -66,3 +67,45 @@ def dh_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
     Dh_A = 4.0 * eps_A / A0_A if A0_A > 0 else 0.0
     Dh_B = 4.0 * eps_B / A0_B if A0_B > 0 else 0.0
     return Dh_A, Dh_B
+
+
+def percolates_z(mask: np.ndarray) -> bool:
+    """void 是否沿流向 z（axis=2）贯穿：某连通块同时触 z=0 与 z=N-1 面。"""
+    lab, _ = ndimage.label(mask)
+    if lab.max() == 0:
+        return False
+    top = set(np.unique(lab[:, :, 0])) - {0}
+    bot = set(np.unique(lab[:, :, -1])) - {0}
+    return len(top & bot) > 0
+
+
+def wall_thickness(phi: np.ndarray, C: float, delta: float, L_m: float, N: int) -> float:
+    """平均物理壁厚 [m]，slab 近似 t = V_solid / A_wall = (1−ε) / A0_wall。
+
+    A0_wall ≈ 两侧单侧面积均值（同一道墙的两个面）。
+    """
+    eps_A, eps_B, eps = eps_sides(phi, C, delta)
+    A0_A, A0_B = a0_sides(phi, C, delta, L_m, N)
+    A0_wall = 0.5 * (A0_A + A0_B)
+    return (1.0 - eps) / A0_wall if A0_wall > 0 else 0.0
+
+
+def find_delta_max(phi: np.ndarray, C: float, L_m: float, N: int,
+                   wall_floor_m: float = 0.3e-3, dstep: float = None) -> float:
+    """最大 |δ|：两侧 void 仍 percolate（z）且壁厚 ≥ floor。"""
+    phimax = float(np.max(np.abs(phi)))
+    if dstep is None:
+        dstep = phimax / 200.0
+    delta = 0.0
+    last_ok = 0.0
+    while delta <= phimax:
+        void_A = phi < (delta - C)
+        void_B = phi > (delta + C)
+        t = wall_thickness(phi, C, delta, L_m, N)
+        ok = (percolates_z(void_A) and percolates_z(void_B)
+              and t >= wall_floor_m)
+        if not ok:
+            break
+        last_ok = delta
+        delta += dstep
+    return last_ok
