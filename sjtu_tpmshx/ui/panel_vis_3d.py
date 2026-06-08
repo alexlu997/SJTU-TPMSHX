@@ -103,8 +103,15 @@ QComboBox {{
 }}
 QComboBox:hover {{ border-color: {t['accent_primary']}; }}
 QComboBox::drop-down {{
-    subcontrol-origin: padding; subcontrol-position: top right;
-    width: 22px; border-left: 1px solid {t['inp_border']};
+    subcontrol-origin: padding; subcontrol-position: center right;
+    width: 22px; border: none; background: transparent;
+}}
+QComboBox::down-arrow {{
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {t['fg']};
+    margin-right: 8px;
 }}
 QComboBox QAbstractItemView {{
     background: {t['combo_list_bg']}; color: {t['combo_list_fg']};
@@ -161,17 +168,20 @@ def _slider_qss():
     t = get_theme()
     return f"""
 QSlider::groove:horizontal {{
-    border: 1px solid {t['inp_border']}; height: 4px;
-    background: {t['card_bg']}; margin: 0px; border-radius: 2px;
+    border: none; height: 5px; background: {t['card_border']};
+    margin: 0px; border-radius: 2px;
+}}
+QSlider::add-page:horizontal {{
+    background: {t['card_border']}; border-radius: 2px;
+}}
+QSlider::sub-page:horizontal {{
+    background: transparent; border-radius: 2px;
 }}
 QSlider::handle:horizontal {{
-    background: {t['accent_primary']}; border: 1px solid {t['chk_checked_border']};
-    width: 14px; height: 14px; margin: -6px 0; border-radius: 7px;
+    background: {t['accent_primary']}; border: 2px solid {t['card_bg']};
+    width: 13px; height: 13px; margin: -6px 0; border-radius: 8px;
 }}
 QSlider::handle:horizontal:hover {{ background: {t['splitter_hover']}; }}
-QSlider::sub-page:horizontal {{
-    background: {t['slider_sub']}; border-radius: 2px;
-}}
 """
 
 # Plane-selection: user picks a plane parallel to XY/YZ/XZ; the slicing normal
@@ -1396,6 +1406,13 @@ class ThreeDVisPanel(QWidget):
                 _lut = _pv.LookupTable(cmap=meta['cmap'])
                 _lut.scalar_range = clim
                 _sbar.SetLookupTable(_lut)
+            except Exception:
+                pass
+            # Push the title up off the bar so it stops crowding the top value
+            # label (e.g. "Ta (K)" sitting on "422.0"). VTK default separation
+            # is ~0 px; ~14 px gives clear air between title and the max tick.
+            try:
+                _sbar.SetVerticalTitleSeparation(14)
             except Exception:
                 pass
 

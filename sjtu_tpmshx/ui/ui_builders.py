@@ -1402,6 +1402,13 @@ def build_canvas_area(window):
         "Export results (CSV + NPZ) or the current figure (PNG / SVG / PDF)")
     btn_export.setEnabled(False)
     _ex_menu = _QMenu(btn_export)
+    # Theme-aware: without this the dropdown items inherited light-on-light text
+    # in the white theme (unreadable). Explicit fg/bg keeps them legible in both.
+    _ex_menu.setStyleSheet(
+        f"QMenu {{ background:{_t['card_bg']}; color:{_t['fg']}; "
+        f"border:1px solid {_t['card_border']}; border-radius:6px; padding:4px; }}"
+        f"QMenu::item {{ padding:6px 20px; border-radius:4px; }}"
+        f"QMenu::item:selected {{ background:{_t['accent_primary']}; color:#ffffff; }}")
     _ex_menu.addAction("Results — CSV + NPZ", window._export_results)
     _ex_menu.addAction("Figure — PNG / SVG / PDF", window._export_figure)
     btn_export.setMenu(_ex_menu)
@@ -1433,14 +1440,18 @@ def build_canvas_area(window):
         f"font-family:'Fira Code','Consolas',monospace;"
         f"font-size:9pt; font-weight:600;")
     window._res_chips = {}
-    # (name, unit, key) — unit kept lowercase (NOT .upper()'d) so "[Pa]"/"[K]"
-    # read correctly. Q carries no caption unit: it is W/m in 2D but W in 3D
-    # (mode-dependent), so a fixed unit would mislabel one mode.
-    for label_text, unit, key in [("Q", '', 'Q'), ("ΔP A", 'Pa', 'dPA'),
-                                  ("ΔP B", 'Pa', 'dPB'),
-                                  ("T_out A", 'K', 'ToutA'),
-                                  ("T_out B", 'K', 'ToutB')]:
-        _cap = QLabel(label_text.upper() + (f"  [{unit}]" if unit else ""))
+    # HTML captions render real subscripts (no literal underscores): ΔP_A,
+    # T_out,A → Δ<i>P</i><sub>A</sub>, <i>T</i><sub>out,A</sub>. unit kept
+    # lowercase so "[Pa]"/"[K]" read right; Q carries no caption unit (W/m in
+    # 2D vs W in 3D — mode-dependent, a fixed unit would mislabel one mode).
+    for cap_html, unit, key in [
+            ("<i>Q</i>", '', 'Q'),
+            ("Δ<i>P</i><sub>A</sub>", 'Pa', 'dPA'),
+            ("Δ<i>P</i><sub>B</sub>", 'Pa', 'dPB'),
+            ("<i>T</i><sub>out,A</sub>", 'K', 'ToutA'),
+            ("<i>T</i><sub>out,B</sub>", 'K', 'ToutB')]:
+        _cap = QLabel(cap_html + (f" [{unit}]" if unit else ""))
+        _cap.setTextFormat(Qt.TextFormat.RichText)
         _cap.setStyleSheet(_cap_qss)
         _val = QLabel("—")
         _val.setStyleSheet(_chip_num_qss)
@@ -1953,6 +1964,9 @@ def build_canvas_area(window):
 
     # ── Hover data label ──
     window._hover_label = QLabel("")
+    # RichText so field names render with real subscripts (P_A → P<sub>A</sub>)
+    # instead of a literal underscore in the cursor readout.
+    window._hover_label.setTextFormat(Qt.TextFormat.RichText)
     window._hover_label.setStyleSheet(
         f"color:{_t['fg']}; font-size:9pt; background:transparent; padding:2px 8px;")
     window._hover_label.setFixedHeight(20)

@@ -213,27 +213,19 @@ class MatplotlibCanvas(FigureCanvas):
         self.draw()
 
     def plot_pressure(self, P_fA, P_fB, N_x, N_y, L, H, mode="",
-                       dP_A=None, dP_B=None, dx_arr=None, dy_arr=None,
-                       residuals_A=None, residuals_B=None):
+                       dx_arr=None, dy_arr=None):
         _t = get_theme()
         from matplotlib.gridspec import GridSpec
 
         self.fig.clear()
         self.fig.patch.set_facecolor(_t['fig_bg'])
 
-        # 2 cloud plots + summary panel + convergence mini-plot.
-        has_resid = (residuals_A is not None and len(residuals_A) > 0) or \
-                    (residuals_B is not None and len(residuals_B) > 0)
-        if has_resid:
-            gs = GridSpec(7, 1, figure=self.fig,
-                          height_ratios=[3, 3, 0.3, 2, 0.25, 1.3, 0.15],
-                          hspace=0.30, left=0.08, right=0.93, top=0.96,
-                          bottom=0.04)
-        else:
-            gs = GridSpec(5, 1, figure=self.fig,
-                          height_ratios=[3, 3, 0.3, 2, 0.2],
-                          hspace=0.28, left=0.08, right=0.93, top=0.96,
-                          bottom=0.04)
+        # 2 pressure cloud plots only. The "Pressure Drop Summary" card and the
+        # SIMPLE convergence mini-plot were removed for the 2D view: dP is
+        # already shown in the top KPI strip and the residual trace was clutter.
+        # dP_A/B + residuals_A/B stay in the signature for call-site stability.
+        gs = GridSpec(2, 1, figure=self.fig, height_ratios=[1, 1],
+                      hspace=0.32, left=0.08, right=0.93, top=0.94, bottom=0.08)
 
         _dx = dx_arr if dx_arr is not None else np.full(N_x, L / N_x)
         _dy = dy_arr if dy_arr is not None else np.full(N_y, H / N_y)
@@ -272,75 +264,10 @@ class MatplotlibCanvas(FigureCanvas):
             for spine in ax.spines.values():
                 spine.set_edgecolor(_t['ax_spine']); spine.set_linewidth(0.8)
 
-        # Frosted card summary panel
-        ax3 = self.fig.add_subplot(gs[3])
-        ax3.axis('off')
-        ax3.set_xlim(0, 1); ax3.set_ylim(0, 1)
-        dPA = dP_A if dP_A is not None else abs(P_fA.max() - P_fA.min())
-        dPB = dP_B if dP_B is not None else abs(P_fB.max() - P_fB.min())
-
-        # Card background (frosted glass effect via rounded rect)
-        from matplotlib.patches import FancyBboxPatch
-        _card_bg = _t['dp_card_bg']; _card_border = _t['dp_card_border']
-        card_rect = FancyBboxPatch((0.03, 0.02), 0.94, 0.92,
-                                   boxstyle="round,pad=0.02",
-                                   facecolor=_card_bg, edgecolor=_card_border,
-                                   linewidth=1.5, alpha=0.95,
-                                   transform=ax3.transAxes, zorder=0)
-        ax3.add_patch(card_rect)
-
-        # Title inside card
-        ax3.text(0.5, 0.88, 'Pressure Drop Summary',
-                 fontsize=12, fontweight='bold', color=_t['ax_text'],
-                 ha='center', va='top', transform=ax3.transAxes, zorder=1)
-
-        # Two metric cards side by side
-        _dp_colors = [_t['dp_color_a'], _t['dp_color_b']]
-        _labels = ['Fluid A', 'Fluid B']
-        _p_in = [P_fA.max(), P_fB.max()]  # approximate inlet pressure
-        _p_out = [P_fA.max() - dPA, P_fB.max() - dPB]
-        _dp = [dPA, dPB]
-        for i, (lbl, col, pi, po, dp) in enumerate(zip(_labels, _dp_colors, _p_in, _p_out, _dp)):
-            cx = 0.28 + i * 0.44
-            ax3.text(cx, 0.72, lbl, fontsize=11, fontweight='bold', color=col,
-                     ha='center', va='top', transform=ax3.transAxes, zorder=1)
-            ax3.text(cx, 0.52, f'\u0394P = {dp:,.0f} Pa',
-                     fontsize=14, fontweight='bold', color=col,
-                     ha='center', va='top', transform=ax3.transAxes, zorder=1)
-            ax3.text(cx, 0.28, f'In: {pi:,.0f}\nOut: {po:,.0f}',
-                     fontsize=9, color=_t['ax_text'], alpha=0.7,
-                     ha='center', va='top', transform=ax3.transAxes,
-                     linespacing=1.6, zorder=1)
-
-        # Divider line between two cards
-        ax3.plot([0.5, 0.5], [0.15, 0.78], color=_card_border, lw=1,
-                 transform=ax3.transAxes, zorder=1)
-
-        # Convergence (SIMPLE residual) mini-plot — semilogy so the long
-        # asymptote is readable. Hidden when no residual history was
-        # supplied (e.g., 3D pipeline hasn't been wired to residuals yet).
-        if has_resid:
-            axR = self.fig.add_subplot(gs[5])
-            axR.set_facecolor(_t['ax_bg'])
-            for label, color, hist in (
-                    ('Fluid A', _t['dp_color_a'], residuals_A),
-                    ('Fluid B', _t['dp_color_b'], residuals_B)):
-                if hist is None or len(hist) == 0:
-                    continue
-                axR.semilogy(range(1, len(hist) + 1), hist,
-                             color=color, lw=1.2, label=label)
-            axR.set_xlabel("SIMPLE iteration", fontsize=9,
-                           color=_t['ax_text'])
-            axR.set_ylabel("Residual", fontsize=9, color=_t['ax_text'])
-            axR.set_title("Convergence", fontsize=10, fontweight='bold',
-                          color=_t['ax_text'], loc='left', pad=4)
-            axR.grid(True, which='both', alpha=0.2, linewidth=0.5)
-            axR.tick_params(labelsize=8, colors=_t['ax_text'])
-            leg = axR.legend(fontsize=8, loc='upper right', framealpha=0.85,
-                             edgecolor=_t['ax_spine'], fancybox=False)
-            if leg is not None:
-                leg.get_frame().set_linewidth(0.5)
-            for spine in axR.spines.values():
-                spine.set_edgecolor(_t['ax_spine']); spine.set_linewidth(0.8)
+        # (Pressure Drop Summary card + SIMPLE convergence mini-plot deleted
+        # from the 2D pressure view. dP is shown in the top KPI strip; SIMPLE
+        # residuals are still tracked by the solver for convergence/bootstrap,
+        # just no longer plotted here.)
+        _ = mode
 
         self.draw()
