@@ -1931,13 +1931,10 @@ def finalize_plots(window):
     Y, X = np.meshgrid(y, x)
     _sub = _t['mpl_subtitle']
 
-    # Pressure plot (pass correct dP values + residual history for the
-    # convergence mini-plot at the bottom of the tab)
+    # Pressure plot — clouds only (dP shown in the KPI strip; the summary card
+    # + SIMPLE convergence plot were removed from this tab).
     window.canvas_pres.plot_pressure(P_fA, P_fB, N_x, N_y, L, H, mode_label,
-                                     dP_A=dP_A, dP_B=dP_B,
-                                     dx_arr=r.get('dx_arr'), dy_arr=r.get('dy_arr'),
-                                     residuals_A=r.get('residuals_A'),
-                                     residuals_B=r.get('residuals_B'))
+                                     dx_arr=r.get('dx_arr'), dy_arr=r.get('dy_arr'))
     window.canvas_pres._hover_data = {
         'fields': [P_fA, P_fB],
         'names': ['P_A', 'P_B'],

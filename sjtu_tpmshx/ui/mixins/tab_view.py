@@ -358,6 +358,11 @@ class TabViewMixin:
         val = hd['fields'][ax_idx][i, j]
         name = hd['names'][ax_idx]
         unit = hd['unit']
+        # Render "P_A" → "P<sub>A</sub>" (real subscript, no literal underscore).
+        # _hover_label is RichText (set at creation), so the tag is honoured.
+        if '_' in name:
+            _h, _sub = name.split('_', 1)
+            name = f"{_h}<sub>{_sub}</sub>"
         self._hover_label.setText(
             f"x={x_mm:.1f}mm, y={y_mm:.1f}mm  |  {name} = {val:.2f} {unit}")
 

@@ -1402,6 +1402,13 @@ def build_canvas_area(window):
         "Export results (CSV + NPZ) or the current figure (PNG / SVG / PDF)")
     btn_export.setEnabled(False)
     _ex_menu = _QMenu(btn_export)
+    # Theme-aware: without this the dropdown items inherited light-on-light text
+    # in the white theme (unreadable). Explicit fg/bg keeps them legible in both.
+    _ex_menu.setStyleSheet(
+        f"QMenu {{ background:{_t['card_bg']}; color:{_t['fg']}; "
+        f"border:1px solid {_t['card_border']}; border-radius:6px; padding:4px; }}"
+        f"QMenu::item {{ padding:6px 20px; border-radius:4px; }}"
+        f"QMenu::item:selected {{ background:{_t['accent_primary']}; color:#ffffff; }}")
     _ex_menu.addAction("Results — CSV + NPZ", window._export_results)
     _ex_menu.addAction("Figure — PNG / SVG / PDF", window._export_figure)
     btn_export.setMenu(_ex_menu)
@@ -1433,11 +1440,18 @@ def build_canvas_area(window):
         f"font-family:'Fira Code','Consolas',monospace;"
         f"font-size:9pt; font-weight:600;")
     window._res_chips = {}
-    for label_text, key in [("Q", 'Q'), ("ΔP A", 'dPA'),
-                             ("ΔP B", 'dPB'),
-                             ("T_out A", 'ToutA'),
-                             ("T_out B", 'ToutB')]:
-        _cap = QLabel(label_text.upper())
+    # HTML captions render real subscripts (no literal underscores): ΔP_A,
+    # T_out,A → Δ<i>P</i><sub>A</sub>, <i>T</i><sub>out,A</sub>. unit kept
+    # lowercase so "[Pa]"/"[K]" read right; Q carries no caption unit (W/m in
+    # 2D vs W in 3D — mode-dependent, a fixed unit would mislabel one mode).
+    for cap_html, unit, key in [
+            ("<i>Q</i>", '', 'Q'),
+            ("Δ<i>P</i><sub>A</sub>", 'Pa', 'dPA'),
+            ("Δ<i>P</i><sub>B</sub>", 'Pa', 'dPB'),
+            ("<i>T</i><sub>out,A</sub>", 'K', 'ToutA'),
+            ("<i>T</i><sub>out,B</sub>", 'K', 'ToutB')]:
+        _cap = QLabel(cap_html + (f" [{unit}]" if unit else ""))
+        _cap.setTextFormat(Qt.TextFormat.RichText)
         _cap.setStyleSheet(_cap_qss)
         _val = QLabel("—")
         _val.setStyleSheet(_chip_num_qss)
@@ -1902,8 +1916,57 @@ def build_canvas_area(window):
     window._canvas_scroll.setWidget(canvas_container)
     vlay.addWidget(window._canvas_scroll, 1)
 
+    # ── 3D card fits the scroll viewport (no forced vertical scrollbar) ──
+    # The fixed card heights suit the stacked 2D canvases, but the lone 3D card
+    # (1144 px) overflowed shorter screens → a scrollbar the user had to drag to
+    # reach a usable size. Refit it to the visible viewport height on every
+    # scroll-resize and whenever the card is shown (tab switch) so it lands
+    # correctly sized with no scroll.
+    def _fit_3d_card_to_viewport():
+        c3d = window._canvas_cards.get('3d')
+        sc = getattr(window, '_canvas_scroll', None)
+        if c3d is None or sc is None or not c3d.isVisible():
+            return
+        vh = sc.viewport().height()
+        if vh > 240:
+            c3d.setFixedHeight(vh - 4)
+    window._fit_3d_card_to_viewport = _fit_3d_card_to_viewport
+
+    _sc = window._canvas_scroll
+    _orig_sc_resize = _sc.resizeEvent
+    def _sc_resize(ev, _o=_orig_sc_resize):
+        if _o is not None:
+            _o(ev)
+        _fit_3d_card_to_viewport()
+    _sc.resizeEvent = _sc_resize
+
+    _c3d = window._canvas_cards.get('3d')
+    if _c3d is not None:
+        _orig_show = _c3d.showEvent
+        def _c3d_show(ev, _o=_orig_show):
+            if _o is not None:
+                _o(ev)
+            # 3D fills one card → no scroll needed. Hide the vertical bar so a
+            # few px of layout slack can't trigger a stray scrollbar, and refit
+            # the card to the viewport.
+            window._canvas_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            _fit_3d_card_to_viewport()
+        _c3d.showEvent = _c3d_show
+        _orig_hide = _c3d.hideEvent
+        def _c3d_hide(ev, _o=_orig_hide):
+            if _o is not None:
+                _o(ev)
+            # Restore for the stacked, taller 2D-canvas tabs.
+            window._canvas_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        _c3d.hideEvent = _c3d_hide
+
     # ── Hover data label ──
     window._hover_label = QLabel("")
+    # RichText so field names render with real subscripts (P_A → P<sub>A</sub>)
+    # instead of a literal underscore in the cursor readout.
+    window._hover_label.setTextFormat(Qt.TextFormat.RichText)
     window._hover_label.setStyleSheet(
         f"color:{_t['fg']}; font-size:9pt; background:transparent; padding:2px 8px;")
     window._hover_label.setFixedHeight(20)

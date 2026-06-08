@@ -314,8 +314,8 @@ class RunControllerMixin:
             'zone_config': f.get('zone_config'),
             'za': f.get('za'),
             'dx_arr': f.get('dx_arr'), 'dy_arr': f.get('dy_arr'),
-            'residuals_A': result.residuals.get('simple_A'),
-            'residuals_B': result.residuals.get('simple_B'),
+            # (residuals_A/B snapshots dropped — they only fed the removed 2D
+            # convergence plot; the solver still tracks residuals internally.)
             'Q_A': result.residuals.get('Q_A', float('nan')),
             'Q_B': result.residuals.get('Q_B', float('nan')),
             'Q_net': result.residuals.get('Q_net', float('nan')),

@@ -27,19 +27,23 @@ FIELD_META = {
     # Colormap: 'turbo' kept by user preference (2026-06-05) — its non-uniform
     # local contrast makes small features pop (perceptually-uniform maps like
     # viridis wash them out for detail inspection). Trade-off accepted.
-    'Ta':      {'cmap': 'turbo',    'title': 'T_a (K)',         'fmt': '%.1f',
+    # Titles carry NO underscore: this string also feeds the VTK colorbar,
+    # which renders plain text only (no HTML/mathtext subscripts). The Qt KPI
+    # strip does its own HTML subscripts; here we keep clean underscore-free
+    # names (Ta/Tb/Ts) that read fine in VTK, matplotlib and Qt alike.
+    'Ta':      {'cmap': 'turbo',    'title': 'Ta (K)',          'fmt': '%.1f',
                 'label': 'Temperature A'},
-    'Tb':      {'cmap': 'turbo',    'title': 'T_b (K)',         'fmt': '%.1f',
+    'Tb':      {'cmap': 'turbo',    'title': 'Tb (K)',          'fmt': '%.1f',
                 'label': 'Temperature B'},
-    'Ts':      {'cmap': 'turbo',    'title': 'T_s (K)',         'fmt': '%.1f',
+    'Ts':      {'cmap': 'turbo',    'title': 'Ts (K)',          'fmt': '%.1f',
                 'label': 'Temperature Solid'},
     'vmag':    {'cmap': 'turbo',    'title': 'speed A (m/s)',   'fmt': '%.2f',
                 'label': 'Velocity A'},
     'vmag_B':  {'cmap': 'turbo',    'title': 'speed B (m/s)',   'fmt': '%.2f',
                 'label': 'Velocity B'},
-    'P_kPa':   {'cmap': 'turbo',    'title': 'P_A abs (kPa)',   'fmt': '%.1f',
+    'P_kPa':   {'cmap': 'turbo',    'title': 'PA abs (kPa)',    'fmt': '%.1f',
                 'label': 'Pressure A'},
-    'P_B_kPa': {'cmap': 'turbo',    'title': 'P_B abs (kPa)',   'fmt': '%.1f',
+    'P_B_kPa': {'cmap': 'turbo',    'title': 'PB abs (kPa)',    'fmt': '%.1f',
                 'label': 'Pressure B'},
     'L_mm':    {'cmap': 'cividis',  'title': 'L (mm)',          'fmt': '%.2f',
                 'label': 'Design L'},

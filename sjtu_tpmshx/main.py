@@ -2609,6 +2609,14 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                 placeholder.deleteLater()
             self._canvas_3d_placeholder = None
             self.canvas_3d = panel
+            # Fit the 3D card to the scroll viewport now that the real panel is
+            # in (avoids the fixed 1144 px card overflowing → scrollbar).
+            _fit = getattr(self, '_fit_3d_card_to_viewport', None)
+            if _fit is not None:
+                try:
+                    _fit()
+                except Exception:
+                    pass
             self.statusBar().showMessage("3D view initialised.", TOAST_MS_BRIEF)
         finally:
             self._lazy_init_3d_running = False
