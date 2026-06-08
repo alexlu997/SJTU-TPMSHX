@@ -87,8 +87,8 @@ def test_wall_thickness_delta0_positive_subcell():
 
 
 def test_find_delta_max_returns_positive_band():
-    """δ=0 周围存在可行偏移带。"""
+    """δ=0 周围存在可行偏移带（壁=2C 常数，δ_max 纯连通极限）。"""
     phi = _phi_grid('Gyroid', N)
     C = 0.5
-    dmax = find_delta_max(phi, C, 0.005, N, wall_floor_m=0.0)
+    dmax = find_delta_max(phi, C)
     assert dmax > 0.0

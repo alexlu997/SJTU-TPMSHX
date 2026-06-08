@@ -33,7 +33,7 @@ def scan_one(tpms, L_mm, t_mm):
     L_m = L_mm / 1000.0
     C = _C_from_tL(tpms, t_mm / L_mm)
     phimax = float(np.max(np.abs(phi)))
-    dmax = find_delta_max(phi, C, L_m, N, wall_floor_m=WALL_FLOOR_M)
+    dmax = find_delta_max(phi, C)   # 壁=2C 常数 → δ_max 纯连通极限
     deltas = np.linspace(0.0, min(dmax * 1.15, phimax), 41)
     rows = []
     for d in deltas:
@@ -48,7 +48,7 @@ def scan_one(tpms, L_mm, t_mm):
                          eps_A=eps_A, eps_B=eps_B, eps=eps, r=r,
                          A0_A=A0_A, A0_B=A0_B, Dh_A=Dh_A, Dh_B=Dh_B,
                          t_phys_mm=t * 1000.0, perc_A=pA, perc_B=pB,
-                         feasible=bool(pA and pB and t >= WALL_FLOOR_M)))
+                         feasible=bool(pA and pB)))   # 壁=2C 常数, 只看连通
     return rows, dmax
 
 
@@ -61,30 +61,28 @@ def main():
         all_rows += rows
         feas = [x for x in rows if x['feasible']]
         r_max = max((x['r'] for x in feas), default=0.0)
-        e0, t0 = rows[0]['eps'], rows[0]['t_phys_mm']
+        e0 = rows[0]['eps']
         last = feas[-1] if feas else rows[0]
         eps_drift = abs(last['eps'] - e0) / e0 * 100
-        t_drift = abs(last['t_phys_mm'] - t0) / t0 * 100
-        # r_healthy = 工作点 r（壁厚漂 <=15%），避开 pinch 处 eps_B->0 把 r_max 抬虚
-        healthy = [x for x in feas if abs(x['t_phys_mm'] - t0) / t0 <= 0.15]
-        r_healthy = max((x['r'] for x in healthy), default=0.0)
+        # r_usable = 可用 r（小通道 ε_B 不塌过半：>= δ=0 时的 50%），避开 pinch 虚高
+        epsB0 = rows[0]['eps_B']
+        usable = [x for x in feas if x['eps_B'] >= 0.5 * epsB0]
+        r_usable = max((x['r'] for x in usable), default=0.0)
         ref = compute_geometry(tpms, L, t, N)
         anchor_ok = abs(rows[0]['A0_A'] - ref['A_0']) / ref['A_0'] < 0.03
-        summary.append(dict(tpms=tpms, dmax=dmax, r_max=r_max, r_healthy=r_healthy,
-                            eps_drift_pct=eps_drift, t_drift_pct=t_drift,
-                            anchor_ok=anchor_ok))
+        summary.append(dict(tpms=tpms, dmax=dmax, r_max=r_max, r_usable=r_usable,
+                            eps_drift_pct=eps_drift, anchor_ok=anchor_ok))
     with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
         w.writeheader()
         w.writerows(all_rows)
     print(f"[CSV] {OUT_CSV}  ({len(all_rows)} rows)")
-    print("\n=== Phase 0 GATE (r_healthy = r @ wall-drift <=15%, honest) ===")
+    print("\n=== Phase 0 GATE (壁=2C 常数; r_usable = r @ eps_B >= 50% of eps_B0) ===")
     for s in summary:
-        # 闸门按 r_healthy（诚实工作点），非 pinch 处虚高的 r_max
-        verdict = "PASS" if (s['r_healthy'] >= 2.0 and s['anchor_ok']) else "HOLD"
-        print(f"  {s['tpms']:8s} delta_max={s['dmax']:.3f}  "
-              f"r_healthy={s['r_healthy']:.2f}  r_max={s['r_max']:.2f}(pinch)  "
-              f"eps_drift={s['eps_drift_pct']:.1f}%  t_drift_atmax={s['t_drift_pct']:.1f}%  "
+        verdict = "PASS" if (s['r_usable'] >= 2.0 and s['anchor_ok']) else "HOLD"
+        print(f"  {s['tpms']:8s} delta_max={s['dmax']:.3f}(连通)  "
+              f"r_usable={s['r_usable']:.2f}  r_max={s['r_max']:.2f}(pinch)  "
+              f"eps_drift={s['eps_drift_pct']:.1f}%  "
               f"anchor={'OK' if s['anchor_ok'] else 'FAIL'}  -> {verdict}")
     return all_rows, summary
 

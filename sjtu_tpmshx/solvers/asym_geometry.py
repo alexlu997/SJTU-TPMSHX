@@ -90,21 +90,19 @@ def wall_thickness(phi: np.ndarray, C: float, delta: float, L_m: float, N: int) 
     return (1.0 - eps) / A0_wall if A0_wall > 0 else 0.0
 
 
-def find_delta_max(phi: np.ndarray, C: float, L_m: float, N: int,
-                   wall_floor_m: float = 0.3e-3, dstep: float = None) -> float:
-    """最大 |δ|：两侧 void 仍 percolate（z）且壁厚 ≥ floor。"""
+def find_delta_max(phi: np.ndarray, C: float, dstep: float = None) -> float:
+    """最大 |δ|：两侧 void 仍 percolate（连通夹断极限）。
+
+    壁厚按「2C 常数」处理（PoC 简化，不约束物理壁厚）→ δ_max 只由连通定。
+    物理可制造性（min wall ~0.3mm）延后到 STL 阶段（Phase 1+），此处不卡。
+    """
     phimax = float(np.max(np.abs(phi)))
     if dstep is None:
         dstep = phimax / 200.0
     delta = 0.0
     last_ok = 0.0
     while delta <= phimax:
-        void_A = phi < (delta - C)
-        void_B = phi > (delta + C)
-        t = wall_thickness(phi, C, delta, L_m, N)
-        ok = (percolates_z(void_A) and percolates_z(void_B)
-              and t >= wall_floor_m)
-        if not ok:
+        if not (percolates_z(phi < (delta - C)) and percolates_z(phi > (delta + C))):
             break
         last_ok = delta
         delta += dstep
