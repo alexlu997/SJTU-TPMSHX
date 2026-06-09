@@ -1261,6 +1261,137 @@ def _build_chi_B_velocity_threshold(ucB, vcB, wcB,
     return np.clip(chi_3d, 0.0, 1.0)
 
 
+def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
+    """Build 3D cell-spacing arrays + grid counts (extracted from _run_3d_stack,
+    2026-06-09 F1). Uniform user spacing, or 6-wall boundary-layer refinement
+    when ``wall_refine`` (expands user N by ~+2·n_refine per axis; first cell
+    0.02 mm, growth 1.8). Returns ``(dx, dy, dz, Nx, Ny, Nz)``.
+
+    ⚠ Known limitation: SIMPLESolver3D.__init__ rebuilds its internal dx/dy/dz
+    as Lx/Nx_refined UNIFORM arrays — the SIMPLE momentum/pressure solve runs on
+    a uniform grid even when wall_refine=True; only the LTNE energy stage sees
+    the refined spacing. wall_refine therefore improves BL accuracy on the
+    THERMAL side only (the dP mismatch is ~1pp for Shanghai-class runs). Full
+    wiring (non-uniform SIMPLE) is the deferred E1 task.
+    """
+    if wall_refine:
+        import warnings as _w
+        _w.warn(
+            "wall_refine_3d=True: refined dx/dy/dz reach the LTNE solver "
+            "but SIMPLE3D currently runs on the uniform user grid (solver "
+            "ignores non-uniform spacing). Velocity/pressure fields are "
+            "computed at uniform Nx_refined×Ny_refined×Nz_refined cell "
+            "spacing. See run_calculation_3d.py:_build_grid_3d comment.",
+            stacklevel=2,
+        )
+        from solvers.df_projection import build_master_refined_grid_3d
+        try:
+            dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
+                L, H, Lz, Nx_u, Ny_u, Nz_u,
+                n_refine=8, first_cell=0.02e-3, growth=1.8)
+            print(f"[3D grid] wall-refine: user {Nx_u}x{Ny_u}x{Nz_u} -> "
+                  f"actual {Nx}x{Ny}x{Nz}")
+        except ValueError as e:
+            print(f"[3D grid] wall-refine skipped ({e}); using uniform")
+            dx = np.full(Nx_u, L / Nx_u, dtype=np.float64)
+            dy = np.full(Ny_u, H / Ny_u, dtype=np.float64)
+            dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
+            Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+    else:
+        dx = np.full(Nx_u, L / Nx_u, dtype=np.float64)
+        dy = np.full(Ny_u, H / Ny_u, dtype=np.float64)
+        dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
+        Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+    return dx, dy, dz, Nx, Ny, Nz
+
+
+def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
+                                 sA, sB, fA, fB, dx, dy, dz):
+    """Energy + mass conservation diagnostics for a converged 3D solve
+    (extracted from _run_3d_stack, 2026-06-09 F1). Returns a dict:
+    domain-total balances (Q_sA/Q_sB/Q_net/energy_rel/mass_rel_A/mass_rel_B)
+    + BC-layer-excluded interior-corrected metrics (Q_sA_interior /
+    Q_sB_interior / Q_interior_primary / AB_interior). Always computed so the
+    user spots non-physical regressions without re-running validation; any
+    failure warns + reports NaN (never silently swallowed)."""
+    try:
+        from solvers.solve_full_3d import energy_balance_3d, mass_balance_3d
+        e_bal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
+        Q_sA = e_bal['Q_sA']
+        Q_sB = e_bal['Q_sB']
+        Q_net = e_bal['Q_net']
+        energy_rel = abs(Q_net) / (abs(Q_sA) + abs(Q_sB) + 1e-30)
+        m_bal_A = mass_balance_3d(
+            sA.u, sA.v, sA.w, sA.rho_field, sA.dy, sA.dx, sA.dz, 2)
+        mass_rel_A = m_bal_A.get('rel', 0.0)
+        mass_rel_B = 0.0
+        if sB is not None:
+            m_bal_B = mass_balance_3d(
+                sB.u, sB.v, sB.w, sB.rho_field, sB.dy, sB.dx, sB.dz, 2)
+            mass_rel_B = m_bal_B.get('rel', 0.0)
+    except Exception as _e:
+        # Surface the failure instead of nan-ing it away silently: these
+        # diagnostics exist precisely to flag non-physical regressions, so a
+        # swallowed exception here would hide the very thing they watch for.
+        import warnings as _w
+        _w.warn(f"3D conservation diagnostics failed ({_e!r}); reporting NaN.",
+                stacklevel=2)
+        Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
+
+    # Path 0' (v3): exclude the BC inlet/outlet layer, where Ta pinned at T_in
+    # creates artificial h_v·(Ts-T_in) source terms (|Q_sA|_total over-reads
+    # ~28%). Interior-corrected metric recovers the physical Q.
+    try:
+        Nx_g, Ny_g, Nz_g = Ta.shape
+        cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
+        integ_A = h_vA_field * (Ts - Ta) * cell_vol
+        integ_B = h_vB_field * (Ts - Tb) * cell_vol
+
+        def _bc_face_mask(dir_code, NxG, NyG, NzG):
+            m = np.zeros((NxG, NyG, NzG), dtype=bool)
+            sl = [slice(None)] * 3
+            sl[_stream_axis(dir_code)] = _inlet_index(dir_code)
+            m[tuple(sl)] = True
+            return m
+
+        def _outlet_mask(dir_code, NxG, NyG, NzG):
+            m = np.zeros((NxG, NyG, NzG), dtype=bool)
+            sl = [slice(None)] * 3
+            sl[_stream_axis(dir_code)] = _outlet_index(dir_code)
+            m[tuple(sl)] = True
+            return m
+
+        bc_A_in  = _bc_face_mask(fA['dir'], Nx_g, Ny_g, Nz_g)
+        bc_A_out = _outlet_mask(fA['dir'], Nx_g, Ny_g, Nz_g)
+        bc_A = bc_A_in | bc_A_out
+        Q_sA_interior = float(np.sum(integ_A[~bc_A]))
+
+        if fB is not None:
+            bc_B_in  = _bc_face_mask(fB['dir'], Nx_g, Ny_g, Nz_g)
+            bc_B_out = _outlet_mask(fB['dir'], Nx_g, Ny_g, Nz_g)
+            bc_B = bc_B_in | bc_B_out
+            Q_sB_interior = float(np.sum(integ_B[~bc_B]))
+        else:
+            Q_sB_interior = 0.0
+
+        Q_interior_primary = 0.5 * (abs(Q_sA_interior) + abs(Q_sB_interior)) \
+            if Q_sB_interior != 0.0 else abs(Q_sA_interior)
+        AB_interior = (abs(abs(Q_sA_interior) - abs(Q_sB_interior))
+                       / max(abs(Q_sA_interior), abs(Q_sB_interior), 1e-30))
+    except Exception as _e:
+        import warnings as _w
+        _w.warn(f"3D interior-corrected Q diagnostics failed ({_e!r}); "
+                f"reporting NaN.", stacklevel=2)
+        Q_sA_interior = Q_sB_interior = Q_interior_primary = float('nan')
+        AB_interior = float('nan')
+
+    return dict(
+        Q_sA=Q_sA, Q_sB=Q_sB, Q_net=Q_net, energy_rel=energy_rel,
+        mass_rel_A=mass_rel_A, mass_rel_B=mass_rel_B,
+        Q_sA_interior=Q_sA_interior, Q_sB_interior=Q_sB_interior,
+        Q_interior_primary=Q_interior_primary, AB_interior=AB_interior)
+
+
 def _run_3d_stack(cfg):
     """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
 
@@ -1311,51 +1442,9 @@ def _run_3d_stack(cfg):
     _g_3d = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
     D_h = _g_3d['D_h']
 
-    # Grid: either uniform user spacing or 6-wall boundary-layer refinement.
-    # Refined grid expands user N by ~+2×n_refine cells per axis (n_refine=8
-    # each wall; first cell 0.02 mm, growth 1.8). Typical: user 20×10×5 →
-    # actual 36×26×21. Improves BL capture in every direction (including z).
-    #
-    # ⚠ Known limitation: SIMPLESolver3D.__init__ currently rebuilds its
-    # internal `self.dx/dy/dz` as Lx/Nx_refined uniform arrays — i.e. the
-    # SIMPLE momentum/pressure solve is run on a UNIFORM grid even when
-    # wall_refine=True. Only the LTNE energy stage sees the refined dx/dy/dz
-    # (`solve_full_domain_3d` accepts dx_arr/dy_arr/dz_arr). This means
-    # wall_refine improves BL accuracy on the THERMAL side only; SIMPLE
-    # velocity/pressure remain on the user grid. The mismatch is small for
-    # typical Shanghai-class runs (BL contributes ~1pp dP) but the user
-    # should be aware. Full wiring is deferred — adding dx_arr/dy_arr/dz_arr
-    # to SIMPLESolver3D.__init__ requires re-validating the sweep_u/v/w
-    # kernels under non-uniform spacing and re-running the Shanghai
-    # validation suite.
-    if wall_refine:
-        import warnings as _w
-        _w.warn(
-            "wall_refine_3d=True: refined dx/dy/dz reach the LTNE solver "
-            "but SIMPLE3D currently runs on the uniform user grid (solver "
-            "ignores non-uniform spacing). Velocity/pressure fields are "
-            "computed at uniform Nx_refined×Ny_refined×Nz_refined cell "
-            "spacing. See run_calculation_3d.py:_run_3d_stack comment.",
-            stacklevel=2,
-        )
-        from solvers.df_projection import build_master_refined_grid_3d
-        try:
-            dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
-                L, H, Lz, Nx_u, Ny_u, Nz_u,
-                n_refine=8, first_cell=0.02e-3, growth=1.8)
-            print(f"[3D grid] wall-refine: user {Nx_u}x{Ny_u}x{Nz_u} -> "
-                  f"actual {Nx}x{Ny}x{Nz}")
-        except ValueError as e:
-            print(f"[3D grid] wall-refine skipped ({e}); using uniform")
-            dx = np.full(Nx_u, L / Nx_u, dtype=np.float64)
-            dy = np.full(Ny_u, H / Ny_u, dtype=np.float64)
-            dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
-            Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
-    else:
-        dx = np.full(Nx_u, L / Nx_u, dtype=np.float64)
-        dy = np.full(Ny_u, H / Ny_u, dtype=np.float64)
-        dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
-        Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
+    # Grid: uniform user spacing, or 6-wall BL refinement (see _build_grid_3d).
+    dx, dy, dz, Nx, Ny, Nz = _build_grid_3d(
+        wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u)
 
     # Resolve streamwise geometry from dir_A
     axis_map = _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
@@ -2292,89 +2381,18 @@ def _run_3d_stack(cfg):
         vmag_B = None
         dP_B = 0.0
 
-    # Conservation diagnostics — always computed now (previously only in tests).
-    # Lets the user spot non-physical regressions (e.g. refined-grid imbalance)
-    # without re-running validation scripts.
-    try:
-        from solvers.solve_full_3d import energy_balance_3d, mass_balance_3d
-        e_bal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
-        Q_sA = e_bal['Q_sA']
-        Q_sB = e_bal['Q_sB']
-        Q_net = e_bal['Q_net']
-        energy_rel = abs(Q_net) / (abs(Q_sA) + abs(Q_sB) + 1e-30)
-        m_bal_A = mass_balance_3d(
-            sA.u, sA.v, sA.w, sA.rho_field, sA.dy, sA.dx, sA.dz, 2)
-        mass_rel_A = m_bal_A.get('rel', 0.0)
-        mass_rel_B = 0.0
-        if sB is not None:
-            m_bal_B = mass_balance_3d(
-                sB.u, sB.v, sB.w, sB.rho_field, sB.dy, sB.dx, sB.dz, 2)
-            mass_rel_B = m_bal_B.get('rel', 0.0)
-    except Exception as _e:
-        # Surface the failure instead of nan-ing it away silently: these
-        # diagnostics exist precisely to flag non-physical regressions, so a
-        # swallowed exception here would hide the very thing they watch for.
-        import warnings as _w
-        _w.warn(f"3D conservation diagnostics failed ({_e!r}); reporting NaN.",
-                stacklevel=2)
-        Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
-
-    # 2026-04-26 Path 0' (v3) — energy flux consistency fix.
-    # Empirical finding (diag_bc_layer_test.py NORM-NO_REFINE):
-    #   |Q_sA_interior| = 369.62W ≈ Q_enth_B = 369.31W (match within 0.08%)
-    #   |Q_sB_interior| = 370.87W ≈ Q_enth_B (match within 0.4%)
-    #   |Q_sA|_total = 414W (over by 28% due to BC inlet/outlet layer pinning)
-    # Root cause: BC inlet cells with Ta pinned at T_in_A create artificial
-    # h_v·(Ts-T_in_A) source contributions because the cell-center value is
-    # held constant at the parameter, while solid responds. Excluding the
-    # BC layer recovers the physical Q.
-    # Diagnostic: also compute mean(|Q_sA_interior|, |Q_sB_interior|).
-    # The returned primary Q remains the enthalpy metric above because the
-    # validation/optimizer stack is calibrated to boundary heat balance.
-    try:
-        Nx_g, Ny_g, Nz_g = Ta.shape
-        cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
-        integ_A = h_vA_field * (Ts - Ta) * cell_vol
-        integ_B = h_vB_field * (Ts - Tb) * cell_vol
-
-        def _bc_face_mask(dir_code, NxG, NyG, NzG):
-            m = np.zeros((NxG, NyG, NzG), dtype=bool)
-            sl = [slice(None)] * 3
-            sl[_stream_axis(dir_code)] = _inlet_index(dir_code)
-            m[tuple(sl)] = True
-            return m
-
-        def _outlet_mask(dir_code, NxG, NyG, NzG):
-            m = np.zeros((NxG, NyG, NzG), dtype=bool)
-            sl = [slice(None)] * 3
-            sl[_stream_axis(dir_code)] = _outlet_index(dir_code)
-            m[tuple(sl)] = True
-            return m
-
-        bc_A_in  = _bc_face_mask(fA['dir'], Nx_g, Ny_g, Nz_g)
-        bc_A_out = _outlet_mask(fA['dir'], Nx_g, Ny_g, Nz_g)
-        bc_A = bc_A_in | bc_A_out
-        Q_sA_interior = float(np.sum(integ_A[~bc_A]))
-
-        if fB is not None:
-            bc_B_in  = _bc_face_mask(fB['dir'], Nx_g, Ny_g, Nz_g)
-            bc_B_out = _outlet_mask(fB['dir'], Nx_g, Ny_g, Nz_g)
-            bc_B = bc_B_in | bc_B_out
-            Q_sB_interior = float(np.sum(integ_B[~bc_B]))
-        else:
-            Q_sB_interior = 0.0
-
-        Q_interior_primary = 0.5 * (abs(Q_sA_interior) + abs(Q_sB_interior)) \
-            if Q_sB_interior != 0.0 else abs(Q_sA_interior)
-        # AB imbal on interior-corrected metric
-        AB_interior = (abs(abs(Q_sA_interior) - abs(Q_sB_interior))
-                       / max(abs(Q_sA_interior), abs(Q_sB_interior), 1e-30))
-    except Exception as _e:
-        import warnings as _w
-        _w.warn(f"3D interior-corrected Q diagnostics failed ({_e!r}); "
-                f"reporting NaN.", stacklevel=2)
-        Q_sA_interior = Q_sB_interior = Q_interior_primary = float('nan')
-        AB_interior = float('nan')
+    # Conservation diagnostics (energy + mass balance + interior-corrected Q) —
+    # extracted to _conservation_diagnostics_3d (F1). Always computed so the
+    # user spots non-physical regressions without re-running validation.
+    _cdiag = _conservation_diagnostics_3d(
+        Ta, Tb, Ts, h_vA_field, h_vB_field, sA, sB, fA, fB, dx, dy, dz)
+    Q_sA = _cdiag['Q_sA']; Q_sB = _cdiag['Q_sB']; Q_net = _cdiag['Q_net']
+    energy_rel = _cdiag['energy_rel']
+    mass_rel_A = _cdiag['mass_rel_A']; mass_rel_B = _cdiag['mass_rel_B']
+    Q_sA_interior = _cdiag['Q_sA_interior']
+    Q_sB_interior = _cdiag['Q_sB_interior']
+    Q_interior_primary = _cdiag['Q_interior_primary']
+    AB_interior = _cdiag['AB_interior']
 
     # ═══════════════════════════════════════════════════════════════════
     # Phase 2 diagnostics (Plan A v3): REQ_1–4 data dump
