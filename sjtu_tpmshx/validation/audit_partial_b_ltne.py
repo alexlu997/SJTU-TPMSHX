@@ -931,6 +931,7 @@ def main() -> int:
         cfg['_closure_used'] = closure
         case_with_closure = dict(CASE1)
         case_with_closure['_closure_used'] = closure
+        cfg['_emit_audit'] = True   # C1: this audit reads r['_audit_*'] keys
         t0 = time.time()
         res = _run_3d_stack(cfg)
         dt = time.time() - t0

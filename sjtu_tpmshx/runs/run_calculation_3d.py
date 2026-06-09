@@ -2025,16 +2025,19 @@ def _run_3d_stack(cfg):
             A_0 = g['A_0']; D_h_m = g['D_h']
             D_h_mm = D_h_m * 1000.0
             Re_loc = rho * u_abs * D_h_m / mu
-            Nu_loc = np.empty_like(Re_loc)
-            for i in range(Nx):
-                for j in range(Ny):
-                    for k in range(Nz):
-                        # single-stream convention: pass ε_f = ε/2 (post-refit 2026-04-26)
-                        nu_corr = _nu_for_fluid(
-                            fluid_type, float(Re_loc[i,j,k]),
-                            g['epsilon'] / 2.0, Lcell, D_h_mm, Pr_f,
-                        )
-                        Nu_loc[i,j,k] = nu_corr
+            # Vectorized Nu over the whole grid. fluid_props .nu forwards to
+            # nu_from_Re, which accepts an array Re. This mirrors the scalar
+            # _nu_for_fluid path element-for-element (Re pre-floor at 1.0, Nu
+            # post-floor at _NU_LAM_FLOOR, single-stream ε_f = ε/2), so it is
+            # bit-identical to the prior per-cell triple loop — just Nx·Ny·Nz×
+            # fewer Python calls. 2026-06-09 perf B1.
+            _m = fluid_props.get(fluid_type)
+            _Pr = (None if _m.compressible
+                   else float(Pr_f if Pr_f is not None else 7.0))
+            Nu_loc = _m.nu(tpms_type, np.maximum(Re_loc, 1.0),
+                           g['epsilon'] / 2.0, Lcell, D_h_mm, _Pr)
+            Nu_loc = np.maximum(np.asarray(Nu_loc, dtype=np.float64),
+                                _NU_LAM_FLOOR)
             H_sf_loc = Nu_loc * k_f / D_h_m
             return A_0 * H_sf_loc
         # Zoned (L,t) varying — recompute geom per cell
@@ -2732,92 +2735,98 @@ def _run_3d_stack(cfg):
               f"{T_A_out:.1f},{T_B_out:.1f},{Q:.1f},"
               f"{Q_sA:.1f},{Q_sB:.1f},{Q_sA+Q_sB:.1f},"
               f"{energy_rel:.6f},{eps_obs:.4f},{chi_p50:.4f}")
-    _dbg = np  # always available (compact mode skips prints only)
-    Q_solid_A_val = float(_dbg.sum(h_vA_field * (Ts - Ta) * cell_vol))
-    Q_solid_B_val = float(_dbg.sum(h_vB_field * (Ts - Tb) * cell_vol))
+    # Run diagnostics (Q-DIAG / CHI / CHI-BC) — OPT-IN, skipped in production.
+    # None of these locals feed the return dict; gating avoids the extra
+    # _face_flux_weights / percentile / histogram recompute + ~30 lines of
+    # console spam on every run. Enable via the 3D profiler (.profile_3d /
+    # TPMSHX_PROFILE_3D=1) or cfg['_verbose_diag']=True. 2026-06-09 perf B2.
+    if _prof_3d_enabled() or bool(cfg.get('_verbose_diag', False)):
+        _dbg = np
+        Q_solid_A_val = float(_dbg.sum(h_vA_field * (Ts - Ta) * cell_vol))
+        Q_solid_B_val = float(_dbg.sum(h_vB_field * (Ts - Tb) * cell_vol))
 
-    # Group 1: LTNE-effective Q (uses eps_f, chi_face, LTNE volume source)
-    Q_enth_A_ltne = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
-    Q_enth_B_ltne = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out)) if sB is not None else 0.0
+        # Group 1: LTNE-effective Q (uses eps_f, chi_face, LTNE volume source)
+        Q_enth_A_ltne = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
+        Q_enth_B_ltne = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out)) if sB is not None else 0.0
 
-    # Group 2: Physical-boundary Q (no eps_f, physical m_dot at inlet)
-    m_A_phys_in = float(_dbg.sum(_face_flux_weights(
-        sA, fA['dir'], face='real_inlet', eps_mode='physical')))
-    Q_enth_A_phys = abs(m_A_phys_in * cp_A * (T_inA - T_A_out))
-    if sB is not None:
-        Q_enth_B_phys = abs(m_dot_B_phys_in * cp_B * (T_inB - T_B_out))
-    else:
-        Q_enth_B_phys = 0.0
+        # Group 2: Physical-boundary Q (no eps_f, physical m_dot at inlet)
+        m_A_phys_in = float(_dbg.sum(_face_flux_weights(
+            sA, fA['dir'], face='real_inlet', eps_mode='physical')))
+        Q_enth_A_phys = abs(m_A_phys_in * cp_A * (T_inA - T_A_out))
+        if sB is not None:
+            Q_enth_B_phys = abs(m_dot_B_phys_in * cp_B * (T_inB - T_B_out))
+        else:
+            Q_enth_B_phys = 0.0
 
-    print(f"[Q-DIAG] === LTNE-effective group ===")
-    print(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
-          f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
-    if sB is not None:
-        print(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
-              f"T_B_out={T_B_out:.1f} K (chi)  "
-              f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
-              f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
-    print(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
-          f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
-    print(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
-          f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
-          f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
+        print(f"[Q-DIAG] === LTNE-effective group ===")
+        print(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
+              f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
+        if sB is not None:
+            print(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
+                  f"T_B_out={T_B_out:.1f} K (chi)  "
+                  f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
+                  f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
+        print(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
+              f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
+        print(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
+              f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
+              f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
 
-    print(f"[Q-DIAG] === Physical-boundary group ===")
-    print(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
-          f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
-    if sB is not None:
-        print(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
-              f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
-              f"T_B_out={T_B_out:.1f} K")
-        print(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
+        print(f"[Q-DIAG] === Physical-boundary group ===")
+        print(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
+              f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
+        if sB is not None:
+            print(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
+                  f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
+                  f"T_B_out={T_B_out:.1f} K")
+            print(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
 
-    # ── REQ_2: χ_B distribution histogram ──
-    if chi_B is not None:
-        chi_flat = chi_B.ravel()
-        print(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
-              f"mean={chi_flat.mean():.3f}")
-        print(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
-              f"p25={_dbg.percentile(chi_flat,25):.3f} "
-              f"p50={_dbg.percentile(chi_flat,50):.3f} "
-              f"p75={_dbg.percentile(chi_flat,75):.3f} "
-              f"p90={_dbg.percentile(chi_flat,90):.3f}")
-        hist, bin_edges = _dbg.histogram(chi_flat, bins=10, range=(0, 1))
-        print("[CHI] histogram bins:")
-        for i, c in enumerate(hist):
-            print(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
-                  f"{c} ({100*c/chi_flat.size:.1f}%)")
+        # ── REQ_2: χ_B distribution histogram ──
+        if chi_B is not None:
+            chi_flat = chi_B.ravel()
+            print(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
+                  f"mean={chi_flat.mean():.3f}")
+            print(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
+                  f"p25={_dbg.percentile(chi_flat,25):.3f} "
+                  f"p50={_dbg.percentile(chi_flat,50):.3f} "
+                  f"p75={_dbg.percentile(chi_flat,75):.3f} "
+                  f"p90={_dbg.percentile(chi_flat,90):.3f}")
+            hist, bin_edges = _dbg.histogram(chi_flat, bins=10, range=(0, 1))
+            print("[CHI] histogram bins:")
+            for i, c in enumerate(hist):
+                print(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
+                      f"{c} ({100*c/chi_flat.size:.1f}%)")
 
-    # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
-    if chi_B is not None and sB is not None:
-        # B inlet face slice in real coords
-        if fB['dir'] == 0:    chi_B_in_face = chi_B[0, :, :]
-        elif fB['dir'] == 1:  chi_B_in_face = chi_B[-1, :, :]
-        elif fB['dir'] == 2:  chi_B_in_face = chi_B[:, 0, :]
-        elif fB['dir'] == 3:  chi_B_in_face = chi_B[:, -1, :]
-        elif fB['dir'] == 4:  chi_B_in_face = chi_B[:, :, 0]
-        else:                 chi_B_in_face = chi_B[:, :, -1]
-        # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
-        # (in_mask_B; approach-(a), no in/out swap).
-        _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
-        if _ltne_mask_B_val is not None:
-            chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
-            if len(chi_in_patch) > 0:
-                print(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
-                      f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
-                      f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
-                      f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
-        # Outlet patch
-        if chi_B_out_face is not None:
-            chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
-            if len(chi_out_patch) > 0:
-                print(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
-                      f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
-                      f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
-                      f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
+        # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
+        if chi_B is not None and sB is not None:
+            # B inlet face slice in real coords
+            if fB['dir'] == 0:    chi_B_in_face = chi_B[0, :, :]
+            elif fB['dir'] == 1:  chi_B_in_face = chi_B[-1, :, :]
+            elif fB['dir'] == 2:  chi_B_in_face = chi_B[:, 0, :]
+            elif fB['dir'] == 3:  chi_B_in_face = chi_B[:, -1, :]
+            elif fB['dir'] == 4:  chi_B_in_face = chi_B[:, :, 0]
+            else:                 chi_B_in_face = chi_B[:, :, -1]
+            # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
+            # (in_mask_B; approach-(a), no in/out swap).
+            _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
+            if _ltne_mask_B_val is not None:
+                chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
+                if len(chi_in_patch) > 0:
+                    print(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
+                          f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
+                          f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
+                          f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
+            # Outlet patch
+            if chi_B_out_face is not None:
+                chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
+                if len(chi_out_patch) > 0:
+                    print(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
+                          f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
+                          f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
+                          f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
     # ═══════════════════════════════════════════════════════════════════
 
-    return dict(
+    _result = dict(
         Ta=Ta, Tb=Tb, Ts=Ts,
         vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
         P_Pa=P_real,
@@ -2859,12 +2868,17 @@ def _run_3d_stack(cfg):
         _ltne_max_iter=_ltne_max_iter,
         _needs_full_validate=(_compact_diag and not all(
             d['converged'] for d in _ltne_info)),
-        # ── Audit-only additive exports (read-only, deep-copied) ──
-        # 2026-05-04: passthrough of SIMPLE face arrays + masks for the
-        # standalone partial-B LTNE conservation audit
-        # (validation/audit_partial_b_ltne.py). No physics or closure
-        # changes; consumers must not mutate. All entries are guarded
-        # with None fallbacks and have no effect on existing callers.
+    )
+    # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
+    # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
+    # LTNE conservation audit (validation/audit_partial_b_ltne.py).
+    # 2026-06-09 perf C1: gated behind cfg['_emit_audit'] (default False) —
+    # these deep-copy both solvers' full u/v/w/ρ fields + K/eps/rho_cp/χ arrays,
+    # a large memory + wall-time cost paid on EVERY run. Only the audit scripts
+    # and test_partial_bc_ghost_b consume them, so those callers set
+    # _emit_audit=True. Consumers must not mutate. No physics change.
+    if cfg.get('_emit_audit', False):
+        _result.update(
         _audit_sA_face=dict(
             u=sA.u.copy(), v=sA.v.copy(), w=sA.w.copy(),
             rho=sA.rho_field.copy(),
@@ -2926,4 +2940,5 @@ def _run_3d_stack(cfg):
         _audit_chi_B=(chi_B.copy() if chi_B is not None else None),
         _audit_P_inA=float(P_inA),
         _audit_P_inB=float(P_inB),
-    )
+        )
+    return _result

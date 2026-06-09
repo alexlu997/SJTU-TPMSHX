@@ -35,6 +35,9 @@ def _partial_bc_air_air_cfg(**overrides):
         fluid_type_A='air', fluid_type_B='air',
         wall_refine_3d=False,
         partial_B_closure='m4_effective_area', m4_exponent=0.67,
+        # 2026-06-09 perf C1: _audit_* exports are opt-in; these tests read
+        # r['_audit_sB_face'] etc., so request them explicitly.
+        _emit_audit=True,
     )
     cfg.update(overrides)
     return cfg

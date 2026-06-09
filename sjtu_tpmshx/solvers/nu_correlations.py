@@ -83,12 +83,26 @@ def _warn_extrap(tpms_type, Re_min, Re_max):
 # ── Public API ───────────────────────────────────────────────────────────
 
 def nu_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm, *, Pr=Pr_AIR):
-    """Scalar Nu (air, smooth × roughness). ``eps_f`` kept for back-compat
-    signature; currently unused in the Nu formula."""
+    """Nu (air, smooth × roughness). ``eps_f`` kept for back-compat
+    signature; currently unused in the Nu formula.
+
+    Accepts scalar OR ndarray ``Re``. The scalar branch is byte-identical to
+    the historical implementation (``float(Re)`` into ``_smooth_nu``); the
+    array branch (2026-06-09) forwards the array straight through — same
+    element-wise formula ``_smooth_nu`` already serves to ``nu_vec`` — so a
+    per-cell loop and a single vectorised call give identical results. NOTE:
+    no ``Re_floor`` is applied here (unlike ``nu_vec``'s floor=10); callers
+    that need a floor apply their own (e.g. the LTNE h_v path floors at 1.0)."""
     del eps_f
-    _warn_extrap(tpms_type, float(Re), float(Re))
+    Re_arr = np.asarray(Re, dtype=np.float64)
+    if Re_arr.ndim == 0:
+        _warn_extrap(tpms_type, float(Re_arr), float(Re_arr))
+        return NU_ROUGHNESS_FACTOR * _smooth_nu(
+            tpms_type, float(Re_arr), L_mm, D_h_mm, Pr=Pr)
+    if Re_arr.size:
+        _warn_extrap(tpms_type, float(Re_arr.min()), float(Re_arr.max()))
     return NU_ROUGHNESS_FACTOR * _smooth_nu(
-        tpms_type, float(Re), L_mm, D_h_mm, Pr=Pr)
+        tpms_type, Re_arr, L_mm, D_h_mm, Pr=Pr)
 
 
 def nu_vec(tpms_type, Re, L_mm, D_h_mm, *, Re_floor=10.0, Pr=Pr_AIR):

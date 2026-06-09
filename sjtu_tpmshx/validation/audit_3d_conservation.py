@@ -1235,6 +1235,7 @@ def main():
             row = {'case': cid}
             for g in grids:
                 cfg = CASES[cid](g)
+                cfg['_emit_audit'] = True   # C1: reads r['_audit_*'] keys
                 t0 = time.time()
                 res = _run_3d_stack(cfg)
                 dt = time.time() - t0
@@ -1277,6 +1278,7 @@ def main():
     for cid in selected:
         print(f'\n══════ Phase 2 case: {cid} ══════')
         cfg = CASES[cid](args.grid)
+        cfg['_emit_audit'] = True   # C1: reads r['_audit_*'] keys
         t0 = time.time()
         res = _run_3d_stack(cfg)
         dt = time.time() - t0
