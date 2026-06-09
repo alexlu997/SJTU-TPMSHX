@@ -983,6 +983,63 @@ def _solver_staggered_to_real(solver, axis_map, real_shape):
     return uf_real, vf_real, wf_real
 
 
+def _balance_stream_outflow(faces, axis_map, coef, dx, dy, dz):
+    """Rescale the OUTFLOW stream-boundary face so the coef-weighted net flux
+    through the two stream boundary faces is zero — discrete global mass
+    conservation, ∮F·n dA = 0.
+
+    Why: the strict conservative-LTNE kernel telescopes the SIMPLE staggered
+    face fluxes (`F_e[i] ≡ F_w[i+1]`), so summing the per-cell energy balance
+    over the domain collapses to the boundary integral ∮F·n. SIMPLE's converged
+    velocity carries a small continuity residual; partial-BC inlet/outlet masks
+    + the outlet taper amplify it for offset/reverse cases, leaving a nonzero
+    net ΣD ≡ ∮F·n. The homogeneous-Neumann MAC projection
+    (`_project_faces_div_free`) removes only the zero-mean part of that
+    divergence — the constant null-space component (= the net ΣD) is
+    irreducible, so it survives as a uniform spurious energy divergence and the
+    reverse-dir heat load drifts (y-mirror breaks ~17 %, spurious over-heating).
+    Enforcing Σ_inlet = Σ_outlet here drives ΣD → 0 BEFORE the projection, so
+    the projection then cleans the interior to machine precision and the kernel
+    is genuinely conservative for reverse-dir/offset fluids too.
+
+    `coef` = eps_f · ρcp = the projection's per-cell flux coefficient (eps_f =
+    0.5·ε). Near-balanced cases (full-face, Shanghai) get scale ≈ 1 → no-op.
+
+    Mutates and returns `faces` = [uf, vf, wf] (already contiguous copies).
+    """
+    sax = int(axis_map['stream_real_axis'])
+    is_rev = bool(axis_map['is_reverse'])
+    F = faces[sax]
+    # Perpendicular face area + boundary-cell coef (matching the projection's
+    # boundary-face coefficient `cf[0]=coef[0]`, `cf[-1]=coef[-1]`).
+    if sax == 0:
+        A = dy[:, None] * dz[None, :]
+        cf_lo, cf_hi = coef[0, :, :], coef[-1, :, :]
+        sl_lo = (0, slice(None), slice(None)); sl_hi = (-1, slice(None), slice(None))
+    elif sax == 1:
+        A = dx[:, None] * dz[None, :]
+        cf_lo, cf_hi = coef[:, 0, :], coef[:, -1, :]
+        sl_lo = (slice(None), 0, slice(None)); sl_hi = (slice(None), -1, slice(None))
+    else:
+        A = dx[:, None] * dy[None, :]
+        cf_lo, cf_hi = coef[:, :, 0], coef[:, :, -1]
+        sl_lo = (slice(None), slice(None), 0); sl_hi = (slice(None), slice(None), -1)
+    flux_lo = float(np.sum(cf_lo * F[sl_lo] * A))
+    flux_hi = float(np.sum(cf_hi * F[sl_hi] * A))
+    # Reverse-dir: inlet at the high-index face, outlet at low; forward: vice-versa.
+    inlet_flux, outlet_flux = (flux_hi, flux_lo) if is_rev else (flux_lo, flux_hi)
+    sl_out = sl_lo if is_rev else sl_hi
+    # Degenerate / inconsistent outflow → leave to the projection's mean-zero
+    # fallback rather than rescale by a wild factor.
+    if abs(outlet_flux) < 1e-12 * (abs(inlet_flux) + 1e-30):
+        return faces
+    scale = inlet_flux / outlet_flux
+    if not np.isfinite(scale) or scale <= 0.0:
+        return faces
+    F[sl_out] = F[sl_out] * scale
+    return faces
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Per-cell χ_B participation field (Phase 1, 2026-05-04)
 #
@@ -2058,6 +2115,30 @@ def _run_3d_stack(cfg):
             ufB = np.zeros((Nx+1, Ny, Nz), dtype=np.float64)
             vfB = np.zeros((Nx, Ny+1, Nz), dtype=np.float64)
             wfB = np.zeros((Nx, Ny, Nz+1), dtype=np.float64)
+
+        # Strict-conservation prerequisite (2026-06-09): enforce discrete global
+        # mass balance ∮F·n=0 on the extracted stream-boundary faces so the
+        # conservative-LTNE kernel's telescoping sum closes to machine
+        # precision. SIMPLE's small continuity residual (amplified by partial-BC
+        # + outlet taper on offset/reverse fluids) otherwise leaves a net ΣD the
+        # homogeneous-Neumann MAC projection cannot remove → reverse heat-load
+        # drift. coef = eps_f·ρcp = 0.5·ε·ρcp matches the projection.
+        #
+        # INCOMPRESSIBLE ONLY. The kernel telescopes ε·ρcp·u with a CONSTANT
+        # ρcp, so enforcing ∮(ε·ρcp·u)=0 means enforcing volume-flux balance
+        # ∮(εu)=0. For incompressible flow that IS mass conservation (ρ const).
+        # For compressible (ideal-gas) flow mass conservation is ∮(ερu)=0 with
+        # ρ=ρ(P,T) varying, so ∮(εu)≠0 is PHYSICAL — forcing it would corrupt
+        # the velocity field (measured: air scale 0.58–0.94, +300 % Q error).
+        # Compressible reverse-dir conservation is a separate kernel-level
+        # (constant-ρcp) limitation, out of scope here.
+        if bool(cfg.get('conservative_ltne', True)) and cfg.get('strict_mass_balance', True):
+            if not fluid_props.get(fluid_type_A).compressible:
+                _coefA = 0.5 * eps_arr * rho_cp_fA
+                _balance_stream_outflow([ufA, vfA, wfA], axis_map, _coefA, dx, dy, dz)
+            if sB is not None and not fluid_props.get(fluid_type_B).compressible:
+                _coefB = 0.5 * eps_arr * rho_cp_fB
+                _balance_stream_outflow([ufB, vfB, wfB], axis_map_B, _coefB, dx, dy, dz)
 
         # H6 ghost-pin: pass chi_B_field + threshold to LTNE kernel. At cells
         # where chi_B_field < chi_B_kernel_threshold, kernel skips Tb update

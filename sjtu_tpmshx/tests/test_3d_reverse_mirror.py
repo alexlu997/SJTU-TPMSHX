@@ -47,20 +47,17 @@ def _cfg(dir_B, in_ctr, out_ctr):
     return R._parse_inputs_3d_cfg(cc)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "2026-06-09: reverse-dir conservative-LTNE non-conservation, exposed (not "
-    "caused) by the correct z-symmetry fix (248696a, mean-zero MAC projection). "
-    "Root cause (isolated + measured): the face field handed to the divergence "
-    "cleaner carries a large net imbalance SumD (|SumD|/rms ~55, grows to ~96 "
-    "over the reverse-dir outer loop). The OLD corner-pin null-space removal "
-    "DUMPED that imbalance into one corner cell (bulk clean -> mirror matched at "
-    "rel 0.02) but broke z-reflection symmetry (the user-visible bug). The "
-    "mean-zero fix is provably mirror-equivariant (1e-16) and SPREADS the "
-    "imbalance uniformly -> reverse-dir y-mirror breaks at rel~0.174. Both are "
-    "band-aids for a non-conservative reverse face field. Production Shanghai is "
-    "UNAFFECTED (SumD~0 there -> both projections bit-identical, Q RMSRE 0.77%). "
-    "Real fix = genuinely conservative reverse-dir faces -> feat/strict-energy-3d "
-    "rewrite. When that lands, this xpasses and strict=True flags it for removal."))
+# 2026-06-09 FIXED (was xfail). Root cause was NOT the interior negate+flip
+# transform (proven machine-exact: ΣD ≡ net stream-boundary flux, telescoping
+# clean). It was a discrete global-mass-balance violation: SIMPLE's small
+# continuity residual, amplified by partial-BC inlet/outlet masks + the outlet
+# taper on offset/reverse fluids, left a net ∮F·n the homogeneous-Neumann MAC
+# projection cannot remove (constant null space) → uniform spurious energy
+# divergence → reverse y-mirror broke at rel~0.174 + spurious over-heating.
+# Fix = `_balance_stream_outflow` enforces Σ_inlet=Σ_outlet on the extracted
+# stream-boundary faces BEFORE the projection (run_calculation_3d.py), so ΣD→0
+# and the strict conservative-LTNE kernel telescopes to machine precision.
+# Near-balanced cases (Shanghai full-face) get scale≈1 → no-op.
 def test_reverse_y_is_mirror_of_forward_y():
     # FORWARD +y (dir=2): inlet at BOTTOM (y=0) x-strip @0.07, outlet TOP @0.03
     cfg_fwd = _cfg(dir_B=2, in_ctr=0.07, out_ctr=0.03)
