@@ -9,8 +9,12 @@ Output DataFrame schema:
     eps_f   : single-channel porosity ε/2
     r_h_m   : hydraulic radius D_h/2 [m]
     Re      : Reynolds number (Excel column "Re", kept for reference/filtering)
-    u_mps   : CFD velocity [m/s] (Excel column 13, 速度)
-    dP_Pa   : CFD corrected pressure loss [Pa] (Excel column 47, 修正压损)
+    u_mps   : velocity [m/s] (Excel column 13, 速度 — 工况速度)
+    dP_Pa   : 摩擦压损 friction ΔP [Pa] (Excel column 47). **实验侧** —
+              = col43 Pressureloss_TPMS (实验总 ΔP 去入口效应) × (转折f/f)
+              friction 隔离因子. 表为实验台架 (电加热 I/V/功率 + 实测流量/
+              温度/压损); CFD (col27-35, col44 P_Exp/P_CFD) 仅并列对照, 非 fit 基.
+              旧注误称 "修正压损 / CFD corrected" (2026-06-05 核实纠正).
     rho     : fluid density [kg/m³] (Excel column 12)
     mu      : fluid dynamic viscosity [Pa·s] (Excel column 9)
 
@@ -48,7 +52,7 @@ _COL_RE = 3      # Re
 _COL_MU = 9      # 动力粘度 Pa·s
 _COL_RHO = 12    # 密度 kg/m³
 _COL_U = 13      # 速度 m/s
-_COL_DP_CORR = 47  # 修正压损 — corrected pressure loss (single source of truth)
+_COL_DP_CORR = 47  # 摩擦压损 friction ΔP (入口已除; 旧注误称"修正压损/CFD") — single source of truth
 
 # Re filter: for L=8 mm geometries only, drop rows with Re < _L8_RE_MIN.
 # Rationale: in the L=8 region the low-Re samples live in the transition

@@ -57,13 +57,74 @@ def a0_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
     return A0_A, A0_B
 
 
-def dh_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
+def a0_sides_mc(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
+    """per-side 比表面积 [1/m] via marching cubes（三角化面积，无 voxel fudge 常数）。
+
+    精确版：A0_side = area(isosurface φ=δ∓C) / V_domain。
+      A0_A = φ=δ−C 面 (void_A↔solid)，A0_B = φ=δ+C 面。
+    极端偏移下比 `a0_sides`（voxel face-count + 1.553，δ=0 标定）准 —— 后者的
+    校正常数只对 δ=0 极小曲面有效，远离时曲面朝向/曲率变 → 偏。本函数直接量
+    真实三角网面积，任意 δ 都准。Phase 1 生成 STL 后亦用此。
+    """
+    from skimage import measure
+    dx = L_m / N
+    V = L_m ** 3
+    phimin, phimax = float(phi.min()), float(phi.max())
+
+    def iso_area(level: float) -> float:
+        if level <= phimin or level >= phimax:
+            return 0.0  # 该侧空腔已消失 → 无界面
+        verts, faces, _, _ = measure.marching_cubes(phi, level=level, spacing=(dx, dx, dx))
+        return float(measure.mesh_surface_area(verts, faces))
+
+    A0_A = iso_area(delta - C) / V
+    A0_B = iso_area(delta + C) / V
+    return A0_A, A0_B
+
+
+def a0_sides_richardson(tpms_type, C: float, delta: float, L_m: float,
+                        Ns=(96, 144, 216)):
+    """per-side A0 [1/m]，3-网格 Richardson 外推（消薄侧网格分辨率偏差）。
+
+    marching-cubes 薄通道面积从下方慢收敛（~O(N^-1.2)）：单网格 N=128 极端偏移下
+    挤压侧 A0_B 可低 ~3%（实测 2026-06-09，与壁厚无关，纯分辨率）。本函数在 3 个
+    等比网格上算 `a0_sides_mc`，估收敛阶后外推 N→∞，<1%。Ns 默认 (96,144,216)，
+    比率 1.5。返回 (A0_A, A0_B)。极端 δ（Phase 1 选点）推荐用此替 `a0_sides_mc`。
+    """
+    from solvers.tpms_geometry import _phi_grid
+    A_vals, B_vals = [], []
+    for N in Ns:
+        aA, aB = a0_sides_mc(_phi_grid(tpms_type, N), C, delta, L_m, N)
+        A_vals.append(aA)
+        B_vals.append(aB)
+    return _richardson3(Ns, A_vals), _richardson3(Ns, B_vals)
+
+
+def _richardson3(Ns, f):
+    """3-网格 Richardson 外推（等比网格，估阶 p）。
+
+    f(N) ≈ f∞ − c·N^(−p)，三点估 p = ln(d1/d2)/ln(r)，外推 f∞ = f3 + d2/(r^p−1)。
+    非单调 / 退化（某侧空腔消失 → f=0）→ 不外推，返回最细网格值 f3。
+    """
+    (N1, N2, N3), (f1, f2, f3) = Ns, f
+    d1, d2 = f2 - f1, f3 - f2
+    if f3 == 0.0 or d1 == 0.0 or d2 == 0.0 or d1 * d2 <= 0.0:
+        return f3                              # 非单调/退化 → 不外推
+    r = ((N2 / N1) + (N3 / N2)) / 2.0          # 平均细化比
+    p = float(np.clip(np.log(d1 / d2) / np.log(r), 0.5, 3.0))
+    return f3 + d2 / (r ** p - 1.0)
+
+
+def dh_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int,
+             mc: bool = False):
     """per-side 水力直径 [m]：D_h = 4·ε_side / A0_side（教科书 4，单股 sheet）。
 
     返回 (Dh_A, Dh_B)。δ=0 时与 tpms_geometry.compute_geometry 的 D_h 一致。
+    mc=True 用 marching-cubes 精确 A0（极端偏移推荐）；默认 voxel 快速版。
     """
     eps_A, eps_B, _ = eps_sides(phi, C, delta)
-    A0_A, A0_B = a0_sides(phi, C, delta, L_m, N)
+    A0_A, A0_B = (a0_sides_mc(phi, C, delta, L_m, N) if mc
+                  else a0_sides(phi, C, delta, L_m, N))
     Dh_A = 4.0 * eps_A / A0_A if A0_A > 0 else 0.0
     Dh_B = 4.0 * eps_B / A0_B if A0_B > 0 else 0.0
     return Dh_A, Dh_B
@@ -90,21 +151,19 @@ def wall_thickness(phi: np.ndarray, C: float, delta: float, L_m: float, N: int) 
     return (1.0 - eps) / A0_wall if A0_wall > 0 else 0.0
 
 
-def find_delta_max(phi: np.ndarray, C: float, L_m: float, N: int,
-                   wall_floor_m: float = 0.3e-3, dstep: float = None) -> float:
-    """最大 |δ|：两侧 void 仍 percolate（z）且壁厚 ≥ floor。"""
+def find_delta_max(phi: np.ndarray, C: float, dstep: float = None) -> float:
+    """最大 |δ|：两侧 void 仍 percolate（连通夹断极限）。
+
+    壁厚按「2C 常数」处理（PoC 简化，不约束物理壁厚）→ δ_max 只由连通定。
+    物理可制造性（min wall ~0.3mm）延后到 STL 阶段（Phase 1+），此处不卡。
+    """
     phimax = float(np.max(np.abs(phi)))
     if dstep is None:
         dstep = phimax / 200.0
     delta = 0.0
     last_ok = 0.0
     while delta <= phimax:
-        void_A = phi < (delta - C)
-        void_B = phi > (delta + C)
-        t = wall_thickness(phi, C, delta, L_m, N)
-        ok = (percolates_z(void_A) and percolates_z(void_B)
-              and t >= wall_floor_m)
-        if not ok:
+        if not (percolates_z(phi < (delta - C)) and percolates_z(phi > (delta + C))):
             break
         last_ok = delta
         delta += dstep

@@ -132,11 +132,11 @@ TASKS = [
                 "δ=0 → D_h == compute_geometry['D_h']（rel 3e-2）"],
          result="5 passed。硬锚通过 → 偏移机制在 δ=0 逐位复现现状几何，归一化验对。"),
     dict(num="3", tag="TDD", title="连通性 + 壁厚 + δ_max 搜索", commit="c135844",
-         purpose="判通道是否还通（连通分量）、量物理壁厚、搜可行偏移上界 δ_max。δ_max 定可达偏置上界。",
+         purpose="判通道是否还通（连通分量），搜可行偏移上界 δ_max（纯连通夹断极限；壁厚按 2C 常数，不约束物理壁厚）。δ_max 定可达偏置上界。",
          code="def percolates_z(mask):           # void 沿流向 z 是否单块贯穿\n"
               "    lab,_ = ndimage.label(mask); ...\n"
-              "def wall_thickness(...):           # slab 近似 t = (1−ε)/A0_wall\n"
-              "def find_delta_max(...):           # 两侧 percolate + t≥0.3mm 的最大 |δ|",
+              "def find_delta_max(phi, C):        # 两侧 percolate 的最大 |δ|（连通极限）\n"
+              "    # 壁=2C 常数：不卡物理壁厚（min-wall 延后到 STL 阶段）",
          tests=["δ=0 两侧空腔都贯穿（双连通 sheet 拓扑）",
                 "全固体块 → 不贯穿",
                 "壁厚为正且 < 胞元",
@@ -144,13 +144,13 @@ TASKS = [
          result="9 passed。核心几何模块完整（ε/A0/D_h/连通/δ_max 全 TDD 守护）。"),
     dict(num="4", tag="出数", title="扫描驱动 + CSV + 闸门", commit="41c7030",
          purpose="拿工具真去扫：δ × {Diamond, Gyroid}（L5 t0.4, N128）→ CSV 82 行 + 闸门判定。Phase 0 的答案在这。",
-         code="# 诚实指标 r_healthy = r @ 壁厚漂 ≤15%（避开 pinch 处 ε_B→0 把 r_max 抬虚）\n"
-              "healthy = [x for x in feas if abs(x.t_phys-t0)/t0 <= 0.15]\n"
-              "r_healthy = max(x.r for x in healthy)\n"
-              "verdict = PASS if (r_healthy >= 2.0 and anchor_ok) else HOLD",
+         code="# 可用 r = r @ ε_B ≥ 50% of ε_B(δ=0)（小通道不塌过半；避开 pinch 虚高）\n"
+              "usable = [x for x in feas if x.eps_B >= 0.5*epsB0]\n"
+              "r_usable = max(x.r for x in usable)\n"
+              "verdict = PASS if (r_usable >= 2.0 and anchor_ok) else HOLD",
          tests=["anchor=OK（δ=0 行 A0 == compute_geometry，端到端验归一化）",
                 "脚本跑通，CSV 生成，闸门表打印"],
-         result="闸门 PASS（两族）。Diamond r_healthy 3.77 / Gyroid 3.40，均 ≫ 2:1。"),
+         result="闸门 PASS（两族）。Diamond r_usable 2.95 / Gyroid 2.93（≈3:1），均 ≫ 2:1。"),
     dict(num="5", tag="可视化", title="HTML 流程报告（本页）", commit="d5b2cd4",
          purpose="读 CSV → 自包含 HTML（手绘 SVG 折线，离线渲染，无 JS 依赖）→ 桌面。即本页。",
          code="svg_chart(series, ...)   # 手绘 SVG 折线 + 网格 + 标注线\n"
@@ -170,10 +170,12 @@ def main():
               for t, rows in by.items()]
     chart_r = svg_chart(r_series, "① 偏置比 r 随 δ ↑（y 截顶 8）", "r = ε_A / ε_B",
                         y_min=0, y_max=8.0, hlines=[(2.0, RED, "r=2 闸门", "5 4")], vlines=vlines)
-    t_series = [dict(x=[r["delta"] for r in rows], y=[r["t_phys_mm"] for r in rows],
-                     color=TP_COL[t], label=t) for t, rows in by.items()]
-    chart_t = svg_chart(t_series, "② 壁厚 t 随 δ ↓（撞 0.3mm 地板=δ_max）", "t_phys [mm]",
-                        hlines=[(FLOOR_MM, RED, "0.3mm 水密地板", "5 4")], vlines=vlines)
+    epsB_series = [dict(x=[r["delta"] for r in rows], y=[r["eps_B"] for r in rows],
+                        color=TP_COL[t], label=t) for t, rows in by.items()]
+    epsB0_lines = [(0.5*rows[0]["eps_B"], TP_COL[t], f"{t} ε_B0×50%", "5 4")
+                   for t, rows in by.items()]
+    chart_t = svg_chart(epsB_series, "② 挤压侧 ε_B 随 δ ↓（塌到 50% = 可用上界）", "ε_B",
+                        hlines=epsB0_lines, vlines=vlines)
     eps_charts, dh_charts = [], []
     for t, rows in by.items():
         eps_charts.append(svg_chart(
@@ -189,17 +191,16 @@ def main():
     summ = []
     for t, rows in by.items():
         feas = [r for r in rows if r["feasible"]]
-        t0 = rows[0]["t_phys_mm"]
-        r_h = max((r["r"] for r in feas if abs(r["t_phys_mm"]-t0)/t0 <= 0.15), default=0.0)
+        epsB0 = rows[0]["eps_B"]
+        r_u = max((r["r"] for r in feas if r["eps_B"] >= 0.5*epsB0), default=0.0)
         r_m = max((r["r"] for r in feas), default=0.0)
         dmax = max(r["delta"] for r in feas)
         last = feas[-1]
-        summ.append((t, dmax, r_h, r_m, abs(last["eps"]-rows[0]["eps"])/rows[0]["eps"]*100,
-                     abs(last["t_phys_mm"]-t0)/t0*100))
+        summ.append((t, dmax, r_u, r_m, abs(last["eps"]-rows[0]["eps"])/rows[0]["eps"]*100))
     summ_rows = "\n".join(
-        f'<tr><td><b>{t}</b></td><td>{dmax:.3f}</td><td class="hl">{rh:.2f}:1</td>'
-        f'<td class="muted">{rm:.1f}:1</td><td>{ed:.1f}%</td><td>{td:.0f}%</td>'
-        f'<td class="ok">PASS</td></tr>' for (t, dmax, rh, rm, ed, td) in summ)
+        f'<tr><td><b>{t}</b></td><td>{dmax:.3f}</td><td class="hl">{ru:.2f}:1</td>'
+        f'<td class="muted">{rm:.1f}:1</td><td>{ed:.1f}%</td>'
+        f'<td class="ok">PASS</td></tr>' for (t, dmax, ru, rm, ed) in summ)
 
     # 时间线 + 任务卡
     steps = "".join(
@@ -315,12 +316,12 @@ footer{{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-f
 
 <div class="verdict">
   <div class="vk">Phase 0 闸门 · Gate</div>
-  <div class="vmain">几何门 <b>PASS</b> —— 健康壁下可达偏置 <b>3.4–3.8 : 1</b>，远超 2:1 闸门。</div>
-  <p>δ=0 端到端复现现有 compute_geometry（anchor OK）· 总孔隙 ε 微漂 1–3%（O(δ²)）· 9 个单测全绿 · 6 commit。纯几何证「能造这么不对称」；下游换热/降 dP 收益须 Phase 1（CFD）+ Phase 3（优化）。</p>
+  <div class="vmain">几何门 <b>PASS</b> —— 可用偏置 <b>≈ 2.9 : 1</b>（小通道不塌过半），远超 2:1 闸门。</div>
+  <p>δ=0 端到端复现现有 compute_geometry（anchor OK）· 总孔隙 ε 微漂 1–3%（O(δ²)）· 9 个单测全绿 · 壁厚按 2C 常数（物理壁厚 / 0.3mm 打印地板延后到 STL 阶段）。纯几何证「能造这么不对称」；下游换热/降 dP 收益须 Phase 1（CFD）+ Phase 3（优化）。</p>
 </div>
 
 <div class="tbl"><table>
-<thead><tr><th>TPMS</th><th>δ_max</th><th>r_healthy（壁漂≤15%）</th><th>r_max（pinch）</th><th>ε 漂</th><th>t 漂 @δ_max</th><th>闸门</th></tr></thead>
+<thead><tr><th>TPMS</th><th>δ_max（连通）</th><th>r_usable（ε_B≥50%）</th><th>r_max（pinch）</th><th>ε 漂</th><th>闸门</th></tr></thead>
 <tbody>{summ_rows}</tbody></table></div>
 
 <h2>执行时间线</h2>
@@ -336,7 +337,7 @@ footer{{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-f
 <div class="cchart">{chart_r}</div>
 <div class="cchart">{chart_t}</div>
 </div>
-<div class="note"><b>怎么读：</b>往右推 δ，偏置比 r 单调↑（①），但壁厚 t 单调↓（②），直到撞 0.3mm 水密地板 = δ_max。所以「能偏多少」由「能接受多薄壁」定，非无限。<b>r_healthy</b>（壁漂≤15%）才是诚实可用偏置 3.4–3.8:1。① y 截顶 8；近 δ_max 处 ε_B→0 使 r 飙到 7–24（pinch 虚高，无用工作点）。</div>
+<div class="note"><b>怎么读：</b>往右推 δ，偏置比 r 单调↑（①），但挤压侧 ε_B 单调↓（②）。<b>壁厚按 2C 常数处理（PoC 简化，不追物理壁厚）</b>，故 δ_max 由<b>连通夹断</b>定（非壁地板）。可用上界取「ε_B 不塌过半（≥50%）」→ <b>r_usable ≈ 2.9:1</b>（≫2:1 闸门）。① y 截顶 8；近 δ_max 处 ε_B→0 使 r 飙到 7–24（pinch 虚高，无用工作点）。<br><span style="color:var(--faint)">注：物理壁厚 ≠ 2C（需除梯度 |∇φ|），真可制造性 0.3mm 地板延后到 STL 阶段。</span></div>
 
 <div class="rowlabel">▌两侧孔隙怎么分化</div>
 <div class="grid2">
@@ -357,7 +358,7 @@ footer{{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-f
   <b>真问号</b>：r=3.4–3.8 对你气-液工况能换多少降 dP / 缩机 —— Phase 1/3 才落定。</p>
 </div>
 
-<footer>纯几何 PoC · 数据 runs/_out/asym_geom_scan_2026-06-05.csv（82 行）· 壁厚为 slab 近似 t=(1−ε)/A0 · 9 测全绿 · 分支 feat/asym-porosity-phase0 · 2026-06-05</footer>
+<footer>纯几何 PoC · 数据 runs/_out/asym_geom_scan_2026-06-05.csv（82 行）· 壁厚按 2C 常数（物理壁厚 / 0.3mm 地板延后 STL）· 9 测全绿 · 分支 feat/asym-porosity-phase0 · 2026-06-05</footer>
 </div></body></html>"""
 
     OUT_HTML.write_text(html, encoding="utf-8")

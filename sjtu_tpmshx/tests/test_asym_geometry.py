@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 from solvers.asym_geometry import (
-    eps_sides, a0_sides, dh_sides, percolates_z, wall_thickness, find_delta_max,
+    eps_sides, a0_sides, a0_sides_mc, a0_sides_richardson, dh_sides,
+    percolates_z, wall_thickness, find_delta_max,
 )
 from solvers.tpms_geometry import _phi_grid, compute_geometry, _C_from_tL
 
@@ -87,8 +88,52 @@ def test_wall_thickness_delta0_positive_subcell():
 
 
 def test_find_delta_max_returns_positive_band():
-    """δ=0 周围存在可行偏移带。"""
+    """δ=0 周围存在可行偏移带（壁=2C 常数，δ_max 纯连通极限）。"""
     phi = _phi_grid('Gyroid', N)
     C = 0.5
-    dmax = find_delta_max(phi, C, 0.005, N, wall_floor_m=0.0)
+    dmax = find_delta_max(phi, C)
     assert dmax > 0.0
+
+
+def test_a0_sides_mc_delta0_symmetric_and_near_voxel():
+    """marching-cubes A0：δ=0 两侧相等，且与 voxel 版同量级（精确 vs 标定近似）。"""
+    L_mm, t_mm, Nf = 5.0, 0.4, 128
+    phi = _phi_grid('Gyroid', Nf)
+    C = _C_from_tL('Gyroid', t_mm / L_mm)
+    L_m = L_mm / 1000.0
+    A0_A, A0_B = a0_sides_mc(phi, C, 0.0, L_m, Nf)
+    assert A0_A == pytest.approx(A0_B, rel=0.05)        # 对称
+    vox_A, _ = a0_sides(phi, C, 0.0, L_m, Nf)
+    assert A0_A == pytest.approx(vox_A, rel=0.20)       # 与 voxel 同量级
+    assert A0_A > 0
+
+
+def test_a0_richardson_thin_side_beats_coarse():
+    """极端 δ：Richardson 3-网格外推消薄侧网格分辨率偏差。
+
+    marching-cubes 薄通道面积从下方慢收敛；单网格 N=128 挤压侧 A0_B 低 ~3%。
+    Richardson(96,144,216) 应 (1) 向上外推 > 最细网格，(2) 比 coarse mc 更接近
+    高 N 参考，(3) 落在近收敛参考 <3%。
+    """
+    tp, L_mm, t_mm = 'Diamond', 5.0, 0.4
+    L_m = L_mm / 1000.0
+    C = _C_from_tL(tp, t_mm / L_mm)
+    dmax = find_delta_max(_phi_grid(tp, 256), C)
+    delta = 0.9 * dmax                                   # 近极限 → 薄侧最薄
+    _, richB = a0_sides_richardson(tp, C, delta, L_m, Ns=(96, 144, 216))
+    _, mc128B = a0_sides_mc(_phi_grid(tp, 128), C, delta, L_m, 128)
+    _, mc216B = a0_sides_mc(_phi_grid(tp, 216), C, delta, L_m, 216)
+    _, refB = a0_sides_mc(_phi_grid(tp, 256), C, delta, L_m, 256)
+    assert richB > mc216B                                # 从下方外推 → 高于最细
+    assert abs(richB - refB) < abs(mc128B - refB)        # 比 coarse mc 更接近参考
+    assert abs(richB - refB) / refB < 0.03               # 与近收敛参考 <3%
+
+
+def test_a0_richardson_delta0_near_mc():
+    """对称 δ=0：曲面良分辨 → Richardson ≈ 单网格 mc（修正小）。"""
+    tp, L_mm, t_mm = 'Diamond', 5.0, 0.4
+    L_m = L_mm / 1000.0
+    C = _C_from_tL(tp, t_mm / L_mm)
+    richA, _ = a0_sides_richardson(tp, C, 0.0, L_m, Ns=(96, 144, 216))
+    mcA, _ = a0_sides_mc(_phi_grid(tp, 144), C, 0.0, L_m, 144)
+    assert richA == pytest.approx(mcA, rel=0.05)
