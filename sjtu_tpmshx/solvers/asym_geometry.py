@@ -57,13 +57,41 @@ def a0_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
     return A0_A, A0_B
 
 
-def dh_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
+def a0_sides_mc(phi: np.ndarray, C: float, delta: float, L_m: float, N: int):
+    """per-side 比表面积 [1/m] via marching cubes（三角化面积，无 voxel fudge 常数）。
+
+    精确版：A0_side = area(isosurface φ=δ∓C) / V_domain。
+      A0_A = φ=δ−C 面 (void_A↔solid)，A0_B = φ=δ+C 面。
+    极端偏移下比 `a0_sides`（voxel face-count + 1.553，δ=0 标定）准 —— 后者的
+    校正常数只对 δ=0 极小曲面有效，远离时曲面朝向/曲率变 → 偏。本函数直接量
+    真实三角网面积，任意 δ 都准。Phase 1 生成 STL 后亦用此。
+    """
+    from skimage import measure
+    dx = L_m / N
+    V = L_m ** 3
+    phimin, phimax = float(phi.min()), float(phi.max())
+
+    def iso_area(level: float) -> float:
+        if level <= phimin or level >= phimax:
+            return 0.0  # 该侧空腔已消失 → 无界面
+        verts, faces, _, _ = measure.marching_cubes(phi, level=level, spacing=(dx, dx, dx))
+        return float(measure.mesh_surface_area(verts, faces))
+
+    A0_A = iso_area(delta - C) / V
+    A0_B = iso_area(delta + C) / V
+    return A0_A, A0_B
+
+
+def dh_sides(phi: np.ndarray, C: float, delta: float, L_m: float, N: int,
+             mc: bool = False):
     """per-side 水力直径 [m]：D_h = 4·ε_side / A0_side（教科书 4，单股 sheet）。
 
     返回 (Dh_A, Dh_B)。δ=0 时与 tpms_geometry.compute_geometry 的 D_h 一致。
+    mc=True 用 marching-cubes 精确 A0（极端偏移推荐）；默认 voxel 快速版。
     """
     eps_A, eps_B, _ = eps_sides(phi, C, delta)
-    A0_A, A0_B = a0_sides(phi, C, delta, L_m, N)
+    A0_A, A0_B = (a0_sides_mc(phi, C, delta, L_m, N) if mc
+                  else a0_sides(phi, C, delta, L_m, N))
     Dh_A = 4.0 * eps_A / A0_A if A0_A > 0 else 0.0
     Dh_B = 4.0 * eps_B / A0_B if A0_B > 0 else 0.0
     return Dh_A, Dh_B

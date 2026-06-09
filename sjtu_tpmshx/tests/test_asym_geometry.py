@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from solvers.asym_geometry import (
-    eps_sides, a0_sides, dh_sides, percolates_z, wall_thickness, find_delta_max,
+    eps_sides, a0_sides, a0_sides_mc, dh_sides, percolates_z, wall_thickness, find_delta_max,
 )
 from solvers.tpms_geometry import _phi_grid, compute_geometry, _C_from_tL
 
@@ -92,3 +92,16 @@ def test_find_delta_max_returns_positive_band():
     C = 0.5
     dmax = find_delta_max(phi, C)
     assert dmax > 0.0
+
+
+def test_a0_sides_mc_delta0_symmetric_and_near_voxel():
+    """marching-cubes A0：δ=0 两侧相等，且与 voxel 版同量级（精确 vs 标定近似）。"""
+    L_mm, t_mm, Nf = 5.0, 0.4, 128
+    phi = _phi_grid('Gyroid', Nf)
+    C = _C_from_tL('Gyroid', t_mm / L_mm)
+    L_m = L_mm / 1000.0
+    A0_A, A0_B = a0_sides_mc(phi, C, 0.0, L_m, Nf)
+    assert A0_A == pytest.approx(A0_B, rel=0.05)        # 对称
+    vox_A, _ = a0_sides(phi, C, 0.0, L_m, Nf)
+    assert A0_A == pytest.approx(vox_A, rel=0.20)       # 与 voxel 同量级
+    assert A0_A > 0

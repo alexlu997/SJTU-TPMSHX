@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from solvers.tpms_geometry import _phi_grid
-from solvers.asym_geometry import eps_sides, a0_sides, dh_sides, percolates_z
+from solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
 
 N = 128
 TPMS = ["Diamond", "Gyroid"]
@@ -40,8 +40,8 @@ def solve_target(phi, A, B, L_m):
     delta = 0.5 * (phi_lo + phi_hi)
     C = 0.5 * (phi_hi - phi_lo)
     eps_A, eps_B, eps = eps_sides(phi, C, delta)
-    A0_A, A0_B = a0_sides(phi, C, delta, L_m, N)
-    Dh_A, Dh_B = dh_sides(phi, C, delta, L_m, N)
+    A0_A, A0_B = a0_sides_mc(phi, C, delta, L_m, N)        # marching cubes 精确
+    Dh_A, Dh_B = dh_sides(phi, C, delta, L_m, N, mc=True)
     pA = percolates_z(phi < (delta - C))
     pB = percolates_z(phi > (delta + C))
     return dict(C=C, delta=delta, eps_A=eps_A, eps_B=eps_B, solid=1.0 - eps,
