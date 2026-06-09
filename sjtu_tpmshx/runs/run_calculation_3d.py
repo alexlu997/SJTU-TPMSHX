@@ -1916,6 +1916,15 @@ def _run_3d_stack(cfg):
     # P2: rho_cp as 3D field (not scalar) for per-cell accuracy
     rho_cp_fA = np.full((Nx, Ny, Nz), rho_A * cp_A, dtype=np.float64)
     rho_cp_fB = np.full((Nx, Ny, Nz), rho_B_ltne * cp_B, dtype=np.float64)
+    # Opt-in (default off): build the LTNE convective rho_cp from SIMPLE's LOCAL
+    # density field ρ(P_local,T) instead of ρ(T,P_inlet). For compressible
+    # fluids the kernel then telescopes cp·(ε·ρ_local·u) = cp·(SIMPLE mass flux),
+    # so ∮(ε·ρcp·u) ≈ cp·∮(mass flux) ≈ 0 (SIMPLE continuity) and the strict
+    # conservative kernel becomes mass-conserving for COMPRESSIBLE reverse flow
+    # too (unblocks the air-air reverse ε-NTU/full-face cases). Off by default
+    # because it shifts the validated forward-air/Shanghai energy advection.
+    _var_rhocp = (bool(cfg.get('variable_rho_cp', False))
+                  or os.environ.get('TPMSHX_VAR_RHOCP') == '1')
 
     # Helper: solver streamwise velocity → correct real component (uc/vc/wc).
     # Transposes solver (Nx_sol, Ny_sol, Nz_sol) → real (Nx, Ny, Nz) via
@@ -2133,10 +2142,14 @@ def _run_3d_stack(cfg):
         # Compressible reverse-dir conservation is a separate kernel-level
         # (constant-ρcp) limitation, out of scope here.
         if bool(cfg.get('conservative_ltne', True)) and cfg.get('strict_mass_balance', True):
-            if not fluid_props.get(fluid_type_A).compressible:
+            # Incompressible always; compressible only with variable_rho_cp (then
+            # rho_cp = ρ_local·cp matches SIMPLE's conserved mass flux, so the
+            # balance scale ≈ 1 and it removes only the residual — see _var_rhocp).
+            if (not fluid_props.get(fluid_type_A).compressible) or _var_rhocp:
                 _coefA = 0.5 * eps_arr * rho_cp_fA
                 _balance_stream_outflow([ufA, vfA, wfA], axis_map, _coefA, dx, dy, dz)
-            if sB is not None and not fluid_props.get(fluid_type_B).compressible:
+            if sB is not None and (
+                    (not fluid_props.get(fluid_type_B).compressible) or _var_rhocp):
                 _coefB = 0.5 * eps_arr * rho_cp_fB
                 _balance_stream_outflow([ufB, vfB, wfB], axis_map_B, _coefB, dx, dy, dz)
 
@@ -2275,7 +2288,14 @@ def _run_3d_stack(cfg):
         # a uniform field.
         T_avgA = float(Ta.mean())
         K_ffA[:] = eps_f_arr * air_conductivity(Ta)
-        rho_cp_fA[:] = air_density(Ta, P_inA) * air_cp(Ta)
+        if _var_rhocp:
+            # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
+            _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
+            if axis_map['is_reverse']:
+                _rhoA_real = np.flip(_rhoA_real, axis=axis_map['stream_real_axis'])
+            rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * air_cp(Ta)
+        else:
+            rho_cp_fA[:] = air_density(Ta, P_inA) * air_cp(Ta)
         # h_v rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         if Tb is not None:
@@ -2285,7 +2305,14 @@ def _run_3d_stack(cfg):
                 rho_cp_fB[:] = water_density(Tb) * water_cp(Tb)
             else:
                 K_ffB[:] = eps_f_arr * air_conductivity(Tb)
-                rho_cp_fB[:] = air_density(Tb, P_inB) * air_cp(Tb)
+                if _var_rhocp:
+                    _rhoB_real = sB.rho_field.transpose(perm_B)
+                    if axis_map_B['is_reverse']:
+                        _rhoB_real = np.flip(
+                            _rhoB_real, axis=axis_map_B['stream_real_axis'])
+                    rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * air_cp(Tb)
+                else:
+                    rho_cp_fB[:] = air_density(Tb, P_inB) * air_cp(Tb)
             # h_vB rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         # Non-iso coupling for fluid B. Water: ρ(T) only, no ideal gas.

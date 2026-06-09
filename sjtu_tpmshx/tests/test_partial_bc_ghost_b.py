@@ -70,10 +70,11 @@ def _compute_epsilon(r):
     "incompressible BC-mass-balance fix (_balance_stream_outflow, this branch) "
     "fixed the WATER reverse case (test_3d_reverse_mirror) but is correctly "
     "skipped for compressible fluids — forcing volume-flux balance there "
-    "corrupts the air field (measured: scale 0.58–0.94, +300% Q). Real fix = "
-    "variable-ρcp kernel telescoping on true mass flux ρ(P,T)·u (separate, "
-    "Shanghai-regression risk). See test_full_face_B_recovers_identity (full-"
-    "face, no partial-BC) for proof this is pure compressibility, not BC offset."))
+    "corrupts the air field (measured: scale 0.58–0.94, +300% Q). FIXED via "
+    "opt-in `variable_rho_cp=True` (local-density ρcp telescopes true mass flux "
+    "ρ(P,T)·u) — ε passes + Q_A≈Q_B, Shanghai RMSRE bit-identical; this xfail "
+    "tracks the DEFAULT-off path. See test_epsilon_ntu_bound_varrhocp + "
+    "test_full_face_B_recovers_identity (full-face = pure compressibility)."))
 def test_epsilon_ntu_bound():
     """ε_obs ≤ ε_max for partial-BC ghost-B case.
 
@@ -172,8 +173,9 @@ def test_eta_B_degenerate_zero_inlet():
     "compressible mass conservation gives ∮(εu)≠0, and the mean-zero MAC "
     "projection spreads that net as spurious energy. The incompressible BC-mass-"
     "balance fix (this branch) cannot apply (volume-flux balance corrupts air). "
-    "Real fix = variable-ρcp kernel (mass-flux telescoping). See "
-    "test_epsilon_ntu_bound xfail for the full rationale."))
+    "FIXED via opt-in `variable_rho_cp=True` (local-density ρcp) — see "
+    "test_full_face_B_varrhocp; this xfail tracks the DEFAULT-off path. "
+    "See test_epsilon_ntu_bound xfail for the full rationale."))
 def test_full_face_B_recovers_identity():
     """Full-face B → r_eff=1 → η_eff=1. Should match no-closure."""
     from runs.run_calculation_3d import _run_3d_stack
@@ -202,3 +204,46 @@ def test_eta_B_field_bounds():
         pytest.skip("chi_B not in result dict")
     c = np.asarray(chi)
     assert c.min() >= -1e-9 and c.max() <= 1.0 + 1e-9
+
+
+# ── Compressible reverse conservation via variable_rho_cp opt-in (2026-06-09) ──
+# The default (constant-inlet-P ρcp) path can't conserve compressible reverse
+# flow (see test_epsilon_ntu_bound / test_full_face_B_recovers_identity xfails).
+# variable_rho_cp=True builds the LTNE convective ρcp from SIMPLE's LOCAL density
+# ρ(P_local,T), so the strict kernel telescopes cp·(ε·ρ_local·u) = cp·(SIMPLE
+# mass flux) ⇒ ∮ ≈ 0 ⇒ conservative ⇒ Q_A ≈ Q_B and ε returns under the bound.
+# Default OFF (shifts the validated forward-air/Shanghai advection — though
+# measured bit-identical on Shanghai RMSRE); these gate the opt-in path.
+
+
+def _energy_balanced(r, rel_max=0.15):
+    QA = abs(r.get('Q_enthalpy_A', 0.0)); QB = abs(r.get('Q_enthalpy_B', 0.0))
+    rel = abs(QA - QB) / max(QA, QB, 1e-30)
+    return rel < rel_max, QA, QB, rel
+
+
+def test_epsilon_ntu_bound_varrhocp():
+    """variable_rho_cp=True makes the air-air OFFSET reverse case conservative:
+    ε under bound + Q_A ≈ Q_B (energy balance = the conservation signature)."""
+    from runs.run_calculation_3d import _run_3d_stack
+    r = _run_3d_stack(_partial_bc_air_air_cfg(variable_rho_cp=True))
+    eps = _compute_epsilon(r)
+    assert eps <= 0.90, f"ε_obs={eps:.4f} > 0.90 even with variable_rho_cp"
+    ok, QA, QB, rel = _energy_balanced(r)
+    assert ok, f"Q_A={QA:.1f} vs Q_B={QB:.1f} not energy-balanced (rel={rel:.3f})"
+
+
+def test_full_face_B_varrhocp():
+    """variable_rho_cp=True: full-face air-air reverse returns ε under bound
+    + energy-balanced (isolates pure compressibility, no partial-BC)."""
+    from runs.run_calculation_3d import _run_3d_stack
+    cfg = _partial_bc_air_air_cfg(variable_rho_cp=True)
+    cfg['fluid_B_cfg'] = dict(dir=3, in_ctr=0.091, in_w=0.182,
+                              out_ctr=0.091, out_w=0.182,
+                              in_z_ctr=0.021, in_z_w=0.042,
+                              out_z_ctr=0.021, out_z_w=0.042)
+    r = _run_3d_stack(cfg)
+    eps = _compute_epsilon(r)
+    assert eps <= 0.95, f"Full-face ε={eps:.4f} > 0.95 with variable_rho_cp"
+    ok, QA, QB, rel = _energy_balanced(r)
+    assert ok, f"Q_A={QA:.1f} vs Q_B={QB:.1f} not energy-balanced (rel={rel:.3f})"
