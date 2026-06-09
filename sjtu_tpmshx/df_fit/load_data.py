@@ -10,10 +10,11 @@ Output DataFrame schema:
     r_h_m   : hydraulic radius D_h/2 [m]
     Re      : Reynolds number (Excel column "Re", kept for reference/filtering)
     u_mps   : velocity [m/s] (Excel column 13, 速度 — 工况速度)
-    dP_Pa   : 摩擦压损 friction ΔP [Pa] (Excel column 47; 入口效应已除,
-              见 col43 Pressureloss_TPMS = total − inlet). 表为实验台架记录
-              (电加热 I/V/功率 + 实测流量/温度/压损) + CFD 对照 (col44
-              P_Exp/P_CFD). 旧注误称 "修正压损 / CFD corrected" (2026-06-05 纠).
+    dP_Pa   : 摩擦压损 friction ΔP [Pa] (Excel column 47). **实验侧** —
+              = col43 Pressureloss_TPMS (实验总 ΔP 去入口效应) × (转折f/f)
+              friction 隔离因子. 表为实验台架 (电加热 I/V/功率 + 实测流量/
+              温度/压损); CFD (col27-35, col44 P_Exp/P_CFD) 仅并列对照, 非 fit 基.
+              旧注误称 "修正压损 / CFD corrected" (2026-06-05 核实纠正).
     rho     : fluid density [kg/m³] (Excel column 12)
     mu      : fluid dynamic viscosity [Pa·s] (Excel column 9)
 
