@@ -142,13 +142,44 @@ def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
         return float(np.mean(T_face))
 
 
+# ── Direction → axis single source ──────────────────────────────────────────
+# dir_code: 0=+x 1=-x 2=+y 3=-y 4=+z 5=-z (matches the 2D _dir_int convention).
+# These helpers are the ONE place the dir→axis/index mapping is encoded; every
+# face-slice / BC-mask / streamwise-component dispatch derives from them, so a
+# direction cannot go inconsistent across call sites (the failure mode the
+# reverse-dir saga kept reintroducing). Forward dirs (even) inject at stream
+# index 0 and exhaust at -1; reverse dirs (odd) mirror that. 2026-06-09 A3.
+def _stream_axis(dir_code):
+    """Real-coord streamwise axis: 0/1→x(0), 2/3→y(1), 4/5→z(2)."""
+    return int(dir_code) // 2
+
+
+def _dir_is_reverse(dir_code):
+    """True for negative-going dirs (-x/-y/-z = odd codes 1/3/5)."""
+    return bool(int(dir_code) % 2)
+
+
+def _inlet_index(dir_code):
+    """Stream-axis index of the REAL inlet face (0 forward, -1 reverse)."""
+    return -1 if _dir_is_reverse(dir_code) else 0
+
+
+def _outlet_index(dir_code):
+    """Stream-axis index of the REAL outlet face (-1 forward, 0 reverse)."""
+    return 0 if _dir_is_reverse(dir_code) else -1
+
+
+def _face_slice(field, dir_code, which):
+    """View of ``field``'s real inlet/outlet face. which ∈ {'inlet','outlet'}.
+    Returns the same axis-collapsed view the hand-rolled ladders did."""
+    idx = _inlet_index(dir_code) if which == 'inlet' else _outlet_index(dir_code)
+    sl = [slice(None), slice(None), slice(None)]
+    sl[_stream_axis(dir_code)] = idx
+    return field[tuple(sl)]
+
+
 def _real_outlet_slice(T_field, dir_code):
-    if dir_code == 0:   return T_field[-1, :, :]
-    if dir_code == 1:   return T_field[0, :, :]
-    if dir_code == 2:   return T_field[:, -1, :]
-    if dir_code == 3:   return T_field[:, 0, :]
-    if dir_code == 4:   return T_field[:, :, -1]
-    return T_field[:, :, 0]
+    return _face_slice(T_field, dir_code, 'outlet')
 
 
 def _simple_mass_flow(solver, dir_code, eps_f_per_side=None):
@@ -2121,10 +2152,8 @@ def _run_3d_stack(cfg):
         Tb = np.full(_shape3d, float(T_inB), dtype=np.float64)
         Ts = np.full(_shape3d, float(_Ts_init_user), dtype=np.float64)
     def _stream_component(uc, vc, wc, dir_code):
-        """Pick streamwise cell-center velocity component."""
-        if dir_code in (0, 1): return uc
-        if dir_code in (2, 3): return vc
-        return wc
+        """Streamwise cell-center velocity component (single dir source)."""
+        return (uc, vc, wc)[_stream_axis(dir_code)]
 
     _progress_cb = cfg.get('_progress_cb')
     _cancel_check = cfg.get('_cancel_check')
@@ -2687,22 +2716,16 @@ def _run_3d_stack(cfg):
 
         def _bc_face_mask(dir_code, NxG, NyG, NzG):
             m = np.zeros((NxG, NyG, NzG), dtype=bool)
-            if   dir_code == 0: m[0, :, :] = True
-            elif dir_code == 1: m[NxG-1, :, :] = True
-            elif dir_code == 2: m[:, 0, :] = True
-            elif dir_code == 3: m[:, NyG-1, :] = True
-            elif dir_code == 4: m[:, :, 0] = True
-            else:               m[:, :, NzG-1] = True
+            sl = [slice(None)] * 3
+            sl[_stream_axis(dir_code)] = _inlet_index(dir_code)
+            m[tuple(sl)] = True
             return m
 
         def _outlet_mask(dir_code, NxG, NyG, NzG):
             m = np.zeros((NxG, NyG, NzG), dtype=bool)
-            if   dir_code == 0: m[NxG-1, :, :] = True
-            elif dir_code == 1: m[0, :, :] = True
-            elif dir_code == 2: m[:, NyG-1, :] = True
-            elif dir_code == 3: m[:, 0, :] = True
-            elif dir_code == 4: m[:, :, NzG-1] = True
-            else:               m[:, :, 0] = True
+            sl = [slice(None)] * 3
+            sl[_stream_axis(dir_code)] = _outlet_index(dir_code)
+            m[tuple(sl)] = True
             return m
 
         bc_A_in  = _bc_face_mask(fA['dir'], Nx_g, Ny_g, Nz_g)
@@ -2811,13 +2834,8 @@ def _run_3d_stack(cfg):
 
         # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
         if chi_B is not None and sB is not None:
-            # B inlet face slice in real coords
-            if fB['dir'] == 0:    chi_B_in_face = chi_B[0, :, :]
-            elif fB['dir'] == 1:  chi_B_in_face = chi_B[-1, :, :]
-            elif fB['dir'] == 2:  chi_B_in_face = chi_B[:, 0, :]
-            elif fB['dir'] == 3:  chi_B_in_face = chi_B[:, -1, :]
-            elif fB['dir'] == 4:  chi_B_in_face = chi_B[:, :, 0]
-            else:                 chi_B_in_face = chi_B[:, :, -1]
+            # B inlet face slice in real coords (single dir source).
+            chi_B_in_face = _face_slice(chi_B, fB['dir'], 'inlet')
             # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
             # (in_mask_B; approach-(a), no in/out swap).
             _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
