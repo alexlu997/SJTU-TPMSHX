@@ -200,6 +200,20 @@ def _simple_tol_default():
     return float(os.environ.get('TPMSHX_SIMPLE_TOL', '1e-5'))
 
 
+def _apply_accel_flags(solver, cfg):
+    """Mirror the Phase A/B/C acceleration knobs from ``cfg`` onto a SIMPLE3D
+    solver. Single source so fluid A and fluid B stay in lockstep (these seven
+    assignments were previously duplicated verbatim per fluid). Phase A defaults
+    on (zero-loss inner-tol scheduling); B/C opt-in until full-sweep validated."""
+    solver.use_adaptive_amg_tol = bool(cfg.get('use_adaptive_amg_tol', True))
+    solver.use_anderson = bool(cfg.get('use_anderson', False))
+    solver.anderson_m = int(cfg.get('anderson_m', 5))
+    solver.anderson_K = int(cfg.get('anderson_K', 3))
+    solver.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
+    solver.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
+    solver.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  3D solver profiler (opt-in, zero-cost when off)
 # ─────────────────────────────────────────────────────────────────────────
@@ -850,9 +864,11 @@ def _parse_inputs_3d_cfg(compute_cfg):
             tpms_type, Lcell, t_wall, k_s,
             u_B, T_inB, P_inB, side='B',
             allow_extrap=_allow_extrap) or []
-    except (ImportError, ValueError) as _e:
-        if isinstance(_e, ValueError):
-            raise
+    except ImportError:
+        # surrogate_domain module unavailable → skip the extrap-domain check.
+        # A ValueError from the check is a real domain violation and must
+        # propagate, so it is intentionally not caught here.
+        pass
 
     from solvers.tpms_calc import validate_fluid_type
     fluid_type_A = compute_cfg.fluid_A.type
@@ -1764,15 +1780,8 @@ def _run_3d_stack(cfg):
         eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
         P_ref_abs=P_ref_A, fluid_type='ideal_gas',
     )
-    # Phase A/B/C acceleration flags. Phase A on by default (zero-loss inner-
-    # tol scheduling); Phase B/C opt-in until full-sweep validated.
-    sA.use_adaptive_amg_tol = bool(cfg.get('use_adaptive_amg_tol', True))
-    sA.use_anderson = bool(cfg.get('use_anderson', False))
-    sA.anderson_m = int(cfg.get('anderson_m', 5))
-    sA.anderson_K = int(cfg.get('anderson_K', 3))
-    sA.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
-    sA.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
-    sA.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
+    # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
+    _apply_accel_flags(sA, cfg)
     sA.inlet_frac = in_mask_2d
     sA.outlet_frac = out_mask_2d
     # Zoned ε → push to SIMPLE so its continuity ∇·(ε·ρ·u)=0 picks up the
@@ -1856,13 +1865,7 @@ def _run_3d_stack(cfg):
             P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
         )
         # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
-        sB.use_adaptive_amg_tol = bool(cfg.get('use_adaptive_amg_tol', True))
-        sB.use_anderson = bool(cfg.get('use_anderson', False))
-        sB.anderson_m = int(cfg.get('anderson_m', 5))
-        sB.anderson_K = int(cfg.get('anderson_K', 3))
-        sB.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
-        sB.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
-        sB.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
+        _apply_accel_flags(sB, cfg)
         sB.inlet_frac = in_mask_B
         sB.outlet_frac = out_mask_B
         # Zoned ε for sB.
@@ -2543,8 +2546,8 @@ def _run_3d_stack(cfg):
     m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side)
     T_A_out_face = _real_outlet_slice(Ta, fA['dir'])
     T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side)
-    # T_A_out no-chi (diagnostic only)
-    T_A_out_no_chi = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side)
+    # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
+    #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
     Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
 
     # Fluid B
@@ -2655,7 +2658,13 @@ def _run_3d_stack(cfg):
             m_bal_B = mass_balance_3d(
                 sB.u, sB.v, sB.w, sB.rho_field, sB.dy, sB.dx, sB.dz, 2)
             mass_rel_B = m_bal_B.get('rel', 0.0)
-    except Exception:
+    except Exception as _e:
+        # Surface the failure instead of nan-ing it away silently: these
+        # diagnostics exist precisely to flag non-physical regressions, so a
+        # swallowed exception here would hide the very thing they watch for.
+        import warnings as _w
+        _w.warn(f"3D conservation diagnostics failed ({_e!r}); reporting NaN.",
+                stacklevel=2)
         Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
 
     # 2026-04-26 Path 0' (v3) — energy flux consistency fix.
@@ -2714,7 +2723,10 @@ def _run_3d_stack(cfg):
         # AB imbal on interior-corrected metric
         AB_interior = (abs(abs(Q_sA_interior) - abs(Q_sB_interior))
                        / max(abs(Q_sA_interior), abs(Q_sB_interior), 1e-30))
-    except Exception:
+    except Exception as _e:
+        import warnings as _w
+        _w.warn(f"3D interior-corrected Q diagnostics failed ({_e!r}); "
+                f"reporting NaN.", stacklevel=2)
         Q_sA_interior = Q_sB_interior = Q_interior_primary = float('nan')
         AB_interior = float('nan')
 
