@@ -606,6 +606,13 @@ def _finalize_3d_cfg(raw, fields):
     one — most fields land in ``ComputeResult.fields`` /
     ``ComputeResult.diagnostics``. The headline scalars (``Q_total``,
     ``dP_A`` / ``dP_B``, ``T_out_A`` / ``T_out_B``) lift directly.
+
+    ⚠ Dual-representation contract: the raw dict (this function's ``raw`` arg)
+    is the LIVE result carrier (window._result_3d → ui.plot_3d_results); the
+    ComputeResult below is the C4 Pipeline view. They must not drift — the
+    mapping here is locked by ``tests/test_finalize_3d_result_sync.py`` (G1).
+    Full unification (live UI → ComputeResult) is the deliberate C4 migration,
+    not done here.
     """
     from controllers.compute_pipeline import ComputeResult
     compute_cfg = fields.get('compute_cfg')
