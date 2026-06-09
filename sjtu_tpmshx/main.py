@@ -1624,7 +1624,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         'combo_fluidA', 'combo_fluidB',
         'combo_dirA', 'combo_dirB',
     )
-    _SESSION_CHECKS = ('chk_zones', 'chk_wall_refine_3d')
+    _SESSION_CHECKS = ('chk_zones', 'chk_wall_refine_3d', 'chk_var_rhocp')
 
     _WORKSPACES = ('A', 'B', 'C')
 

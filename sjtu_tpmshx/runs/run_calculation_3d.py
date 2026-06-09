@@ -548,6 +548,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
         fluid_A_cfg=fluid_A_cfg,
         fluid_B_cfg=fluid_B_cfg,
         wall_refine_3d=wall_refine,
+        variable_rho_cp=bool(compute_cfg.flags.variable_rho_cp),
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
