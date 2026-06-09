@@ -50,14 +50,22 @@ def test_headline_q_equals_air_side_enthalpy():
     Q_A = res['Q_enthalpy_A']
     Q_B = res['Q_enthalpy_B']
 
-    # Fixture sanity: this MUST be a two-fluid case with a real A/B gap, else
-    # the test is vacuous (the old average would equal Q_A when Q_B==Q_A).
+    # Fixture sanity: two-fluid case (Q_enthalpy_B > 0). NOTE: the A/B
+    # advective-enthalpy gap shrank from ~8 % to ~0.35 % after the 2026-06-09
+    # reverse-conservation fix (PR #17 incompressible mass-balance tightened the
+    # water-side accounting). The headline-SELECTION assertions below — Q == Q_A
+    # and Q != mean — are the real test, not a gap magnitude, so the gap-size
+    # guard was dropped (it broke once conservation improved).
     assert Q_B > 0.0, "fixture must exercise a two-fluid case (Q_enthalpy_B>0)"
-    assert abs(Q_B - Q_A) > 0.01 * Q_A, (
-        f"fixture should show the A/B accounting gap (Q_A={Q_A:.1f}, "
-        f"Q_B={Q_B:.1f}); without a gap the test cannot distinguish the fix")
 
     # The fix: headline Q is the air-side duty, NOT 0.5*(Q_A+Q_B).
     assert Q == pytest.approx(Q_A, rel=1e-9), (
         f"headline Q={Q:.3f} must equal air-side Q_enthalpy_A={Q_A:.3f}, "
         f"not the 0.5*(Q_A+Q_B)={0.5*(Q_A+Q_B):.3f} average")
+    # Non-vacuous whenever A and B differ at all: the headline must NOT be the
+    # mean. (Distinguishes the air-side pick from the old 0.5·(Q_A+Q_B) even for
+    # a sub-percent gap; skipped only in the degenerate Q_A==Q_B limit.)
+    if abs(Q_B - Q_A) > 1e-6 * Q_A:
+        assert Q != pytest.approx(0.5 * (Q_A + Q_B), rel=1e-9), (
+            f"headline Q={Q:.3f} must be the air-side duty, not the "
+            f"0.5*(Q_A+Q_B)={0.5*(Q_A+Q_B):.3f} average")
