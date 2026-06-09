@@ -1917,15 +1917,21 @@ def _run_3d_stack(cfg):
     # P2: rho_cp as 3D field (not scalar) for per-cell accuracy
     rho_cp_fA = np.full((Nx, Ny, Nz), rho_A * cp_A, dtype=np.float64)
     rho_cp_fB = np.full((Nx, Ny, Nz), rho_B_ltne * cp_B, dtype=np.float64)
-    # Opt-in (default off): build the LTNE convective rho_cp from SIMPLE's LOCAL
-    # density field ρ(P_local,T) instead of ρ(T,P_inlet). For compressible
+    # Default ON (2026-06-09): build the LTNE convective rho_cp from SIMPLE's
+    # LOCAL density field ρ(P_local,T) instead of ρ(T,P_inlet). For compressible
     # fluids the kernel then telescopes cp·(ε·ρ_local·u) = cp·(SIMPLE mass flux),
     # so ∮(ε·ρcp·u) ≈ cp·∮(mass flux) ≈ 0 (SIMPLE continuity) and the strict
-    # conservative kernel becomes mass-conserving for COMPRESSIBLE reverse flow
-    # too (unblocks the air-air reverse ε-NTU/full-face cases). Off by default
-    # because it shifts the validated forward-air/Shanghai energy advection.
-    _var_rhocp = (bool(cfg.get('variable_rho_cp', False))
-                  or os.environ.get('TPMSHX_VAR_RHOCP') == '1')
+    # conservative kernel is mass-conserving for COMPRESSIBLE reverse flow too
+    # (fixes the air-air reverse ε-NTU/full-face cases). Strict certificate
+    # machine-zero on all 6 audit cases; Shanghai bit-identical to the old
+    # inlet-P path. Env `TPMSHX_VAR_RHOCP=0/1` is an explicit override; otherwise
+    # cfg/flags default True. Set cfg['variable_rho_cp']=False (or uncheck the
+    # UI box) to restore the legacy inlet-pressure density.
+    _env_vrc = os.environ.get('TPMSHX_VAR_RHOCP')
+    if _env_vrc in ('0', '1'):
+        _var_rhocp = _env_vrc == '1'
+    else:
+        _var_rhocp = bool(cfg.get('variable_rho_cp', True))
 
     # Helper: solver streamwise velocity → correct real component (uc/vc/wc).
     # Transposes solver (Nx_sol, Ny_sol, Nz_sol) → real (Nx, Ny, Nz) via

@@ -60,21 +60,14 @@ def _compute_epsilon(r):
 # ── Thermodynamic bound (corrected ε-NTU) ──────────────────────────
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "COMPRESSIBLE reverse-dir conservation limitation (2026-06-09). This is an "
-    "AIR-AIR (both compressible) reverse (dir=3) case. The conservative-LTNE "
-    "kernel telescopes ε·ρcp·u with a CONSTANT ρcp, so its strict conservation "
-    "needs ∮(εu)=0. For compressible flow mass conservation is ∮(ερu)=0 with "
-    "ρ=ρ(P,T) varying ⇒ ∮(εu)≠0 PHYSICALLY, so the mean-zero MAC projection "
-    "spreads that nonzero net as spurious energy ⇒ ε exceeds the bound. The "
-    "incompressible BC-mass-balance fix (_balance_stream_outflow, this branch) "
-    "fixed the WATER reverse case (test_3d_reverse_mirror) but is correctly "
-    "skipped for compressible fluids — forcing volume-flux balance there "
-    "corrupts the air field (measured: scale 0.58–0.94, +300% Q). FIXED via "
-    "opt-in `variable_rho_cp=True` (local-density ρcp telescopes true mass flux "
-    "ρ(P,T)·u) — ε passes + Q_A≈Q_B, Shanghai RMSRE bit-identical; this xfail "
-    "tracks the DEFAULT-off path. See test_epsilon_ntu_bound_varrhocp + "
-    "test_full_face_B_recovers_identity (full-face = pure compressibility)."))
+# 2026-06-09 FIXED (was xfail). Air-air (both compressible) reverse (dir=3): the
+# conservative-LTNE kernel needs ∮(ε·ρcp·u)=0, but with ρcp from the INLET
+# pressure ρ(T,P_in) the net is nonzero (SIMPLE conserves mass with ρ(P_local,T))
+# and the mean-zero MAC projection spreads it as spurious energy → ε over bound.
+# variable_rho_cp (now DEFAULT ON) builds ρcp from SIMPLE's local density so the
+# kernel telescopes cp·(SIMPLE mass flux) → conservative → ε under bound. Uncheck
+# the UI box / cfg['variable_rho_cp']=False / env TPMSHX_VAR_RHOCP=0 for the
+# legacy inlet-P path (see test_epsilon_ntu_bound_legacy_off).
 def test_epsilon_ntu_bound():
     """ε_obs ≤ ε_max for partial-BC ghost-B case.
 
@@ -165,17 +158,11 @@ def test_eta_B_degenerate_zero_inlet():
 # ── M4 degradation: full-face B → η_eff = 1 ───────────────────────
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "COMPRESSIBLE reverse-dir conservation limitation (2026-06-09). Air-air, B "
-    "dir=3 reverse, FULL-FACE (in_w=out_w=0.182 = no partial-BC, no outlet "
-    "taper imbalance) — yet ε still exceeds the bound. This isolates the cause "
-    "to pure COMPRESSIBILITY: the constant-ρcp kernel needs ∮(εu)=0 but "
-    "compressible mass conservation gives ∮(εu)≠0, and the mean-zero MAC "
-    "projection spreads that net as spurious energy. The incompressible BC-mass-"
-    "balance fix (this branch) cannot apply (volume-flux balance corrupts air). "
-    "FIXED via opt-in `variable_rho_cp=True` (local-density ρcp) — see "
-    "test_full_face_B_varrhocp; this xfail tracks the DEFAULT-off path. "
-    "See test_epsilon_ntu_bound xfail for the full rationale."))
+# 2026-06-09 FIXED (was xfail). Air-air, B dir=3 reverse, FULL-FACE (no
+# partial-BC, no outlet taper) — pure compressibility: the inlet-P ρcp left a
+# nonzero ∮(ε·ρcp·u) the mean-zero projection smeared as spurious energy.
+# variable_rho_cp (DEFAULT ON) builds ρcp from SIMPLE's local density →
+# conserves → ε under bound. See test_epsilon_ntu_bound for the rationale.
 def test_full_face_B_recovers_identity():
     """Full-face B → r_eff=1 → η_eff=1. Should match no-closure."""
     from runs.run_calculation_3d import _run_3d_stack
@@ -206,14 +193,13 @@ def test_eta_B_field_bounds():
     assert c.min() >= -1e-9 and c.max() <= 1.0 + 1e-9
 
 
-# ── Compressible reverse conservation via variable_rho_cp opt-in (2026-06-09) ──
-# The default (constant-inlet-P ρcp) path can't conserve compressible reverse
-# flow (see test_epsilon_ntu_bound / test_full_face_B_recovers_identity xfails).
-# variable_rho_cp=True builds the LTNE convective ρcp from SIMPLE's LOCAL density
-# ρ(P_local,T), so the strict kernel telescopes cp·(ε·ρ_local·u) = cp·(SIMPLE
-# mass flux) ⇒ ∮ ≈ 0 ⇒ conservative ⇒ Q_A ≈ Q_B and ε returns under the bound.
-# Default OFF (shifts the validated forward-air/Shanghai advection — though
-# measured bit-identical on Shanghai RMSRE); these gate the opt-in path.
+# ── Compressible reverse conservation via variable_rho_cp (DEFAULT ON 2026-06-09) ──
+# variable_rho_cp (now the DEFAULT) builds the LTNE convective ρcp from SIMPLE's
+# LOCAL density ρ(P_local,T), so the strict kernel telescopes cp·(ε·ρ_local·u) =
+# cp·(SIMPLE mass flux) ⇒ ∮ ≈ 0 ⇒ conservative ⇒ Q_A ≈ Q_B and ε under bound
+# (test_epsilon_ntu_bound / test_full_face_B_recovers_identity, un-xfailed). The
+# two tests below add the explicit Q_A≈Q_B energy-balance signature;
+# test_variable_rho_cp_off_override guards the legacy inlet-P toggle.
 
 
 def _energy_balanced(r, rel_max=0.15):
@@ -247,3 +233,17 @@ def test_full_face_B_varrhocp():
     assert eps <= 0.95, f"Full-face ε={eps:.4f} > 0.95 with variable_rho_cp"
     ok, QA, QB, rel = _energy_balanced(r)
     assert ok, f"Q_A={QA:.1f} vs Q_B={QB:.1f} not energy-balanced (rel={rel:.3f})"
+
+
+def test_variable_rho_cp_off_override():
+    """The legacy inlet-P density is reachable via variable_rho_cp=False and is
+    NOT a silent no-op: it gives a materially higher ε than the default ON path
+    (which conserves). Guards both the OFF override and the default flip."""
+    from runs.run_calculation_3d import _run_3d_stack
+    eps_on = _compute_epsilon(_run_3d_stack(_partial_bc_air_air_cfg()))
+    eps_off = _compute_epsilon(
+        _run_3d_stack(_partial_bc_air_air_cfg(variable_rho_cp=False)))
+    assert eps_on <= 0.90, f"default (ON) should conserve: ε_on={eps_on:.4f}"
+    assert eps_off > eps_on + 0.1, (
+        f"OFF override looks like a no-op: ε_off={eps_off:.4f} vs "
+        f"ε_on={eps_on:.4f} (expect the legacy inlet-P path far higher)")

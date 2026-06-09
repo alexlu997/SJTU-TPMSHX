@@ -580,15 +580,16 @@ def build_page_domain(window):
     # 3D variable-rho_cp checkbox — LTNE energy kernel builds gas density from
     # SIMPLE's LOCAL cell pressure ρ(P_local,T) instead of inlet ρ(T,P_in).
     # Conserves COMPRESSIBLE reverse-dir flow (Q_A≈Q_B); strict certificate
-    # machine-zero; Shanghai bit-identical. OFF by default (validated model).
+    # machine-zero; Shanghai bit-identical. ON by default (2026-06-09) — uncheck
+    # for the legacy inlet-pressure density.
     window.chk_var_rhocp = QCheckBox("Local-P gas density (3D)")
-    window.chk_var_rhocp.setChecked(False)
+    window.chk_var_rhocp.setChecked(True)
     window.chk_var_rhocp.setToolTip(
         "3D LTNE energy kernel: gas density ρ=P/RT from the LOCAL cell pressure "
-        "(SIMPLE) instead of the inlet pressure. Fixes energy conservation for "
+        "(SIMPLE) instead of the inlet pressure. Conserves energy for "
         "compressible reverse-dir flow (Q_A≈Q_B). Strict conservation stays "
         "machine-zero; Shanghai bit-identical; low-ΔP cases unchanged. "
-        "OFF = validated default (inlet-pressure density).")
+        "ON = default; uncheck for the legacy inlet-pressure density.")
     window.chk_var_rhocp.setStyleSheet(window.chk_wall_refine_3d.styleSheet())
     g4.addWidget(window.chk_var_rhocp, 4, 0, 1, 2)
 

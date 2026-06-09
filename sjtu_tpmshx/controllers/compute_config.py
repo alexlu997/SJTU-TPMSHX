@@ -295,9 +295,11 @@ def _read_feature_flags(window) -> 'FeatureFlags':
     chk_wall = getattr(window, 'chk_wall_refine_3d', None)
     wall = bool(chk_wall is not None and
                 getattr(chk_wall, 'isChecked', lambda: False)())
+    # variable_rho_cp defaults ON (2026-06-09); an absent toggle (old/partial
+    # window) keeps the default, a present one mirrors its checked state.
     chk_vrc = getattr(window, 'chk_var_rhocp', None)
-    var_rhocp = bool(chk_vrc is not None and
-                     getattr(chk_vrc, 'isChecked', lambda: False)())
+    var_rhocp = (bool(getattr(chk_vrc, 'isChecked', lambda: True)())
+                 if chk_vrc is not None else True)
     unit = getattr(window, '_temp_unit', 'K')
     if unit not in ('K', 'C'):
         unit = 'K'
@@ -478,7 +480,7 @@ class FeatureFlags:
     Audit C4 (L-a-2).
     """
     wall_refine_3d: bool = False
-    variable_rho_cp: bool = False
+    variable_rho_cp: bool = True   # default ON (local-P gas density; 2026-06-09)
     temp_unit: Literal['K', 'C'] = 'K'
 
 
