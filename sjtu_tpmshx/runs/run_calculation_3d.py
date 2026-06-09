@@ -2288,7 +2288,7 @@ def _run_3d_stack(cfg):
         # a uniform field.
         T_avgA = float(Ta.mean())
         K_ffA[:] = eps_f_arr * air_conductivity(Ta)
-        if _var_rhocp:
+        if _var_rhocp and sA is not None:
             # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
             _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
             if axis_map['is_reverse']:
@@ -2305,7 +2305,7 @@ def _run_3d_stack(cfg):
                 rho_cp_fB[:] = water_density(Tb) * water_cp(Tb)
             else:
                 K_ffB[:] = eps_f_arr * air_conductivity(Tb)
-                if _var_rhocp:
+                if _var_rhocp and sB is not None:
                     _rhoB_real = sB.rho_field.transpose(perm_B)
                     if axis_map_B['is_reverse']:
                         _rhoB_real = np.flip(
