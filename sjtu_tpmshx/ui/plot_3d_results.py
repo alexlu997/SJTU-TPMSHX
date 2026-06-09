@@ -1,0 +1,403 @@
+"""plot_3d_results.py — visualisation layer for the 3D compute results.
+
+Extracted from ``runs/run_calculation_3d.py`` (2026-06-09 refactor Group-4
+slice A2/A1): this is the Qt + matplotlib + ui.theme side of the 3D path —
+pushing a finished ``window._result_3d`` dict into the embedded PyVistaQt panel
+and the mid-z 2D slice canvases. Keeping it here makes ``run_calculation_3d``
+genuinely compute-only (no ui.theme / matplotlib import), which is what the C4
+``ComputePipeline`` "Qt-free" contract wants.
+
+Behaviour is byte-for-byte the original — functions moved verbatim, only the
+``from ui.theme import get_theme`` import was hoisted to module top.
+
+Entry:
+    finalize_plots_3d(window) -> bool   — push fields into ThreeDVisPanel +
+                                          (optionally) the mid-z 2D slices.
+"""
+from __future__ import annotations
+import numpy as np
+
+# Theme — resolved at call time via get_theme()
+from ui.theme import get_theme as _get_theme
+
+
+def _fmt_metric(value, fmt, dash='-'):
+    try:
+        if value is None or not np.isfinite(float(value)):
+            return dash
+        return fmt.format(float(value))
+    except Exception:
+        return dash
+
+
+def _store_3d_result_labels(window, result):
+    """Mirror 3D scalar metrics into the legacy left-panel labels.
+
+    The canvas-top summary strip reads these same labels, so keeping this
+    centralised prevents the 3D path from showing partial KPI state.
+    """
+    values = {
+        '_r_Q': _fmt_metric(result.get('Q'), '{:.2f}'),
+        '_r_dP_A': _fmt_metric(result.get('dP'), '{:.0f}'),
+        '_r_dP_B': _fmt_metric(result.get('dP_B'), '{:.0f}'),
+        '_r_ToutA': _fmt_metric(result.get('T_A_out'), '{:.1f}'),
+        '_r_ToutB': _fmt_metric(result.get('T_B_out'), '{:.1f}'),
+    }
+    for attr, text in values.items():
+        label = getattr(window, attr, None)
+        if label is not None:
+            try:
+                label.setText(text)
+            except Exception:
+                pass
+
+
+def finalize_plots_3d(window) -> bool:
+    """Push 3D fields into the embedded panel + mid-z slices to 2D canvases.
+
+    Returns
+    -------
+    bool
+        True iff the embedded PyVistaQt panel was successfully populated.
+        False means the 3D solve completed but visualisation failed
+        (panel init exception, ``set_fields`` exception, or offscreen
+        mode without a panel). The caller should NOT auto-switch to the
+        3D tab in that case.
+
+        Added 2026-05-20 UI sweep: prior to this, the function swallowed
+        all visualisation exceptions (only ``print`` + ``traceback``),
+        and ``main.py`` unconditionally marked ``_has_results_3d=True``
+        and switched to the 3D tab, leading to the "status bar says
+        done but canvas is blank" failure mode.
+    """
+    res = getattr(window, '_result_3d', None)
+    if res is None:
+        print("[3D vis] window._result_3d is None — solver produced no "
+              "stashed result dict; nothing to visualise.")
+        return False
+    _store_3d_result_labels(window, res)
+    # Skeleton placeholder retires once real 3D data lands.
+    sk = getattr(window, '_3d_skeleton', None)
+    if sk is not None:
+        try: sk.stop()
+        except Exception: pass
+
+    _3d_vis_ok = True
+
+    # ── 1. PyVistaQt 3D panel ──
+    panel = getattr(window, 'canvas_3d', None)
+    if panel is None and hasattr(window, '_lazy_init_3d_panel'):
+        try:
+            window._lazy_init_3d_panel()
+            panel = getattr(window, 'canvas_3d', None)
+        except Exception as _e_lazy:
+            panel = None
+            print(f"[3D vis] _lazy_init_3d_panel failed: {_e_lazy}")
+    if panel is None:
+        # Either lazy init failed, or offscreen mode left the placeholder
+        # in place. Either way, the 3D visualisation cannot be displayed
+        # and the caller must not switch the user to a blank tab.
+        print("[3D vis] no PyVistaQt panel (canvas_3d is None after lazy "
+              "init) — embedded 3D view cannot be populated. Check the "
+              "[3D vis] _lazy_init_3d_panel line above for the import error.")
+        _3d_vis_ok = False
+    if panel is not None:
+        try:
+            P_B_kPa = None
+            if res.get('P_Pa_B') is not None:
+                P_B_kPa = np.ascontiguousarray(res['P_Pa_B'] / 1000.0)
+            # Map fluid-A dir index (0=+x,1=-x,2=+y,3=-y,4=+z,5=-z) to
+            # '±axis' string so the panel can orient inlet/outlet glyphs.
+            _dirs = ['+x', '-x', '+y', '-y', '+z', '-z']
+            _dir_idx = res.get('dir_A', 0)
+            _dir_str = _dirs[int(_dir_idx) % 6]
+            _dir_b = res.get('dir_B')
+            _dir_str_B = None if _dir_b is None else _dirs[int(_dir_b) % 6]
+            # When sB was None, Tb is a uniform prescribed array (T_inB
+            # everywhere) and would render as a flat single-color cube,
+            # misleading the user into thinking they have a B field.
+            # Filter it out at the panel boundary so the combo skips Tb.
+            _has_B = _dir_b is not None
+            _Tb_for_panel = res.get('Tb') if _has_B else None
+            _vmag_B_for_panel = res.get('vmag_B') if _has_B else None
+            _P_B_for_panel = P_B_kPa if _has_B else None
+            panel.set_fields(
+                Ta=res['Ta'],
+                Tb=_Tb_for_panel,
+                Ts=res.get('Ts'),
+                vmag=res['vmag'],
+                vmag_B=_vmag_B_for_panel,
+                P_kPa=res['P_kPa'],
+                P_B_kPa=_P_B_for_panel,
+                L_mm=res['L_mm'],
+                dx=res['dx'], dy=res['dy'], dz=res['dz'],
+                real_dims=(res['Lx'], res['Ly'], res['Lz']),
+                flow_dir=_dir_str,
+                flow_dir_B=_dir_str_B if _has_B else None,
+            )
+            # Surrogate-extrapolation watermark — lower-left viewport.
+            if res.get('extrapolated'):
+                # Dedupe + condense: fluid A/B repeat the same "Wall thickness"
+                # line (drop exact dups), strip the verbose "(u=…,T=…,P=…)" tail
+                # and the redundant "ConstDF-v1 " (already in the header) so the
+                # watermark is 2–3 short lines, not a wall of text.
+                _reasons = list(dict.fromkeys(res.get('extrap_reasons', [])))
+                _short = [r.split(' (')[0].rstrip('.').replace('ConstDF-v1 ', '')
+                          for r in _reasons]
+                _txt = "⚠ ConstDF-v1 extrapolated\n" + "\n".join(_short)
+                try:
+                    panel.set_watermark(_txt)
+                except Exception:
+                    pass
+            else:
+                try:
+                    panel.set_watermark(None)
+                except Exception:
+                    pass
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            print(f"[3D vis] set_fields failed: {e}")
+            _3d_vis_ok = False
+
+    # ── 2. 2D canvases: auto mid-z slice (keeps Temperature/Pressure/Velocity
+    #       tabs relevant under 3D mode) ──
+    import os as _os_3d_fin
+    window._rendered_3d_slices = False
+    if _os_3d_fin.environ.get('TPMSHX_EAGER_3D_SLICES', '0') == '1':
+        _render_2d_slices_from_3d(window, res)
+        window._rendered_3d_slices = True
+
+    return _3d_vis_ok
+
+
+def _render_2d_slices_from_3d(window, res):
+    """Mid-z slice of 3D fields → Temperature/Pressure/Velocity canvases.
+
+    Custom renderers (not `plot_temperature`/`plot_pressure`) because refined
+    3D grid is non-uniform; legacy 2D plotters assume `np.linspace` spacing.
+    """
+    Ta = res['Ta']; Tb = res['Tb']; Ts = res['Ts']
+    P_Pa = res['P_Pa']; uc = res['uc_real']; vc = res['vc_real']
+    wc = res.get('wc_real')
+    dx = res['dx']; dy = res['dy']
+    Nx, Ny, Nz = Ta.shape
+    k_mid = Nz // 2
+    z_info = f'mid-z (k={k_mid}/{Nz})'
+
+    # Legacy attrs for hover/export (single-step (1, Nx, Ny))
+    window.T_fA = Ta[None, :, :, k_mid]
+    window.T_fB = Tb[None, :, :, k_mid]
+    window.T_s  = Ts[None, :, :, k_mid]
+    window.P_fA = P_Pa[:, :, k_mid]
+    window.P_fB = np.zeros_like(window.P_fA)
+
+    # Shared cumsum coord grid (mm) — handles non-uniform dx/dy
+    xc = (np.cumsum(dx) - dx / 2) * 1000.0
+    yc = (np.cumsum(dy) - dy / 2) * 1000.0
+
+    # Fluid B optional (cross-flow). Detect by presence of P_Pa_B
+    P_Pa_B = res.get('P_Pa_B')
+    vmag_B = res.get('vmag_B')
+    uc_B = res.get('uc_real_B')
+    vc_B = res.get('vc_real_B')
+    wc_B = res.get('wc_real_B')
+    dP_B = res.get('dP_B', 0.0)
+    has_B = P_Pa_B is not None
+    if wc is None:
+        wc = np.zeros_like(uc)
+    if has_B and wc_B is None:
+        wc_B = np.zeros_like(uc_B)
+
+    plot_jobs = [
+        ('canvas_temp', _plot_3d_temperature,
+            (Ta[:, :, k_mid], Tb[:, :, k_mid], Ts[:, :, k_mid], xc, yc, z_info)),
+        ('canvas_pres', _plot_3d_pressure,
+            (P_Pa[:, :, k_mid],
+             P_Pa_B[:, :, k_mid] if has_B else None,
+             xc, yc, res['dP'], dP_B, z_info)),
+        ('canvas_vel', _plot_3d_velocity_slice,
+            (uc[:, :, k_mid], vc[:, :, k_mid], wc[:, :, k_mid],
+             uc_B[:, :, k_mid] if has_B else None,
+             vc_B[:, :, k_mid] if has_B else None,
+             wc_B[:, :, k_mid] if has_B else None,
+             xc, yc, z_info)),
+    ]
+    for attr, fn, args in plot_jobs:
+        canvas = getattr(window, attr, None)
+        if canvas is None:
+            continue
+        try:
+            fn(canvas, *args)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            print(f"[3D->2D {attr}] {e}")
+
+    # Surrogate-extrapolation watermark on the 2D mid-z slice canvases so the
+    # Temperature / Pressure / Velocity tabs under 3D mode carry the same
+    # `⚠ ConstDF-v1 extrapolated` notice the 3D viewport + 2D-native path
+    # already show. Without this, a 3D run with t=0.6 mm would hide the
+    # extrapolation flag on every canvas except the PyVistaQt viewport.
+    if res.get('extrapolated'):
+        _reasons = list(res.get('extrap_reasons', []) or [])
+        from ui.theme import get_theme as _gt
+        _tw = _gt().get('warn', '#B45309')
+        _wm_text = "⚠ ConstDF-v1 extrapolated: " + " | ".join(_reasons)
+        for attr in ('canvas_temp', 'canvas_pres', 'canvas_vel'):
+            _cv = getattr(window, attr, None)
+            if _cv is None:
+                continue
+            try:
+                _cv.fig.text(0.5, 0.005, _wm_text,
+                             color=_tw, fontsize=8, ha='center', va='bottom',
+                             fontweight='bold', alpha=0.85)
+                _cv.draw_idle()
+            except Exception:
+                pass
+
+
+def _begin_canvas_plot(canvas, nrows=1, ncols=1):
+    """Clear canvas + create axes + style spines. Returns (axes_iterable, (X, Y))
+    placeholder None — caller provides xc/yc via a follow-up meshgrid."""
+    _T = _get_theme()
+    canvas.fig.clear()
+    canvas.fig.patch.set_facecolor(_T['fig_bg'])
+    axes = canvas.fig.subplots(nrows, ncols)
+    canvas.axes = [axes if hasattr(axes, '__iter__') else [axes]]
+    return axes
+
+
+def _style_axis(ax, xlabel='x [mm]', ylabel='y [mm]', title='',
+                title_size=12, label_size=10, tick_size=9):
+    _T = _get_theme()
+    ax.set_facecolor(_T['ax_bg'])
+    if title:
+        ax.set_title(title, fontsize=title_size, fontweight='bold',
+                     color=_T['ax_text'])
+    ax.set_xlabel(xlabel, fontsize=label_size, color=_T['ax_text'])
+    ax.set_ylabel(ylabel, fontsize=label_size, color=_T['ax_text'])
+    ax.tick_params(labelsize=tick_size, colors=_T['ax_text'])
+    for sp in ax.spines.values():
+        sp.set_edgecolor(_T['ax_spine'])
+
+
+def _plot_3d_temperature(canvas, Ta_slice, Tb_slice, Ts_slice, xc, yc, z_info):
+    """3-panel temperature (Ta / Tb / Ts) on mid-z slice.
+
+    All three panels share a single (vmin, vmax) so the slice colorscale
+    matches the 3D viewport's `_share(('Ta','Tb','Ts'))` clim. Without the
+    shared range, Ts (which can sit between bulk T_inA/T_inB and act
+    nearly uniform) would autoscale to its own narrow range and look
+    blown-up next to the fluid panels.
+    """
+    _T = _get_theme()
+    axes = _begin_canvas_plot(canvas, 1, 3)
+    Y, X = np.meshgrid(yc, xc)
+    vmin_unified = float(min(Ta_slice.min(), Tb_slice.min(), Ts_slice.min()))
+    vmax_unified = float(max(Ta_slice.max(), Tb_slice.max(), Ts_slice.max()))
+    if vmax_unified - vmin_unified < 1e-12:
+        vmax_unified = vmin_unified + 1.0
+    datasets = [
+        (Ta_slice, r'$T_{f,A}$ [K] — Fluid A'),
+        (Tb_slice, r'$T_{f,B}$ [K] — Fluid B (frozen)'),
+        (Ts_slice, r'$T_s$ [K] — Solid'),
+    ]
+    for ax, (field, title) in zip(axes, datasets):
+        cf = ax.contourf(X, Y, field, levels=256, cmap='turbo',
+                          vmin=vmin_unified, vmax=vmax_unified)
+        cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.85, aspect=18, format='%.1f')
+        cb.ax.tick_params(labelsize=8, colors=_T['ax_text'])
+        _style_axis(ax, title=title, title_size=11, label_size=9, tick_size=8)
+        # Equal aspect preserves geometric proportion (e.g. Shanghai 182×42 mm
+        # is not square; default 'auto' stretches it to fill the axis box and
+        # makes the contour shapes disagree with the 3D volume rendering).
+        try:
+            ax.set_aspect('equal')
+        except Exception:
+            pass
+    canvas.fig.suptitle(f'Temperature — 3D {z_info}', fontsize=12,
+                         fontweight='bold', color=_T['ax_text'], y=0.995)
+    canvas.fig.subplots_adjust(left=0.05, right=0.97, top=0.88, bottom=0.10,
+                                wspace=0.32)
+    canvas.draw()
+
+
+def _plot_3d_pressure(canvas, P_slice_A, P_slice_B, xc, yc, dP_A, dP_B, z_info):
+    """Pressure panels. If P_slice_B is None → single panel (A only, B frozen).
+
+    A/B panels share one (vmin, vmax) so the same color reads as the same
+    pressure across panels. Independent autoscale (matplotlib default) makes
+    a 1 kPa B field look as red as a 100 kPa A field, which is misleading
+    when both panels share the 'turbo' cmap.
+    """
+    _T = _get_theme()
+    if P_slice_B is None:
+        axes = [_begin_canvas_plot(canvas)]
+        P_data = [(P_slice_A, 'A', dP_A)]
+    else:
+        axes = _begin_canvas_plot(canvas, 1, 2)
+        P_data = [(P_slice_A, 'A', dP_A), (P_slice_B, 'B', dP_B)]
+    Y, X = np.meshgrid(yc, xc)
+    # Shared clim across all panels (kPa).
+    p_min_kpa = float(P_slice_A.min()) / 1000.0
+    p_max_kpa = float(P_slice_A.max()) / 1000.0
+    if P_slice_B is not None:
+        p_min_kpa = min(p_min_kpa, float(P_slice_B.min()) / 1000.0)
+        p_max_kpa = max(p_max_kpa, float(P_slice_B.max()) / 1000.0)
+    if p_max_kpa - p_min_kpa < 1e-12:
+        p_max_kpa = p_min_kpa + 1.0
+    for ax, (p, tag, dp) in zip(axes, P_data):
+        # levels=256 matches turbo's 256 distinct colours exactly — finer
+        # banding than the prior 128 (which under-sampled the cmap by half),
+        # still well below the wasteful 512 (2026-05-20 perf note).
+        cf = ax.contourf(X, Y, p / 1000.0, levels=256, cmap='turbo',
+                          vmin=p_min_kpa, vmax=p_max_kpa)
+        cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.1f')
+        cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
+        _style_axis(ax, title=(f'$P_{tag}$ (kPa) — Fluid {tag} — 3D {z_info}   '
+                                rf'$|\Delta P|$ = {dp:.0f} Pa'))
+        try:
+            ax.set_aspect('equal')
+        except Exception:
+            pass
+    canvas.fig.subplots_adjust(left=0.06, right=0.96, top=0.90, bottom=0.10,
+                                wspace=0.25)
+    canvas.draw()
+
+
+def _plot_3d_velocity_slice(canvas, uA, vA, wA, uB, vB, wB, xc, yc, z_info):
+    """Velocity magnitude panels. If uB is None → single panel (A only).
+
+    A/B panels share one vmax (vmin pinned at 0) so cross-flow B running
+    at 0.5 m/s does not look as bright as A running at 5 m/s under the
+    same 'turbo' cmap. Mirrors the panel's `_share(('vmag','vmag_B'))`
+    clim convention.
+    """
+    _T = _get_theme()
+    if uB is None:
+        axes = [_begin_canvas_plot(canvas)]
+        V_data = [(uA, vA, wA, 'A')]
+    else:
+        axes = _begin_canvas_plot(canvas, 1, 2)
+        V_data = [(uA, vA, wA, 'A'), (uB, vB, wB, 'B')]
+    Y, X = np.meshgrid(yc, xc)
+    # Pre-compute |v| so we can pick a shared vmax across panels.
+    vmags = []
+    for u, v, w, _tag in V_data:
+        ww = w if w is not None else np.zeros_like(u)
+        vmags.append(np.sqrt(u ** 2 + v ** 2 + ww ** 2))
+    vmax_v = max(float(vm.max()) for vm in vmags)
+    if vmax_v <= 0.0:
+        vmax_v = 1.0
+    for ax, vmag, (u, v, w, tag) in zip(axes, vmags, V_data):
+        cf = ax.contourf(X, Y, vmag, levels=256, cmap='turbo',
+                          vmin=0.0, vmax=vmax_v)
+        cb = canvas.fig.colorbar(cf, ax=ax, shrink=0.9, aspect=25, format='%.2f')
+        cb.ax.tick_params(labelsize=9, colors=_T['ax_text'])
+        _style_axis(ax, title=f'|v| (m/s) — Fluid {tag} — 3D {z_info}')
+        try:
+            ax.set_aspect('equal')
+        except Exception:
+            pass
+    canvas.fig.subplots_adjust(left=0.06, right=0.96, top=0.92, bottom=0.08,
+                                wspace=0.25)
+    canvas.draw()

@@ -425,7 +425,7 @@ class RunControllerMixin:
 
         mode = self.compute.current_mode()
         if mode == '3d':
-            from runs.run_calculation_3d import finalize_plots_3d
+            from ui.plot_3d_results import finalize_plots_3d
             # 2026-06-02 fix: do NOT pre-clear ``_has_results_3d`` here. In the
             # live window that flag is a ResultCache bridge whose setter
             # (main.Main_Menu._has_results_3d) DELETES ``_result_3d`` — which

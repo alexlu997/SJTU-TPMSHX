@@ -92,7 +92,7 @@ def test_3d_finalize_crash_resets_has_results_3d():
 
     # Patch QApplication.processEvents (called inside the slot) so the
     # absent QApplication doesn't blow up.
-    with patch('runs.run_calculation_3d.finalize_plots_3d', _boom), \
+    with patch('ui.plot_3d_results.finalize_plots_3d', _boom), \
          patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()
         try:
@@ -117,7 +117,7 @@ def test_3d_finalize_success_sets_has_results_3d_true():
     win = _DummyWindow()
     win._has_results_3d = False  # clean prior state
 
-    with patch('runs.run_calculation_3d.finalize_plots_3d',
+    with patch('ui.plot_3d_results.finalize_plots_3d',
                 return_value=True), \
          patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()
@@ -138,7 +138,7 @@ def test_3d_finalize_returns_false_keeps_has_results_3d_false():
     win = _DummyWindow()
     win._has_results_3d = True  # stale True
 
-    with patch('runs.run_calculation_3d.finalize_plots_3d',
+    with patch('ui.plot_3d_results.finalize_plots_3d',
                 return_value=False), \
          patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()
