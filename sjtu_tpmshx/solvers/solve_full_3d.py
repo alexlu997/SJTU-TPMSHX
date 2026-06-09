@@ -111,14 +111,23 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
     vals = np.concatenate(vals)
     L = csr_matrix((vals, (rows, cols)), shape=(n, n))
 
-    # Homogeneous-Neumann Laplacian is singular (constant null space). Pin one
-    # reference cell to remove it; the residual global imbalance (Σ D ≈ 0) is
-    # absorbed there with negligible magnitude.
-    L = L.tolil()
-    L.rows[0] = [0]; L.data[0] = [1.0]
-    L = L.tocsr()
-    rhs = D.copy(); rhs[0] = 0.0
-    phi = spsolve(L, rhs).reshape(Nx, Ny, Nz)
+    # Homogeneous-Neumann Laplacian is singular (constant null space). Remove the
+    # null space with a mean-zero constraint (Σφ=0) via a Lagrange multiplier
+    # (bordered system), NOT by pinning a single corner cell.
+    #
+    # 2026-06-09 z-symmetry fix: the old approach replaced the Laplacian row of
+    # cell 0 = corner (0,0,0) with φ[0]=0. That corner is off every reflection
+    # mid-plane, so replacing its row breaks the x/y/z reflection symmetry of L;
+    # the resulting φ is asymmetric and the face correction wf += dφ/Cz becomes a
+    # non-odd spurious z-velocity, breaking T-field symmetry (~30% z-asymmetry on
+    # a fully symmetric cross-flow case). The bordered operator below pins the
+    # MEAN of φ instead — a reflection-symmetric constraint — so a symmetric D
+    # yields a symmetric φ and a correctly odd velocity correction.
+    from scipy.sparse import bmat
+    e = np.ones((n, 1))
+    L_aug = bmat([[L, e], [e.T, None]], format='csr')
+    rhs_aug = np.concatenate([D, [0.0]])
+    phi = spsolve(L_aug, rhs_aug)[:n].reshape(Nx, Ny, Nz)
 
     # Correct interior faces only. With L φ = D (L = graph Laplacian), the
     # per-cell post-correction divergence is D − Lφ = 0 iff the face flux is
