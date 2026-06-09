@@ -1250,12 +1250,29 @@ class SIMPLESolver3D:
                  use_coarse_bootstrap=None,
                  fluid_type='ideal_gas',
                  R_gas=287.05,
-                 alpha_rho=0.3):
+                 alpha_rho=0.3,
+                 dx_arr=None, dy_arr=None, dz_arr=None):
         self.Lx, self.Ly, self.Lz = Lx, Ly, Lz
         self.Nx, self.Ny, self.Nz = Nx, Ny, Nz
-        self.dx = np.full(Nx, Lx / Nx, dtype=np.float64)
-        self.dy = np.full(Ny, Ly / Ny, dtype=np.float64)
-        self.dz = np.full(Nz, Lz / Nz, dtype=np.float64)
+        # E1 (2026-06-09): accept non-uniform cell spacings (wall_refine). The
+        # momentum + pressure-correction kernels are ALREADY non-uniform-aware
+        # — momentum d-coeffs use face distances 0.5·(dx[i-1]+dx[i]); the PPE
+        # builds aE from those d-coeffs × the cell's own face area dx[i]·dz[k].
+        # So enabling non-uniform spacing needs only this: stop hard-coding the
+        # uniform Lx/Nx arrays. Default None → uniform (byte-identical to the
+        # prior behaviour, so the standard wall_refine=False path is unchanged).
+        self.dx = (np.full(Nx, Lx / Nx, dtype=np.float64) if dx_arr is None
+                   else np.ascontiguousarray(dx_arr, dtype=np.float64))
+        self.dy = (np.full(Ny, Ly / Ny, dtype=np.float64) if dy_arr is None
+                   else np.ascontiguousarray(dy_arr, dtype=np.float64))
+        self.dz = (np.full(Nz, Lz / Nz, dtype=np.float64) if dz_arr is None
+                   else np.ascontiguousarray(dz_arr, dtype=np.float64))
+        if (self.dx.shape != (Nx,) or self.dy.shape != (Ny,)
+                or self.dz.shape != (Nz,)):
+            raise ValueError(
+                f"SIMPLESolver3D non-uniform spacing shape mismatch: "
+                f"dx{self.dx.shape}/dy{self.dy.shape}/dz{self.dz.shape} "
+                f"vs grid ({Nx},{Ny},{Nz})")
 
         self.rho = float(rho)
         self.mu = float(mu)

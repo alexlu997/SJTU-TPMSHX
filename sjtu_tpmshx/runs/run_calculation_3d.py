@@ -1274,23 +1274,15 @@ def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
     when ``wall_refine`` (expands user N by ~+2·n_refine per axis; first cell
     0.02 mm, growth 1.8). Returns ``(dx, dy, dz, Nx, Ny, Nz)``.
 
-    ⚠ Known limitation: SIMPLESolver3D.__init__ rebuilds its internal dx/dy/dz
-    as Lx/Nx_refined UNIFORM arrays — the SIMPLE momentum/pressure solve runs on
-    a uniform grid even when wall_refine=True; only the LTNE energy stage sees
-    the refined spacing. wall_refine therefore improves BL accuracy on the
-    THERMAL side only (the dP mismatch is ~1pp for Shanghai-class runs). Full
-    wiring (non-uniform SIMPLE) is the deferred E1 task.
+    2026-06-09 E1: the refined non-uniform spacing now reaches BOTH stages —
+    the LTNE energy solve AND the SIMPLE momentum/pressure solve (the latter via
+    SIMPLESolver3D's dx_arr/dy_arr/dz_arr; its kernels were already non-uniform-
+    aware). Previously SIMPLE silently ran on a uniform grid under wall_refine.
+    Velocity/pressure now resolve the boundary layer too (verified: Shanghai
+    wall_refine converges, dP within ~0.6% of the uniform-grid value, mass
+    residual ~1e-5).
     """
     if wall_refine:
-        import warnings as _w
-        _w.warn(
-            "wall_refine_3d=True: refined dx/dy/dz reach the LTNE solver "
-            "but SIMPLE3D currently runs on the uniform user grid (solver "
-            "ignores non-uniform spacing). Velocity/pressure fields are "
-            "computed at uniform Nx_refined×Ny_refined×Nz_refined cell "
-            "spacing. See run_calculation_3d.py:_build_grid_3d comment.",
-            stacklevel=2,
-        )
         from solvers.df_projection import build_master_refined_grid_3d
         try:
             dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
@@ -1310,6 +1302,17 @@ def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
         dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
         Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
     return dx, dy, dz, Nx, Ny, Nz
+
+
+def _solver_spacings(dx, dy, dz, perm):
+    """Map real-coords cell-spacing arrays onto a SIMPLE solver's axis order.
+
+    The solver↔real mapping is ``real = solver.transpose(perm)`` (perm =
+    solver_to_real_perm), so solver axis ``s`` spans real axis ``perm.index(s)``.
+    Returns ``(sdx, sdy, sdz)`` in solver-axis order. Used to feed the refined
+    non-uniform grid into SIMPLESolver3D under wall_refine (E1, 2026-06-09)."""
+    real = (dx, dy, dz)
+    return (real[perm.index(0)], real[perm.index(1)], real[perm.index(2)])
 
 
 def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
@@ -1524,11 +1527,18 @@ def _run_3d_stack(cfg):
     v_inlet_field = np.where(in_mask_2d > 0.5, u_A, 0.0).astype(np.float64)
 
     # ── SIMPLE A (3D, compressible) — BUILD ONLY ──
+    # E1: under wall_refine, feed the refined non-uniform spacing (permuted to
+    # solver axes) so SIMPLE solves on the same grid the LTNE stage uses. For
+    # the uniform default these stay None → solver builds uniform (unchanged).
+    _sdxA = _sdyA = _sdzA = None
+    if wall_refine:
+        _sdxA, _sdyA, _sdzA = _solver_spacings(dx, dy, dz, solver_to_real_perm)
     sA = SIMPLESolver3D(
         **solver_init,
         rho=rho_A, mu=mu_A, T_in=T_inA, v_inlet=v_inlet_field,
         eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
         P_ref_abs=P_ref_A, fluid_type='ideal_gas',
+        dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
     )
     # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
     _apply_accel_flags(sA, cfg)
@@ -1608,11 +1618,15 @@ def _run_3d_stack(cfg):
         v_inlet_B = np.where(in_mask_B > 0.5, u_B, 0.0).astype(np.float64)
         # Zoned ε for sB: same eps_field but transposed via B's perm (built
         # below after sB construction).
+        _sdxB = _sdyB = _sdzB = None
+        if wall_refine:
+            _sdxB, _sdyB, _sdzB = _solver_spacings(dx, dy, dz, perm_B)
         sB = SIMPLESolver3D(
             **axis_map_B['solver_init'],
             rho=rho_B, mu=mu_B, T_in=T_inB, v_inlet=v_inlet_B,
             eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
             P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
+            dx_arr=_sdxB, dy_arr=_sdyB, dz_arr=_sdzB,
         )
         # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
         _apply_accel_flags(sB, cfg)
