@@ -34,7 +34,7 @@ from ui.ui_constants import (
     VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
 )
 from ui.theme import (
-    _THEMES, _build_styles, get_theme, get_theme_name, set_theme,
+    _THEMES, get_theme, get_theme_name, set_theme,
     apply_mpl_theme, get_density, set_density,
 )
 
@@ -73,74 +73,34 @@ def _git_commit_hash():
     except Exception:
         return ''
 
-_S = _build_styles()
-_BG = _S['BG']; _LBL = _S['LBL']; _VAL = _S['VAL']; _VAL_WARN = _S['VAL_WARN']
-_INP = _S['INP']; _COMBO = _S['COMBO']
-_T_NEUTRAL = _S['T_NEUTRAL']; _T_A = _S['T_A']; _T_B = _S['T_B']
-_F_NEUTRAL = _S['F_NEUTRAL']; _F_A = _S['F_A']; _F_B = _S['F_B']
-_BTN_BASE = "border-radius:5px; color:white; font-weight:bold; font-size:9pt;"
-_BTN_A = _S['BTN_A']; _BTN_B = _S['BTN_B']
-_BTN_TPMS = _S['BTN_TPMS']; _BTN_RUN = _S['BTN_RUN']
-_BTN_PRIMARY = _S['BTN_PRIMARY']; _BTN_SECONDARY = _S['BTN_SECONDARY']
-_BTN_TERTIARY = _S['BTN_TERTIARY']; _BTN_LONG = _S['BTN_LONG']
-_TOOLBTN_SPLIT = _S.get('TOOLBTN_SPLIT', '')
-
-
 def _rebuild_styles(theme_name=None):
-    """Rebuild module-level style vars after theme switch.
+    """Refresh styles after a theme switch.
 
-    Phase 3 refactor (2026-05-06 plan #4): the module-globals refresh is
-    now performed by :class:`controllers.theme_manager.ThemeManager` via
-    ``bind_to_module``. We still call ``ui.theme.set_theme`` here for
-    backward compat (the persistent ``.theme`` marker), then delegate
-    the rebuild to the active manager if a window has constructed one;
-    otherwise fall back to the legacy inline rebuild so import-time
-    ordering in ``__main__`` keeps working.
+    Batch-3 (2026-06-10): the module-level style globals (``_BG``,
+    ``_LBL``, ``_COMBO``, …) are retired — every consumer reads styles
+    through :class:`controllers.theme_manager.ThemeManager` (via
+    ``ui.field_factory.default_factory().theme``). This hook persists
+    the theme choice, refreshes the live window's manager when one
+    exists, and re-applies the matplotlib theme.
     """
-    global _S
     if theme_name is not None:
         try:
             from ui.theme import set_theme as _st
             _st(theme_name)
         except Exception:
             pass
-    # Prefer the live window's ThemeManager if one exists.
+    # Refresh the live window's ThemeManager if one exists.
     try:
-        import sys as _sys_rs
-        win = None
-        try:
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app is not None:
-                for w in app.topLevelWidgets():
-                    if w.__class__.__name__ == 'Main_Menu':
-                        win = w
-                        break
-        except Exception:
-            pass
-        if win is not None and getattr(win, 'theme', None) is not None:
-            win.theme.rebuild()
-            _S = _sys_rs.modules[__name__]._S
-            apply_mpl_theme()
-            return
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                if (w.__class__.__name__ == 'Main_Menu'
+                        and getattr(w, 'theme', None) is not None):
+                    w.theme.rebuild()
+                    break
     except Exception:
         pass
-    # Legacy fallback (only used before any Main_Menu has been built).
-    global _BG, _LBL, _VAL, _VAL_WARN, _INP, _COMBO
-    global _T_NEUTRAL, _T_A, _T_B, _F_NEUTRAL, _F_A, _F_B
-    global _BTN_A, _BTN_B, _BTN_TPMS, _BTN_RUN
-    global _BTN_PRIMARY, _BTN_SECONDARY, _BTN_TERTIARY, _BTN_LONG
-    global _TOOLBTN_SPLIT
-    _S = _build_styles(theme_name)
-    _BG = _S['BG']; _LBL = _S['LBL']; _VAL = _S['VAL']; _VAL_WARN = _S['VAL_WARN']
-    _INP = _S['INP']; _COMBO = _S['COMBO']
-    _T_NEUTRAL = _S['T_NEUTRAL']; _T_A = _S['T_A']; _T_B = _S['T_B']
-    _F_NEUTRAL = _S['F_NEUTRAL']; _F_A = _S['F_A']; _F_B = _S['F_B']
-    _BTN_A = _S['BTN_A']; _BTN_B = _S['BTN_B']
-    _BTN_TPMS = _S['BTN_TPMS']; _BTN_RUN = _S['BTN_RUN']
-    _BTN_PRIMARY = _S['BTN_PRIMARY']; _BTN_SECONDARY = _S['BTN_SECONDARY']
-    _BTN_TERTIARY = _S['BTN_TERTIARY']; _BTN_LONG = _S['BTN_LONG']
-    _TOOLBTN_SPLIT = _S.get('TOOLBTN_SPLIT', '')
     apply_mpl_theme()
 
 
@@ -207,13 +167,12 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         from controllers import (ComputeOrchestrator, ResultCache,
                                   SessionManager, ThemeManager, SignalRouter)
 
-        # Phase 3: ThemeManager owns the style dict; bind it back onto this
-        # module so legacy call sites (`import main as _m; m._BG`) keep
-        # working unchanged. SignalRouter records connections for bulk
-        # disconnect on closeEvent.
+        # Phase 3: ThemeManager owns the style dict. Batch-3 (2026-06-10):
+        # the legacy `import main as _m; m._BG` back-import path is retired
+        # — the last consumers (ui/overview.py, ui/sensitivity.py) now read
+        # styles via default_factory().theme, so no bind_to_module call.
+        # SignalRouter records connections for bulk disconnect on closeEvent.
         self.theme = ThemeManager(self)
-        import sys as _sys_tm
-        self.theme.bind_to_module(_sys_tm.modules[__name__])
         self.signals = SignalRouter(self)
 
         # Phase 5: install a process-wide FieldFactory backed by the live
