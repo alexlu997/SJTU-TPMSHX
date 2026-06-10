@@ -50,9 +50,10 @@ def test_rect_height_changes_water_side():
 
 
 def test_nu_re_window_per_fluid():
-    from design.fluids import nu_re_window, NU_RE_FIT_RANGE, YAN_RE_RANGE
+    from design.fluids import nu_re_window, NU_RE_FIT_RANGE, WATER_NU_RE_RANGE
     assert nu_re_window("air") == NU_RE_FIT_RANGE        # (400, 16000)
-    assert nu_re_window("water") == YAN_RE_RANGE         # Yan[6] (150, 3000)
+    assert nu_re_window("water") == WATER_NU_RE_RANGE     # 拓扑专属新式 (100, 50000)
+    assert WATER_NU_RE_RANGE == (100.0, 50000.0)
 
 
 def test_design_validity_fields_default():

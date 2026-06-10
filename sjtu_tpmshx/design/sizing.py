@@ -52,8 +52,21 @@ def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
     if f_lo <= 0:                            # 最短已够
         return lo, ev(lo, LTNE_TOL)          # 终点收紧
     # f_lo>0>f_hi 已 bracket → brentq 超线性求根 (T_out 单调)
-    Lx_root = brentq(lambda Lx: ev(Lx, SIZING_TOL).T_out_hot - tgt,
-                     lo, hi, xtol=TOL, maxiter=BISECT_IT)
+    try:
+        Lx_root = brentq(lambda Lx: ev(Lx, SIZING_TOL).T_out_hot - tgt,
+                         lo, hi, xtol=TOL, maxiter=BISECT_IT)
+    except ValueError:
+        # 冷却临界点 (小 LMTD): ev() 改 warm-start 种子 → 松容差 LTNE 解非确定,
+        # brentq 复评端点可能同号而崩。退回稳健二分 (不校验端点号; T_out 随 Lx 单调
+        # 递减的假设下照常收敛), 取上界 = 满足 T_out≤tgt 的最小 Lx。
+        a, b = lo, hi
+        for _ in range(BISECT_IT):
+            m = 0.5 * (a + b)
+            if ev(m, SIZING_TOL).T_out_hot - tgt > 0:
+                a = m              # 仍欠冷 → 需更长 Lx
+            else:
+                b = m
+        Lx_root = b
     return Lx_root, ev(Lx_root, LTNE_TOL)    # 终点收紧
 
 RHO_S = 7900.0          # 304 SS [kg/m³]
