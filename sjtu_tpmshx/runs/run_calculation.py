@@ -1890,7 +1890,6 @@ def finalize_plots(window):
     """Ex-Main_Menu._finalize_plots(self). Render plots from stored results.
     MUST run on main thread."""
     from ui.theme import get_theme
-    import main as _main_mod
     _t = get_theme()
 
     if getattr(window, '_compute_warnings', None):

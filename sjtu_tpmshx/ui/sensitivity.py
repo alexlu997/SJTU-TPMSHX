@@ -83,9 +83,10 @@ class SensitivityDialog(QDialog):
             self._combo_m.addItem(f"{lbl} [{unit}]", key)
         self._combo_m.setCurrentIndex(3)  # default h_v/(dP/L) ratio
 
-        import main as _m
+        from .field_factory import default_factory
+        _tm = default_factory().theme
         for cb in (self._combo_x, self._combo_y, self._combo_m):
-            cb.setStyleSheet(_m._COMBO)
+            cb.setStyleSheet(_tm.style('COMBO'))
             cb.setFixedHeight(30)
             # 2026-05-20 UI sweep (Tier 21): invalidate the cached sweep
             # grid whenever an axis/metric selection changes. Without
@@ -97,13 +98,13 @@ class SensitivityDialog(QDialog):
 
         self._le_steps = QLineEdit("9")
         self._le_steps.setFixedWidth(56)
-        self._le_steps.setStyleSheet(_m._INP)
+        self._le_steps.setStyleSheet(_tm.style('INP'))
         self._le_steps.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         lbl_x = QLabel("X axis:"); lbl_y = QLabel("Y axis:")
         lbl_m = QLabel("Metric:"); lbl_n = QLabel("Steps:")
         for l in (lbl_x, lbl_y, lbl_m, lbl_n):
-            l.setStyleSheet(_m._LBL)
+            l.setStyleSheet(_tm.style('LBL'))
 
         ctrl.addWidget(lbl_x); ctrl.addWidget(self._combo_x, 1)
         ctrl.addWidget(lbl_y); ctrl.addWidget(self._combo_y, 1)
@@ -113,7 +114,7 @@ class SensitivityDialog(QDialog):
         btn_run = QPushButton("Run sweep")
         btn_run.setFixedHeight(32)
         btn_run.setMinimumWidth(120)
-        btn_run.setStyleSheet(_m._BTN_PRIMARY)
+        btn_run.setStyleSheet(_tm.style('BTN_PRIMARY'))
         btn_run.clicked.connect(self._run_sweep)
         ctrl.addWidget(btn_run)
         # Tier 24: keep a handle so _run_sweep can disable it during the
