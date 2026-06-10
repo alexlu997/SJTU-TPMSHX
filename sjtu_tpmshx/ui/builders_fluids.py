@@ -13,6 +13,36 @@ from PySide6.QtWidgets import (
 from .builders_base import section, row, res_row, add_row, _computed_divider
 
 
+def _build_fluid_io_rows(window, g, side, t, u_default, T_default, P_default,
+                         btn_text):
+    """Rows 1-10 shared by the Fluid A/B cards: u / T_in / P_in inputs, the
+    COMPUTED divider, ρ/Re/Nu/dP·dL result rows and the Auto-fill button.
+
+    Row 0 (fluid-type combo) stays per-side — the supported-fluid sets and
+    their tooltips genuinely differ. ``btn_text`` is passed whole so each
+    side keeps its original mnemonic (&) position.
+    """
+    s = side
+    setattr(window, f'le_u{s}',
+            row(window, g, 1, f"<i>u</i><sub>{s}</sub> [m/s]", u_default))
+    setattr(window, f'le_Tin{s}',
+            row(window, g, 2, "<i>T</i><sub>in</sub> [K]", T_default))
+    setattr(window, f'_lbl_Tin{s}_unit', g.itemAtPosition(2, 0).widget())
+    setattr(window, f'le_Pin{s}',
+            row(window, g, 3, "<i>P</i><sub>in</sub> [Pa]", P_default))
+    _computed_divider(g, 4)
+    setattr(window, f'_v_rho{s}', res_row(window, g, 5, "<i>&rho;</i> [kg/m³]"))
+    setattr(window, f'_v_Re{s}',  res_row(window, g, 6, "Re"))
+    setattr(window, f'_v_Nu{s}',  res_row(window, g, 7, "Nu"))
+    setattr(window, f'_v_dPL{s}', res_row(window, g, 8, "d<i>P</i>/d<i>L</i> [Pa/m]"))
+    btn = QPushButton(btn_text)
+    btn.setFixedHeight(28); btn.setStyleSheet(t.style('BTN_SECONDARY'))
+    btn.setToolTip(f"Compute Fluid {s} density / Reynolds / Nusselt / dP·dL "
+                   "from current state")
+    btn.clicked.connect(getattr(window, f'auto_fill_fluid_{s.lower()}'))
+    g.addWidget(btn, 10, 0, 1, 2)
+
+
 def build_page_fluids(window):
     """Ex-Main_Menu._build_page_fluids(self) -> QScrollArea."""
     # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
@@ -78,20 +108,9 @@ def build_page_fluids(window):
     except Exception:
         pass
     add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
-    window.le_uA   = row(window, g1, 1, "<i>u</i><sub>A</sub> [m/s]",  "20.0")
-    window.le_TinA = row(window, g1, 2, "<i>T</i><sub>in</sub> [K]",   "422.0")
-    window._lbl_TinA_unit = g1.itemAtPosition(2, 0).widget()
-    window.le_PinA = row(window, g1, 3, "<i>P</i><sub>in</sub> [Pa]",  "192362")
-    _computed_divider(g1, 4)
-    window._v_rhoA = res_row(window, g1, 5, "<i>&rho;</i> [kg/m³]")
-    window._v_ReA  = res_row(window, g1, 6, "Re")
-    window._v_NuA  = res_row(window, g1, 7, "Nu")
-    window._v_dPLA = res_row(window, g1, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
-    btn_a = QPushButton("Auto-&fill A")
-    btn_a.setFixedHeight(28); btn_a.setStyleSheet(t.style('BTN_SECONDARY'))
-    btn_a.setToolTip("Compute Fluid A density / Reynolds / Nusselt / dP·dL from current state")
-    btn_a.clicked.connect(window.auto_fill_fluid_a)
-    g1.addWidget(btn_a, 10, 0, 1, 2)
+    _build_fluid_io_rows(window, g1, 'A', t,
+                         u_default="20.0", T_default="422.0",
+                         P_default="192362", btn_text="Auto-&fill A")
 
     # ── Fluid B (input + computed) — sits to the right of Fluid A ─────
     g2b, _ = section(window, _fluids_row_lay, "Fluid B", _T_B, _F_B)
@@ -123,20 +142,9 @@ def build_page_fluids(window):
     # → u_B ≈ 0.133 m/s interstitial (col 11). Driving ΔT = T_inA − T_inB
     # ≈ 122 K (hot air 422 K cooled by cold water 300 K), matching the
     # gas-heater duty.
-    window.le_uB   = row(window, g2b, 1, "<i>u</i><sub>B</sub> [m/s]",  "0.133")
-    window.le_TinB = row(window, g2b, 2, "<i>T</i><sub>in</sub> [K]",   "300.0")
-    window._lbl_TinB_unit = g2b.itemAtPosition(2, 0).widget()
-    window.le_PinB = row(window, g2b, 3, "<i>P</i><sub>in</sub> [Pa]",  "101973")
-    _computed_divider(g2b, 4)
-    window._v_rhoB = res_row(window, g2b, 5, "<i>&rho;</i> [kg/m³]")
-    window._v_ReB  = res_row(window, g2b, 6, "Re")
-    window._v_NuB  = res_row(window, g2b, 7, "Nu")
-    window._v_dPLB = res_row(window, g2b, 8, "d<i>P</i>/d<i>L</i> [Pa/m]")
-    btn_b = QPushButton("Auto-fill &B")
-    btn_b.setFixedHeight(28); btn_b.setStyleSheet(t.style('BTN_SECONDARY'))
-    btn_b.setToolTip("Compute Fluid B density / Reynolds / Nusselt / dP·dL from current state")
-    btn_b.clicked.connect(window.auto_fill_fluid_b)
-    g2b.addWidget(btn_b, 10, 0, 1, 2)
+    _build_fluid_io_rows(window, g2b, 'B', t,
+                         u_default="0.133", T_default="300.0",
+                         P_default="101973", btn_text="Auto-fill &B")
 
     # ── Inlet / Outlet configuration (unified) ─────────────
     _DIR_ITEMS = ["+x  (left → right)", "-x  (right → left)",
