@@ -246,7 +246,7 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
     Reads ``chk_zones``, ``combo_zone_axis``, ``_zone_grid``, and the
     ``_pareto_*`` attributes. When ``chk_zones`` is checked, also
     pre-resolves the ``ZoneConfig`` instance via
-    ``solvers.zone_editor.build_zone_config(window)`` so the downstream
+    ``ui.zone_table.build_zone_config(window)`` so the downstream
     Pipeline2D / Pipeline3D layer never touches the Qt zone-table
     widget.
 
@@ -272,7 +272,7 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
     resolved_config = None
     if enabled:
         try:
-            from solvers.zone_editor import build_zone_config as _bzc
+            from ui.zone_table import build_zone_config as _bzc
             resolved_config = _bzc(window)
         except Exception:
             resolved_config = None

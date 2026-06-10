@@ -2,6 +2,9 @@
 
 Extracted from main.py (Task B.8). Entry: run_polygon_calculation.
 All functions take `window` (Main_Menu) as first arg.
+
+Lives in runs/ (UI-coupled pipeline, same tier as run_calculation.py) so
+solvers/ stays importable without Qt/matplotlib.
 """
 import warnings
 import numpy as np
@@ -10,9 +13,9 @@ import matplotlib.tri as mtri
 from matplotlib.gridspec import GridSpec
 
 from PySide6.QtWidgets import QApplication, QMessageBox
-from .tpms_calc import geometry as tpms_geometry, air_cp
-from .fvm_solver import solve_polygon_domain
-from .unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
+from solvers.tpms_calc import geometry as tpms_geometry, air_cp
+from solvers.fvm_solver import solve_polygon_domain
+from solvers.unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
 from ui.theme import get_theme
 
 
@@ -39,8 +42,8 @@ def run_polygon_calculation(window):
 
 def _parse_inputs(window, _log):
     """Phase 1: read UI widgets, validate, build mesh. Returns cfg or None."""
-    from . import unstructured_mesh as um
-    from .unstructured_mesh import BC_INLET_A, BC_OUTLET_A, BC_INLET_B, BC_OUTLET_B
+    from solvers import unstructured_mesh as um
+    from solvers.unstructured_mesh import BC_INLET_A, BC_OUTLET_A, BC_INLET_B, BC_OUTLET_B
 
     if not window.compute_tpms():
         return None

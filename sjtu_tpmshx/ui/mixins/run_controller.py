@@ -258,7 +258,7 @@ class RunControllerMixin:
         return
 
     def _run_polygon_calculation(self):
-        from solvers.polygon_calc import run_polygon_calculation
+        from runs.polygon_calc import run_polygon_calculation
         return run_polygon_calculation(self)
 
     def _finalize_plots(self):

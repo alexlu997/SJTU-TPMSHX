@@ -1,12 +1,14 @@
-"""Zone configuration editor helpers.
+"""Zone-table editor helpers (the "Define zones" tab's table/grid logic).
 
 DEPRECATED for optimizer use — see solvers/zone_config.py for context.
 This module backs the UI's "Define zones" tab only. New code uses
 solvers.field_param.ContinuousFieldConfig.
 
-Extracted from main.py (Task B.5). All functions take `window` (Main_Menu
-instance) as first argument. Intra-module calls use top-level function
-names, not `window._method(...)`.
+Extracted from main.py (Task B.5); moved from solvers/zone_editor.py to
+ui/ (it is pure Qt table manipulation — solvers/ stays Qt-free). Distinct
+from ui/zone_editor.py, which owns the draggable canvas handles.
+All functions take `window` (Main_Menu instance) as first argument.
+Intra-module calls use top-level function names, not `window._method(...)`.
 """
 from PySide6.QtWidgets import QTableWidgetItem
 
@@ -137,7 +139,7 @@ def build_zone_config(window):
     if not window.chk_zones.isChecked():
         window._zone_grid = None
         return None
-    from .zone_config import ZoneConfig, Zone
+    from solvers.zone_config import ZoneConfig, Zone
     tpms_type = window.combo_tpms.currentText()
     k_s = float(window.le_ks.text())
 
