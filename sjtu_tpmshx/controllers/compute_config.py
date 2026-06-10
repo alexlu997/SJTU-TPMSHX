@@ -37,6 +37,43 @@ does *not* describe partial-pipe BC, zone configs, or session state
 (extrap reasons, cancel tokens) — those continue through their
 existing window attributes for now; the grep gate (Task 4.3) limits
 the scope to ``window.le_*`` reads, which this dataclass replaces.
+
+Runtime env-flag registry (Batch-4, 2026-06-10)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Central inventory of every ``TPMSHX_*`` knob. Flags are read at call
+time (never cached) so tests can monkeypatch them; each has one reading
+site or one shared helper, listed here. Adding a flag = add a row.
+
+- ``TPMSHX_ALLOW_EXTRAP`` (0) — surrogate out-of-window → warn, not abort.
+  Read in ``df_fit/surrogate_domain.py``, ``solvers/sigmoid_field.py``,
+  ``solvers/sigmoid_field_3d.py`` (3 identical 1-line parsers — kept local
+  to avoid a solvers→df_fit dependency; keep in sync).
+- ``TPMSHX_CHI_S`` (1.0) — solid-k anisotropy χ_s; ``solvers/tpms_calc.py``
+  (module-level, fixed at import).
+- ``TPMSHX_DEBUG`` (unset) — debug prints; ``solvers/simple_solver_3d.py``.
+- ``TPMSHX_DF_RESIDUAL_CORR`` (0) — dP residual-learning correction;
+  ``df_fit/predict.py``.
+- ``TPMSHX_DISABLE_3D_PANEL`` (0) — skip PyVista panel;
+  ``ui/builders_canvas.py``.
+- ``TPMSHX_EAGER_3D_SLICES`` (0) — precompute 3D slices;
+  ``ui/plot_3d_results.py``.
+- ``TPMSHX_PARALLEL_THRESHOLD`` (200000) — red-black prange cell gate;
+  ``solvers/simple_solver_3d.py`` (module-level, fixed at import).
+- ``TPMSHX_PHASE_A/B/C`` (1/0/0) — SIMPLE acceleration phases; single
+  helper ``runs.run_calculation_3d._apply_phase_flags`` (cfg keys win).
+- ``TPMSHX_PREINIT_3D`` (0) — prewarm 3D panel at startup; ``main.py``.
+- ``TPMSHX_PROFILE_3D`` (0) — cProfile the 3D solve;
+  ``runs/run_calculation_3d.py``.
+- ``TPMSHX_ROUGH_MODE`` (baseline; UI path defaults norris_1a) +
+  ``TPMSHX_ROUGH_EPS_UM`` (100) — roughness model; single helper
+  ``solvers.roughness.resolve_mode_from_env``.
+- ``TPMSHX_RUN_SHANGHAI_REGRESSION`` (0) — opt-in long validation gate;
+  ``tests/test_shanghai_regression.py``.
+- ``TPMSHX_SIMPLE_TOL`` (1e-5) — SIMPLE pp tol for diagnostic sweeps;
+  single helper ``runs.run_calculation_3d._simple_tol_default``.
+- ``TPMSHX_VAR_RHOCP`` (unset) — local-P gas density override (UI checkbox
+  is primary); ``runs/run_calculation_3d.py``.
 """
 from __future__ import annotations
 

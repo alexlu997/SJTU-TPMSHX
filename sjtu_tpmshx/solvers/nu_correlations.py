@@ -44,6 +44,10 @@ import numpy as np
 Pr_AIR = 0.72
 NU_ROUGHNESS_FACTOR = 1.28           # SLM Sa≈31 µm enhancement (φ_rough)
 NU_RE_FIT_RANGE = (400.0, 16000.0)   # Re fit window for extrap warnings
+NU_LAM_FLOOR = 4.36                  # laminar Hagen-Poiseuille limit — floor
+                                     # for local-Re h_v paths (wall cells with
+                                     # u→0 must not extrapolate Nu→0). Single
+                                     # source for the 2D and 3D h_v builders.
 
 # 3p PL coefficients (refit 2026-04-28; user-locked).
 # Refitting Nu = edit this dict, nothing else.

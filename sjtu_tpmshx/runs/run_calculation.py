@@ -1181,9 +1181,9 @@ def _run_solvers(window, cfg, fields):
     _ALPHA_COUP = 0.7     # under-relaxation
 
     # Local-Re Nu rescale (2D #1 fix 2026-04-25): per-cell h_v using local
-    # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to Nu_lam=4.36 floor
-    # (laminar Hagen-Poiseuille limit, prevents Nu→0 non-physical extrapolation).
-    _NU_LAM_FLOOR_2D = 4.36
+    # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to the laminar
+    # Hagen-Poiseuille floor (prevents Nu→0 non-physical extrapolation).
+    from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
 
     def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm):
         """Per-side Nu: water uses Pr-substitution onto air-fit correlation
