@@ -82,6 +82,7 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 _AMG_GATE = 30_000
 
 from .tpms_calc import air_density, air_viscosity, P_atm
+from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
 
 
 # ===================================================================
@@ -213,11 +214,13 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
     wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
     if wall_out > 0.01 and j >= Ny - 8:
         wall_dist = Ny - j
-        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
     wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
     if wall_in > 0.01 and j < 8:
         wall_dist = j + 1
-        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
     # Pressure gradient source
     p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
@@ -363,11 +366,13 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
     wall_out = 1.0 - outlet_frac[i, k]
     if wall_out > 0.01 and j >= Ny - 8:
         wall_dist = Ny - j
-        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
     wall_in = 1.0 - inlet_frac[i, k]
     if wall_in > 0.01 and j < 8:
         wall_dist = j + 1
-        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
     p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
 
@@ -525,11 +530,13 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
     wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
     if wall_out > 0.01 and j >= Ny - 8:
         wall_dist = Ny - j
-        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
     wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
     if wall_in > 0.01 and j < 8:
         wall_dist = j + 1
-        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
     p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
 
