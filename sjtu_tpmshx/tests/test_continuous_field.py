@@ -1,5 +1,5 @@
 """
-test_continuous_field.py — Unit tests for solvers.field_param.
+test_continuous_field.py — Unit tests for solvers.continuous_field.
 
 Covers:
   * decision-vector dim, bounds, decode/encode round-trips (symmetric + not)
@@ -20,7 +20,7 @@ import pytest
 # test output stays readable.
 warnings.filterwarnings('ignore', category=UserWarning, module=r'solvers\.tpms_calc')
 
-from solvers.field_param import (
+from solvers.continuous_field import (
     ContinuousFieldConfig,
     decision_dim,
     decision_bounds,

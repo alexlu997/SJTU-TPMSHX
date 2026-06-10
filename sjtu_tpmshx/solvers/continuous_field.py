@@ -1,5 +1,5 @@
 """
-field_param.py — Continuous L(x,y), t(x,y) field parametrization for
+continuous_field.py — Continuous L(x,y), t(x,y) field parametrization for
 optimization-friendly TPMS heat-exchanger design.
 
 Replaces the discrete patch-zoning representation (18 patches × {L, t} = 36-D)
@@ -40,10 +40,10 @@ DEFAULT_SYMMETRIC_Y = True
 # Decision-vector bounds — pinned to the ConstDF-v1 surrogate's training
 # window. Outside this rectangle predict_K_cF clamps K to the 1e-8 floor
 # (no extrapolation), which collapses SIMPLE convergence and produces
-# 100% rejected designs. See df_fit/surrogate_domain.py for the same
+# 100% rejected designs. See df_surrogate/surrogate_domain.py for the same
 # limits enforced on the UI Compute path.
-# Training convex hull [mm] — single source in df_fit/_domain.py.
-from df_fit._domain import TRAIN_L as DEFAULT_L_BOUNDS, TRAIN_T as DEFAULT_T_BOUNDS
+# Training convex hull [mm] — single source in df_surrogate/_domain.py.
+from df_surrogate._domain import TRAIN_L as DEFAULT_L_BOUNDS, TRAIN_T as DEFAULT_T_BOUNDS
 # Manufacturability ratio: lower-bounded slightly below 0.3/8 = 0.0375 so
 # the corner (L=8, t=0.3) does not trip the penalty; upper-bounded loose.
 DEFAULT_RATIO_BOUNDS = (0.035, 0.20)   # t / L
@@ -416,7 +416,7 @@ def uniform_field(L_mm: float, t_mm: float,
 # ─── Standalone smoke test ──────────────────────────────────────────
 
 if __name__ == '__main__':
-    print("=== field_param.py smoke test ===\n")
+    print("=== continuous_field.py smoke test ===\n")
 
     # Test 1: decode/encode round-trip (symmetric)
     n_ctrl_x = 4

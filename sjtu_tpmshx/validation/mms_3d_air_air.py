@@ -52,7 +52,7 @@ except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from solvers.solve_full_3d import _gs_full_chunk_3d_stag
+from solvers.ltne_energy_3d import _gs_full_chunk_3d_stag
 
 
 # ─────────────────────────────────────────────────────────────────────────

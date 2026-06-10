@@ -1,5 +1,5 @@
 """
-solve_full_3d.py — Full-domain 3D steady-state 2-fluid LTNE solver
+ltne_energy_3d.py — Full-domain 3D steady-state 2-fluid LTNE solver
 
 Three-temperature (Ta, Tb, Ts) LTNE on an (Nx, Ny, Nz) grid.
 
@@ -26,7 +26,7 @@ Phase 1 additions (2026-04-20):
 import numpy as np
 from numba import njit
 
-from solvers.solve_full import solve_full_domain as _solve_full_2d
+from solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
 
 # ---------------------------------------------------------------------------
@@ -1264,7 +1264,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     inlet_mask_*               : 2D cross-section or None.
     alpha_T                    : 0 < α ≤ 1 under-relax (default 0.7).
 
-    Nz == 1 fast path: delegates to solvers.solve_full.solve_full_domain
+    Nz == 1 fast path: delegates to solvers.ltne_energy.solve_full_domain
     (bitwise-identical Nz=1 regression).
     """
     Nx, Ny, Nz = int(Nx), int(Ny), int(Nz)
@@ -1325,7 +1325,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
 
     # Per-fluid void-fraction split. Default = symmetric ε_A = ε_B = ε/2;
     # asymmetric eps_A / eps_B raises NotImplementedError because the njit
-    # kernel currently takes a single eps_f_arr. Mirrors solve_full.py.
+    # kernel currently takes a single eps_f_arr. Mirrors ltne_energy.py.
     if eps_A is None and eps_B is None:
         if np.ndim(epsilon) == 0:
             eps_f_arr = np.full((Nx, Ny, Nz), 0.5 * float(epsilon), dtype=np.float64)
@@ -1441,7 +1441,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
     converged = False
     q_tol = max(tol * 10.0, 1e-4) if q_rel_tol is None else float(q_rel_tol)
-    T_abs_tol = 0.01  # K between chunks — mirror 2D solve_full.py (#4)
+    T_abs_tol = 0.01  # K between chunks — mirror 2D ltne_energy.py (#4)
     chg = 0.0
 
     # Dispatch: if caller passed staggered face velocities (ufA, vfA, wfA)

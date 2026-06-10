@@ -8,8 +8,8 @@ from scipy.optimize import minimize
 from .sizing import size_fixed_cell, Design, RHO_S
 from .forward import K_STEEL
 
-# 训练凸包 [mm] — single source in df_fit/_domain.py.
-from df_fit._domain import TRAIN_L as L_BOUNDS, TRAIN_T as T_BOUNDS
+# 训练凸包 [mm] — single source in df_surrogate/_domain.py.
+from df_surrogate._domain import TRAIN_L as L_BOUNDS, TRAIN_T as T_BOUNDS
 
 def warm_start_joint(cases, baseline: Design, arrangement: str = "cross",
                      maxiter: int = 20, rho_s: float = RHO_S,

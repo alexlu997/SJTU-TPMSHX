@@ -62,7 +62,7 @@ def test_conservative_ltne_z_symmetric(u_A):
 
 def test_conservative_kernel_zsym_minimal():
     """Direct-kernel minimal repro: z-even axial-only flow must give z-even T."""
-    from solvers.solve_full_3d import solve_full_domain_3d
+    from solvers.ltne_energy_3d import solve_full_domain_3d
 
     Nx, Ny, Nz = 16, 10, 8
     L, H, D = 0.182, 0.042, 0.042

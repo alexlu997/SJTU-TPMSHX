@@ -610,7 +610,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
 
         Phase 5 follow-up (UI report #1, 2026-05-07): also pre-imports +
         warms the D-F surrogate (joblib/sklearn RBF). First call to
-        ``df_fit.predict.predict_K_cF`` adds ~1-2 s on cold-cache because
+        ``df_surrogate.predict.predict_K_cF`` adds ~1-2 s on cold-cache because
         joblib has to demand-load the .joblib model and sklearn pulls in
         scipy. Doing that in the same background thread eliminates the
         "Not Responding" flash when the user clicks Fluid Auto-fill.
@@ -638,7 +638,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                 # Warm the D-F surrogate by triggering one prediction.
                 # Loads joblib model + first sklearn import.
                 try:
-                    from df_fit.predict import predict_K_cF
+                    from df_surrogate.predict import predict_K_cF
                     predict_K_cF(tpms_type, float(Lcell), float(t_mm), 0.4)
                 except Exception:
                     pass

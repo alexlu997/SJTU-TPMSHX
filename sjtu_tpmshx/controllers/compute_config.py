@@ -46,14 +46,14 @@ time (never cached) so tests can monkeypatch them; each has one reading
 site or one shared helper, listed here. Adding a flag = add a row.
 
 - ``TPMSHX_ALLOW_EXTRAP`` (0) — surrogate out-of-window → warn, not abort.
-  Read in ``df_fit/surrogate_domain.py``, ``solvers/sigmoid_field.py``,
+  Read in ``df_surrogate/surrogate_domain.py``, ``solvers/sigmoid_field.py``,
   ``solvers/sigmoid_field_3d.py`` (3 identical 1-line parsers — kept local
-  to avoid a solvers→df_fit dependency; keep in sync).
+  to avoid a solvers→df_surrogate dependency; keep in sync).
 - ``TPMSHX_CHI_S`` (1.0) — solid-k anisotropy χ_s; ``solvers/tpms_calc.py``
   (module-level, fixed at import).
 - ``TPMSHX_DEBUG`` (unset) — debug prints; ``solvers/simple_solver_3d.py``.
 - ``TPMSHX_DF_RESIDUAL_CORR`` (0) — dP residual-learning correction;
-  ``df_fit/predict.py``.
+  ``df_surrogate/predict.py``.
 - ``TPMSHX_DISABLE_3D_PANEL`` (0) — skip PyVista panel;
   ``ui/builders_canvas.py``.
 - ``TPMSHX_EAGER_3D_SLICES`` (0) — precompute 3D slices;

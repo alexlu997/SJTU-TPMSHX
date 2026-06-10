@@ -68,7 +68,7 @@ def project_cells_to_streamwise_K_cF(grid_cells: List[dict],
     This loses cross-stream variation but is the best 1D projection available
     under SIMPLE's current K/c_F array shape limitation.
     """
-    from df_fit.predict import predict_K_cF_vec
+    from df_surrogate.predict import predict_K_cF_vec
 
     # Cell-centre s_frac: uniform or from streamwise_dx
     if streamwise_dx is None:
@@ -132,7 +132,7 @@ def project_fields_to_streamwise_K_cF(L_field: np.ndarray,
 
     Returns (K_arr, cF_arr) both shape (Ny_sim,) float64.
     """
-    from df_fit.predict import predict_K_cF_vec
+    from df_surrogate.predict import predict_K_cF_vec
 
     if fluid == 'A':
         L_1d = L_field.mean(axis=1)
@@ -245,7 +245,7 @@ def project_fields_to_streamwise_K_cF_3d(L_field: np.ndarray,
 
     Returns (K_arr, cF_arr) both shape (Ny_sim, Nz_sim) float64.
     """
-    from df_fit.predict import predict_K_cF_vec
+    from df_surrogate.predict import predict_K_cF_vec
 
     if fluid == 'A':
         L2 = L_field.mean(axis=1)

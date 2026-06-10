@@ -14,7 +14,7 @@ from matplotlib.gridspec import GridSpec
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 from solvers.tpms_calc import geometry as tpms_geometry, air_cp
-from solvers.fvm_solver import solve_polygon_domain
+from solvers.polygon_fvm import solve_polygon_domain
 from solvers.unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
 from ui.theme import get_theme
 

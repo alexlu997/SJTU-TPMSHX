@@ -22,7 +22,7 @@ Staggered grid:  P[i,j] cell centre (Nx,Ny)
 Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
   u, v are *interstitial* (pore-average) velocities, not superficial. Inlet BC
   `v_inlet = m_dot / (rho * A_void)` where A_void = eps_f * A_total; training
-  data (df_fit/) uses the same convention. Consequently K and c_F from the D-F
+  data (df_surrogate/) uses the same convention. Consequently K and c_F from the D-F
   surrogate are *effective interstitial* coefficients that already absorb the
   eps_f factor — they are not the canonical Darcy/Forchheimer values one would
   cite from a textbook. This is algebraically equivalent to the superficial
@@ -183,7 +183,7 @@ def _porous_src_df(umag, K, cF, mu, rho):
 
     Darcy-Forchheimer closure: Sp * u = (mu/K) * u + rho * c_F * |u| * u.
     K and c_F are geometry-level constants from the 3D MLP ensemble surrogate
-    (see df_fit/predict.py:predict_K_cF). Caller provides K, cF per-row.
+    (see df_surrogate/predict.py:predict_K_cF). Caller provides K, cF per-row.
     """
     if umag < 1e-10:
         return mu / K  # pure Darcy when velocity vanishes
@@ -949,7 +949,7 @@ class SIMPLESolver:
         # Broadcast for uniform geometry; per-row predictions for zone_config
         # graded designs. zone_arrays path doesn't carry L/t/eps metadata, so
         # it falls back to the uniform (scalar) prediction.
-        from df_fit.predict import predict_K_cF, predict_K_cF_vec
+        from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 
         if zone_config is not None:
             # Per-row (L, t, eps_f) → batched prediction

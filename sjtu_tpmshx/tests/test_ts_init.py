@@ -12,8 +12,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-from solvers.solve_full import solve_full_domain
-from solvers.solve_full_3d import solve_full_domain_3d
+from solvers.ltne_energy import solve_full_domain
+from solvers.ltne_energy_3d import solve_full_domain_3d
 
 
 def _common_args(Nx=10, Ny=8):
@@ -240,7 +240,7 @@ def test_ts_init_3d_user_value_lands_in_initial_field():
     # (this is the regression the run_calculation*.py fix prevents).
     assert np.allclose(Ta, T_inA), (
         "Ta seed must use T_inA, not 0.5*(T_inA+T_inB) — "
-        "see solve_full_3d.py:1442 FV fix rationale")
+        "see ltne_energy_3d.py:1442 FV fix rationale")
     assert np.allclose(Tb, T_inB), "Tb seed must use T_inB"
     assert not np.allclose(Ta, 0.5 * (T_inA + T_inB)), \
         "Ta seed regressed to legacy 0.5-mean — re-check run_calculation_3d.py"

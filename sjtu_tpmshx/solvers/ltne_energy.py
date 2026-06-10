@@ -1,5 +1,5 @@
 """
-solve_full.py — Full-domain steady-state 2-fluid LTNE solver
+ltne_energy.py — Full-domain steady-state 2-fluid LTNE solver
 
 Solves the coupled energy equations on the ENTIRE L × H domain
 using spatially-varying velocity fields from SIMPLE solvers.
@@ -314,7 +314,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 
 
 # Diagnostic-only convergence trace (point 0 quantify, 2026-05-22) — mirrors
-# solve_full_3d._CONV_TRACE. None in production → zero overhead.
+# ltne_energy_3d._CONV_TRACE. None in production → zero overhead.
 _CONV_TRACE = None
 
 
@@ -517,7 +517,7 @@ def solve_full_domain(L, H, Nx, Ny,
     T_abs_tol = 0.01  # K between chunks
     # 2026-05-20 code-bug sweep (Tier 23): pre-init `chg` so the
     # `return_info` path (L551 `float(chg)`) cannot hit NameError when
-    # the while loop never executes (max_iter <= 0). solve_full_3d.py
+    # the while loop never executes (max_iter <= 0). ltne_energy_3d.py
     # already guards this; mirror it here.
     chg = 0.0
 

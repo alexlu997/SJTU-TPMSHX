@@ -29,14 +29,14 @@ import numpy as np
 
 from controllers.compute_config import ComputeConfig, bc_to_dict
 from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.solve_full_3d import solve_full_domain_3d
+from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
 )
 from solvers import fluid_props
-from df_fit.predict import predict_K_cF
+from df_surrogate.predict import predict_K_cF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
@@ -514,7 +514,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
     extrap_reasons = []
     _allow_extrap = bool(compute_cfg.extrap.allow)
     try:
-        from df_fit.surrogate_domain import check_surrogate_domain_at_point
+        from df_surrogate.surrogate_domain import check_surrogate_domain_at_point
         extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_A, T_inA, P_inA, side='A',
@@ -1382,7 +1382,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
     user spots non-physical regressions without re-running validation; any
     failure warns + reports NaN (never silently swallowed)."""
     try:
-        from solvers.solve_full_3d import energy_balance_3d, mass_balance_3d
+        from solvers.ltne_energy_3d import energy_balance_3d, mass_balance_3d
         e_bal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
         Q_sA = e_bal['Q_sA']
         Q_sB = e_bal['Q_sB']
@@ -1546,7 +1546,7 @@ def _run_3d_stack(cfg):
     if zone_cells:
         L_mm_field, t_field_3d, eps_field_3d = _build_zone_fields_3d(
             zone_cells, Nx, Ny, Nz, L, H, tpms_type, k_s, Lcell, t_wall)
-        from df_fit.predict import predict_K_cF_vec
+        from df_surrogate.predict import predict_K_cF_vec
         K_field_3d, cF_field_3d = predict_K_cF_vec(
             tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0)
         # Real → solver coord permutation (inverse equals same tuple for 2-swaps),
@@ -1946,7 +1946,7 @@ def _run_3d_stack(cfg):
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
     # Filled → only Ts is overridden with the user value; Ta/Tb stay at the
-    # per-fluid inlet T (the 2026-04-24 FV fix in solve_full_3d.py:1442-44
+    # per-fluid inlet T (the 2026-04-24 FV fix in ltne_energy_3d.py:1442-44
     # showed that 0.5*mean for Ta/Tb leaks into non-pipe inlet cells and
     # breaks energy balance by 20–25% on partial-inlet runs). The solid
     # energy equation still updates Ts each sweep; this is *not* prescribed.

@@ -35,11 +35,11 @@ from solvers.tpms_calc import (
 )
 from solvers import tpms_calc
 from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.solve_full_3d import solve_full_domain_3d
+from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
-from solvers.field_param import from_decision_vector
+from solvers.continuous_field import from_decision_vector
 
 
 R_AIR = 287.05

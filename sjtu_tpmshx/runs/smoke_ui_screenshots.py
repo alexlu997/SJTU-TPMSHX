@@ -1,4 +1,4 @@
-"""runs/test_ui_screenshots.py — Phase E: offscreen render screenshots."""
+"""runs/smoke_ui_screenshots.py — Phase E: offscreen render screenshots."""
 from __future__ import annotations
 import os, sys
 

@@ -1,5 +1,5 @@
 """
-fvm_solver.py — FVM solvers on unstructured triangular mesh
+polygon_fvm.py — FVM solvers on unstructured triangular mesh
 
 1. Brinkman-Forchheimer SIMPLE solver (collocated + Rhie-Chow)
 2. LTNE energy solver (two fluids + solid)
@@ -17,7 +17,7 @@ SIMPLE algorithm on collocated triangular mesh:
   5. Iterate until mass residual converges
 
 Velocity / closure convention: same as simple_solver.py — u is interstitial,
-K and c_F are effective interstitial coefficients from df_fit/predict.py
+K and c_F are effective interstitial coefficients from df_surrogate/predict.py
 (SurrogateV3 RBF on (L_mm, t_mm, eps_f)). Legacy f-Re closure was removed
 2026-04-19.
 """
@@ -323,7 +323,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         nabla·(D·nabla P) = 0,   D = 1/R(|U|)
         U = -D·nabla P
 
-    D-F closure via ConstDF-v1 surrogate (df_fit.predict.predict_K_cF).
+    D-F closure via ConstDF-v1 surrogate (df_surrogate.predict.predict_K_cF).
     Supports per-cell (K, c_F) via optional K_arr / cF_arr (shape [n_cells]).
     If not provided, uniform (L_mm, t_mm, eps) is used and broadcast.
 
@@ -335,7 +335,7 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     if (K_arr is None) ^ (cF_arr is None):
         raise ValueError("Provide both K_arr and cF_arr, or neither.")
     if K_arr is None:
-        from df_fit.predict import predict_K_cF
+        from df_surrogate.predict import predict_K_cF
         K_val, cF_val = predict_K_cF(tpms_type, float(L_mm), float(t_mm),
                                      float(eps) / 2.0)
         K_arr = np.full(nc, K_val, dtype=np.float64)
@@ -517,7 +517,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     Returns: u_cell, v_cell, P_cell, face_Un
     """
     nc = mesh.n_cells
-    from df_fit.predict import predict_K_cF
+    from df_surrogate.predict import predict_K_cF
     K, cF = predict_K_cF(tpms_type, float(L_mm), float(t_mm), float(eps) / 2.0)
     mu_eff = mu / eps
 
@@ -873,7 +873,7 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
             mesh.cell_centers[:, 1] - ymin, nc, H_mesh)
 
         # Darcy solver: per-cell (K, c_F) via ConstDF-v1 surrogate
-        from df_fit.predict import predict_K_cF_vec
+        from df_surrogate.predict import predict_K_cF_vec
         L_row = np.empty(nc, dtype=np.float64)
         t_row = np.empty(nc, dtype=np.float64)
         for ci in range(nc):

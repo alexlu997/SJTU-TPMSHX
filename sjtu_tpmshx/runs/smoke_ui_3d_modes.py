@@ -1,4 +1,4 @@
-"""runs/test_ui_3d_modes.py — Phase B: smoke 3D Compute path with 3 roughness modes.
+"""runs/smoke_ui_3d_modes.py — Phase B: smoke 3D Compute path with 3 roughness modes.
 
 Constructs minimal cfg mirroring UI 3D Compute, calls _run_3d_stack
 directly, compares Q + dP across {baseline, norris_1a, bhatti_shah_1b}.

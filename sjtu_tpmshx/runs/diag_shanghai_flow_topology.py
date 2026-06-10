@@ -37,7 +37,7 @@ from solvers.tpms_calc import (
     water_density, water_viscosity, water_cp, water_conductivity,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
-from df_fit.predict import predict_K_cF
+from df_surrogate.predict import predict_K_cF
 
 R_AIR = 287.05
 

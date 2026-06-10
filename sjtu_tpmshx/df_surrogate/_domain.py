@@ -1,7 +1,7 @@
 """Single source of truth for the ConstDF-v1 surrogate training domain.
 
 Re-calibrating the surrogate = edit these constants HERE (nothing else).
-Consumed by df_fit.surrogate_domain, design.optimize, solvers.field_param
+Consumed by df_surrogate.surrogate_domain, design.optimize, solvers.continuous_field
 (continuous convex hull) and domain.validator (discrete training nodes).
 
 Pure constants, zero imports — importing this module can never trigger a

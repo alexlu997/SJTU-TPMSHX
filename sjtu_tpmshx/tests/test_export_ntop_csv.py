@@ -20,7 +20,7 @@ from optimization.export_ntop_csv import (
     export_decision_vector,
     export_pareto_row,
 )
-from solvers.field_param import (
+from solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_T_BOUNDS,
     encode_decision_vector,

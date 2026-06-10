@@ -2,7 +2,7 @@
 
 DEPRECATED for optimizer use — see solvers/zone_config.py for context.
 This module backs the UI's "Define zones" tab only. New code uses
-solvers.field_param.ContinuousFieldConfig.
+solvers.continuous_field.ContinuousFieldConfig.
 
 Extracted from main.py (Task B.5); moved from solvers/zone_editor.py to
 ui/ (it is pure Qt table manipulation — solvers/ stays Qt-free). Distinct

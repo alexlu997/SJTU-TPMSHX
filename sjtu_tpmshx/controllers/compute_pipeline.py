@@ -29,7 +29,7 @@ Implementations
   in ``Main_Menu.write_result(result)``.
 
 - :class:`Pipeline3D` mirrors the 3D path through
-  ``solvers.simple_solver_3d`` and ``solvers.solve_full_3d``.
+  ``solvers.simple_solver_3d`` and ``solvers.ltne_energy_3d``.
 
 Both implementations are pure ``ComputeConfig`` → :class:`ComputeResult`
 adapters.  No ``window.le_*`` reads, no Qt writes.

@@ -47,7 +47,7 @@ def run_single_case(case: dict) -> dict:
                                 geometry as tpms_geometry,
                                 P_atm, air_density, air_viscosity,
                                 air_conductivity, air_cp, adaptive_grid)
-        from solvers.solve_full import solve_full_domain
+        from solvers.ltne_energy import solve_full_domain
 
         tpms = case['tpms']
         L_cell = case['L_cell_mm']
