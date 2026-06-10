@@ -55,7 +55,10 @@ sjtu_tpmshx/.accent
 sjtu_tpmshx/.first_run_done
 sjtu_tpmshx/.user_presets.json
 
-# Regeneratable optimizer run outputs + generated inputs
+# Regeneratable optimizer run outputs + generated inputs.
+# Root opt_runs/ holds the archived historical runs (tracked files stay
+# tracked); new runs land untracked wherever the launch CWD puts them.
+opt_runs/
 sjtu_tpmshx/opt_runs/
 sjtu_tpmshx/nTop_inputs/
 
