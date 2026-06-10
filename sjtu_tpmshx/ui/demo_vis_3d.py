@@ -37,10 +37,10 @@ from solvers.tpms_calc import (
     air_conductivity, air_cp, P_atm,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.solve_full_3d import solve_full_domain_3d
+from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.sigmoid_field_3d import build_continuous_arrays_3d
 from solvers.sigmoid_field import get_geometry_lut
-from df_fit.predict import predict_K_cF
+from df_surrogate.predict import predict_K_cF
 
 R_AIR = 287.05
 

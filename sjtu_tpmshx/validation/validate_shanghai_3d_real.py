@@ -35,9 +35,9 @@ from solvers.tpms_calc import (
     P_atm, Sa_mm, Pr,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.solve_full_3d import (solve_full_domain_3d,
+from solvers.ltne_energy_3d import (solve_full_domain_3d,
                                      energy_balance_3d, mass_balance_3d)
-from df_fit.predict import predict_K_cF
+from df_surrogate.predict import predict_K_cF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  apply_to_K_cF, resolve_mode_from_env)
 

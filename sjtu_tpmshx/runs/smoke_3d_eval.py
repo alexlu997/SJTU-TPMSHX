@@ -19,7 +19,7 @@ from optimization.evaluator_3d import (
     DEFAULT_CONFIG_3D,
     evaluate_design_3d,
 )
-from solvers.field_param import (
+from solvers.continuous_field import (
     decision_dim,
     decision_bounds,
     DEFAULT_N_CTRL_X,

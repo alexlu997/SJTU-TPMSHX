@@ -25,7 +25,7 @@ Public API:
     predict_dP_compressible_corrected(...) -> dP [Pa] with correction applied
 
 Usage:
-    >>> from sjtu_tpmshx.df_fit.residual_correction import (
+    >>> from sjtu_tpmshx.df_surrogate.residual_correction import (
     ...     predict_dP_compressible_corrected,
     ... )
     >>> dP = predict_dP_compressible_corrected(

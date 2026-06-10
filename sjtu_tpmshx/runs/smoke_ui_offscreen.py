@@ -1,4 +1,4 @@
-"""runs/test_ui_smoke_offscreen.py — Phase A: Qt offscreen smoke.
+"""runs/smoke_ui_offscreen.py — Phase A: Qt offscreen smoke.
 
 Boots MainWindow with QT_QPA_PLATFORM=offscreen, simulates user flow:
   1. Construct window (catches __init__ crashes / missing imports)

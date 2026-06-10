@@ -20,7 +20,7 @@ import pytest
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-from solvers.field_param import (
+from solvers.continuous_field import (
     encode_decision_vector,
     uniform_field,
 )

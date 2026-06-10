@@ -535,7 +535,7 @@ def show_field_preview(window, x_decision=None) -> None:
         _set_status(window, f"matplotlib unavailable ({e})")
         return
 
-    from solvers.field_param import (
+    from solvers.continuous_field import (
         from_decision_vector, encode_decision_vector, uniform_field,
         DEFAULT_L_BOUNDS, DEFAULT_T_BOUNDS,
         DEFAULT_N_CTRL_X, DEFAULT_N_CTRL_Y, DEFAULT_SYMMETRIC_Y,
@@ -1078,7 +1078,7 @@ def load_pareto_solution(window, x_decision: np.ndarray) -> None:
     pushed back to scalar Compute inputs. The full graded geometry lives in
     the Pareto CSV under ``opt_runs/.../pareto_final.csv``.
     """
-    from solvers.field_param import decode_decision_vector
+    from solvers.continuous_field import decode_decision_vector
 
     cfg_full = _gather_cfg(window)
     # 2026-05-20 UI sweep: guard against a corrupt or mis-sized decision

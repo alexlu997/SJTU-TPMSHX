@@ -51,12 +51,12 @@ from solvers.tpms_calc import (
     adaptive_grid,
 )
 from solvers.simple_solver import SIMPLESolver
-from solvers.solve_full import solve_full_domain
+from solvers.ltne_energy import solve_full_domain
 from solvers.df_projection import (
     extract_dP_from_simple,
     override_simple_K_cF,
 )
-from solvers.field_param import (
+from solvers.continuous_field import (
     ContinuousFieldConfig,
     from_decision_vector,
     DEFAULT_N_CTRL_X,
@@ -515,7 +515,7 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
 
     # Build a uniform field at L=6, t=0.4 → equivalent to single-zone baseline
-    from solvers.field_param import uniform_field, encode_decision_vector
+    from solvers.continuous_field import uniform_field, encode_decision_vector
 
     fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
     print("Building uniform-field design …")

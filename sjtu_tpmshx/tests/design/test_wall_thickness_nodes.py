@@ -7,7 +7,7 @@ t∈{0.3,0.4,0.5} 是闭合训练域; t=0.6 为外推 (低置信, K 外插可能
 import math
 
 from solvers.tpms_calc import geometry, nu_from_Re
-from df_fit.predict import predict_K_cF, predict_dP_compressible
+from df_surrogate.predict import predict_K_cF, predict_dP_compressible
 
 
 def test_closures_accept_t_0p3_and_0p6():

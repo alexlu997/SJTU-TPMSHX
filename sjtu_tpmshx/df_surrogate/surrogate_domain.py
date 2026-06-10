@@ -13,7 +13,7 @@ patch-zoning optimizer was retired in favor of the continuous-field design.
 from __future__ import annotations
 from typing import List, Tuple
 
-# ConstDF-v1 surrogate fitted window — single source in df_fit/_domain.py.
+# ConstDF-v1 surrogate fitted window — single source in df_surrogate/_domain.py.
 from ._domain import (
     TRAIN_L as _SURROGATE_L_MM,
     TRAIN_T as _SURROGATE_T_MM,

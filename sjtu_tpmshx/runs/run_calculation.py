@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from controllers.compute_config import ComputeConfig, bc_to_dict
 from solvers.simple_solver import SIMPLESolver
-from solvers.solve_full import solve_full_domain
+from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
 
@@ -123,7 +123,7 @@ def _parse_inputs_cfg(compute_cfg):
     # dict so the UI can mark the result + watermark the plots.
     _allow_extrap = bool(compute_cfg.extrap.allow)
     try:
-        from df_fit.surrogate_domain import check_surrogate_domain_at_point
+        from df_surrogate.surrogate_domain import check_surrogate_domain_at_point
         _tpms = compute_cfg.geometry.tpms
         _L = compute_cfg.geometry.L_cell_mm
         _t = compute_cfg.geometry.t_wall_mm
@@ -1267,7 +1267,7 @@ def _run_solvers(window, cfg, fields):
     # (per-fluid inlet T for Ta/Tb, 0.5*(T_inA+T_inB) for Ts).
     # Filled → only Ts is overridden with the user value; Ta/Tb stay at
     # the per-fluid inlet T to avoid the 0.5-mean energy-balance leak
-    # documented in solve_full_3d.py:1442-44 (mid-T value at non-pipe
+    # documented in ltne_energy_3d.py:1442-44 (mid-T value at non-pipe
     # inlet cells diffuses back as a virtual heat source, ~20–25% on
     # partial-inlet geometries). Ts is *not* prescribed; the solid
     # energy equation still updates it every sweep.

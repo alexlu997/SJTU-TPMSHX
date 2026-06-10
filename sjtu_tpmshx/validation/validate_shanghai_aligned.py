@@ -31,9 +31,9 @@ from solvers.tpms_calc import (
     nu_from_Re, nu_water_gyroid_yan6,
 )
 from solvers.simple_solver import SIMPLESolver
-from solvers.solve_full import solve_full_domain
+from solvers.ltne_energy import solve_full_domain
 from solvers.df_projection import build_master_refined_grid, extract_dP_from_simple
-from df_fit.predict import predict_K_cF
+from df_surrogate.predict import predict_K_cF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  apply_to_K_cF, resolve_mode_from_env)
 

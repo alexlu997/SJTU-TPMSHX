@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from solvers.tpms_calc import geometry as tpms_geometry
-from solvers.solve_full_3d import solve_full_domain_3d
-from df_fit.predict import predict_dP_compressible, predict_dP
+from solvers.ltne_energy_3d import solve_full_domain_3d
+from df_surrogate.predict import predict_dP_compressible, predict_dP
 from .fluids import fluid_props, fluid_nu
 
 K_STEEL = 16.0
@@ -24,7 +24,7 @@ SIZING_CHUNK = 100
 # 关键: enumerate_select 全核 loky 并行, 各进程 lru_cache 不共享 → 各自重建 phi grid;
 # N=256 时 16 进程 × 2 拓扑 × 128MiB ≈ 4GiB 常驻 → MemoryError。N=128 解此瓶颈。
 GEOM_N = 128
-# dir 编码 (verified vs solve_full_3d docstring): 0=+x, 1=−x, 2=+y, 3=−y
+# dir 编码 (verified vs ltne_energy_3d docstring): 0=+x, 1=−x, 2=+y, 3=−y
 # 内核选择: 叉流走 2D 内核 (Nz=1, 垂直流股稳定快)。逆流两股同轴反向, 2D 内核
 # solve_full_domain 无欠松弛 → 极限环 (水出口 347↔357 跳, 能量不平衡 7-33%);
 # 改走 3D 内核 (Nz=2) + 低 α 欠松弛阻尼 → 稳定收敛 (实证 α=0.3 gap 0.4%, 各

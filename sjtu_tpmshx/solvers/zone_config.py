@@ -4,7 +4,7 @@ zone_config.py — Zone-based domain partitioning for SJTU-TPMSHX
 DEPRECATED FOR OPTIMIZER USE
 ============================
 The optimizer (`optimization/optimizer_qnehvi.py` + `evaluator.py`) now
-uses `solvers.field_param.ContinuousFieldConfig` (4×4 + Y-mirror = 16-D
+uses `solvers.continuous_field.ContinuousFieldConfig` (4×4 + Y-mirror = 16-D
 bicubic B-spline) for continuous-field optimization, which superseded
 the old patch-zoning NSGA-II workflow (2026-05-08 rewrite).
 

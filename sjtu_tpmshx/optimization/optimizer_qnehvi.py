@@ -40,7 +40,7 @@ from optimization.evaluator import (
     DEFAULT_CONFIG as EVAL_DEFAULT_CONFIG,
     evaluate_design,
 )
-from solvers.field_param import (
+from solvers.continuous_field import (
     decision_dim,
     decision_bounds,
 )

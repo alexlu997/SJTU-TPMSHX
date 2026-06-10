@@ -1,5 +1,5 @@
 """
-tests/test_solve_full_3d.py — Phase 1 Week 3 verification
+tests/test_ltne_energy_3d.py — Phase 1 Week 3 verification
 
 Four tests:
   1. nz1_matches_2d        — Nz=1 delegate path == 2D solver bitwise
@@ -16,12 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from solvers.solve_full_3d import (
+from solvers.ltne_energy_3d import (
     solve_full_domain_3d,
     energy_balance_3d,
     mass_balance_3d,
 )
-from solvers.solve_full import solve_full_domain
+from solvers.ltne_energy import solve_full_domain
 
 
 def _toy_case(Nx=10, Ny=8, Nz=1, T_inA=350.0, T_inB=300.0):
@@ -150,4 +150,4 @@ if __name__ == '__main__':
     test_mass_balance()
     test_energy_balance()
     test_alpha_T_robustness()
-    print("\nAll solve_full_3d tests PASS")
+    print("\nAll ltne_energy_3d tests PASS")

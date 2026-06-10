@@ -46,7 +46,7 @@ from typing import Optional
 
 import numpy as np
 
-from solvers.field_param import (
+from solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_N_CTRL_X,
     DEFAULT_N_CTRL_Y,

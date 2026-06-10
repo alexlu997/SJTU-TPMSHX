@@ -16,7 +16,7 @@ and boundary effect correction. See surrogate_v3.py for details.
 
 Usage
 -----
-    >>> from sjtu_tpmshx.df_fit.predict import predict_K_cF, predict_dP_compressible
+    >>> from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_dP_compressible
     >>> K, cF = predict_K_cF('Gyroid', 7.0, 0.6, 0.368)
     >>> dP = predict_dP_compressible('Gyroid', 7.0, 0.6, 0.368,
     ...          G=63.05, T=370.7, P_in=304746, mu=2.16e-5, L=0.231)

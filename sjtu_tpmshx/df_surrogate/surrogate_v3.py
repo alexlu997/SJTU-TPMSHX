@@ -25,7 +25,7 @@ Calibration:
     3. L=8 geometries: Re < 1600 excluded (transition regime)
 
 Usage:
-    >>> from sjtu_tpmshx.df_fit.surrogate_v3 import SurrogateV3
+    >>> from sjtu_tpmshx.df_surrogate.surrogate_v3 import SurrogateV3
     >>> model = SurrogateV3()
     >>> K, c_F = model.predict(L_mm=7.0, t_mm=0.6)
     >>> dP = model.predict_dP(K, c_F, G=63.05, T=370.7, P_in=304746, mu=2.16e-5, L=0.182)

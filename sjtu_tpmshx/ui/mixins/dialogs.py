@@ -32,8 +32,8 @@ class DialogsMixin:
     """Overview / test-info / solve-log modal dialogs."""
 
     def _show_overview(self):
-        """Open the D7 overview dashboard dialog."""
-        from ui.overview import open_overview
+        """Open the D7 session-overview dashboard dialog."""
+        from ui.session_overview import open_overview
         open_overview(self)
 
     def _show_solve_log(self):
