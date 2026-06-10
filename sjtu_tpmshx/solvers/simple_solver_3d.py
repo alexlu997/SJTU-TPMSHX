@@ -82,6 +82,7 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 _AMG_GATE = 30_000
 
 from .tpms_calc import air_density, air_viscosity, P_atm
+from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
 
 
 # ===================================================================
@@ -137,6 +138,103 @@ def _porous_src_df_3d(umag, K, cF, mu, rho):
 
 # ── SIMPLE Step 1: u-momentum (x-direction), 7-point first-order upwind ──
 
+@njit(cache=True, fastmath=True, inline='always')
+def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
+                  Nx, Ny, Nz, dx, dy, dz,
+                  rho_field, mu_eff_field, mu_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+    """One Gauss-Seidel update of the u-face (i, j, k) — shared cell body
+    for the serial and parallel sweeps (B6 dedup; previously duplicated
+    verbatim). ``inline='always'`` so Numba fuses it into each loop."""
+    # Volume + face areas
+    dxi = 0.5 * (dx[i - 1] + dx[min(i, Nx - 1)])
+    dyj = dy[j]
+    dzk = dz[k]
+    vol = dxi * dyj * dzk
+
+    # Face viscosity (average cells i-1 and i)
+    il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
+    mu_e = 0.5 * (mu_eff_field[il_r, j, k]
+                  + mu_eff_field[ir_r, j, k])
+
+    # Diffusion coefficients (6 faces). 2× at domain walls
+    # (half-cell distance to wall, no-slip image point).
+    De = mu_e * dyj * dzk / dxi
+    Dw = De
+    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
+    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
+    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
+    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
+
+    # Neighbour values (with wall-BC zero outside domain)
+    uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
+    uW = u[i - 1, j, k] if i > 0 else 0.0
+    uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
+    uS = u[i, j - 1, k] if j > 0 else 0.0
+    uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
+    uB = u[i, j, k - 1] if k > 0 else u[i, j, k]
+
+    # Face-centred fluxes (upwind, first order)
+    ue = 0.5 * (u[i, j, k] + u[min(i + 1, Nx), j, k])
+    uw = 0.5 * (u[max(i - 1, 0), j, k] + u[i, j, k])
+    il = max(i - 1, 0); ir = min(i, Nx - 1)
+    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k]) \
+        if j < Ny - 1 else 0.0
+    vs = 0.5 * (v[il, j, k] + v[ir, j, k])
+    wn = 0.5 * (w[il, j, k + 1] + w[ir, j, k + 1]) \
+        if k < Nz - 1 else 0.0
+    wb = 0.5 * (w[il, j, k] + w[ir, j, k])
+
+    rho_loc = 0.5 * (rho_field[il_r, j, k]
+                     + rho_field[ir_r, j, k])
+    mu_loc = 0.5 * (mu_field[il_r, j, k]
+                    + mu_field[ir_r, j, k])
+
+    Fe = rho_loc * ue * dyj * dzk
+    Fw = rho_loc * uw * dyj * dzk
+    Fn = rho_loc * vn * dxi * dzk
+    Fs = rho_loc * vs * dxi * dzk
+    Ft = rho_loc * wn * dxi * dyj
+    Fb = rho_loc * wb * dxi * dyj
+
+    aE = De + max(-Fe, 0.0)
+    aW = Dw + max(Fw, 0.0)
+    aN = Dn + max(-Fn, 0.0)
+    aS = Ds + max(Fs, 0.0)
+    aT = Dt + max(-Ft, 0.0)
+    aB = Db + max(Fb, 0.0)
+
+    # Brinkman / Forchheimer drag (linearised)
+    umag = _umag_u_3d(u, v, w, i, j, k, Nx, Ny, Nz)
+    Sp = _porous_src_df_3d(umag, K_arr[j, k], cF_arr[j, k],
+                             mu_loc, rho_loc) * vol
+
+    # P1b-c: wall penalty, grid-invariant via aP_natural
+    aP_nat = aE + aW + aN + aS + aT + aB
+    wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
+    if wall_out > 0.01 and j >= Ny - 8:
+        wall_dist = Ny - j
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+    wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
+    if wall_in > 0.01 and j < 8:
+        wall_dist = j + 1
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+    # Pressure gradient source
+    p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
+
+    aP0 = aE + aW + aN + aS + aT + aB + Sp
+    rhs = (aE * uE + aW * uW + aN * uN + aS * uS
+           + aT * uT + aB * uB + p_src)
+    aP = aP0 / alpha_u
+    rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j, k]
+
+    u[i, j, k] = rhs / aP
+    d_u[i, j, k] = dyj * dzk / aP0
+
+
 @njit(cache=True, fastmath=True)
 def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                         Nx, Ny, Nz,
@@ -150,96 +248,17 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
     u : (Nx+1, Ny, Nz) — updated in place.
     K_arr, cF_arr : (Ny, Nz) — interstitial D-F coefficients per streamwise row.
     Internal walls (i=0, i=Nx) are no-slip (u=0).
+    Cell body shared with the parallel variant via `_u_cell_df_3d`.
     """
     for _ in range(n_sweeps):
         for i in range(1, Nx):
             for j in range(Ny):
                 for k in range(Nz):
-                    # Volume + face areas
-                    dxi = 0.5 * (dx[i - 1] + dx[min(i, Nx - 1)])
-                    dyj = dy[j]
-                    dzk = dz[k]
-                    vol = dxi * dyj * dzk
-
-                    # Face viscosity (average cells i-1 and i)
-                    il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
-                    mu_e = 0.5 * (mu_eff_field[il_r, j, k]
-                                  + mu_eff_field[ir_r, j, k])
-
-                    # Diffusion coefficients (6 faces). 2× at domain walls
-                    # (half-cell distance to wall, no-slip image point).
-                    De = mu_e * dyj * dzk / dxi
-                    Dw = De
-                    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-                    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-                    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
-
-                    # Neighbour values (with wall-BC zero outside domain)
-                    uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
-                    uW = u[i - 1, j, k] if i > 0 else 0.0
-                    uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
-                    uS = u[i, j - 1, k] if j > 0 else 0.0
-                    uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
-                    uB = u[i, j, k - 1] if k > 0 else u[i, j, k]
-
-                    # Face-centred fluxes (upwind, first order)
-                    ue = 0.5 * (u[i, j, k] + u[min(i + 1, Nx), j, k])
-                    uw = 0.5 * (u[max(i - 1, 0), j, k] + u[i, j, k])
-                    il = max(i - 1, 0); ir = min(i, Nx - 1)
-                    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k]) \
-                        if j < Ny - 1 else 0.0
-                    vs = 0.5 * (v[il, j, k] + v[ir, j, k])
-                    wn = 0.5 * (w[il, j, k + 1] + w[ir, j, k + 1]) \
-                        if k < Nz - 1 else 0.0
-                    wb = 0.5 * (w[il, j, k] + w[ir, j, k])
-
-                    rho_loc = 0.5 * (rho_field[il_r, j, k]
-                                     + rho_field[ir_r, j, k])
-                    mu_loc = 0.5 * (mu_field[il_r, j, k]
-                                    + mu_field[ir_r, j, k])
-
-                    Fe = rho_loc * ue * dyj * dzk
-                    Fw = rho_loc * uw * dyj * dzk
-                    Fn = rho_loc * vn * dxi * dzk
-                    Fs = rho_loc * vs * dxi * dzk
-                    Ft = rho_loc * wn * dxi * dyj
-                    Fb = rho_loc * wb * dxi * dyj
-
-                    aE = De + max(-Fe, 0.0)
-                    aW = Dw + max(Fw, 0.0)
-                    aN = Dn + max(-Fn, 0.0)
-                    aS = Ds + max(Fs, 0.0)
-                    aT = Dt + max(-Ft, 0.0)
-                    aB = Db + max(Fb, 0.0)
-
-                    # Brinkman / Forchheimer drag (linearised)
-                    umag = _umag_u_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                    Sp = _porous_src_df_3d(umag, K_arr[j, k], cF_arr[j, k],
-                                             mu_loc, rho_loc) * vol
-
-                    # P1b-c: wall penalty, grid-invariant via aP_natural
-                    aP_nat = aE + aW + aN + aS + aT + aB
-                    wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
-                    if wall_out > 0.01 and j >= Ny - 8:
-                        wall_dist = Ny - j
-                        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                    wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
-                    if wall_in > 0.01 and j < 8:
-                        wall_dist = j + 1
-                        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-
-                    # Pressure gradient source
-                    p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
-
-                    aP0 = aE + aW + aN + aS + aT + aB + Sp
-                    rhs = (aE * uE + aW * uW + aN * uN + aS * uS
-                           + aT * uT + aB * uB + p_src)
-                    aP = aP0 / alpha_u
-                    rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j, k]
-
-                    u[i, j, k] = rhs / aP
-                    d_u[i, j, k] = dyj * dzk / aP0
+                    _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
+                                  Nx, Ny, Nz, dx, dy, dz,
+                                  rho_field, mu_eff_field, mu_field,
+                                  K_arr, cF_arr, outlet_frac, inlet_frac,
+                                  alpha_u)
 
     # No-slip BC at x-walls
     for j in range(Ny):
@@ -249,10 +268,10 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
 
 
 # Parallel red-black Gauss-Seidel variant of `_sweep_u_jit_df_3d`. Dispatched
-# when grid ≥ `_PARALLEL_CELL_THRESHOLD`. Body is identical to the serial
-# version except the triple loop is split into two colour passes with
-# `(i+j+k) % 2 == color` filtering; each pass writes only same-colour cells,
-# reads only opposite-colour neighbours, so `prange` on i is race-free.
+# when grid ≥ `_PARALLEL_CELL_THRESHOLD`. Same cell body (`_u_cell_df_3d`);
+# the triple loop is split into two colour passes with `(i+j+k) % 2 == color`
+# filtering — each pass writes only same-colour cells, reads only
+# opposite-colour neighbours, so `prange` on i is race-free.
 @njit(cache=True, fastmath=True, parallel=True)
 def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                  Nx, Ny, Nz,
@@ -268,70 +287,11 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                     for k in range(Nz):
                         if (i + j + k) % 2 != color:
                             continue
-                        dxi = 0.5 * (dx[i - 1] + dx[min(i, Nx - 1)])
-                        dyj = dy[j]
-                        dzk = dz[k]
-                        vol = dxi * dyj * dzk
-                        il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
-                        mu_e = 0.5 * (mu_eff_field[il_r, j, k]
-                                      + mu_eff_field[ir_r, j, k])
-                        De = mu_e * dyj * dzk / dxi
-                        Dw = De
-                        Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-                        Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-                        Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                        Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
-                        uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
-                        uW = u[i - 1, j, k] if i > 0 else 0.0
-                        uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
-                        uS = u[i, j - 1, k] if j > 0 else 0.0
-                        uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
-                        uB = u[i, j, k - 1] if k > 0 else u[i, j, k]
-                        ue = 0.5 * (u[i, j, k] + u[min(i + 1, Nx), j, k])
-                        uw = 0.5 * (u[max(i - 1, 0), j, k] + u[i, j, k])
-                        il = max(i - 1, 0); ir = min(i, Nx - 1)
-                        vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k]) \
-                            if j < Ny - 1 else 0.0
-                        vs = 0.5 * (v[il, j, k] + v[ir, j, k])
-                        wn = 0.5 * (w[il, j, k + 1] + w[ir, j, k + 1]) \
-                            if k < Nz - 1 else 0.0
-                        wb = 0.5 * (w[il, j, k] + w[ir, j, k])
-                        rho_loc = 0.5 * (rho_field[il_r, j, k]
-                                         + rho_field[ir_r, j, k])
-                        mu_loc = 0.5 * (mu_field[il_r, j, k]
-                                        + mu_field[ir_r, j, k])
-                        Fe = rho_loc * ue * dyj * dzk
-                        Fw = rho_loc * uw * dyj * dzk
-                        Fn = rho_loc * vn * dxi * dzk
-                        Fs = rho_loc * vs * dxi * dzk
-                        Ft = rho_loc * wn * dxi * dyj
-                        Fb = rho_loc * wb * dxi * dyj
-                        aE = De + max(-Fe, 0.0)
-                        aW = Dw + max(Fw, 0.0)
-                        aN = Dn + max(-Fn, 0.0)
-                        aS = Ds + max(Fs, 0.0)
-                        aT = Dt + max(-Ft, 0.0)
-                        aB = Db + max(Fb, 0.0)
-                        umag = _umag_u_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                        Sp = _porous_src_df_3d(umag, K_arr[j, k], cF_arr[j, k],
-                                                 mu_loc, rho_loc) * vol
-                        aP_nat = aE + aW + aN + aS + aT + aB
-                        wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
-                        if wall_out > 0.01 and j >= Ny - 8:
-                            wall_dist = Ny - j
-                            Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
-                        if wall_in > 0.01 and j < 8:
-                            wall_dist = j + 1
-                            Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
-                        aP0 = aE + aW + aN + aS + aT + aB + Sp
-                        rhs = (aE * uE + aW * uW + aN * uN + aS * uS
-                               + aT * uT + aB * uB + p_src)
-                        aP = aP0 / alpha_u
-                        rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j, k]
-                        u[i, j, k] = rhs / aP
-                        d_u[i, j, k] = dyj * dzk / aP0
+                        _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
+                                      Nx, Ny, Nz, dx, dy, dz,
+                                      rho_field, mu_eff_field, mu_field,
+                                      K_arr, cF_arr, outlet_frac,
+                                      inlet_frac, alpha_u)
     for j in range(Ny):
         for k in range(Nz):
             u[0, j, k] = 0.0
@@ -340,102 +300,95 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
 
 # ── SIMPLE Step 2: v-momentum (y-direction) ────────────────────────
 
-@njit(cache=True, fastmath=True)
-def _sweep_v_jit_df_3d(u, v, w, P, d_v,
-                        v_inlet_field,
-                        Nx, Ny, Nz,
-                        dx, dy, dz,
-                        rho_field, mu_eff_field, mu_field,
-                        K_arr, cF_arr,
-                        outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps):
-    """Solve the y-momentum equation on the v-staggered face.
+@njit(cache=True, fastmath=True, inline='always')
+def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
+                  Nx, Ny, Nz, dx, dy, dz,
+                  rho_field, mu_eff_field, mu_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+    """One Gauss-Seidel update of the v-face (i, j, k) — shared cell body
+    for the serial and parallel sweeps (B6 dedup)."""
+    jc = min(j, Ny - 1)
+    dxi = dx[i]
+    dyj = 0.5 * (dy[j - 1] + dy[min(j, Ny - 1)])
+    dzk = dz[k]
+    vol = dxi * dyj * dzk
 
-    Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
-    non-uniform inlet profile for manifold mal-distribution modeling (P2).
-    Outlet j=Ny preserves rho*v mass flux for variable-density flow.
-    """
-    for _ in range(n_sweeps):
-        for i in range(Nx):
-            for j in range(1, Ny):
-                for k in range(Nz):
-                    jc = min(j, Ny - 1)
-                    dxi = dx[i]
-                    dyj = 0.5 * (dy[j - 1] + dy[min(j, Ny - 1)])
-                    dzk = dz[k]
-                    vol = dxi * dyj * dzk
+    jb = max(j - 1, 0); jt = min(j, Ny - 1)
+    mu_e = 0.5 * (mu_eff_field[i, jb, k]
+                  + mu_eff_field[i, jt, k])
 
-                    jb = max(j - 1, 0); jt = min(j, Ny - 1)
-                    mu_e = 0.5 * (mu_eff_field[i, jb, k]
-                                  + mu_eff_field[i, jt, k])
+    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
+    Dw = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
+    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
+    Ds = mu_e * dxi * dzk / dyj
+    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
+    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
 
-                    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-                    Dw = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-                    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
-                    Ds = mu_e * dxi * dzk / dyj
-                    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
+    vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
+    vW = v[i - 1, j, k] if i > 0 else 0.0
+    vN = v[i, j + 1, k] if j < Ny - 1 else v[i, j, k]
+    vS = v[i, j - 1, k]
+    vT = v[i, j, k + 1] if k < Nz - 1 else v[i, j, k]
+    vB = v[i, j, k - 1] if k > 0 else v[i, j, k]
 
-                    vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
-                    vW = v[i - 1, j, k] if i > 0 else 0.0
-                    vN = v[i, j + 1, k] if j < Ny - 1 else v[i, j, k]
-                    vS = v[i, j - 1, k]
-                    vT = v[i, j, k + 1] if k < Nz - 1 else v[i, j, k]
-                    vB = v[i, j, k - 1] if k > 0 else v[i, j, k]
+    ue = 0.5 * (u[i + 1, jb, k] + u[i + 1, jt, k]) \
+        if i < Nx - 1 else 0.0
+    uw = 0.5 * (u[i, jb, k] + u[i, jt, k]) if i > 0 else 0.0
+    vn = 0.5 * (v[i, j, k] + v[i, min(j + 1, Ny), k])
+    vs = 0.5 * (v[i, max(j - 1, 0), k] + v[i, j, k])
+    wn = 0.5 * (w[i, jb, k + 1] + w[i, jt, k + 1]) \
+        if k < Nz - 1 else 0.0
+    wb = 0.5 * (w[i, jb, k] + w[i, jt, k])
 
-                    ue = 0.5 * (u[i + 1, jb, k] + u[i + 1, jt, k]) \
-                        if i < Nx - 1 else 0.0
-                    uw = 0.5 * (u[i, jb, k] + u[i, jt, k]) if i > 0 else 0.0
-                    vn = 0.5 * (v[i, j, k] + v[i, min(j + 1, Ny), k])
-                    vs = 0.5 * (v[i, max(j - 1, 0), k] + v[i, j, k])
-                    wn = 0.5 * (w[i, jb, k + 1] + w[i, jt, k + 1]) \
-                        if k < Nz - 1 else 0.0
-                    wb = 0.5 * (w[i, jb, k] + w[i, jt, k])
+    rho_loc = 0.5 * (rho_field[i, jb, k] + rho_field[i, jt, k])
+    mu_loc = 0.5 * (mu_field[i, jb, k] + mu_field[i, jt, k])
 
-                    rho_loc = 0.5 * (rho_field[i, jb, k] + rho_field[i, jt, k])
-                    mu_loc = 0.5 * (mu_field[i, jb, k] + mu_field[i, jt, k])
+    Fe = rho_loc * ue * dyj * dzk
+    Fw = rho_loc * uw * dyj * dzk
+    Fn = rho_loc * vn * dxi * dzk
+    Fs = rho_loc * vs * dxi * dzk
+    Ft = rho_loc * wn * dxi * dyj
+    Fb = rho_loc * wb * dxi * dyj
 
-                    Fe = rho_loc * ue * dyj * dzk
-                    Fw = rho_loc * uw * dyj * dzk
-                    Fn = rho_loc * vn * dxi * dzk
-                    Fs = rho_loc * vs * dxi * dzk
-                    Ft = rho_loc * wn * dxi * dyj
-                    Fb = rho_loc * wb * dxi * dyj
+    aE = De + max(-Fe, 0.0)
+    aW = Dw + max(Fw, 0.0)
+    aN = Dn + max(-Fn, 0.0)
+    aS = Ds + max(Fs, 0.0)
+    aT = Dt + max(-Ft, 0.0)
+    aB = Db + max(Fb, 0.0)
 
-                    aE = De + max(-Fe, 0.0)
-                    aW = Dw + max(Fw, 0.0)
-                    aN = Dn + max(-Fn, 0.0)
-                    aS = Ds + max(Fs, 0.0)
-                    aT = Dt + max(-Ft, 0.0)
-                    aB = Db + max(Fb, 0.0)
+    umag = _umag_v_3d(u, v, w, i, j, k, Nx, Ny, Nz)
+    Sp = _porous_src_df_3d(umag, K_arr[jc, k], cF_arr[jc, k],
+                             mu_loc, rho_loc) * vol
 
-                    umag = _umag_v_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                    Sp = _porous_src_df_3d(umag, K_arr[jc, k], cF_arr[jc, k],
-                                             mu_loc, rho_loc) * vol
+    # P1b-c: wall penalty, grid-invariant via aP_natural
+    aP_nat = aE + aW + aN + aS + aT + aB
+    wall_out = 1.0 - outlet_frac[i, k]
+    if wall_out > 0.01 and j >= Ny - 8:
+        wall_dist = Ny - j
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+    wall_in = 1.0 - inlet_frac[i, k]
+    if wall_in > 0.01 and j < 8:
+        wall_dist = j + 1
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
-                    # P1b-c: wall penalty, grid-invariant via aP_natural
-                    aP_nat = aE + aW + aN + aS + aT + aB
-                    wall_out = 1.0 - outlet_frac[i, k]
-                    if wall_out > 0.01 and j >= Ny - 8:
-                        wall_dist = Ny - j
-                        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                    wall_in = 1.0 - inlet_frac[i, k]
-                    if wall_in > 0.01 and j < 8:
-                        wall_dist = j + 1
-                        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+    p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
 
-                    p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
+    aP0 = aE + aW + aN + aS + aT + aB + Sp
+    rhs = (aE * vE + aW * vW + aN * vN + aS * vS
+           + aT * vT + aB * vB + p_src)
+    aP = aP0 / alpha_u
+    rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j, k]
 
-                    aP0 = aE + aW + aN + aS + aT + aB + Sp
-                    rhs = (aE * vE + aW * vW + aN * vN + aS * vS
-                           + aT * vT + aB * vB + p_src)
-                    aP = aP0 / alpha_u
-                    rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j, k]
+    v[i, j, k] = rhs / aP
+    d_v[i, j, k] = dxi * dzk / aP0
 
-                    v[i, j, k] = rhs / aP
-                    d_v[i, j, k] = dxi * dzk / aP0
 
-    # Apply BCs
+@njit(cache=True, fastmath=True, inline='always')
+def _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz):
+    """Inlet + outlet BC tail shared by the serial and parallel v-sweeps."""
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
@@ -451,6 +404,36 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                     v[i, Ny, k] = v[i, Ny - 1, k]
             else:
                 v[i, Ny, k] = 0.0
+
+
+@njit(cache=True, fastmath=True)
+def _sweep_v_jit_df_3d(u, v, w, P, d_v,
+                        v_inlet_field,
+                        Nx, Ny, Nz,
+                        dx, dy, dz,
+                        rho_field, mu_eff_field, mu_field,
+                        K_arr, cF_arr,
+                        outlet_frac, inlet_frac,
+                        alpha_u, n_sweeps):
+    """Solve the y-momentum equation on the v-staggered face.
+
+    Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
+    non-uniform inlet profile for manifold mal-distribution modeling (P2).
+    Outlet j=Ny preserves rho*v mass flux for variable-density flow.
+    Cell body shared with the parallel variant via `_v_cell_df_3d`.
+    """
+    for _ in range(n_sweeps):
+        for i in range(Nx):
+            for j in range(1, Ny):
+                for k in range(Nz):
+                    _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
+                                  Nx, Ny, Nz, dx, dy, dz,
+                                  rho_field, mu_eff_field, mu_field,
+                                  K_arr, cF_arr, outlet_frac, inlet_frac,
+                                  alpha_u)
+
+    # Apply BCs
+    _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz)
 
 
 # Parallel red-black Gauss-Seidel variant of `_sweep_v_jit_df_3d`.
@@ -470,84 +453,102 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                     for k in range(Nz):
                         if (i + j + k) % 2 != color:
                             continue
-                        jc = min(j, Ny - 1)
-                        dxi = dx[i]
-                        dyj = 0.5 * (dy[j - 1] + dy[min(j, Ny - 1)])
-                        dzk = dz[k]
-                        vol = dxi * dyj * dzk
-                        jb = max(j - 1, 0); jt = min(j, Ny - 1)
-                        mu_e = 0.5 * (mu_eff_field[i, jb, k]
-                                      + mu_eff_field[i, jt, k])
-                        De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-                        Dw = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-                        Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
-                        Ds = mu_e * dxi * dzk / dyj
-                        Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                        Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
-                        vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
-                        vW = v[i - 1, j, k] if i > 0 else 0.0
-                        vN = v[i, j + 1, k] if j < Ny - 1 else v[i, j, k]
-                        vS = v[i, j - 1, k]
-                        vT = v[i, j, k + 1] if k < Nz - 1 else v[i, j, k]
-                        vB = v[i, j, k - 1] if k > 0 else v[i, j, k]
-                        ue = 0.5 * (u[i + 1, jb, k] + u[i + 1, jt, k]) \
-                            if i < Nx - 1 else 0.0
-                        uw = 0.5 * (u[i, jb, k] + u[i, jt, k]) if i > 0 else 0.0
-                        vn = 0.5 * (v[i, j, k] + v[i, min(j + 1, Ny), k])
-                        vs = 0.5 * (v[i, max(j - 1, 0), k] + v[i, j, k])
-                        wn = 0.5 * (w[i, jb, k + 1] + w[i, jt, k + 1]) \
-                            if k < Nz - 1 else 0.0
-                        wb = 0.5 * (w[i, jb, k] + w[i, jt, k])
-                        rho_loc = 0.5 * (rho_field[i, jb, k] + rho_field[i, jt, k])
-                        mu_loc = 0.5 * (mu_field[i, jb, k] + mu_field[i, jt, k])
-                        Fe = rho_loc * ue * dyj * dzk
-                        Fw = rho_loc * uw * dyj * dzk
-                        Fn = rho_loc * vn * dxi * dzk
-                        Fs = rho_loc * vs * dxi * dzk
-                        Ft = rho_loc * wn * dxi * dyj
-                        Fb = rho_loc * wb * dxi * dyj
-                        aE = De + max(-Fe, 0.0)
-                        aW = Dw + max(Fw, 0.0)
-                        aN = Dn + max(-Fn, 0.0)
-                        aS = Ds + max(Fs, 0.0)
-                        aT = Dt + max(-Ft, 0.0)
-                        aB = Db + max(Fb, 0.0)
-                        umag = _umag_v_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                        Sp = _porous_src_df_3d(umag, K_arr[jc, k], cF_arr[jc, k],
-                                                 mu_loc, rho_loc) * vol
-                        aP_nat = aE + aW + aN + aS + aT + aB
-                        wall_out = 1.0 - outlet_frac[i, k]
-                        if wall_out > 0.01 and j >= Ny - 8:
-                            wall_dist = Ny - j
-                            Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        wall_in = 1.0 - inlet_frac[i, k]
-                        if wall_in > 0.01 and j < 8:
-                            wall_dist = j + 1
-                            Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
-                        aP0 = aE + aW + aN + aS + aT + aB + Sp
-                        rhs = (aE * vE + aW * vW + aN * vN + aS * vS
-                               + aT * vT + aB * vB + p_src)
-                        aP = aP0 / alpha_u
-                        rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j, k]
-                        v[i, j, k] = rhs / aP
-                        d_v[i, j, k] = dxi * dzk / aP0
-    for i in range(Nx):
-        for k in range(Nz):
-            v[i, 0, k] = v_inlet_field[i, k]
-            if outlet_frac[i, k] > 0.5:
-                if Ny >= 2:
-                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
-                                            + rho_field[i, Ny - 1, k])
-                    rho_outer_face = rho_field[i, Ny - 1, k]
-                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
-                else:
-                    v[i, Ny, k] = v[i, Ny - 1, k]
-            else:
-                v[i, Ny, k] = 0.0
+                        _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
+                                      Nx, Ny, Nz, dx, dy, dz,
+                                      rho_field, mu_eff_field, mu_field,
+                                      K_arr, cF_arr, outlet_frac,
+                                      inlet_frac, alpha_u)
+    _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz)
 
 
 # ── SIMPLE Step 3: w-momentum (z-direction) — new in 3D ────────────
+
+@njit(cache=True, fastmath=True, inline='always')
+def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
+                  Nx, Ny, Nz, dx, dy, dz,
+                  rho_field, mu_eff_field, mu_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+    """One Gauss-Seidel update of the w-face (i, j, k) — shared cell body
+    for the serial and parallel sweeps (B6 dedup)."""
+    kc = min(k, Nz - 1)
+    dxi = dx[i]
+    dyj = dy[j]
+    dzk = 0.5 * (dz[k - 1] + dz[min(k, Nz - 1)])
+    vol = dxi * dyj * dzk
+
+    kb = max(k - 1, 0); kt = min(k, Nz - 1)
+    mu_e = 0.5 * (mu_eff_field[i, j, kb]
+                  + mu_eff_field[i, j, kt])
+
+    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
+    Dw_ = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
+    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
+    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
+    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
+    Db = mu_e * dxi * dyj / dzk
+
+    wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
+    wW = w[i - 1, j, k] if i > 0 else 0.0
+    wN = w[i, j + 1, k] if j < Ny - 1 else 0.0
+    wS = w[i, j - 1, k] if j > 0 else 0.0
+    wT = w[i, j, k + 1] if k < Nz - 1 else w[i, j, k]
+    wB = w[i, j, k - 1]
+
+    ue = 0.5 * (u[i + 1, j, kb] + u[i + 1, j, kt]) \
+        if i < Nx - 1 else 0.0
+    uw = 0.5 * (u[i, j, kb] + u[i, j, kt]) if i > 0 else 0.0
+    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt]) \
+        if j < Ny - 1 else 0.0
+    vs = 0.5 * (v[i, j, kb] + v[i, j, kt]) if j > 0 else 0.0
+    wn = 0.5 * (w[i, j, k] + w[i, j, min(k + 1, Nz)])
+    wb = 0.5 * (w[i, j, max(k - 1, 0)] + w[i, j, k])
+
+    rho_loc = 0.5 * (rho_field[i, j, kb] + rho_field[i, j, kt])
+    mu_loc = 0.5 * (mu_field[i, j, kb] + mu_field[i, j, kt])
+
+    Fe = rho_loc * ue * dyj * dzk
+    Fw_ = rho_loc * uw * dyj * dzk
+    Fn = rho_loc * vn * dxi * dzk
+    Fs = rho_loc * vs * dxi * dzk
+    Ft = rho_loc * wn * dxi * dyj
+    Fb = rho_loc * wb * dxi * dyj
+
+    aE = De + max(-Fe, 0.0)
+    aW = Dw_ + max(Fw_, 0.0)
+    aN = Dn + max(-Fn, 0.0)
+    aS = Ds + max(Fs, 0.0)
+    aT = Dt + max(-Ft, 0.0)
+    aB = Db + max(Fb, 0.0)
+
+    umag = _umag_w_3d(u, v, w, i, j, k, Nx, Ny, Nz)
+    Sp = _porous_src_df_3d(umag, K_arr[j, kc], cF_arr[j, kc],
+                             mu_loc, rho_loc) * vol
+
+    # P1b-c: wall penalty, grid-invariant via aP_natural.
+    # w-face at (i, j, k) between cells (i, j, k-1) and (i, j, k).
+    aP_nat = aE + aW + aN + aS + aT + aB
+    wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
+    if wall_out > 0.01 and j >= Ny - 8:
+        wall_dist = Ny - j
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+    wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
+    if wall_in > 0.01 and j < 8:
+        wall_dist = j + 1
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+    p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
+
+    aP0 = aE + aW + aN + aS + aT + aB + Sp
+    rhs = (aE * wE + aW * wW + aN * wN + aS * wS
+           + aT * wT + aB * wB + p_src)
+    aP = aP0 / alpha_u
+    rhs += (1.0 - alpha_u) / alpha_u * aP0 * w[i, j, k]
+
+    w[i, j, k] = rhs / aP
+    d_w[i, j, k] = dxi * dyj / aP0
+
 
 @njit(cache=True, fastmath=True)
 def _sweep_w_jit_df_3d(u, v, w, P, d_w,
@@ -560,87 +561,17 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
     """Solve the z-momentum equation on the w-staggered face.
 
     Top/bottom z-walls (k=0, k=Nz) are no-slip by default (w=0).
+    Cell body shared with the parallel variant via `_w_cell_df_3d`.
     """
     for _ in range(n_sweeps):
         for i in range(Nx):
             for j in range(Ny):
                 for k in range(1, Nz):
-                    kc = min(k, Nz - 1)
-                    dxi = dx[i]
-                    dyj = dy[j]
-                    dzk = 0.5 * (dz[k - 1] + dz[min(k, Nz - 1)])
-                    vol = dxi * dyj * dzk
-
-                    kb = max(k - 1, 0); kt = min(k, Nz - 1)
-                    mu_e = 0.5 * (mu_eff_field[i, j, kb]
-                                  + mu_eff_field[i, j, kt])
-
-                    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-                    Dw_ = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-                    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-                    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-                    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                    Db = mu_e * dxi * dyj / dzk
-
-                    wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
-                    wW = w[i - 1, j, k] if i > 0 else 0.0
-                    wN = w[i, j + 1, k] if j < Ny - 1 else 0.0
-                    wS = w[i, j - 1, k] if j > 0 else 0.0
-                    wT = w[i, j, k + 1] if k < Nz - 1 else w[i, j, k]
-                    wB = w[i, j, k - 1]
-
-                    ue = 0.5 * (u[i + 1, j, kb] + u[i + 1, j, kt]) \
-                        if i < Nx - 1 else 0.0
-                    uw = 0.5 * (u[i, j, kb] + u[i, j, kt]) if i > 0 else 0.0
-                    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt]) \
-                        if j < Ny - 1 else 0.0
-                    vs = 0.5 * (v[i, j, kb] + v[i, j, kt]) if j > 0 else 0.0
-                    wn = 0.5 * (w[i, j, k] + w[i, j, min(k + 1, Nz)])
-                    wb = 0.5 * (w[i, j, max(k - 1, 0)] + w[i, j, k])
-
-                    rho_loc = 0.5 * (rho_field[i, j, kb] + rho_field[i, j, kt])
-                    mu_loc = 0.5 * (mu_field[i, j, kb] + mu_field[i, j, kt])
-
-                    Fe = rho_loc * ue * dyj * dzk
-                    Fw_ = rho_loc * uw * dyj * dzk
-                    Fn = rho_loc * vn * dxi * dzk
-                    Fs = rho_loc * vs * dxi * dzk
-                    Ft = rho_loc * wn * dxi * dyj
-                    Fb = rho_loc * wb * dxi * dyj
-
-                    aE = De + max(-Fe, 0.0)
-                    aW = Dw_ + max(Fw_, 0.0)
-                    aN = Dn + max(-Fn, 0.0)
-                    aS = Ds + max(Fs, 0.0)
-                    aT = Dt + max(-Ft, 0.0)
-                    aB = Db + max(Fb, 0.0)
-
-                    umag = _umag_w_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                    Sp = _porous_src_df_3d(umag, K_arr[j, kc], cF_arr[j, kc],
-                                             mu_loc, rho_loc) * vol
-
-                    # P1b-c: wall penalty, grid-invariant via aP_natural.
-                    # w-face at (i, j, k) between cells (i, j, k-1) and (i, j, k).
-                    aP_nat = aE + aW + aN + aS + aT + aB
-                    wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
-                    if wall_out > 0.01 and j >= Ny - 8:
-                        wall_dist = Ny - j
-                        Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                    wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
-                    if wall_in > 0.01 and j < 8:
-                        wall_dist = j + 1
-                        Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-
-                    p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
-
-                    aP0 = aE + aW + aN + aS + aT + aB + Sp
-                    rhs = (aE * wE + aW * wW + aN * wN + aS * wS
-                           + aT * wT + aB * wB + p_src)
-                    aP = aP0 / alpha_u
-                    rhs += (1.0 - alpha_u) / alpha_u * aP0 * w[i, j, k]
-
-                    w[i, j, k] = rhs / aP
-                    d_w[i, j, k] = dxi * dyj / aP0
+                    _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
+                                  Nx, Ny, Nz, dx, dy, dz,
+                                  rho_field, mu_eff_field, mu_field,
+                                  K_arr, cF_arr, outlet_frac, inlet_frac,
+                                  alpha_u)
 
     # No-slip at z-walls
     for i in range(Nx):
@@ -665,68 +596,11 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                     for k in range(1, Nz):
                         if (i + j + k) % 2 != color:
                             continue
-                        kc = min(k, Nz - 1)
-                        dxi = dx[i]
-                        dyj = dy[j]
-                        dzk = 0.5 * (dz[k - 1] + dz[min(k, Nz - 1)])
-                        vol = dxi * dyj * dzk
-                        kb = max(k - 1, 0); kt = min(k, Nz - 1)
-                        mu_e = 0.5 * (mu_eff_field[i, j, kb]
-                                      + mu_eff_field[i, j, kt])
-                        De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-                        Dw_ = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-                        Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-                        Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-                        Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-                        Db = mu_e * dxi * dyj / dzk
-                        wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
-                        wW = w[i - 1, j, k] if i > 0 else 0.0
-                        wN = w[i, j + 1, k] if j < Ny - 1 else 0.0
-                        wS = w[i, j - 1, k] if j > 0 else 0.0
-                        wT = w[i, j, k + 1] if k < Nz - 1 else w[i, j, k]
-                        wB = w[i, j, k - 1]
-                        ue = 0.5 * (u[i + 1, j, kb] + u[i + 1, j, kt]) \
-                            if i < Nx - 1 else 0.0
-                        uw = 0.5 * (u[i, j, kb] + u[i, j, kt]) if i > 0 else 0.0
-                        vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt]) \
-                            if j < Ny - 1 else 0.0
-                        vs = 0.5 * (v[i, j, kb] + v[i, j, kt]) if j > 0 else 0.0
-                        wn = 0.5 * (w[i, j, k] + w[i, j, min(k + 1, Nz)])
-                        wb = 0.5 * (w[i, j, max(k - 1, 0)] + w[i, j, k])
-                        rho_loc = 0.5 * (rho_field[i, j, kb] + rho_field[i, j, kt])
-                        mu_loc = 0.5 * (mu_field[i, j, kb] + mu_field[i, j, kt])
-                        Fe = rho_loc * ue * dyj * dzk
-                        Fw_ = rho_loc * uw * dyj * dzk
-                        Fn = rho_loc * vn * dxi * dzk
-                        Fs = rho_loc * vs * dxi * dzk
-                        Ft = rho_loc * wn * dxi * dyj
-                        Fb = rho_loc * wb * dxi * dyj
-                        aE = De + max(-Fe, 0.0)
-                        aW = Dw_ + max(Fw_, 0.0)
-                        aN = Dn + max(-Fn, 0.0)
-                        aS = Ds + max(Fs, 0.0)
-                        aT = Dt + max(-Ft, 0.0)
-                        aB = Db + max(Fb, 0.0)
-                        umag = _umag_w_3d(u, v, w, i, j, k, Nx, Ny, Nz)
-                        Sp = _porous_src_df_3d(umag, K_arr[j, kc], cF_arr[j, kc],
-                                                 mu_loc, rho_loc) * vol
-                        aP_nat = aE + aW + aN + aS + aT + aB
-                        wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
-                        if wall_out > 0.01 and j >= Ny - 8:
-                            wall_dist = Ny - j
-                            Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
-                        if wall_in > 0.01 and j < 8:
-                            wall_dist = j + 1
-                            Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
-                        p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
-                        aP0 = aE + aW + aN + aS + aT + aB + Sp
-                        rhs = (aE * wE + aW * wW + aN * wN + aS * wS
-                               + aT * wT + aB * wB + p_src)
-                        aP = aP0 / alpha_u
-                        rhs += (1.0 - alpha_u) / alpha_u * aP0 * w[i, j, k]
-                        w[i, j, k] = rhs / aP
-                        d_w[i, j, k] = dxi * dyj / aP0
+                        _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
+                                      Nx, Ny, Nz, dx, dy, dz,
+                                      rho_field, mu_eff_field, mu_field,
+                                      K_arr, cF_arr, outlet_frac,
+                                      inlet_frac, alpha_u)
     for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0

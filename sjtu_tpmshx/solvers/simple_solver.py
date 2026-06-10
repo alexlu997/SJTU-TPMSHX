@@ -166,6 +166,17 @@ def _sou_corr_v_y(v, i, j, Ny, Fn):
         return 0.5 * Fn * (phi_n - phi_s)
 
 
+# Brinkman wall-penalty coefficients (P1b-c, B6 naming). Within 8 cells of a
+# blocked inlet/outlet face the momentum source gains
+# `BASE · frac⁴ · exp(−EFOLD·(dist−1)) · aP_natural` — a grid-invariant
+# no-slip layer. EFOLD=1.5 → the penalty e-folds over 1.5 cells (fits the
+# Brinkman layer δ_B ≈ 0.05 mm at production grids); BASE=1e3 dominates aP
+# without losing float64 precision at any tested resolution. Captured as
+# compile-time constants by the Numba kernels here and in simple_solver_3d.
+_WALL_PENALTY_BASE = 1e3
+_WALL_PENALTY_EFOLD = 1.5
+
+
 @njit(cache=True)
 def _porous_src_df(umag, K, cF, mu, rho):
     """Linearised porous resistance coefficient [kg/(m3 s)] for ConstDF-v1.
@@ -255,11 +266,13 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
                 if wall_out > 0.01 and j >= Ny - 8:
                     wall_dist = Ny - j
-                    Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+                    Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
                 wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
                 if wall_in > 0.01 and j < 8:
                     wall_dist = j + 1
-                    Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+                    Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i - 1, j] - P[i, j]) * dyj
                 sou = (_sou_corr_u_x(u, i, j, Nx, Fe)
@@ -341,11 +354,13 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                 wall_out = 1.0 - outlet_frac[i]
                 if wall_out > 0.01 and j >= Ny - 8:
                     wall_dist = Ny - j
-                    Sp += 1e3 * wall_out**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+                    Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
                 wall_in = 1.0 - inlet_frac[i]
                 if wall_in > 0.01 and j < 8:
                     wall_dist = j + 1
-                    Sp += 1e3 * wall_in**4 * np.exp(-1.5 * (wall_dist - 1)) * aP_nat
+                    Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i, j - 1] - P[i, j]) * dxi
                 sou = (_sou_corr_v_x(v, i, j, Nx, Fe)
