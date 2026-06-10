@@ -12,6 +12,7 @@ sympy>=1.13                 # MMS manufactured solutions (V&V)
 pyamg>=5.2                  # SPD AMG for 3D Pressure-Poisson + streamfunction
 joblib>=1.3                 # surrogate model persistence
 numba>=0.60                 # SIMPLE inner-kernel JIT
+scikit-learn>=1.5           # D-F surrogate: Huber trend + GP residual (plhub_gp)
 
 # --- Plotting / 3D rendering ---
 matplotlib>=3.8

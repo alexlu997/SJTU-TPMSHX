@@ -5,9 +5,25 @@ Model:
     1D compressible isothermal D-F equation:
         P_out² = P_in² − 2·R·T·(μG/K + c_F·G²)·L
 
-    c_F: RBF exact interpolation on (L_mm, t_mm, eps_f)
-    K:   RBF interpolation + clamp K_min = 1e-7
-         (physical basis: Darcy fraction ≤ 15% at lowest operational Re)
+    Geometry → (K, c_F) regressor — method="rbf" (production default):
+        RBF cubic s=0.1 on (L_mm, t_mm, eps_f) + K clamp 1e-8.
+        Validated end-to-end: Shanghai 3D Nz=3 dP RMSRE 7.19% / Q 3.22%.
+
+    method="plhub_gp" (opt-in, 2026-06-10): Huber-robust power-law trend
+        log10 y = a + b·log10(L) + c·t  + GP Matern(ν=2.5) residual on
+        (L, t) + log-clip ±0.1 dex; no K clamp. Wins the training-domain
+        metrics by a wide margin (LOO dP MAPE G 17.5/D 11.5 vs RBF
+        24.7/32.1; leave-one-L-out bounded ~240% vs RBF 2000-5800%
+        divergence) — selection study runs/diag_df_model_zoo.py.
+        ⚠ REJECTED as production default by end-to-end evidence: its
+        robust trend discounts the L6 c_F hump, but the Shanghai 3D
+        pipeline measurement (2026-06-10, Nz=3) gives dP RMSRE 62.79%
+        (systematic −27..−69% under-prediction, 16/16 cases; CSV
+        validation/shanghai_3d_baselineplhub_switch.csv) vs 7.19% with
+        the RBF — i.e. the Shanghai experiment sides with the high-c_F
+        branch (L6 hump physics extends toward L=7), not the smooth
+        trend. Keep for training-domain studies and as the L6-question
+        counter-hypothesis.
 
 Velocity / mass-flux convention:
     G = m_dot / A_void (interstitial mass flux), i.e. A_void already absorbs
@@ -80,29 +96,44 @@ def _prebuilt_csv(tpms: str) -> Path:
 
 
 _FEATURES_ALL = ("L_mm", "t_mm", "eps_f")
+_METHODS = ("plhub_gp", "rbf")
 
 
 class SurrogateV3:
-    """Production surrogate: RBF(c_F) + RBF(K) with K clamp.
+    """Production surrogate for the geometry → (K, c_F) map.
 
-    Experiment-only kwargs (keyword-only, defaults = production model,
-    bit-identical to the historical behavior):
+    method="rbf" (default): RBF cubic s=0.1 + K clamp 1e-8 — production
+        model, bit-identical to the historical behavior with default
+        kwargs; Shanghai 3D end-to-end 7.19% dP / 3.22% Q.
+    method="plhub_gp" (opt-in): Huber power-law trend + GP Matern
+        residual + log-clip; no K clamp (K_min resolves to 1e-12).
+        Training-domain winner (LOO/LOLO) but rejected as default —
+        Shanghai 3D dP RMSRE 62.79% (see module docstring).
 
-    standardize : z-score the RBF features before interpolation. The raw
-        feature scales are wildly uneven (L_mm spans 4.0, t_mm 0.2,
-        eps_f ~0.1) so the unscaled RBF distance metric is dominated by
-        L_mm. See runs/diag_rbf_feature_ablation.py.
-    features : which canonical features feed the RBF. eps_f is a
-        deterministic function of (L_mm, t_mm) → collinear; ("L_mm",
-        "t_mm") removes the redundancy. Queries always pass the canonical
-        3-column layout regardless of this setting.
+    RBF-only experiment kwargs (see runs/diag_rbf_feature_ablation.py):
+
+    standardize : z-score the RBF features before interpolation (tested
+        2026-06-10: degrades LOO badly — the unscaled L_mm-dominated
+        metric is an effective prior; keep False).
+    features : which canonical features feed the RBF. Queries always
+        pass the canonical 3-column (L_mm, t_mm, eps_f) layout.
     """
 
-    def __init__(self, tpms: str = "Gyroid", K_min: float = K_MIN, *,
+    def __init__(self, tpms: str = "Gyroid", K_min: float | None = None, *,
+                 method: str = "rbf",
+                 clip_margin: float = 0.1,
                  standardize: bool = False,
                  features: tuple[str, ...] = _FEATURES_ALL):
+        if method not in _METHODS:
+            raise ValueError(f"unknown method {method!r}; valid: {_METHODS}")
         self.tpms = tpms
-        self.K_min = K_min
+        self.method = method
+        self.clip_margin = float(clip_margin)
+        # Legacy RBF keeps the historical 1e-8 clamp; plhub_gp removes it
+        # (the clamp floored the true K ≈ 1e-9 of L4/L5 geometries and was
+        # the largest single LOO error source).
+        self.K_min = K_min if K_min is not None else (
+            K_MIN if method == "rbf" else 1e-12)
         self.standardize = bool(standardize)
         self.features = tuple(features)
         unknown = set(self.features) - set(_FEATURES_ALL)
@@ -242,8 +273,64 @@ class SurrogateV3:
         self._fit_X = np.ascontiguousarray(X_feat, dtype=float)
         self._fit_K = np.ascontiguousarray(K_arr, dtype=float)
         self._fit_cF = np.ascontiguousarray(cF_arr, dtype=float)
-        self._rbf_K = self._make_rbf(self._fit_X, np.log10(self._fit_K))
-        self._rbf_cF = self._make_rbf(self._fit_X, np.log10(self._fit_cF))
+        self._rbf_K, self._rbf_cF = self._make_predictors(
+            self._fit_X, np.log10(self._fit_K), np.log10(self._fit_cF))
+
+    def _make_predictors(self, X3, logK, logcF):
+        """Build (fK, fC): callables mapping canonical (N,3) [L_mm, t_mm,
+        eps_f] queries to log10(K) / log10(c_F), honoring self.method.
+        Single construction point shared by the full-data fit and the
+        per-fold refits in eval_loo. (Attribute names _rbf_K/_rbf_cF are
+        kept for the predict_K_cF_vec batch path regardless of method.)
+        """
+        if self.method == "rbf":
+            return (self._make_rbf(X3, logK), self._make_rbf(X3, logcF))
+        return (self._fit_plhub_one(X3, logK),
+                self._fit_plhub_one(X3, logcF))
+
+    def _fit_plhub_one(self, X3, y):
+        """Huber power-law trend + GP Matern residual, one target.
+
+        Trend: log10 y = a + b*log10(L) + c*t, Huber loss (eps=1.35) so
+        the L6 c_F hump cannot bend the extrapolation trend. Residual:
+        GP Matern(nu=2.5) on (L, t), anisotropic ML-II length scales +
+        WhiteKernel — restores per-geometry detail near data, decays to
+        zero away from it (prediction reverts to the robust trend).
+        Output log-clipped to the training range ± clip_margin dex.
+        Selected via runs/diag_df_model_zoo.py (LOO + leave-one-L-out).
+        """
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import (
+            ConstantKernel, Matern, WhiteKernel)
+        from sklearn.linear_model import HuberRegressor
+
+        X3 = np.asarray(X3, dtype=float)
+        L, t = X3[:, 0], X3[:, 1]
+        A = np.column_stack([np.ones(len(L)), np.log10(L), t])
+        hub = HuberRegressor(epsilon=1.35, alpha=0.0,
+                             fit_intercept=False, max_iter=500)
+        hub.fit(A, y)
+        coef = hub.coef_.copy()
+        resid = y - A @ coef
+        kern = (ConstantKernel(0.1, (1e-4, 1e2))
+                * Matern(length_scale=[2.0, 0.2],
+                         length_scale_bounds=(1e-2, 1e2), nu=2.5)
+                + WhiteKernel(1e-4, (1e-8, 1e-1)))
+        gp = GaussianProcessRegressor(kernel=kern, normalize_y=False,
+                                      n_restarts_optimizer=5,
+                                      random_state=0)
+        gp.fit(np.column_stack([L, t]), resid)
+        lo = float(y.min()) - self.clip_margin
+        hi = float(y.max()) + self.clip_margin
+
+        def predict_log10(X):
+            X = np.atleast_2d(np.asarray(X, dtype=float))
+            Lq, tq = X[:, 0], X[:, 1]
+            Aq = np.column_stack([np.ones(len(Lq)), np.log10(Lq), tq])
+            out = Aq @ coef + gp.predict(np.column_stack([Lq, tq]))
+            return np.clip(out, lo, hi)
+
+        return predict_log10
 
     def _make_rbf(self, X3: np.ndarray, y: np.ndarray):
         """RBF over canonical (N,3) [L_mm, t_mm, eps_f] feature rows.
@@ -459,11 +546,11 @@ def eval_loo(model: SurrogateV3):
         mask = np.ones(len(ref), dtype=bool)
         mask[idx] = False
 
-        # Refit through model._make_rbf so per-fold models honor the
-        # variant config (standardize/features); default path is the same
-        # direct RBFInterpolator as before.
-        rbf_K_i = model._make_rbf(X_feat[mask], log_K[mask])
-        rbf_cF_i = model._make_rbf(X_feat[mask], log_cF[mask])
+        # Refit through model._make_predictors so per-fold models honor
+        # the method (plhub_gp/rbf) and any variant config; the legacy
+        # rbf default path is the same direct RBFInterpolator as before.
+        rbf_K_i, rbf_cF_i = model._make_predictors(
+            X_feat[mask], log_K[mask], log_cF[mask])
 
         K_p = max(10.0 ** rbf_K_i(X_feat[idx:idx + 1])[0], model.K_min)
         cF_p = 10.0 ** rbf_cF_i(X_feat[idx:idx + 1])[0]

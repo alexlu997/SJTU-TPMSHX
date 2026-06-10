@@ -283,6 +283,44 @@ class PLTrendGPRobust(PLTrendGP):
         return self
 
 
+class PLTrendGPRobustLt(PLTrendGP):
+    """Production-integration variant: trend features (log10 L, t) instead
+    of (log10 D_h, eps_f). D_h/eps_f require a voxel geometry call per
+    query — the solver vec path only carries (L, t, eps); (log L, t) is
+    free. Must match PLTrendGPRobust performance to be adopted."""
+    def fit(self, ref):
+        A = np.column_stack([np.ones(len(ref)),
+                             np.log10(ref["L_mm"].to_numpy(float)),
+                             ref["t_mm"].to_numpy(float)])
+        Xg = ref[["L_mm", "t_mm"]].to_numpy(float)
+        self.parts = []
+        for col in ("K", "c_F"):
+            y = np.log10(ref[col].to_numpy(float))
+            hub = HuberRegressor(epsilon=1.35, alpha=0.0,
+                                 fit_intercept=False, max_iter=500)
+            hub.fit(A, y)
+            c = hub.coef_.copy()
+            resid = y - A @ c
+            kern = (C(0.1, (1e-4, 1e2))
+                    * Matern(length_scale=[2.0, 0.2],
+                             length_scale_bounds=(1e-2, 1e2), nu=2.5)
+                    + WhiteKernel(1e-4, (1e-8, 1e-1)))
+            gp = GaussianProcessRegressor(kernel=kern, normalize_y=False,
+                                          n_restarts_optimizer=5,
+                                          random_state=0)
+            gp.fit(Xg, resid)
+            self.parts.append((c, gp))
+        return self
+
+    def predict(self, q):
+        a = np.array([1.0, np.log10(q["L"]), q["t"]])
+        xg = np.array([[q["L"], q["t"]]])
+        out = []
+        for c, gp in self.parts:
+            out.append(10.0 ** (float(a @ c) + float(gp.predict(xg)[0])))
+        return max(out[0], K_FLOOR), out[1]
+
+
 class LogClip:
     """Wrap any model: clip log10 predictions to the training range
     +/- margin dex. Cheap extrapolation guard — coefficients of an
@@ -354,6 +392,8 @@ ZOO = [
         GPModel, PLTrendGPRobust,
         lambda: LogClip(lambda: ProdRBF(clamp=K_FLOOR,
                                         kernel="thin_plate_spline"))])),
+    ("PLHub(L,t) + GP",      PLTrendGPRobustLt),
+    ("PLHub(L,t)+GP+clip",   lambda: LogClip(PLTrendGPRobustLt)),
 ]
 
 

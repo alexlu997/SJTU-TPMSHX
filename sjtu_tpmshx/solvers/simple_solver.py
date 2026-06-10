@@ -183,9 +183,10 @@ def _porous_src_df(umag, K, cF, mu, rho):
 
     Darcy-Forchheimer closure: Sp * u = (mu/K) * u + rho * c_F * |u| * u.
     K and c_F are geometry-level constants from the SurrogateV3 RBF surrogate
-    (df_surrogate/predict.py:predict_K_cF → surrogate_v3.SurrogateV3; the
-    former "3D MLP ensemble" backend no longer exists). Caller provides
-    K, cF per-row.
+    (df_surrogate/predict.py:predict_K_cF → surrogate_v3.SurrogateV3, default
+    method="rbf"; the opt-in "plhub_gp" alternative was rejected as default
+    by Shanghai 3D evidence — see surrogate_v3 module docstring). Caller
+    provides K, cF per-row.
     """
     if umag < 1e-10:
         return mu / K  # pure Darcy when velocity vanishes
