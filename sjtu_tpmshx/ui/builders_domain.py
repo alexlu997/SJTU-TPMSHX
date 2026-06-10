@@ -16,25 +16,16 @@ from .builders_base import section, row, res_row, add_row
 
 
 def _on_dim_changed(window):
-    """Toggle visibility of 3D-only inputs based on Dimensionality combo."""
+    """Toggle visibility of 3D-only inputs based on Dimensionality combo.
+
+    Iterates the ``window._3d_only_widgets`` registry — populated by
+    ``build_page_domain`` (Lz/Nz rows + 3D checkboxes) and
+    ``builders_fluids.build_page_fluids`` (z-partial BC rows) as the
+    widgets are created. New 3D-only widgets just register themselves;
+    no hardcoded attribute list to keep in sync.
+    """
     is_3d = window.combo_dim.currentIndex() == 1
-    widgets = [window.le_Lz, window._lbl_Lz, window.le_Nz, window._lbl_Nz]
-    if hasattr(window, 'chk_wall_refine_3d'):
-        widgets.append(window.chk_wall_refine_3d)
-    if hasattr(window, 'chk_var_rhocp'):
-        widgets.append(window.chk_var_rhocp)
-    # z-partial BC 4 fields per fluid (+ labels) — hidden in 2D mode
-    for name in ('le_pipeA_in_z_ctr', 'le_pipeA_in_z_w',
-                 'le_pipeA_out_z_ctr', 'le_pipeA_out_z_w',
-                 '_lbl_pipeA_in_z_ctr', '_lbl_pipeA_in_z_w',
-                 '_lbl_pipeA_out_z_ctr', '_lbl_pipeA_out_z_w',
-                 'le_pipeB_in_z_ctr', 'le_pipeB_in_z_w',
-                 'le_pipeB_out_z_ctr', 'le_pipeB_out_z_w',
-                 '_lbl_pipeB_in_z_ctr', '_lbl_pipeB_in_z_w',
-                 '_lbl_pipeB_out_z_ctr', '_lbl_pipeB_out_z_w'):
-        if hasattr(window, name):
-            widgets.append(getattr(window, name))
-    for w in widgets:
+    for w in getattr(window, '_3d_only_widgets', []):
         w.setVisible(is_3d)
     # Mode change also reveals/hides the result tabs for the current mode
     if hasattr(window, '_update_tab_visibility'):
@@ -63,12 +54,17 @@ def build_page_domain(window):
     lay = QVBoxLayout(w)
     lay.setSpacing(12); lay.setContentsMargins(6, 4, 8, 6)
 
+    # 3D-only widget registry — reset here because the domain page builds
+    # first on every (re)build; builders_fluids appends its z-partial rows.
+    window._3d_only_widgets = []
+
     # Domain Geometry
     g, _ = section(window, lay, "  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
     window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.182")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
     window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.042")
     window._lbl_Lz     = g.itemAtPosition(2, 0).widget()
+    window._3d_only_widgets += [window.le_Lz, window._lbl_Lz]
 
     # Update edge labels when L or H changes
     window.le_L.editingFinished.connect(window._update_edge_combos)
@@ -167,6 +163,7 @@ def build_page_domain(window):
     window.le_Ny = row(window, g4, 1, "Grid <i>N<sub>y</sub></i>", "20")
     window.le_Nz = row(window, g4, 2, "Grid <i>N<sub>z</sub></i> (3D only)", "5")
     window._lbl_Nz = g4.itemAtPosition(2, 0).widget()
+    window._3d_only_widgets += [window.le_Nz, window._lbl_Nz]
 
     # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces).
     # OFF by default (5-15× faster, ~1pp accuracy cost). Turn ON for production
@@ -208,6 +205,7 @@ def build_page_domain(window):
         }}
     """)
     g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
+    window._3d_only_widgets.append(window.chk_wall_refine_3d)
     # NOTE: legacy `_chk_wall_refine_3d` alias removed 2026-05-05 audit;
     # no remaining readers (grep confirmed). Use `chk_wall_refine_3d`.
 
@@ -226,6 +224,7 @@ def build_page_domain(window):
         "ON = default; uncheck for the legacy inlet-pressure density.")
     window.chk_var_rhocp.setStyleSheet(window.chk_wall_refine_3d.styleSheet())
     g4.addWidget(window.chk_var_rhocp, 4, 0, 1, 2)
+    window._3d_only_widgets.append(window.chk_var_rhocp)
 
     # Hide 3D-only inputs by default (2D mode)
     _on_dim_changed(window)

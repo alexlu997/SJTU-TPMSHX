@@ -179,6 +179,12 @@ def build_page_fluids(window):
     window.le_pipeA_out_z_w   = row(window, gio, 8,
                                      "Outlet z-width [m] (3D)",  "0.042")
     window._lbl_pipeA_out_z_w   = gio.itemAtPosition(8, 0).widget()
+    window._3d_only_widgets += [
+        window.le_pipeA_in_z_ctr, window._lbl_pipeA_in_z_ctr,
+        window.le_pipeA_in_z_w, window._lbl_pipeA_in_z_w,
+        window.le_pipeA_out_z_ctr, window._lbl_pipeA_out_z_ctr,
+        window.le_pipeA_out_z_w, window._lbl_pipeA_out_z_w,
+    ]
 
     gio2, sec_pipeB = section(window, lay, "  Fluid B  Inlet / Outlet", _T_B, _F_B)
     window._rect_only_widgets.append(sec_pipeB)
@@ -208,6 +214,12 @@ def build_page_fluids(window):
     window.le_pipeB_out_z_w   = row(window, gio2, 8,
                                      "Outlet z-width [m] (3D)",  "0.042")
     window._lbl_pipeB_out_z_w   = gio2.itemAtPosition(8, 0).widget()
+    window._3d_only_widgets += [
+        window.le_pipeB_in_z_ctr, window._lbl_pipeB_in_z_ctr,
+        window.le_pipeB_in_z_w, window._lbl_pipeB_in_z_w,
+        window.le_pipeB_out_z_ctr, window._lbl_pipeB_out_z_ctr,
+        window.le_pipeB_out_z_w, window._lbl_pipeB_out_z_w,
+    ]
 
     # ── Polygon pipe edge config (hidden by default) ──────
     window._poly_pipe_frame = QFrame()
