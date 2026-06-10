@@ -15,6 +15,9 @@ Velocity / mass-flux convention:
     interstitial* coefficients — not canonical Darcy/Forchheimer values.
     Downstream consumers (simple_solver.py) use the same convention; do not
     mix with superficial-form equations from textbooks.
+    (Verified against the raw Excel columns 2026-06-10: col6 A = eps_f·L²
+    per cell, col13 v = m/(ρ·20·A6) = interstitial velocity of the 20-cell
+    frontal specimen, col3 Re = ρ·v13·D_h/μ. See the G note in _build.)
 
 Calibration:
     1. Compressible WLS on raw Pressureloss_TPMS (col 43) + G (col 48):
@@ -76,12 +79,36 @@ def _prebuilt_csv(tpms: str) -> Path:
     return _PREBUILT_DIR / f"{tpms}_surrogate_ref.csv"
 
 
-class SurrogateV3:
-    """Production surrogate: RBF(c_F) + RBF(K) with K clamp."""
+_FEATURES_ALL = ("L_mm", "t_mm", "eps_f")
 
-    def __init__(self, tpms: str = "Gyroid", K_min: float = K_MIN):
+
+class SurrogateV3:
+    """Production surrogate: RBF(c_F) + RBF(K) with K clamp.
+
+    Experiment-only kwargs (keyword-only, defaults = production model,
+    bit-identical to the historical behavior):
+
+    standardize : z-score the RBF features before interpolation. The raw
+        feature scales are wildly uneven (L_mm spans 4.0, t_mm 0.2,
+        eps_f ~0.1) so the unscaled RBF distance metric is dominated by
+        L_mm. See runs/diag_rbf_feature_ablation.py.
+    features : which canonical features feed the RBF. eps_f is a
+        deterministic function of (L_mm, t_mm) → collinear; ("L_mm",
+        "t_mm") removes the redundancy. Queries always pass the canonical
+        3-column layout regardless of this setting.
+    """
+
+    def __init__(self, tpms: str = "Gyroid", K_min: float = K_MIN, *,
+                 standardize: bool = False,
+                 features: tuple[str, ...] = _FEATURES_ALL):
         self.tpms = tpms
         self.K_min = K_min
+        self.standardize = bool(standardize)
+        self.features = tuple(features)
+        unknown = set(self.features) - set(_FEATURES_ALL)
+        if unknown:
+            raise ValueError(f"unknown RBF features: {sorted(unknown)}; "
+                             f"valid: {_FEATURES_ALL}")
         if XLSX.exists():
             self._build()                 # authoritative: calibrate from Excel
         else:
@@ -109,12 +136,19 @@ class SurrogateV3:
         t_mm = pd.to_numeric(raw.iloc[:, 2], errors="coerce")[mask].astype(float).values
         T_C = pd.to_numeric(raw.iloc[:, 7], errors="coerce")[mask].astype(float).values
         # 2026-05-28 G convention fix: previous code read col 48 ("G
-        # 千克每平方米每秒") which in the v3.1 xlsx is ≈ 20× ρ·v — an
-        # interstitial-throat mass flux that does not match the doc
-        # convention. The vault method spec (2026-04-16) and LOO table
-        # use G = ρ·u = m/(A_total) (superficial). Reconstruct it from
-        # col 12 (density) and col 13 (velocity) so the fit ranges
+        # 千克每平方米每秒") which is exactly 20× ρ·v — the total m_dot over
+        # a SINGLE cell's void area (specimen frontal = 20 cells), i.e. a
+        # bookkeeping artifact, not a physical flux. Reconstruct G from
+        # col 12 (density) × col 13 (velocity); the resulting fit ranges
         # match the documented c_F = 186–2140 for trained geometries.
+        # 2026-06-10 provenance audit: col6 A = eps_f·L² (one cell's void
+        # area), col13 v = m/(ρ·20·A6) → interstitial velocity, col3
+        # Re = ρ·v13·D_h/μ. So G = ρ·v13 is the INTERSTITIAL mass flux —
+        # consistent with the module-docstring convention and with
+        # simple_solver's interstitial velocities. (An earlier version of
+        # this comment claimed "superficial m/A_total" — wrong label,
+        # right fix. Caveat: L=4 rows show v13 vs m/(ρ·20·A6) drift up to
+        # ~16%; all other geometries agree to <0.5%.)
         rho_col = pd.to_numeric(raw.iloc[:, 12], errors="coerce")[mask].astype(float).values
         v_col = pd.to_numeric(raw.iloc[:, 13], errors="coerce")[mask].astype(float).values
         G = rho_col * v_col
@@ -208,12 +242,32 @@ class SurrogateV3:
         self._fit_X = np.ascontiguousarray(X_feat, dtype=float)
         self._fit_K = np.ascontiguousarray(K_arr, dtype=float)
         self._fit_cF = np.ascontiguousarray(cF_arr, dtype=float)
-        self._rbf_K = RBFInterpolator(
-            self._fit_X, np.log10(self._fit_K),
-            kernel="cubic", smoothing=0.1)
-        self._rbf_cF = RBFInterpolator(
-            self._fit_X, np.log10(self._fit_cF),
-            kernel="cubic", smoothing=0.1)
+        self._rbf_K = self._make_rbf(self._fit_X, np.log10(self._fit_K))
+        self._rbf_cF = self._make_rbf(self._fit_X, np.log10(self._fit_cF))
+
+    def _make_rbf(self, X3: np.ndarray, y: np.ndarray):
+        """RBF over canonical (N,3) [L_mm, t_mm, eps_f] feature rows.
+
+        Honors the experiment-only variant config (feature subset and/or
+        z-score standardization). Default config returns a bare
+        RBFInterpolator on the raw 3-column array — bit-identical to the
+        historical model. The variant path wraps the interpolator so every
+        caller (predict, predict_K_cF_vec, eval_loo) keeps passing the
+        canonical 3-column query layout.
+        """
+        if not self.standardize and self.features == _FEATURES_ALL:
+            return RBFInterpolator(X3, y, kernel="cubic", smoothing=0.1)
+        idx = [_FEATURES_ALL.index(f) for f in self.features]
+        Xs = np.asarray(X3, dtype=float)[:, idx]
+        if self.standardize:
+            mu, sd = Xs.mean(axis=0), Xs.std(axis=0)
+            sd[sd == 0.0] = 1.0
+        else:
+            mu = np.zeros(len(idx))
+            sd = np.ones(len(idx))
+        rbf = RBFInterpolator((Xs - mu) / sd, y,
+                              kernel="cubic", smoothing=0.1)
+        return lambda X: rbf((np.asarray(X, dtype=float)[:, idx] - mu) / sd)
 
     def _build_from_prebuilt(self) -> None:
         """Build from the committed calibrated CSV (no raw Excel needed).
@@ -332,6 +386,9 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
     # here to keep eval_shanghai a zero-dependency standalone helper; if
     # the JSON drifts, this constant must follow.
     A_FLOW = 36 * 18.0565e-6
+    # 18.0565 mm² = eps_f(Gyroid,7,0.6)·(7 mm)² — per-unit VOID area, so
+    # G = m/A_FLOW below is the interstitial mass flux, matching the
+    # training-G convention (verified 2026-06-10).
     L_DOM = 0.182  # Shanghai HX streamwise A length [m]. Was 0.231 (stale —
                    # 182+42+7 historical "total" guess); corrected 2026-05-28.
 
@@ -402,12 +459,11 @@ def eval_loo(model: SurrogateV3):
         mask = np.ones(len(ref), dtype=bool)
         mask[idx] = False
 
-        rbf_K_i = RBFInterpolator(
-            X_feat[mask], log_K[mask],
-            kernel="cubic", smoothing=0.1)
-        rbf_cF_i = RBFInterpolator(
-            X_feat[mask], log_cF[mask],
-            kernel="cubic", smoothing=0.1)
+        # Refit through model._make_rbf so per-fold models honor the
+        # variant config (standardize/features); default path is the same
+        # direct RBFInterpolator as before.
+        rbf_K_i = model._make_rbf(X_feat[mask], log_K[mask])
+        rbf_cF_i = model._make_rbf(X_feat[mask], log_cF[mask])
 
         K_p = max(10.0 ** rbf_K_i(X_feat[idx:idx + 1])[0], model.K_min)
         cF_p = 10.0 ** rbf_cF_i(X_feat[idx:idx + 1])[0]
