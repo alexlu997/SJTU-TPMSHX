@@ -199,7 +199,7 @@ def build_quick_design_dialog(parent=None):
     """
     # ── 延迟导入 Qt (保持模块可在非 GUI 环境导入) ──────────────
     from PySide6.QtWidgets import (
-        QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+        QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
         QGroupBox, QLabel, QLineEdit, QPushButton,
         QComboBox, QCheckBox, QTableWidget, QFileDialog,
         QSizePolicy, QFrame, QWidget, QLayout,
@@ -352,15 +352,19 @@ def build_quick_design_dialog(parent=None):
     le_height.setToolTip("矩形迎风固定高 H [mm] (仅勾选「固定高度迎风」时生效)。")
     chk_rect.toggled.connect(le_height.setEnabled)
 
-    mode_row = _FlowLayout(hs=16, vs=6)
-    mode_row.addWidget(_pair("模式:", combo_mode))
-    mode_row.addWidget(_pair("排列:", combo_arr))
-    mode_row.addWidget(_pair("材料密度 (kg/m³):", le_rho))
-    mode_row.addWidget(_pair("热导率 (W/m·K):", le_ks))
-    mode_row.addWidget(_pair("物性模型:", combo_prop))
-    mode_row.addWidget(chk_rect)
-    mode_row.addWidget(_pair("迎风高 (mm):", le_height))
-    root.addLayout(mode_row)
+    # 4 列对齐网格 (替代 FlowLayout: 折行后控件与上行成列对齐, 不再左飘错位)
+    mode_grid = QGridLayout()
+    mode_grid.setHorizontalSpacing(16); mode_grid.setVerticalSpacing(6)
+    _al = Qt.AlignLeft | Qt.AlignVCenter
+    mode_grid.addWidget(_pair("模式:", combo_mode),         0, 0, _al)
+    mode_grid.addWidget(_pair("排列:", combo_arr),          0, 1, _al)
+    mode_grid.addWidget(_pair("材料密度 (kg/m³):", le_rho), 0, 2, _al)
+    mode_grid.addWidget(_pair("热导率 (W/m·K):", le_ks),    0, 3, _al)
+    mode_grid.addWidget(_pair("物性模型:", combo_prop),     1, 0, _al)
+    mode_grid.addWidget(chk_rect,                           1, 1, _al)
+    mode_grid.addWidget(_pair("迎风高 (mm):", le_height),   1, 2, _al)
+    mode_grid.setColumnStretch(4, 1)        # 右侧吸收余量 → 各列内容宽、左对齐
+    root.addLayout(mode_grid)
 
     # ── Auto 参数组 ───────────────────────────────────────────
     auto_group = QGroupBox("自动搜索参数")
