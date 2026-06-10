@@ -38,7 +38,7 @@ from ui.theme import (
     apply_mpl_theme, get_density, set_density,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 def _git_commit_hash():
