@@ -24,10 +24,19 @@ from __future__ import annotations
 import cProfile
 import pstats
 import io
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
+
+# Repo-root layout (Batch-5, 2026-06-10): benchmarks/ sits beside the
+# sjtu_tpmshx package; put the package dir on sys.path so the flat imports
+# below resolve when running `python -m benchmarks.profiling.profile_compute`
+# from the repo root.
+_PKG_DIR = Path(__file__).resolve().parents[2] / 'sjtu_tpmshx'
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
 
 from optimization.evaluator import evaluate_design, DEFAULT_CONFIG
 from solvers.field_param import (

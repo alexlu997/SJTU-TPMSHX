@@ -14,7 +14,7 @@ Domain visually stretched to unit cube [0,1]³ (option C — real physics data,
 display-only scaling). Axis labels show normalised position; annotation
 provides the real-world dimensions.
 
-Usage:
+Usage (from the repo root):
     python -u examples/demo_vis_3d_interactive.py            # interactive window
     python -u examples/demo_vis_3d_interactive.py --test     # off-screen smoke test
     python -u examples/demo_vis_3d_interactive.py --real-aspect  # keep real box
@@ -30,7 +30,9 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 
-ROOT = Path(__file__).resolve().parents[1]
+# Repo-root layout (Batch-5, 2026-06-10): examples/ sits beside the
+# sjtu_tpmshx package, so point sys.path at the package dir itself.
+ROOT = Path(__file__).resolve().parents[1] / 'sjtu_tpmshx'
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
