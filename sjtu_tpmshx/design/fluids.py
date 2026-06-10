@@ -5,16 +5,25 @@ from dataclasses import dataclass
 from solvers.tpms_calc import (
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_from_Re, nu_water_gyroid_yan6,
+    nu_from_Re,
 )
 from solvers.nu_correlations import NU_RE_FIT_RANGE   # air 幂律拟合 Re 窗 (400,16000)
 
-YAN_RE_RANGE = (150.0, 3000.0)      # Yan[6] 水侧 gyroid 验证 Re 域
+WATER_NU_RE_RANGE = (100.0, 50000.0)   # 拓扑专属水侧 Nu 关联式验证 Re 域 (新式)
+YAN_RE_RANGE = WATER_NU_RE_RANGE        # 向后兼容别名 (旧名, 现已非 Yan)
+
+# 拓扑专属水侧 Nu = c·Re^a·Pr^(1/3)。取代旧的"两拓扑共用 Yan[6] Gyroid 式
+# (0.471·Re^0.627, Diamond 借用)"; 现各拓扑独立。新 Gyroid 系数与 Yan 互验 ±1%,
+# 新 Diamond 比借用值低 5–12% (Diamond 终于用自身物性而非借 Gyroid)。
+WATER_NU_COEFFS = {
+    'Diamond': {'c': 0.3427, 'a': 0.6626},
+    'Gyroid':  {'c': 0.4445, 'a': 0.6361},
+}
 
 def nu_re_window(fluid: str):
     """该流体 Nu 关联式的验证 Re 域 (lo, hi)。域外 = 外推, 低置信。
-    air → 项目幂律拟合窗; water → Yan[6] 实验域。"""
-    return YAN_RE_RANGE if fluid == "water" else NU_RE_FIT_RANGE
+    air → 项目幂律拟合窗 (400,16000); water → 拓扑专属新式 (100,50000)。"""
+    return WATER_NU_RE_RANGE if fluid == "water" else NU_RE_FIT_RANGE
 
 @dataclass
 class Props:
@@ -33,10 +42,11 @@ def fluid_props(fluid: str, T_K: float, P_Pa: float) -> Props:
 
 def fluid_nu(fluid: str, topo: str, Re: float, eps_f: float,
              L_mm: float, D_h_mm: float) -> float:
-    """单股 Nu。air: 项目幂律×f_rough; water: Yan[6] (Re 150–3000)。"""
+    """单股 Nu。air: 项目幂律×f_rough; water: 拓扑专属 c·Re^a·Pr^(1/3) (Re 100–50000)。"""
     if fluid == "air":
         return nu_from_Re(topo, Re, eps_f, L_mm, D_h_mm)
     if fluid == "water":
         Pr_w = fluid_props("water", 320.0, 2e5).Pr
-        return float(nu_water_gyroid_yan6(max(Re, 1.0), Pr_w))
+        co = WATER_NU_COEFFS[topo]
+        return co['c'] * max(Re, 1.0) ** co['a'] * Pr_w ** (1 / 3)
     raise ValueError(f"unknown fluid {fluid!r}")
