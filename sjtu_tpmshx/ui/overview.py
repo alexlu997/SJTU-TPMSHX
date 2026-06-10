@@ -50,7 +50,9 @@ class OverviewDialog(QDialog):
             "letter-spacing:-0.3px;")
         hdr.addWidget(title)
         hdr.addStretch(1)
-        import main as _m
+        import main as _m   # __version__ only — styles come from ThemeManager
+        from .field_factory import default_factory
+        _tm = default_factory().theme
         sub = QLabel(
             f"Preset: {getattr(window, '_active_preset_name', '—')}  "
             f"·  Workspace: {getattr(window, '_active_workspace', 'A')}  "
@@ -141,7 +143,7 @@ class OverviewDialog(QDialog):
         for name in getattr(window, '_BUILTIN_PRESETS', ()):
             btn = QPushButton(name)
             btn.setFixedHeight(34)
-            btn.setStyleSheet(_m._BTN_SECONDARY)
+            btn.setStyleSheet(_tm.style('BTN_SECONDARY'))
             btn.clicked.connect(
                 lambda _c=False, n=name: self._load_preset(n))
             pr_row.addWidget(btn)
@@ -162,7 +164,7 @@ class OverviewDialog(QDialog):
                 btn = QPushButton(
                     f"  {e.get('label', '?')}   Q={e.get('Q','?')}  ")
                 btn.setFixedHeight(32)
-                btn.setStyleSheet(_m._BTN_TERTIARY)
+                btn.setStyleSheet(_tm.style('BTN_TERTIARY'))
                 btn.clicked.connect(
                     lambda _c=False, entry=e: self._load_recent(entry))
                 rc_row.addWidget(btn)
@@ -175,7 +177,7 @@ class OverviewDialog(QDialog):
         close_row = QHBoxLayout(); close_row.addStretch(1)
         btn_close = QPushButton("Close")
         btn_close.setFixedHeight(32); btn_close.setMinimumWidth(110)
-        btn_close.setStyleSheet(_m._BTN_TERTIARY)
+        btn_close.setStyleSheet(_tm.style('BTN_TERTIARY'))
         btn_close.clicked.connect(self.accept)
         close_row.addWidget(btn_close)
         root.addLayout(close_row)
