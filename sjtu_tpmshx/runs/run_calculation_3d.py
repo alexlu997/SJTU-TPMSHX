@@ -229,6 +229,23 @@ def _simple_tol_default():
     return float(os.environ.get('TPMSHX_SIMPLE_TOL', '1e-5'))
 
 
+def _apply_phase_flags(cfg):
+    """Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
+
+    Phase A defaults ON (zero-loss); Phase B/C opt-in until full-sweep
+    validated. Set ``TPMSHX_PHASE_A=0`` to disable A; ``TPMSHX_PHASE_B=1`` /
+    ``_C=1`` to enable B/C. ``setdefault`` so explicit cfg keys win over env.
+    Single env-read source for both the window path and the cfg (Pipeline3D)
+    path; ``_apply_accel_flags`` below then mirrors cfg onto each solver.
+    """
+    cfg.setdefault('use_adaptive_amg_tol',
+                    os.getenv('TPMSHX_PHASE_A', '1') != '0')
+    cfg.setdefault('use_anderson',
+                    os.getenv('TPMSHX_PHASE_B', '0') == '1')
+    cfg.setdefault('use_coarse_bootstrap',
+                    os.getenv('TPMSHX_PHASE_C', '0') == '1')
+
+
 def _apply_accel_flags(solver, cfg):
     """Mirror the Phase A/B/C acceleration knobs from ``cfg`` onto a SIMPLE3D
     solver. Single source so fluid A and fluid B stay in lockstep (these seven
@@ -415,17 +432,8 @@ def run_calculation_3d_inner_cfg(compute_cfg, window):
     def _iter_cb(outer, n_outer):
         window._iter_label_now = f"outer {outer}/{n_outer}"
     cfg['_iter_cb'] = _iter_cb
-    # Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
-    # Phase A defaults ON (zero-loss); Phase B/C opt-in until full-sweep
-    # validated. Set TPMSHX_PHASE_A=0 to disable A; TPMSHX_PHASE_B=1 / _C=1
-    # to enable B/C.
-    import os as _os
-    cfg.setdefault('use_adaptive_amg_tol',
-                    _os.getenv('TPMSHX_PHASE_A', '1') != '0')
-    cfg.setdefault('use_anderson',
-                    _os.getenv('TPMSHX_PHASE_B', '0') == '1')
-    cfg.setdefault('use_coarse_bootstrap',
-                    _os.getenv('TPMSHX_PHASE_C', '0') == '1')
+    # Phase A/B/C acceleration flags — see _apply_phase_flags.
+    _apply_phase_flags(cfg)
     result = _run_3d_stack(cfg)
     # Tag extrap provenance — set by `_parse_inputs` when surrogate domain
     # guard downgraded to warn. Lets downstream (UI panel, export) flag the
@@ -575,7 +583,6 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     (the build phase is a passthrough); the Pipeline ABC contract
     surfaces both so the signature matches :class:`Pipeline2D`.
     """
-    import os as _os
     cfg = dict(parsed)  # shallow copy — _run_3d_stack mutates a few keys
 
     # Progress + cancel hooks (mirrors legacy run_calculation_3d_inner_cfg).
@@ -585,13 +592,8 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
         cfg['_cancel_check'] = (lambda _tok=cancel_token:
                                 bool(getattr(_tok, 'cancelled', False)))
 
-    # Phase A/B/C acceleration flags — env-var entrypoint (UI checkbox TBD).
-    cfg.setdefault('use_adaptive_amg_tol',
-                    _os.getenv('TPMSHX_PHASE_A', '1') != '0')
-    cfg.setdefault('use_anderson',
-                    _os.getenv('TPMSHX_PHASE_B', '0') == '1')
-    cfg.setdefault('use_coarse_bootstrap',
-                    _os.getenv('TPMSHX_PHASE_C', '0') == '1')
+    # Phase A/B/C acceleration flags — see _apply_phase_flags.
+    _apply_phase_flags(cfg)
 
     return _run_3d_stack(cfg)
 
@@ -1770,7 +1772,7 @@ def _run_3d_stack(cfg):
     from solvers.tpms_calc import compute as tpms_compute
     from solvers.tpms_calc import nu_from_Re as _nu_from_Re
     from solvers.tpms_calc import nu_water_from_Re as _nu_water_from_Re
-    _NU_LAM_FLOOR = 4.36   # Hagen-Poiseuille single-tube limit
+    from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
     u_B_val = cfg.get('u_B', u_A)
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
