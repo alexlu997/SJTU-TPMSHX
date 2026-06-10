@@ -58,10 +58,7 @@ _UI_ROUGH_MODE_DEFAULT = 'norris_1a'
 
 def _resolve_ui_roughness():
     """Read mode + ε from env; default to norris_1a so UI matches BO."""
-    import os as _os
-    mode = _os.environ.get('TPMSHX_ROUGH_MODE', _UI_ROUGH_MODE_DEFAULT).strip().lower()
-    eps_um = float(_os.environ.get('TPMSHX_ROUGH_EPS_UM', '100'))
-    return mode, eps_um
+    return resolve_mode_from_env(default=_UI_ROUGH_MODE_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
