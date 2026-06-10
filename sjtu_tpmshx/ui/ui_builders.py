@@ -1153,57 +1153,6 @@ def build_page_zones(window):
     return scroll
 
 
-def build_page_optimization(window):
-    """NSGA-II trigger + live status. Separate accordion group from Zone Layout
-    so users can collapse/expand optimization UI independently of zone config.
-    """
-    # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI rather
-    # than back-importing main module globals.
-    from .field_factory import default_factory
-    f = default_factory()
-    t = f.theme
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setStyleSheet("border:none; background:transparent;")
-
-    w = QWidget(); w.setStyleSheet(f"background:{t.style('BG')};")
-    lay = QVBoxLayout(w)
-    lay.setSpacing(8); lay.setContentsMargins(4, 4, 6, 4)
-
-    # Trigger button - orange filled signals long-running (multi-minute) work.
-    # Stored on the window so `optimize_panel._set_optimize_running` can flip
-    # it into a Cancel button mid-run.
-    btn_opt = QPushButton("&Optimize Zones (NSGA-II)")
-    btn_opt.setFixedHeight(32)
-    btn_opt.setStyleSheet(t.style('BTN_LONG'))
-    btn_opt.setToolTip(
-        "Launch NSGA-II Pareto search. Runs for minutes to hours.")
-    btn_opt.clicked.connect(window._run_optimize)
-    window._opt_btn = btn_opt
-    lay.addWidget(btn_opt)
-
-    # Live status
-    g_opt, _ = section(window, lay, "  Optimization Status",
-                        t.style('T_NEUTRAL'), t.style('F_NEUTRAL'))
-    window._opt_status = QLabel("Idle")
-    window._opt_status.setWordWrap(True)
-    window._opt_status.setMinimumHeight(40)
-    # Explicit fg color — _VAL's dynamic property-selector chain sometimes
-    # failed to paint a default when the label had no valState attribute,
-    # leaving "Idle" invisible (white-on-white) in light mode.
-    _tos = get_theme()
-    window._opt_status.setStyleSheet(
-        f"color:{_tos['fg']}; font-family:'Fira Code','Consolas',monospace;"
-        f"font-size:10pt; font-weight:bold; background:transparent; border:none;")
-    window._opt_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    g_opt.addWidget(window._opt_status, 0, 0, 1, 2)
-
-    lay.addStretch()
-    scroll.setWidget(w)
-    return scroll
-
-
 def build_canvas_area(window):
     """Ex-Main_Menu._build_canvas_area(self) -> QWidget."""
     # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
