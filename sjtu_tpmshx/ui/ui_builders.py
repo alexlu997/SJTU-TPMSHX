@@ -29,6 +29,8 @@ def _on_dim_changed(window):
     widgets = [window.le_Lz, window._lbl_Lz, window.le_Nz, window._lbl_Nz]
     if hasattr(window, 'chk_wall_refine_3d'):
         widgets.append(window.chk_wall_refine_3d)
+    if hasattr(window, 'chk_var_rhocp'):
+        widgets.append(window.chk_var_rhocp)
     # z-partial BC 4 fields per fluid (+ labels) — hidden in 2D mode
     for name in ('le_pipeA_in_z_ctr', 'le_pipeA_in_z_w',
                  'le_pipeA_out_z_ctr', 'le_pipeA_out_z_w',
@@ -574,6 +576,22 @@ def build_page_domain(window):
     g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
     # NOTE: legacy `_chk_wall_refine_3d` alias removed 2026-05-05 audit;
     # no remaining readers (grep confirmed). Use `chk_wall_refine_3d`.
+
+    # 3D variable-rho_cp checkbox — LTNE energy kernel builds gas density from
+    # SIMPLE's LOCAL cell pressure ρ(P_local,T) instead of inlet ρ(T,P_in).
+    # Conserves COMPRESSIBLE reverse-dir flow (Q_A≈Q_B); strict certificate
+    # machine-zero; Shanghai bit-identical. ON by default (2026-06-09) — uncheck
+    # for the legacy inlet-pressure density.
+    window.chk_var_rhocp = QCheckBox("Local-P gas density (3D)")
+    window.chk_var_rhocp.setChecked(True)
+    window.chk_var_rhocp.setToolTip(
+        "3D LTNE energy kernel: gas density ρ=P/RT from the LOCAL cell pressure "
+        "(SIMPLE) instead of the inlet pressure. Conserves energy for "
+        "compressible reverse-dir flow (Q_A≈Q_B). Strict conservation stays "
+        "machine-zero; Shanghai bit-identical; low-ΔP cases unchanged. "
+        "ON = default; uncheck for the legacy inlet-pressure density.")
+    window.chk_var_rhocp.setStyleSheet(window.chk_wall_refine_3d.styleSheet())
+    g4.addWidget(window.chk_var_rhocp, 4, 0, 1, 2)
 
     # Hide 3D-only inputs by default (2D mode)
     _on_dim_changed(window)

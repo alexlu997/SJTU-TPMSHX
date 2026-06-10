@@ -295,10 +295,16 @@ def _read_feature_flags(window) -> 'FeatureFlags':
     chk_wall = getattr(window, 'chk_wall_refine_3d', None)
     wall = bool(chk_wall is not None and
                 getattr(chk_wall, 'isChecked', lambda: False)())
+    # variable_rho_cp defaults ON (2026-06-09); an absent toggle (old/partial
+    # window) keeps the default, a present one mirrors its checked state.
+    chk_vrc = getattr(window, 'chk_var_rhocp', None)
+    var_rhocp = (bool(getattr(chk_vrc, 'isChecked', lambda: True)())
+                 if chk_vrc is not None else True)
     unit = getattr(window, '_temp_unit', 'K')
     if unit not in ('K', 'C'):
         unit = 'K'
-    return FeatureFlags(wall_refine_3d=wall, temp_unit=unit)
+    return FeatureFlags(wall_refine_3d=wall, variable_rho_cp=var_rhocp,
+                        temp_unit=unit)
 
 
 def _read_extrap_policy(window) -> 'ExtrapPolicy':
@@ -464,13 +470,17 @@ class FeatureFlags:
     """UI toggles that survive into the solver layer.
 
     ``wall_refine_3d`` mirrors ``window.chk_wall_refine_3d`` (3D wall
-    boundary-layer refinement). ``temp_unit`` mirrors ``window._temp_unit``
-    purely for round-tripping; ComputeConfig fields are always Kelvin so
-    the solver itself never needs this flag.
+    boundary-layer refinement). ``variable_rho_cp`` mirrors
+    ``window.chk_var_rhocp`` (3D LTNE energy-kernel gas density from SIMPLE's
+    local pressure ρ(P_local,T) instead of inlet pressure — conserves
+    compressible reverse flow; default off). ``temp_unit`` mirrors
+    ``window._temp_unit`` purely for round-tripping; ComputeConfig fields are
+    always Kelvin so the solver itself never needs this flag.
 
     Audit C4 (L-a-2).
     """
     wall_refine_3d: bool = False
+    variable_rho_cp: bool = True   # default ON (local-P gas density; 2026-06-09)
     temp_unit: Literal['K', 'C'] = 'K'
 
 

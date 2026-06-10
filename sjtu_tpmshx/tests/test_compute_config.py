@@ -328,9 +328,32 @@ def test_c4_new_dataclasses_have_safe_defaults():
     assert zn.pareto_x_decision is None
     fl = FeatureFlags()
     assert fl.wall_refine_3d is False
+    assert fl.variable_rho_cp is True   # default ON (local-P gas density)
     assert fl.temp_unit == 'K'
     ex = ExtrapPolicy()
     assert ex.allow is False
+
+
+def test_read_feature_flags_variable_rho_cp():
+    """`chk_var_rhocp` checkbox → FeatureFlags.variable_rho_cp (default ON)."""
+    from controllers.compute_config import _read_feature_flags
+
+    class _Chk:
+        def __init__(self, v): self._v = v
+        def isChecked(self): return self._v
+
+    class _W:
+        pass
+
+    w = _W()
+    w.chk_wall_refine_3d = _Chk(False)
+    w.chk_var_rhocp = _Chk(True)
+    assert _read_feature_flags(w).variable_rho_cp is True
+    w.chk_var_rhocp = _Chk(False)
+    assert _read_feature_flags(w).variable_rho_cp is False
+    # absent checkbox → default ON (no crash)
+    del w.chk_var_rhocp
+    assert _read_feature_flags(w).variable_rho_cp is True
 
 
 def test_c4_compute_config_default_has_new_fields():
