@@ -154,12 +154,10 @@ def _transform_simple_P_to_real(s):
     return np.ascontiguousarray(P_loc.T, dtype=np.float64)
 
 
-# ── Load Shanghai cases ──
-DATA_PATH = _DATA / 'raw_data' / '20260401-上海电气天然气加热器实验工况.xlsx'
-if not DATA_PATH.exists():  # rename-proof legacy fallback
-    DATA_PATH = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
-df = pd.read_excel(DATA_PATH, engine='openpyxl', sheet_name='Sheet1',
-                   header=None, skiprows=2)
+# ── Load Shanghai cases (canonical loader, B1 1.3) ──
+from validation._harness import load_cases_df
+from validation._case_sets import SHANGHAI_XLSX
+df = load_cases_df(SHANGHAI_XLSX)
 
 results = []
 

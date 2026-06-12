@@ -30,36 +30,25 @@ _THIS = Path(__file__).resolve()
 ROOT = _THIS.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from solvers.tpms_calc import geometry as tpms_geometry  # noqa: E402
 import validation.validate_shanghai_3d_real as V          # noqa: E402
 from validation._metrics import rmsre_from_pct             # noqa: E402
+from validation._harness import load_cases_df               # noqa: E402
+from validation._case_sets import (D76_XLSX, D76_N_CASES,   # noqa: E402
+                                    D76_EXCLUDE, d76_spec)
 
-DATA_XLSX = ROOT.parent / 'data' / 'raw_data' / '20260609-水直空气侧-D_7_6.xlsx'
-N_CASES = 18
-EXCLUDE = {11}          # duplicated sensor block (= case 10's T/P columns)
-
-
-def _patch_to_d76():
-    """Repoint validate_shanghai_3d_real module globals at the D_7_6 specimen."""
-    g = tpms_geometry('Diamond', 7.0, 0.6, 16.0)
-    V.TPMS = 'Diamond'
-    V.L_CELL = 7.0
-    V.T_WALL = 0.6
-    V.EPS = g['epsilon']
-    V.EPS_A = g['epsilon_A']
-    V.D_H = g['D_h']
-    V.R_H = g['D_h'] / 2
-    V.A0 = g['A_0']
-    V.A_FLOW = V.EPS_A * 36 * 49e-6     # 36-cell frontal, void fraction
-    # L_DOM / H_DOM / LZ identical to Shanghai (0.182 / 0.042 / 0.042)
+N_CASES = D76_N_CASES
+EXCLUDE = D76_EXCLUDE
 
 
 def main(nx=20, ny=10, nz=3) -> dict:
-    _patch_to_d76()
-    df = pd.read_excel(DATA_XLSX, engine='openpyxl', sheet_name='Sheet1',
-                       header=None, skiprows=2)
-    print(f"D_7_6 3D validation (Diamond L=7 t=0.6, eps={V.EPS:.4f}, "
-          f"D_H={V.D_H*1000:.3f} mm, A_FLOW={V.A_FLOW*1e6:.0f} mm2)")
+    # B1 1.3 (2026-06-12): the old _patch_to_d76() module-global patch is
+    # gone — it never reached helper default args frozen at import, so the
+    # gate had been computing h_vA with Shanghai (Gyroid) geometry. The
+    # spec is now passed explicitly; reference numbers re-baselined.
+    spec = d76_spec()
+    df = load_cases_df(D76_XLSX)
+    print(f"D_7_6 3D validation (Diamond L=7 t=0.6, eps={spec.eps:.4f}, "
+          f"D_H={spec.D_h*1000:.3f} mm, A_FLOW={spec.a_flow_m2*1e6:.0f} mm2)")
     print(f"Grid {nx}x{ny}x{nz}; cases 1-{N_CASES} excl {sorted(c+1 for c in EXCLUDE)}\n")
     errs = []
     for ci in range(N_CASES):
@@ -67,7 +56,7 @@ def main(nx=20, ny=10, nz=3) -> dict:
             continue
         r = V._run_one_case(ci, df, nx, ny, nz, wall_refine=False,
                             profile_kind='uniform', profile_eta=0.0,
-                            max_outer=V.MAX_OUTER)
+                            max_outer=V.MAX_OUTER, spec=spec)
         errs.append((ci + 1, r['err_dP%'], bool(r['pressure_state_valid'])))
         print(f"Case {ci+1:2d}: dP {r['dP_exp']:.0f}/{r['dP_sim']:.0f} "
               f"({r['err_dP%']:+.1f}%)  [P-valid={r['pressure_state_valid']}]")
