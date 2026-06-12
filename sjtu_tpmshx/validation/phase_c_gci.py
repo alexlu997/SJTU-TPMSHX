@@ -53,17 +53,13 @@ CASES_C = {
 
 
 def _fit_order_loglog(Ns, Qs):
-    """Slope of log|Q-Q_inf| vs log(h). Use Q-mean as Q_inf approx."""
+    """Slope of log|Q-Q_inf| vs log(h), Q_inf = finest-grid proxy."""
+    from validation._order_fit import fit_order_loglog
     Qs = np.asarray(Qs, dtype=np.float64)
     Q_inf = Qs[-1]   # finest as proxy
     h = 1.0 / np.asarray(Ns, dtype=np.float64)
     e = np.abs(Qs - Q_inf)
-    msk = (e > 1e-6) & np.isfinite(e)
-    if msk.sum() < 2:
-        return float('nan')
-    lh = np.log(h[msk]); le = np.log(e[msk])
-    p, _ = np.polyfit(lh, le, 1)
-    return float(p)
+    return fit_order_loglog(h, e, err_floor=1e-6).p
 
 
 def _gci_roache(Q_fine, Q_med, h_fine, h_med, p):

@@ -1300,11 +1300,12 @@ def _run_solvers(window, cfg, fields):
         _Tb_for_simpB = Tb if _coup_it > 0 else None
         with _warn.catch_warnings(record=True) as _caught:
             _warn.simplefilter("always")
-            # 2026-05-09 (option B) — water side runs incompressible SIMPLE
-            # so _update_density (ideal-gas P/RT update) is a no-op; ρ stays
-            # at the inlet value over the whole field.
-            _ftA = 'incompressible' if _pA['name'] == 'water' else 'ideal_gas'
-            _ftB = 'incompressible' if _pB['name'] == 'water' else 'ideal_gas'
+            # 2026-05-09 (option B) — incompressible fluids run SIMPLE with
+            # _update_density (ideal-gas P/RT update) as a no-op; ρ stays
+            # at the inlet value over the whole field. B1 1.1: mapping via
+            # the registry's flow_model() instead of a per-site string check.
+            _ftA = fluid_props.flow_model(_pA['name'])
+            _ftB = fluid_props.flow_model(_pB['name'])
             ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A,
                                             'Fluid A', P_inA_val,
                                             T_field_real=_Ta_for_simpA,
@@ -1628,9 +1629,11 @@ def _finalize_cfg(raw, fields):
     # T_out a downstream finalize_plots would compute by hand.
     compute_cfg = fields['compute_cfg']
 
-    def _outlet_T(T_field, uc_field, vc_field, dir_code, fluid_props,
+    def _outlet_T(T_field, uc_field, vc_field, dir_code, fluid_type,
                   T_in_K, P_in_Pa):
-        from solvers import tpms_calc as _tc
+        # B1 1.1: param renamed from `fluid_props` — it shadowed the
+        # solvers.fluid_props module this function now dispatches through.
+        from solvers import fluid_props as _fluids
         # Same convention as ``_enthalpy_balance_2d`` outlet plane.
         if dir_code in (0, 1):
             j_out = -1 if dir_code == 0 else 0
@@ -1642,13 +1645,10 @@ def _finalize_cfg(raw, fields):
             u_face = vc_field[:, i_out]
             T_face = T_field[:, i_out]
             dA = raw['energy_dx']
-        # ρ·cp weighting — water uses (T) only; air uses (T, P).
-        if fluid_props == 'water':
-            rho = _tc.water_density(T_face)
-            cp = _tc.water_cp(T_face)
-        else:
-            rho = _tc.air_density(T_face, P_in_Pa)
-            cp = _tc.air_cp(T_face)
+        # ρ·cp weighting — registry primitives (water rho ignores P).
+        _m = _fluids.get(fluid_type)
+        rho = _m.rho(T_face, P_in_Pa)
+        cp = _m.cp(T_face)
         import numpy as _np
         w = _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
         wsum = float(_np.sum(w))

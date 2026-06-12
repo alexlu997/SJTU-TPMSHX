@@ -9,9 +9,9 @@ Batch-2 split (2026-06-10): the page builders now live in sibling modules —
 ``builders_domain`` (Geometry page + _on_dim_changed),
 ``builders_fluids`` (Boundary Conditions page),
 ``builders_canvas`` (canvas cards, tab toolbar, zoom helpers).
-This module keeps the top-level assembly (build_ui / build_param_tabs),
-the zone page, and re-exports every public name so existing
-``from ui.ui_builders import X`` call sites keep working unchanged.
+This module keeps the top-level assembly (build_ui / build_param_tabs)
+and the zone page; page builders and row helpers live in the sibling
+``builders_*`` modules and must be imported from there.
 
 Intra-module calls use top-level function names (e.g., `build_param_tabs(window)`
 instead of `window._build_param_tabs()`) so the wiring within this module is
@@ -29,17 +29,13 @@ from PySide6.QtWidgets import (
 )
 from .theme import get_theme, get_theme_name
 
-# Re-exports — public API unchanged after the Batch-2 module split.
-from .builders_base import (                                     # noqa: F401
-    section, row, res_row, add_row, _computed_divider,
-    _ResultLabel, _ENTITY_MAP, _parse_unit_from_label,
-)
-from .builders_domain import build_page_domain, _on_dim_changed  # noqa: F401
-from .builders_fluids import build_page_fluids                   # noqa: F401
-from .builders_canvas import (                                   # noqa: F401
-    build_canvas_area, canvas_zoom, canvas_zoom_reset,
-    canvas_wheel_zoom, _layout_split_cards, _relayout_canvas_cards,
-)
+# Internal imports only — the Batch-2 re-export shim was removed in
+# refactor B1 (2026-06-12); import page builders from their source
+# modules (builders_base / builders_domain / builders_fluids /
+# builders_canvas) directly.
+from .builders_domain import build_page_domain
+from .builders_fluids import build_page_fluids
+from .builders_canvas import build_canvas_area
 
 
 def build_ui(window):

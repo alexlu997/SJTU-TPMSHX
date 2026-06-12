@@ -12,6 +12,50 @@ from PySide6.QtWidgets import (
 
 from .builders_base import section, row, res_row, add_row, _computed_divider
 
+_DIR_ITEMS = ["+x  (left → right)", "-x  (right → left)",
+              "+y  (bottom → top)", "-y  (top → bottom)",
+              "+z  (front → back, 3D)", "-z  (back → front, 3D)"]
+
+# Inlet/outlet card rows shared by the A/B mirror (B1 1.4). in_ctr/out_ctr
+# defaults are per-side (crossflow geometry) and injected by the caller.
+_PIPE_ROWS = (
+    ('in_ctr',    "Inlet centre [m]",          None),
+    ('in_w',      "Inlet width [m]",           "0.042"),
+    ('out_ctr',   "Outlet centre [m]",         None),
+    ('out_w',     "Outlet width [m]",          "0.042"),
+    ('in_z_ctr',  "Inlet z-centre [m] (3D)",   "0.021"),
+    ('in_z_w',    "Inlet z-width [m] (3D)",    "0.042"),
+    ('out_z_ctr', "Outlet z-centre [m] (3D)",  "0.021"),
+    ('out_z_w',   "Outlet z-width [m] (3D)",   "0.042"),
+)
+
+
+def _build_pipe_section(window, lay, side, *, title_style, frame_style,
+                        combo_style, dir_index, in_ctr, out_ctr):
+    """One ``Fluid X  Inlet / Outlet`` card — the A/B mirror collapsed
+    (B1 1.4). Widget names follow the ``le_pipe{side}_*`` /
+    ``_lbl_pipe{side}_*`` convention; the four z-rows register in
+    ``window._3d_only_widgets`` in (le, lbl) pairs, preserving the
+    original ordering.
+    """
+    gio, sec = section(window, lay, f"  Fluid {side}  Inlet / Outlet",
+                       title_style, frame_style)
+    window._rect_only_widgets.append(sec)
+    combo = QComboBox(); combo.addItems(_DIR_ITEMS)
+    combo.setCurrentIndex(dir_index)
+    combo.setStyleSheet(combo_style)
+    combo.currentIndexChanged.connect(window._on_dir_changed)
+    setattr(window, f'combo_dir{side}', combo)
+    add_row(window, gio, 0, "Flow direction", combo)
+    per_side = {'in_ctr': in_ctr, 'out_ctr': out_ctr}
+    for r, (suffix, label, default) in enumerate(_PIPE_ROWS, start=1):
+        le = row(window, gio, r, label, per_side.get(suffix, default))
+        lbl = gio.itemAtPosition(r, 0).widget()
+        setattr(window, f'le_pipe{side}_{suffix}', le)
+        setattr(window, f'_lbl_pipe{side}_{suffix}', lbl)
+        if '_z_' in suffix:
+            window._3d_only_widgets += [le, lbl]
+
 
 def _build_fluid_io_rows(window, g, side, t, u_default, T_default, P_default,
                          btn_text):
@@ -146,80 +190,17 @@ def build_page_fluids(window):
                          u_default="0.133", T_default="300.0",
                          P_default="101973", btn_text="Auto-fill &B")
 
-    # ── Inlet / Outlet configuration (unified) ─────────────
-    _DIR_ITEMS = ["+x  (left → right)", "-x  (right → left)",
-                  "+y  (bottom → top)", "-y  (top → bottom)",
-                  "+z  (front → back, 3D)", "-z  (back → front, 3D)"]
-
-    gio, sec_pipeA = section(window, lay, "  Fluid A  Inlet / Outlet", _T_A, _F_A)
-    window._rect_only_widgets.append(sec_pipeA)
-    window.combo_dirA = QComboBox(); window.combo_dirA.addItems(_DIR_ITEMS)
-    window.combo_dirA.setCurrentIndex(0)  # default +x
-    window.combo_dirA.setStyleSheet(_COMBO)
-    window.combo_dirA.currentIndexChanged.connect(window._on_dir_changed)
-    add_row(window, gio, 0, "Flow direction", window.combo_dirA)
-    window.le_pipeA_in_ctr  = row(window, gio, 1, "Inlet centre [m]",   "0.021")
-    window._lbl_pipeA_in_ctr  = gio.itemAtPosition(1, 0).widget()
-    window.le_pipeA_in_w    = row(window, gio, 2, "Inlet width [m]",    "0.042")
-    window._lbl_pipeA_in_w    = gio.itemAtPosition(2, 0).widget()
-    window.le_pipeA_out_ctr = row(window, gio, 3, "Outlet centre [m]",  "0.021")
-    window._lbl_pipeA_out_ctr = gio.itemAtPosition(3, 0).widget()
-    window.le_pipeA_out_w   = row(window, gio, 4, "Outlet width [m]",   "0.042")
-    window._lbl_pipeA_out_w   = gio.itemAtPosition(4, 0).widget()
-    # 3D-only z-partial BC (hidden in 2D — default full-depth)
-    window.le_pipeA_in_z_ctr  = row(window, gio, 5,
-                                     "Inlet z-centre [m] (3D)",  "0.021")
-    window._lbl_pipeA_in_z_ctr  = gio.itemAtPosition(5, 0).widget()
-    window.le_pipeA_in_z_w    = row(window, gio, 6,
-                                     "Inlet z-width [m] (3D)",   "0.042")
-    window._lbl_pipeA_in_z_w    = gio.itemAtPosition(6, 0).widget()
-    window.le_pipeA_out_z_ctr = row(window, gio, 7,
-                                     "Outlet z-centre [m] (3D)", "0.021")
-    window._lbl_pipeA_out_z_ctr = gio.itemAtPosition(7, 0).widget()
-    window.le_pipeA_out_z_w   = row(window, gio, 8,
-                                     "Outlet z-width [m] (3D)",  "0.042")
-    window._lbl_pipeA_out_z_w   = gio.itemAtPosition(8, 0).widget()
-    window._3d_only_widgets += [
-        window.le_pipeA_in_z_ctr, window._lbl_pipeA_in_z_ctr,
-        window.le_pipeA_in_z_w, window._lbl_pipeA_in_z_w,
-        window.le_pipeA_out_z_ctr, window._lbl_pipeA_out_z_ctr,
-        window.le_pipeA_out_z_w, window._lbl_pipeA_out_z_w,
-    ]
-
-    gio2, sec_pipeB = section(window, lay, "  Fluid B  Inlet / Outlet", _T_B, _F_B)
-    window._rect_only_widgets.append(sec_pipeB)
-    window.combo_dirB = QComboBox(); window.combo_dirB.addItems(_DIR_ITEMS)
-    window.combo_dirB.setCurrentIndex(3)  # default -y (crossflow)
-    window.combo_dirB.setStyleSheet(_COMBO)
-    window.combo_dirB.currentIndexChanged.connect(window._on_dir_changed)
-    add_row(window, gio2, 0, "Flow direction", window.combo_dirB)
-    window.le_pipeB_in_ctr  = row(window, gio2, 1, "Inlet centre [m]",   "0.154")
-    window._lbl_pipeB_in_ctr  = gio2.itemAtPosition(1, 0).widget()
-    window.le_pipeB_in_w    = row(window, gio2, 2, "Inlet width [m]",    "0.042")
-    window._lbl_pipeB_in_w    = gio2.itemAtPosition(2, 0).widget()
-    window.le_pipeB_out_ctr = row(window, gio2, 3, "Outlet centre [m]",  "0.028")
-    window._lbl_pipeB_out_ctr = gio2.itemAtPosition(3, 0).widget()
-    window.le_pipeB_out_w   = row(window, gio2, 4, "Outlet width [m]",   "0.042")
-    window._lbl_pipeB_out_w   = gio2.itemAtPosition(4, 0).widget()
-    # 3D-only z-partial BC for fluid B (mirror Fluid A)
-    window.le_pipeB_in_z_ctr  = row(window, gio2, 5,
-                                     "Inlet z-centre [m] (3D)",  "0.021")
-    window._lbl_pipeB_in_z_ctr  = gio2.itemAtPosition(5, 0).widget()
-    window.le_pipeB_in_z_w    = row(window, gio2, 6,
-                                     "Inlet z-width [m] (3D)",   "0.042")
-    window._lbl_pipeB_in_z_w    = gio2.itemAtPosition(6, 0).widget()
-    window.le_pipeB_out_z_ctr = row(window, gio2, 7,
-                                     "Outlet z-centre [m] (3D)", "0.021")
-    window._lbl_pipeB_out_z_ctr = gio2.itemAtPosition(7, 0).widget()
-    window.le_pipeB_out_z_w   = row(window, gio2, 8,
-                                     "Outlet z-width [m] (3D)",  "0.042")
-    window._lbl_pipeB_out_z_w   = gio2.itemAtPosition(8, 0).widget()
-    window._3d_only_widgets += [
-        window.le_pipeB_in_z_ctr, window._lbl_pipeB_in_z_ctr,
-        window.le_pipeB_in_z_w, window._lbl_pipeB_in_z_w,
-        window.le_pipeB_out_z_ctr, window._lbl_pipeB_out_z_ctr,
-        window.le_pipeB_out_z_w, window._lbl_pipeB_out_z_w,
-    ]
+    # ── Inlet / Outlet configuration (unified, A/B via _build_pipe_section) ──
+    # A: +x default, inlet/outlet centred (0.021). B: -y crossflow default,
+    # inlet at far edge (0.154), outlet near edge (0.028).
+    _build_pipe_section(window, lay, 'A',
+                        title_style=_T_A, frame_style=_F_A,
+                        combo_style=_COMBO,
+                        dir_index=0, in_ctr="0.021", out_ctr="0.021")
+    _build_pipe_section(window, lay, 'B',
+                        title_style=_T_B, frame_style=_F_B,
+                        combo_style=_COMBO,
+                        dir_index=3, in_ctr="0.154", out_ctr="0.028")
 
     # ── Polygon pipe edge config (hidden by default) ──────
     window._poly_pipe_frame = QFrame()

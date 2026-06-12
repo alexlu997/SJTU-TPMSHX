@@ -15,6 +15,23 @@ from .theme import get_theme
 from .builders_base import section, row, res_row, add_row
 
 
+def _res_ab_row(window, rg, r, label, attr_a, attr_b, *, unit_lbl_attrs=None):
+    """One A/B result-row pair in the results grid (B1 1.4): same label,
+    column 0 for Fluid A and column 2 for Fluid B. ``unit_lbl_attrs``
+    optionally captures the two label widgets (for the K/°C unit toggle).
+    """
+    setattr(window, attr_a, res_row(window, rg, r, label, 0))
+    setattr(window, attr_b, res_row(window, rg, r, label, 2))
+    if unit_lbl_attrs is not None:
+        try:
+            for col, lbl_attr in zip((0, 2), unit_lbl_attrs):
+                item = rg.itemAtPosition(r, col)
+                if item is not None:
+                    setattr(window, lbl_attr, item.widget())
+        except Exception:
+            pass
+
+
 def _on_dim_changed(window):
     """Toggle visibility of 3D-only inputs based on Dimensionality combo.
 
@@ -249,24 +266,15 @@ def build_page_domain(window):
         h.setStyleSheet(_LBL)
         h.setAlignment(Qt.AlignmentFlag.AlignCenter)
         rg.addWidget(h, 0, c * 2, 1, 2)
-    window._r_ToutA = res_row(window, rg, 1, "<i>T</i><sub>out</sub> [K]", 0)
-    window._r_ToutB = res_row(window, rg, 1, "<i>T</i><sub>out</sub> [K]", 2)
-    # 2026-05-20 UI sweep: capture the row's label widget so the K/°C
-    # toggle path (`_sync_temp_unit_labels` in main.py) can rewrite the
-    # `[K]` suffix when the user flips the header K/°C button. Prior to
-    # this the suffix stayed `[K]` regardless of unit, leaving a stale
-    # label next to the value.
-    try:
-        _lbl_ToutA_item = rg.itemAtPosition(1, 0)
-        _lbl_ToutB_item = rg.itemAtPosition(1, 2)
-        if _lbl_ToutA_item is not None:
-            window._lbl_ToutA_unit = _lbl_ToutA_item.widget()
-        if _lbl_ToutB_item is not None:
-            window._lbl_ToutB_unit = _lbl_ToutB_item.widget()
-    except Exception:
-        pass
-    window._r_dP_A  = res_row(window, rg, 2, "Δ<i>P</i><sub>total</sub> [Pa]", 0)
-    window._r_dP_B  = res_row(window, rg, 2, "Δ<i>P</i><sub>total</sub> [Pa]", 2)
+    # A/B result rows via the shared mirror helper (B1 1.4).
+    # 2026-05-20 UI sweep: the T_out unit labels are captured so the K/°C
+    # toggle (`_sync_temp_unit_labels` in main.py) can rewrite the `[K]`
+    # suffix when the user flips the header unit button.
+    _res_ab_row(window, rg, 1, "<i>T</i><sub>out</sub> [K]",
+                '_r_ToutA', '_r_ToutB',
+                unit_lbl_attrs=('_lbl_ToutA_unit', '_lbl_ToutB_unit'))
+    _res_ab_row(window, rg, 2, "Δ<i>P</i><sub>total</sub> [Pa]",
+                '_r_dP_A', '_r_dP_B')
     window._r_Q     = res_row(window, rg, 3, "<i>Q</i><sub>total</sub> [W/m]", 0)
     # Document which Q metric is shown so users don't conflate it with the
     # other diagnostics in the result dict (Q_solid_B, Q_sA, Q_sB,

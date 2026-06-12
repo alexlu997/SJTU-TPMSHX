@@ -138,7 +138,7 @@ class FieldFactory:
         """Build a result label that flips empty/filled style on text set."""
         # Local import: _ResultLabel lives in ui_builders to avoid circular
         # imports during the gradual P5 migration.
-        from .ui_builders import _ResultLabel
+        from .builders_base import _ResultLabel
         val = _ResultLabel('—', unit_hint=unit_hint,
                             quantity_name=quantity_name)
         val.setProperty('valState', 'empty')
@@ -163,7 +163,7 @@ class FieldFactory:
                 col: int = 0) -> '_ResultLabel':
         """Add (label, result-label) at cols ``col``/``col+1``. The unit
         hint is parsed from the trailing ``[unit]`` token in ``text``."""
-        from .ui_builders import _parse_unit_from_label
+        from .builders_base import _parse_unit_from_label
         lbl = self.label(text)
         unit_hint, qty_name = _parse_unit_from_label(text)
         val = self.result_label(unit_hint=unit_hint, quantity_name=qty_name)

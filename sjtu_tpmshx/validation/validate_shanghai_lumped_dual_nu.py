@@ -150,10 +150,9 @@ def main() -> None:
     print(f"  Air Nu: nu_from_Re (Gyroid v4.1 ×1.28 roughness)")
     print(f"  Water Nu: Yan [6] 2024  Nu = 0.471·Re^0.627·Pr^(1/3)\n")
 
-    data_path = (_PROJECT / 'data' / 'raw_data'
-                 / '20260401-上海电气天然气加热器实验工况.xlsx')
-    df = pd.read_excel(data_path, sheet_name='Sheet1', engine='openpyxl',
-                       header=None, skiprows=2)
+    from validation._harness import load_cases_df
+    from validation._case_sets import SHANGHAI_XLSX
+    df = load_cases_df(SHANGHAI_XLSX)
 
     rows = []
     print(f"{'C':>2} {'Re_A':>5} {'Re_B':>5} {'Nu_A':>5} {'Nu_B':>5} "

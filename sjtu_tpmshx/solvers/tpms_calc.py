@@ -376,18 +376,15 @@ def compute(tpms_type: str,
     D_h_mm = D_h_m * 1000.0        # [mm]  (used in Nu correlation)
 
     # ── Fluid properties at inlet conditions ──────────────────
-    # 2026-05-09 — water dispatch added (option B). Water rho is taken
-    # incompressible (P_in_Pa ignored). Air uses ideal-gas density.
-    if fluid_type == 'water':
-        mu  = float(water_viscosity(T_in_K))
-        k_f = float(water_conductivity(T_in_K))
-        rho = float(water_density(T_in_K))
-        cp_f = float(water_cp(T_in_K))
-    else:
-        mu  = air_viscosity(T_in_K)
-        k_f = air_conductivity(T_in_K)
-        rho = air_density(T_in_K, P_in_Pa)
-        cp_f = air_cp(T_in_K)
+    # B1 1.1 (2026-06-12): property primitives via the fluid_props
+    # registry (water rho ignores P — incompressible; air ideal-gas).
+    # Function-level import: fluid_props imports tpms_calc at module level.
+    from solvers import fluid_props as _fluids
+    _m = _fluids.get(fluid_type)
+    mu = float(_m.mu(T_in_K))
+    k_f = float(_m.k(T_in_K))
+    rho = float(_m.rho(T_in_K, P_in_Pa))
+    cp_f = float(_m.cp(T_in_K))
 
     # ── Reynolds number ──────────────────────────────────────
     # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
@@ -422,15 +419,11 @@ def compute(tpms_type: str,
     # cosmetic mismatch that confused users sanity-checking Nu vs Q.
     # Water path already routes through nu_water_from_Re → nu_from_Re,
     # so it picked up ×1.28 correctly; only the air branch was buggy.
-    if fluid_type == 'water':
-        # Pr-substitution onto the air-fit correlation (Reynolds analogy).
-        # Pr_water = mu * cp / k_f. Falls back to nu_water_from_Re for
-        # consistent dispatch over Diamond / Gyroid.
-        Pr_water = mu * cp_f / k_f
-        Nu = nu_water_from_Re(tpms_type, Re, eps_A, L_cell_mm, D_h_mm,
-                              Pr_water)
-    else:
-        Nu = nu_from_Re(tpms_type, Re, eps_A, L_cell_mm, D_h_mm)
+    # B1 1.1: Nu via the registry's per-fluid dispatch — water forwards the
+    # caller-computed Pr to nu_water_from_Re (Pr-substitution); the air
+    # adapter ignores Pr and uses nu_from_Re's built-in Pr_AIR.
+    Pr_f = mu * cp_f / k_f
+    Nu = _m.nu(tpms_type, Re, eps_A, L_cell_mm, D_h_mm, Pr_f)
 
     H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
 

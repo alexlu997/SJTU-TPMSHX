@@ -43,28 +43,24 @@ from solvers.roughness import (f_enhancement, nu_extra_factor,
 
 R_AIR = 287.05
 
-# ── Shanghai geometry (mirrors 2D validate_shanghai.py) ──
-# Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
-from configs import load_shanghai_baseline
-from controllers.compute_config import ComputeConfig
-# Audit C3 (2026-05-28): sourced through ComputeConfig.  `_SH` keeps
-# the raw dict view for the two Shanghai-specific fields (n_units,
-# a_flow_per_unit_m2) that are not part of the ComputeConfig schema.
-_SH = load_shanghai_baseline()
-_SH_CC = ComputeConfig.from_dict(_SH)
-TPMS = _SH_CC.geometry.tpms
-L_CELL = _SH_CC.geometry.L_cell_mm
-T_WALL = _SH_CC.geometry.t_wall_mm
-K_S = _SH_CC.geometry.k_s_W_mK
-g = tpms_geometry(TPMS, L_CELL, T_WALL, K_S)
-EPS = g['epsilon']; EPS_A = g['epsilon_A']; D_H = g['D_h']; R_H = D_H / 2; A0 = g['A_0']
-L_DOM = _SH_CC.geometry.L_dom_m
-H_DOM = _SH_CC.geometry.H_dom_m
-LZ = _SH_CC.geometry.Lz_m  # arbitrary 3D depth (water uniform along z)
+# ── Specimen geometry — canonical spec from validation/_case_sets ──
+# (B1 1.3, 2026-06-12: replaces the module-global derivation block that
+# validate_d76_3d had to monkey-patch. The globals below are kept as a
+# read-only Shanghai view for printing and test back-compat (V.EPS);
+# the runner itself threads `spec` explicitly.)
+from validation._harness import load_cases_df
+from validation._case_sets import shanghai_spec, SHANGHAI_XLSX
 
-N_UNITS = _SH['domain']['n_units']
-A_FLOW_PER_UNIT = _SH['domain']['a_flow_per_unit_m2']
-A_FLOW = N_UNITS * A_FLOW_PER_UNIT
+SPEC = shanghai_spec()
+TPMS = SPEC.tpms
+L_CELL = SPEC.L_cell_mm
+T_WALL = SPEC.t_wall_mm
+K_S = SPEC.k_s_W_mK
+EPS = SPEC.eps; EPS_A = SPEC.eps_A; D_H = SPEC.D_h; R_H = SPEC.r_h; A0 = SPEC.A_0
+L_DOM = SPEC.L_dom_m
+H_DOM = SPEC.H_dom_m
+LZ = SPEC.Lz_m  # arbitrary 3D depth (water uniform along z)
+A_FLOW = SPEC.a_flow_m2
 
 # Outer coupling parameters (mirror 2D)
 MAX_OUTER = 4          # fewer than 2D's 8 for 3D speed; P1b exit OK
@@ -81,43 +77,48 @@ water_rho = water_density
 water_mu  = water_viscosity
 
 
-def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, eps=EPS, d_h=D_H,
-                            L_cell=L_CELL):
+def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, *, spec):
     """Local single-stream Nu → h_vA field (mirror 2D _compute_h_vA_field).
 
     Uses post-refit single-stream convention: ε_f = ε/2, Re = ρ·u·D_h/μ,
     Nu = h·D_h/k_f via _nu_vec (Diamond F4-D / Gyroid F7).
+
+    ``spec`` is REQUIRED (B1 1.3): the old default args (eps=EPS, …)
+    froze Shanghai geometry at import time, which silently defeated the
+    d76 module-global patch — the d76 gate ran with Gyroid eps/D_h here.
 
     Ta_field, ucA_field : (Nx, Ny, Nz) real-coord cell-centre
     sA: SIMPLESolver3D for fluid A (internal dims (Ny, Nx, Nz))
     Returns h_vA shape (Nx, Ny, Nz).
     """
     from solvers.sigmoid_field import _nu_vec
+    d_h = spec.D_h
     P_abs_sf = (sA.P_ref_abs + sA.P).transpose(1, 0, 2)  # (Nx, Ny, Nz)
     rho_loc = P_abs_sf / (R_AIR * Ta_field)
     mu_loc = air_viscosity(Ta_field)
     k_loc = air_conductivity(Ta_field)
     Re_loc = rho_loc * np.abs(ucA_field) * d_h / mu_loc
     Re_loc = np.clip(Re_loc, 1.0, None)
-    L_mm_arr = np.full_like(Re_loc, L_cell)
+    L_mm_arr = np.full_like(Re_loc, spec.L_cell_mm)
     D_h_mm_arr = np.full_like(Re_loc, d_h * 1000.0)
-    Nu_field = _nu_vec(TPMS, Re_loc, np.full_like(Re_loc, eps),
+    Nu_field = _nu_vec(spec.tpms, Re_loc, np.full_like(Re_loc, spec.eps),
                        L_mm_arr, D_h_mm_arr)
     H_sf = Nu_field * k_loc / d_h
-    return A0 * H_sf
+    return spec.A_0 * H_sf
 
 
-def _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=False):
+def _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=False, spec=None):
     """Build (dx, dy, dz, Nx, Ny, Nz). Optional six-wall refinement."""
+    spec = SPEC if spec is None else spec
     if wall_refine:
         from solvers.df_projection import build_master_refined_grid_3d
         dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
-            L_DOM, H_DOM, LZ, Nx_u, Ny_u, Nz_u,
+            spec.L_dom_m, spec.H_dom_m, spec.Lz_m, Nx_u, Ny_u, Nz_u,
             n_refine=8, first_cell=0.02e-3)
     else:
-        dx = np.full(Nx_u, L_DOM / Nx_u)
-        dy = np.full(Ny_u, H_DOM / Ny_u)
-        dz = np.full(Nz_u, LZ / Nz_u)
+        dx = np.full(Nx_u, spec.L_dom_m / Nx_u)
+        dy = np.full(Ny_u, spec.H_dom_m / Ny_u)
+        dz = np.full(Nz_u, spec.Lz_m / Nz_u)
         Nx, Ny, Nz = Nx_u, Ny_u, Nz_u
     return dx, dy, dz, Nx, Ny, Nz
 
@@ -155,11 +156,22 @@ def _build_inlet_profile(Nx_simA, Nz_simA, u_mean, kind='uniform', eta=0.0):
 
 def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
                     profile_kind='uniform', profile_eta=0.0,
-                    max_outer=None):
-    """Run one Shanghai case (index ci 0-15). Returns result dict.
+                    max_outer=None, spec=None):
+    """Run one experimental case (index ci). Returns result dict.
 
     max_outer : override module-level MAX_OUTER (default None → use MAX_OUTER).
+    spec      : SpecimenSpec (default None → Shanghai). B1 1.3: replaces
+                the module-global monkey-patch that validate_d76_3d used —
+                the locals unpacked below shadow the Shanghai module
+                globals for the rest of this function body.
     """
+    spec = SPEC if spec is None else spec
+    TPMS, L_CELL, T_WALL, K_S = (spec.tpms, spec.L_cell_mm,
+                                 spec.t_wall_mm, spec.k_s_W_mK)
+    EPS, EPS_A, D_H, A0 = spec.eps, spec.eps_A, spec.D_h, spec.A_0
+    L_DOM, H_DOM, LZ = spec.L_dom_m, spec.H_dom_m, spec.Lz_m
+    A_FLOW = spec.a_flow_m2
+
     max_outer_local = MAX_OUTER if max_outer is None else int(max_outer)
     case = ci + 1
 
@@ -185,7 +197,8 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     Q_exp = float(df.iloc[ci, 33])
 
     # ── Grid (optional six-wall refinement) ──
-    dx, dy, dz, Nx, Ny, Nz = _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=wall_refine)
+    dx, dy, dz, Nx, Ny, Nz = _build_grid(Nx_u, Ny_u, Nz_u,
+                                         wall_refine=wall_refine, spec=spec)
 
     eps_arr = np.full((Nx, Ny, Nz), EPS)
     K_ffA = np.full((Nx, Ny, Nz), EPS_A * air_conductivity(T_Ain_K))
@@ -297,7 +310,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
 
         # Update h_vA from local T/v/P after first iter
         if Ta is not None:
-            h_vA_field = _compute_h_vA_field_3d(Ta, ucA_real, sA)
+            h_vA_field = _compute_h_vA_field_3d(Ta, ucA_real, sA, spec=spec)
 
         # 2026-05-19 ε contract (Option A): pass FULL porosity ε_full.
         # The kernel internally does eps_f = 0.5*epsilon (single halving →
@@ -432,12 +445,7 @@ def main():
                     help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
     args = ap.parse_args()
 
-    data_path = (ROOT.parent / 'data' / 'raw_data'
-                 / '20260401-上海电气天然气加热器实验工况.xlsx')
-    if not data_path.exists():  # rename-proof legacy fallback
-        data_path = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
-    df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
-                       header=None, skiprows=2)
+    df = load_cases_df(SHANGHAI_XLSX)
 
     print(f"Shanghai 3D validation (Gyroid L={L_CELL} t={T_WALL} eps={EPS:.4f})")
     print(f"Domain: {L_DOM*1000:.0f}x{H_DOM*1000:.0f}x{LZ*1000:.0f} mm")

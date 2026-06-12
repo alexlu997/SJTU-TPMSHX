@@ -1,5 +1,10 @@
 """Benchmark harness for SJTU-TPMSHX A (performance subproject).
 
+NOTE (refactor B1, 2026-06-12): this is a frozen 2026-05 benchmark snapshot.
+Tasks 4-5 depend on runs/batch_runner.py, which was removed in B1 (no
+production consumer); those tasks no longer run. Kept as historical record
+alongside benchmark_snapshot_a.md / _b.md.
+
 Measures:
   1. Cold import of solve_full (with __pycache__ cleared)
   2. Warm import of solve_full (3 runs, take min)
