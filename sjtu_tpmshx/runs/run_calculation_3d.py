@@ -192,9 +192,9 @@ def _simple_mass_flow(solver, dir_code, eps_f_per_side=None):
 
 
 def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
-    """Scale K/cF arrays by f_enhancement for air; skip for water (Yan [6]
-    correlation already embeds AM roughness)."""
-    if fluid_type == 'water':
+    """Scale K/cF arrays by f_enhancement; skip fluids whose closure already
+    embeds AM roughness (water: Yan [6]) — registry flag, B1 1.1."""
+    if fluid_props.get(fluid_type).embeds_roughness:
         return K_arr, cF_arr
     mode, eps_um = _resolve_ui_roughness()
     if mode == 'baseline':
@@ -207,10 +207,11 @@ def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
 
 
 def _apply_roughness_h_v(h_v_field, fluid_type, rho, mu, u, D_h_m):
-    """Multiply h_v by nu_extra_factor for air; skip for water. Norris 1a
-    returns 1.0 (Nu unchanged ×1.28), so this is a no-op for the default
-    mode; only bhatti_shah_1b actually rescales Nu."""
-    if fluid_type == 'water':
+    """Multiply h_v by nu_extra_factor; skip roughness-embedding fluids
+    (registry flag, B1 1.1). Norris 1a returns 1.0 (Nu unchanged ×1.28),
+    so this is a no-op for the default mode; only bhatti_shah_1b actually
+    rescales Nu."""
+    if fluid_props.get(fluid_type).embeds_roughness:
         return h_v_field
     mode, eps_um = _resolve_ui_roughness()
     if mode == 'baseline':
@@ -1630,16 +1631,15 @@ def _run_3d_stack(cfg):
     if fluid_type_B == 'sco2':
         raise NotImplementedError("sCO₂ properties not yet implemented for Fluid B")
     is_water_B = fluid_type_B == 'water'
+    # B1 1.1: property primitives + flow model for side B via the registry
+    # (frozen-B / stiffness semantics keep using is_water_B).
+    _mB = fluid_props.get(fluid_type_B)
     sB = None
     sB_info = None
     if fB is not None:
         u_B = cfg.get('u_B', u_A)
-        if is_water_B:
-            rho_B = float(water_density(T_inB))
-            mu_B = float(water_viscosity(T_inB))
-        else:
-            rho_B = air_density(T_inB, P_inB)
-            mu_B = air_viscosity(T_inB)
+        rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P
+        mu_B = float(_mB.mu(T_inB))
         axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
         is_x_stream_B = axis_map_B['is_x_stream']
         is_y_stream_B = axis_map_B['is_y_stream']
@@ -1659,16 +1659,14 @@ def _run_3d_stack(cfg):
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
         G_B = rho_B * u_B
-        if is_water_B:
-            C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
-            P_ref_B = float(P_inB - C_B * L_stream_B / rho_B)
-            P_ref_B = max(P_ref_B, 1.0e4)
-            solver_fluid_type_B = 'incompressible'
-        else:
-            C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
+        C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
+        solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
+        if _mB.compressible:
             P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
             P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
-            solver_fluid_type_B = 'ideal_gas'
+        else:
+            P_ref_B = float(P_inB - C_B * L_stream_B / rho_B)
+            P_ref_B = max(P_ref_B, 1.0e4)
         in_mask_B, out_mask_B = _build_partial_masks(
             fB, dcross1_B, dcross2_B,
             axis_map_B['N_cross1'], axis_map_B['N_cross2'], is_reverse_B)
@@ -1729,15 +1727,10 @@ def _run_3d_stack(cfg):
         wcB = np.zeros((Nx, Ny, Nz))
         Tb_presc = np.full((Nx, Ny, Nz), T_inB, dtype=np.float64)
 
-    # LTNE inputs — Fluid A always air, Fluid B dispatches on fluid_type_B.
-    if is_water_B:
-        cp_B = water_cp(T_inB)
-        k_B = float(water_conductivity(T_inB))
-        rho_B_ltne = float(water_density(T_inB))
-    else:
-        cp_B = air_cp(T_inB)
-        k_B = air_conductivity(T_inB)
-        rho_B_ltne = air_density(T_inB, P_inB)
+    # LTNE inputs — Fluid A always air, Fluid B via the registry (B1 1.1).
+    cp_B = _mB.cp(T_inB)
+    k_B = float(_mB.k(T_inB))
+    rho_B_ltne = float(_mB.rho(T_inB, P_inB))   # water rho ignores P
     eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
                else np.full((Nx, Ny, Nz), eps))
     # Per-cell single-channel void fraction (#2/#3). When zoned, eps varies
@@ -2306,32 +2299,29 @@ def _run_3d_stack(cfg):
 
         if Tb is not None:
             T_avgB = float(Tb.mean())
-            if is_water_B:
-                K_ffB[:] = eps_f_arr * water_conductivity(Tb)
-                rho_cp_fB[:] = water_density(Tb) * water_cp(Tb)
+            # B1 1.1: per-fluid primitives via registry; the local-P
+            # rho·cp path is compressible-only physics (water keeps ρ(T)).
+            K_ffB[:] = eps_f_arr * _mB.k(Tb)
+            if _mB.compressible and _var_rhocp and sB is not None:
+                _rhoB_real = sB.rho_field.transpose(perm_B)
+                if axis_map_B['is_reverse']:
+                    _rhoB_real = np.flip(
+                        _rhoB_real, axis=axis_map_B['stream_real_axis'])
+                rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb)
             else:
-                K_ffB[:] = eps_f_arr * air_conductivity(Tb)
-                if _var_rhocp and sB is not None:
-                    _rhoB_real = sB.rho_field.transpose(perm_B)
-                    if axis_map_B['is_reverse']:
-                        _rhoB_real = np.flip(
-                            _rhoB_real, axis=axis_map_B['stream_real_axis'])
-                    rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * air_cp(Tb)
-                else:
-                    rho_cp_fB[:] = air_density(Tb, P_inB) * air_cp(Tb)
+                rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb)
             # h_vB rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         # Non-iso coupling for fluid B. Water: ρ(T) only, no ideal gas.
         # Air: ρ(P,T) via ideal gas law (mirror of A).
         if sB is not None and Tb is not None:
             Tb_sB = np.ascontiguousarray(Tb.transpose(perm_B))
-            if is_water_B:
-                rho_new_B = water_density(Tb_sB)
-                mu_new_B = water_viscosity(Tb_sB)
-            else:
+            if _mB.compressible:
                 P_abs_B = sB.P_ref_abs + sB.P
                 rho_new_B = P_abs_B / (R_AIR * Tb_sB)
-                mu_new_B = air_viscosity(Tb_sB)
+            else:
+                rho_new_B = _mB.rho(Tb_sB)
+            mu_new_B = _mB.mu(Tb_sB)
             if outer > 0:
                 sB.rho_field = np.ascontiguousarray(
                     _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
@@ -2346,9 +2336,9 @@ def _run_3d_stack(cfg):
             sB._mu_eff_field = np.ascontiguousarray(
                 sB.mu_field / eps_eff_B, dtype=np.float64)
 
-            if not is_water_B:
+            if _mB.compressible:   # P_ref recompute is compressible-only
                 Tb_avg = float(Tb_sB.mean())
-                mu_avg_B = float(air_viscosity(Tb_avg))
+                mu_avg_B = float(_mB.mu(Tb_avg))
                 C_avg_B = (mu_avg_B * G_B / max(K_pred, 1e-16)
                            + cF_pred * G_B * G_B)
                 P_out_sq_B_new = (P_inB ** 2

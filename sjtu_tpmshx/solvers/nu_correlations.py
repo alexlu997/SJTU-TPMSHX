@@ -130,3 +130,25 @@ def nu_water_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr_water):
     """
     return nu_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm) \
            * (Pr_water / Pr_AIR) ** (1/3)
+
+
+# ── Topology-specific DIRECT water fits (design-tool lineage) ────────
+# Single-sourced here in B1 1.1 (2026-06-12); previously a private dict in
+# design/fluids.py. These are a THIRD water-Nu lineage, deliberately
+# distinct from both nu_water_from_Re (Pr-substitution) above and
+# tpms_calc.nu_water_gyroid_yan6 (Yan [6]): direct per-topology fits
+# Nu = c·Re^a·Pr^(1/3) on water CFD, Re 100-50000. New-Gyroid
+# cross-checks Yan within ±1 %; new-Diamond sits 5-12 % below the old
+# borrowed-Gyroid value (Diamond finally uses its own physics).
+WATER_NU_RE_RANGE = (100.0, 50000.0)
+WATER_NU_COEFFS = {
+    'Diamond': {'c': 0.3427, 'a': 0.6626},
+    'Gyroid':  {'c': 0.4445, 'a': 0.6361},
+}
+
+
+def nu_water_topo(tpms_type, Re, Pr_water):
+    """Topology-specific direct water Nu = c·Re^a·Pr^(1/3) (table above).
+    ``max(Re, 1.0)`` floor preserved verbatim from the design-tool fit."""
+    co = WATER_NU_COEFFS[tpms_type]
+    return co['c'] * max(Re, 1.0) ** co['a'] * Pr_water ** (1 / 3)
