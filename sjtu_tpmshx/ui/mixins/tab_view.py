@@ -21,15 +21,15 @@ class TabViewMixin:
     """Tab / canvas / detach-reattach UI handlers."""
 
     def _canvas_zoom(self, factor):
-        from ui.ui_builders import canvas_zoom
+        from ui.builders_canvas import canvas_zoom
         return canvas_zoom(self, factor)
 
     def _canvas_zoom_reset(self):
-        from ui.ui_builders import canvas_zoom_reset
+        from ui.builders_canvas import canvas_zoom_reset
         return canvas_zoom_reset(self)
 
     def _canvas_wheel_zoom(self, event, canvas, key):
-        from ui.ui_builders import canvas_wheel_zoom
+        from ui.builders_canvas import canvas_wheel_zoom
         return canvas_wheel_zoom(self, event, canvas, key)
 
     def _update_tab_visibility(self):
@@ -127,7 +127,7 @@ class TabViewMixin:
             self.statusBar().showMessage(
                 "Split view requires both tabs to have data.", 4000)
             return
-        from ui.ui_builders import _layout_split_cards
+        from ui.builders_canvas import _layout_split_cards
         _layout_split_cards(self, [cur, tab])
         # Paint both tab buttons as active, others inactive.
         for k, btn in (('temp', self.btn_tab_temp),
@@ -187,7 +187,7 @@ class TabViewMixin:
         # Exiting split view — a plain tab click means "back to single".
         if getattr(self, '_split_tabs', None):
             self._split_tabs = None
-            from ui.ui_builders import _relayout_canvas_cards
+            from ui.builders_canvas import _relayout_canvas_cards
             _relayout_canvas_cards(self, 1)
         # Reject clicks on hidden tabs (defensive — buttons are hidden anyway)
         btn_lookup = {
