@@ -29,21 +29,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from validation.mms_3d_air_air import run_mms
+from validation._order_fit import fit_order_loglog
 
 GRIDS = [10, 16, 24, 32]
 OUT_CSV = ROOT / 'validation' / 'mms_phase_b4_orders.csv'
-
-
-def _fit(hs, errs):
-    lh = np.log(np.asarray(hs)); le = np.log(np.asarray(errs))
-    A = np.vstack([lh, np.ones_like(lh)]).T
-    coef, *_ = np.linalg.lstsq(A, le, rcond=None)
-    slope = float(coef[0])
-    pred = A @ coef
-    ss_res = float(np.sum((le - pred) ** 2))
-    ss_tot = float(np.sum((le - le.mean()) ** 2))
-    r2 = 1.0 - ss_res / (ss_tot + 1e-30)
-    return slope, r2
 
 
 def main():
@@ -59,7 +48,8 @@ def main():
               f"L2_s={r['L2_s']:.4e}")
     rows = []
     for m in ('L2_A', 'L2_B', 'L2_s'):
-        p, r2 = _fit(hs, errs[m])
+        _fit = fit_order_loglog(hs, errs[m])
+        p, r2 = _fit.p, _fit.r2
         rows.append((m, p, r2, errs[m][-1]))
         print(f"  {m}: p_obs={p:.3f}  R2={r2:.5f}  val_gfine={errs[m][-1]:.3e}")
     with open(OUT_CSV, 'w') as f:

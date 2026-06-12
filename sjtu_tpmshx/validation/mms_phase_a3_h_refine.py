@@ -38,24 +38,9 @@ warnings.filterwarnings('ignore')
 
 from validation.mms_3d_air_air import run_mms, L_DOM
 from validation._provenance import write_csv_with_provenance
+from validation._order_fit import fit_order_loglog
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a3_h_refine.py'
-
-
-def fit_order(h_arr, err_arr):
-    """Linear fit log(err) = p*log(h) + c. Returns p, c, R^2."""
-    h = np.asarray(h_arr, dtype=np.float64)
-    e = np.asarray(err_arr, dtype=np.float64)
-    mask = (e > 0) & np.isfinite(e)
-    if mask.sum() < 2:
-        return float('nan'), float('nan'), float('nan')
-    lh = np.log(h[mask]); le = np.log(e[mask])
-    p, c = np.polyfit(lh, le, 1)
-    le_pred = p * lh + c
-    ss_res = np.sum((le - le_pred) ** 2)
-    ss_tot = np.sum((le - le.mean()) ** 2)
-    r2 = 1.0 - ss_res / (ss_tot + 1e-30)
-    return float(p), float(c), float(r2)
 
 
 def main():
@@ -124,7 +109,8 @@ def main():
         sub = df[df['case'] == c].sort_values('h', ascending=False)
         h = sub['h'].values
         for metric in ['L2_A', 'L2_B', 'L2_s', 'Linf_A', 'Linf_B', 'Linf_s']:
-            p, c0, r2 = fit_order(h, sub[metric].values)
+            _fit = fit_order_loglog(h, sub[metric].values)
+            p, c0, r2 = _fit.p, _fit.c, _fit.r2
             row = dict(case=c, metric=metric, p_obs=p, R2=r2,
                        intercept=c0)
             # Ref grid 30 value

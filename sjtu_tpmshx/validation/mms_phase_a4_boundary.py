@@ -50,6 +50,7 @@ warnings.filterwarnings('ignore')
 
 from validation.mms_3d_air_air import run_mms, L_DOM
 from validation._provenance import write_csv_with_provenance
+from validation._order_fit import fit_order_loglog
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a4_boundary.py'
 
@@ -88,20 +89,6 @@ def _l2_linf_masked(num, exact, mask):
     l2 = float(np.sqrt(np.mean(diff**2)) / (np.sqrt(np.mean(ref**2)) + 1e-30))
     linf = float(np.max(np.abs(diff)))
     return l2, linf
-
-
-def _fit_order(h_arr, err_arr):
-    h = np.asarray(h_arr, dtype=np.float64)
-    e = np.asarray(err_arr, dtype=np.float64)
-    msk = (e > 0) & np.isfinite(e)
-    if msk.sum() < 2:
-        return float('nan'), float('nan')
-    p, _ = np.polyfit(np.log(h[msk]), np.log(e[msk]), 1)
-    pred = p * np.log(h[msk]) + np.polyfit(np.log(h[msk]), np.log(e[msk]), 1)[1]
-    ss_res = np.sum((np.log(e[msk]) - pred) ** 2)
-    ss_tot = np.sum((np.log(e[msk]) - np.log(e[msk]).mean()) ** 2)
-    r2 = 1.0 - ss_res / (ss_tot + 1e-30)
-    return float(p), float(r2)
 
 
 def main():
@@ -168,7 +155,8 @@ def main():
         for phase in ['A', 'B', 's']:
             col = f'L2_{phase}_{region}'
             err = df[col].values
-            p, r2 = _fit_order(df['h'].values, err)
+            _fit = fit_order_loglog(df['h'].values, err)
+            p, r2 = _fit.p, _fit.r2
             l2_max = err[-1]
             order_rows.append(dict(
                 region=region, phase=phase, p_obs=p, R2=r2, L2_g_max=l2_max))
