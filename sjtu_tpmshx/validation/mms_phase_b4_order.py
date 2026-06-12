@@ -36,16 +36,19 @@ OUT_CSV = ROOT / 'validation' / 'mms_phase_b4_orders.csv'
 
 
 def main():
-    hs, errs = [], {'L2_A': [], 'L2_B': [], 'L2_s': []}
-    for N in GRIDS:
-        r = run_mms('3d', Nx=N, Ny=N, Nz=N, max_outer=8000, inner=50,
-                    tol=1e-10, alpha_f=0.7, alpha_s=1.0, verbose=False,
-                    conservative=1)
-        hs.append(1.0 / N)
-        for m in errs:
-            errs[m].append(r[m])
-        print(f"N={N:>3}  L2_A={r['L2_A']:.4e}  L2_B={r['L2_B']:.4e}  "
-              f"L2_s={r['L2_s']:.4e}")
+    from validation._mms_driver import run_grid_sequence
+    rows_raw = run_grid_sequence(
+        GRIDS,
+        lambda N: run_mms('3d', Nx=N, Ny=N, Nz=N, max_outer=8000, inner=50,
+                          tol=1e-10, alpha_f=0.7, alpha_s=1.0, verbose=False,
+                          conservative=1),
+        lambda N, r, dt: dict(h=1.0 / N, L2_A=r['L2_A'],
+                              L2_B=r['L2_B'], L2_s=r['L2_s']),
+        on_grid=lambda N, r, row, dt: print(
+            f"N={N:>3}  L2_A={r['L2_A']:.4e}  L2_B={r['L2_B']:.4e}  "
+            f"L2_s={r['L2_s']:.4e}"))
+    hs = [row['h'] for row in rows_raw]
+    errs = {m: [row[m] for row in rows_raw] for m in ('L2_A', 'L2_B', 'L2_s')}
     rows = []
     for m in ('L2_A', 'L2_B', 'L2_s'):
         _fit = fit_order_loglog(hs, errs[m])
