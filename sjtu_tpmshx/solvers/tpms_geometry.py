@@ -13,10 +13,16 @@ TPMS implicit functions:
   where k = 2*pi/L
 
 Solid region: |phi| <= C(t), where C is the level-set threshold
-corresponding to wall thickness t.
+corresponding to wall thickness t. The wall is the band between the two
+bounding isosurfaces phi=-C and phi=+C, centered on the minimal surface phi=0.
 
-The relationship between C and t is established numerically:
-  t = average distance from phi=0 surface to phi=C surface.
+The relationship between C and t is established numerically by fitting C(t/L)
+to CAD porosity data (see _C_COEFFS). Geometrically, t is the FULL wall
+thickness across that band (phi=-C to phi=+C), not the half-distance from
+phi=0 to phi=C. Because phi is a trig sum (not a signed-distance field), the
+physical thickness is t = 2*C / |grad phi|_phys, with |grad phi|_phys =
+(2*pi/L)*g and g = |grad phi| ~ 1.5 at the surface; hence t != 2*C in mm even
+though the band spans 2*C in phi-units.
 """
 
 import numpy as np

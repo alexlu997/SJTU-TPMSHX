@@ -8,32 +8,35 @@
 
 | CSV | dP RMSRE | Q RMSRE | Era | Status |
 |-----|----------|---------|-----|--------|
-| `shanghai_3d_baseline_pytest_h3.csv` (6/02) | **17.32%** | **3.74%** | **post G-fix + RBF cubic s=0.1, Nz=3** | **CURRENT pinned baseline** — `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` asserts these (tol ±5%/±10%). Nz=3 for CI speed (~25 s/case vs ~3 min at Nz=10). |
-| `shanghai_3d_baseline.csv` (5/28, pre-G-fix) | 44.74% | 2.91% | full-ε fix, baseline roughness, **pre G-fix (col 48 G) + thin_plate s=0** | **SUPERSEDED by G-fix** — the G-convention + RBF-cubic fix (commits f6146db / 0d3b59a, 5/29) was NOT applied here. 44.74% is the pre-fix Nz=10 number. Kept for trajectory; do NOT cite as current. |
-| `shanghai_3d_baseline_nz10_postGfix.csv` (6/02) | **21.49%** | **3.88%** | **post G-fix + RBF cubic s=0.1, Nz=10**, A+B low-Re early-exit | **CURRENT authoritative (Nz=10)** — 16/16 valid, 0 clip; G-fix cut Nz=10 dP from 44.74%→21.49% (−23 pp). max\|err_dP\|=30.5%, Q_net_rel<3.1e-4. |
+| `shanghai_3d_baseline.csv` (6/12, v1.4.0) | **9.82%** | **3.20%** | **gamma_df default backend + mass-flux inlet, Nz=3** | **CURRENT canonical (production default)** — DF surrogate default switched rbf→gamma_df 2026-06-12 (commit `fdb49b1`); the +2.6pp vs rbf is entirely the smooth-trend K (cF gate-identical 534.8). File content = the v1.4.0 default full-chain run. |
+| `shanghai_3d_baseline_gammadf_routing_check.csv` (6/12) | **7.19%** | **3.22%** | rbf backend + mass-flux inlet, Nz=3 | **rbf reference** (pre-v1.4.0 default; also the bit-identical routing regression check). Reproduce: `TPMSHX_DF_METHOD=rbf`. |
+| `shanghai_3d_baseline_nz10_massflux.csv` (6/09) | **8.69%** | **3.33%** | rbf backend + mass-flux inlet, **Nz=10** | **rbf Nz=10 reference** — gamma_df Nz=10 has NOT been measured yet. |
+| `shanghai_3d_baseline_pytest_h3.csv` (regenerated per run) | — | — | whatever HEAD defaults are | scratch output of `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` (opt-in); pinned values live in the test (9.82/3.20 since v1.4.0, tol ±5%/±10%). |
+| `shanghai_3d_baseline_nz10_postGfix.csv` (6/02) | 21.49% | 3.88% | post G-fix + RBF cubic s=0.1, Nz=10, **velocity-inlet era** | SUPERSEDED by the 2026-06-04 mass-flux inlet fix (dP 21.49→8.69 at Nz=10); trajectory only. |
 | `shanghai_3d_baseline_post-fix-mass-cons-Nz10.csv` (5/15) | 47.02% | 2.22% | **ε double-halved (ε_full/4) bug** | OBSOLETE — superseded numbers, see `vault/.../regression_report.md` header |
 | `shanghai_3d_baselineNz10_norris_1a.csv` (5/13) | 24.15% | 3.61% | **old f-multiplier era** (norris_1a still applied f≈1.46 friction) | OBSOLETE — `norris_1a` is now a baseline no-op alias (`solvers/roughness.py`); 24.15% is double-counted-friction, do NOT cite |
 | other `shanghai_3d_baseline*Nz10*`, `*post-fix-norris1a*`, `*bhatti_shah*`, `*z20*`, `*fine_Nx40*` | — | — | mixed pre-ε-fix / experiment branches | OBSOLETE for headline; trajectory only |
 
-## Current authoritative numbers (post G-fix + RBF cubic s=0.1, 2026-06-02)
-- **3D LTNE conditional (water-temp prescribed), Nz=10: dP 21.49% / Q 3.88%** —
-  `shanghai_3d_baseline_nz10_postGfix.csv`. CONDITIONAL prediction (experimental
-  `T_Bout` for `Tb_prescribed`; water side frozen) — NOT a clean no-leak temp
-  prediction. **This replaces the old 44.74%/2.91%**, which was the SAME pipeline
-  *before* the G-convention + RBF-cubic surrogate fix (5/29); the G-fix cut Nz=10
-  dP by 23 pp.
-- **3D LTNE, Nz=3 (CI-pinned):  dP 17.32% / Q 3.74%** —
-  `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` (tol ±5%/±10%).
-  Nz=3 for CI speed; ~4 pp below Nz=10 = grid effect.
+## Current authoritative numbers (v1.4.0, 2026-06-12)
+- **Production default (gamma_df backend), Nz=3: dP 9.82% / Q 3.20%** —
+  `shanghai_3d_baseline.csv`. DF surrogate default = GammaDF multi-fidelity
+  (`df_surrogate/gamma_df.py`) since 2026-06-12; gamma_df **Nz=10 not yet
+  measured**.
+- **rbf backend reference (`TPMSHX_DF_METHOD=rbf`): Nz=3 dP 7.19% / Q 3.22%,
+  Nz=10 dP 8.69% / Q 3.33%** — post 2026-06-04 mass-flux-inlet fix (which cut
+  Nz=3 dP 17.43→7.19 by injecting the experimentally-correct air mass flow).
+  The gamma_df−rbf gap (+2.6pp) is entirely the smooth-trend K; cF is
+  gate-identical (534.8) by construction.
 - **Clean no-leak Q (paper baseline): Q_air 1.71%** — lumped dual-Nu ε-NTU
   (`validate_shanghai_lumped_dual_nu.py`), surrogate-independent.
-- dP residual ~20% = entrance口径 + t=0.6/L=7 geometry differential, non-separable
-  from Shanghai data (see `vault/reports/method/2026-05-15-Q-dP-state-audit-CN.md`
-  §4 + memory `feedback_dp_gap_attribution`).
+- rbf-side dP residual ~7% = true closure + geometry floor (the old "entrance
+  convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
+  see memory `feedback_dp_gap_attribution`).
 
 ## To reproduce
-- Nz=3 (fast, CI):  `validate_shanghai_3d_real.py --nz 3`  → 17.32/3.74
-- Nz=10 (headline): `validate_shanghai_3d_real.py --nz 10` → 21.49/3.88
+- Nz=3 default (gamma_df): `validate_shanghai_3d_real.py --nz 3`  → 9.82/3.20
+- Nz=3 rbf reference:      `TPMSHX_DF_METHOD=rbf` + same command   → 7.19/3.22
+- Nz=10 rbf reference:     `TPMSHX_DF_METHOD=rbf` + `--nz 10`      → 8.69/3.33
 Both carry `pressure_clip_hits` + `pressure_state_valid`; Shanghai n_invalid=0.
 The SIMPLE solver's A+B low-Re early-exit (default on) makes the water-side solve
 ~24× faster with <0.01% effect on dP/Q (verified 2026-06-02).

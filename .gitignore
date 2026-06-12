@@ -34,6 +34,11 @@ Picture.zip
 *.log
 sjtu_tpmshx/benchmark_a_*.json
 
+# Shanghai validation probe outputs (suffixed runs = diagnostics; the
+# canonical baseline + archived references are tracked explicitly and
+# stay tracked — gitignore only silences new untracked probes)
+sjtu_tpmshx/validation/shanghai_3d_baseline_*.csv
+
 # OS / editor
 .DS_Store
 Thumbs.db
