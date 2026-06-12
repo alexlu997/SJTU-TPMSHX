@@ -145,10 +145,15 @@ class ComputePipeline(ABC):
 
     def __init__(self, cfg: ComputeConfig,
                  progress_cb: Optional[ProgressFn] = None,
-                 cancel_token: Optional[Any] = None) -> None:
+                 cancel_token: Optional[Any] = None,
+                 ui_hooks: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = cfg
         self.progress_cb: ProgressFn = progress_cb or (lambda _pct: None)
         self.cancel = cancel_token
+        # B2 2.1a: optional UI side channels the legacy window path wired
+        # directly (live residual sparkline buffer, outer-iteration label).
+        # Keys: 'live_residuals' (2D), 'iter_label_cb' (2D), 'iter_cb' (3D).
+        self.ui_hooks: Dict[str, Any] = ui_hooks or {}
 
     def _check_cancel(self) -> None:
         if self.cancel is None:
@@ -213,7 +218,9 @@ class Pipeline2D(ComputePipeline):
             _parse_inputs_cfg, _build_fields_cfg,
         )
         self._parsed = _parse_inputs_cfg(self.cfg)
-        return _build_fields_cfg(self._parsed)
+        return _build_fields_cfg(
+            self._parsed,
+            live_residuals=self.ui_hooks.get('live_residuals'))
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
         from runs.run_calculation import _run_solvers_cfg
@@ -221,7 +228,8 @@ class Pipeline2D(ComputePipeline):
             "Pipeline2D.run_solvers called before build_fields")
         return _run_solvers_cfg(self._parsed, fields,
                                 progress_cb=self.progress_cb,
-                                cancel_token=self.cancel)
+                                cancel_token=self.cancel,
+                                ui_hooks=self.ui_hooks)
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
@@ -258,7 +266,8 @@ class Pipeline3D(ComputePipeline):
             "Pipeline3D.run_solvers called before build_fields")
         return _run_solvers_3d_cfg(self._parsed, fields,
                                     progress_cb=self.progress_cb,
-                                    cancel_token=self.cancel)
+                                    cancel_token=self.cancel,
+                                    iter_cb=self.ui_hooks.get('iter_cb'))
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
@@ -270,18 +279,17 @@ class Pipeline3D(ComputePipeline):
 
 def pipeline_for(cfg: ComputeConfig,
                  progress_cb: Optional[ProgressFn] = None,
-                 cancel_token: Optional[Any] = None) -> ComputePipeline:
+                 cancel_token: Optional[Any] = None,
+                 ui_hooks: Optional[Dict[str, Any]] = None) -> ComputePipeline:
     """Dim-dispatch factory: return :class:`Pipeline3D` if ``cfg.is_3d``,
     otherwise :class:`Pipeline2D`.
 
     Convenience wrapper for adapters / scripts that do not know upfront
     whether the cfg represents a 2D or 3D run.
     """
-    if cfg.is_3d:
-        return Pipeline3D(cfg, progress_cb=progress_cb,
-                          cancel_token=cancel_token)
-    return Pipeline2D(cfg, progress_cb=progress_cb,
-                      cancel_token=cancel_token)
+    cls = Pipeline3D if cfg.is_3d else Pipeline2D
+    return cls(cfg, progress_cb=progress_cb, cancel_token=cancel_token,
+               ui_hooks=ui_hooks)
 
 
 __all__ = [

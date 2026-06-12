@@ -575,7 +575,7 @@ def _build_fields_3d_cfg(parsed):
 
 
 def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
-                         cancel_token=None):
+                         cancel_token=None, iter_cb=None):
     """Phase 3 (Qt-free) 3D: drive :func:`_run_3d_stack` with the
     progress + cancel hooks read off the cfg dict.
 
@@ -583,6 +583,10 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     without modifying it.  ``parsed`` and ``fields`` are the same dict
     (the build phase is a passthrough); the Pipeline ABC contract
     surfaces both so the signature matches :class:`Pipeline2D`.
+
+    ``iter_cb(outer, n_outer)`` (B2 2.1a) mirrors the legacy window
+    path's ``cfg['_iter_cb']`` wiring — drives the UI "outer k/N"
+    ticker label through the SIMPLE↔LTNE coupling loop.
     """
     cfg = dict(parsed)  # shallow copy — _run_3d_stack mutates a few keys
 
@@ -592,6 +596,8 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     if cancel_token is not None:
         cfg['_cancel_check'] = (lambda _tok=cancel_token:
                                 bool(getattr(_tok, 'cancelled', False)))
+    if iter_cb is not None:
+        cfg['_iter_cb'] = iter_cb
 
     # Phase A/B/C acceleration flags — see _apply_phase_flags.
     _apply_phase_flags(cfg)

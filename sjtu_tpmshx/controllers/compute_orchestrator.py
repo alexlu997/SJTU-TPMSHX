@@ -46,6 +46,15 @@ class CancelToken:
     def is_set(self) -> bool:
         return self._evt.is_set()
 
+    @property
+    def cancelled(self) -> bool:
+        """B2 2.1a (2026-06-13): the pipeline layer probes
+        ``getattr(token, 'cancelled', False)`` (compute_pipeline._check_cancel,
+        _run_solvers_3d_cfg) — without this property that probe was ALWAYS
+        False, making cancel a silent no-op on the cfg path. ``is_set()``
+        stays for the legacy window path."""
+        return self._evt.is_set()
+
     def cancel(self) -> None:
         self._evt.set()
 

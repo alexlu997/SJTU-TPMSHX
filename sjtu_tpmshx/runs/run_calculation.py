@@ -668,7 +668,7 @@ class _PipelineWindowShim:
     # constructor's many attribute assignments.
     _init_done = False
 
-    def __init__(self, compute_cfg, progress_cb=None):
+    def __init__(self, compute_cfg, progress_cb=None, iter_label_cb=None):
         from solvers import tpms_calc as _tc
         from solvers.tpms_calc import geometry as _tpms_geom
         from domain.validator import compute_volumetric_htc
@@ -677,6 +677,10 @@ class _PipelineWindowShim:
         # callback only fires on the real loop updates below.
         object.__setattr__(self, '_progress_cb',
                            progress_cb or (lambda _pct: None))
+        # B2 2.1a: forward `_iter_label_now` writes ("iter k/N") to the UI
+        # ticker — the legacy window path read this attribute directly.
+        object.__setattr__(self, '_iter_label_cb',
+                           iter_label_cb or (lambda _s: None))
 
         # Re-run tpms_calc.compute per side — the same call
         # ``Main_Menu._auto_fill_fluid`` would have made in the UI
@@ -737,15 +741,22 @@ class _PipelineWindowShim:
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
-        if (name == '_compute_progress' and
-                getattr(self, '_init_done', False)):
+        if not getattr(self, '_init_done', False):
+            return
+        if name == '_compute_progress':
             try:
                 self._progress_cb(int(value))
             except Exception:
                 pass
+        elif name == '_iter_label_now':
+            try:
+                self._iter_label_cb(str(value))
+            except Exception:
+                pass
 
 
-def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None):
+def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None,
+                     ui_hooks=None):
     """Phase 3 (Qt-free): drive ``_run_solvers`` via the
     :class:`_PipelineWindowShim` adapter.
 
@@ -759,9 +770,14 @@ def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None):
     poll for cancellation inside its inner loops. The Pipeline ABC
     checks the token between phases, so worst case the user waits one
     full solver pass.  C5+ may push cancel polling inward.
+
+    ``ui_hooks`` (B2 2.1a): optional dict; ``'iter_label_cb'`` receives
+    the shim-captured ``_iter_label_now`` strings ("iter k/N").
     """
     compute_cfg = cfg['compute_cfg']
-    shim = _PipelineWindowShim(compute_cfg, progress_cb=progress_cb)
+    _hooks = ui_hooks or {}
+    shim = _PipelineWindowShim(compute_cfg, progress_cb=progress_cb,
+                               iter_label_cb=_hooks.get('iter_label_cb'))
     result = _run_solvers(shim, cfg, fields)
     # Forward shim-captured state into the result dict so Pipeline2D's
     # finalize step can promote it into ComputeResult slots.
