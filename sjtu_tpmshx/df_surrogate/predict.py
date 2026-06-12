@@ -114,35 +114,34 @@ def _apply_override(tpms: str, L_mm: float, t_mm: float,
 
 
 # ==================================================================
-# Backend selection: SurrogateV3 (rbf, default) | GammaDF (opt-in)
+# Backend selection — explicit registry (B2 2.2; see backend.py for the
+# registration contract: Shanghai 3D + D_7_6 gates required for any new
+# backend or default switch).
 # ==================================================================
 
-_DF_METHODS = ("rbf", "gamma_df")
+from .backend import available_methods, get_backend  # noqa: E402
+
 _DF_DEFAULT = "gamma_df"     # default switched rbf -> gamma_df 2026-06-12
-_CACHE: dict[tuple[str, str], "object"] = {}
 
 
 def _resolve_method(method: str | None = None) -> str:
     """Per-call ``method`` wins; else env TPMSHX_DF_METHOD; else default."""
     m = (method if method is not None
          else os.environ.get("TPMSHX_DF_METHOD", _DF_DEFAULT)).strip().lower()
-    if m not in _DF_METHODS:
-        raise ValueError(f"unknown DF method {m!r}; valid: {_DF_METHODS}")
+    if m not in available_methods():
+        raise ValueError(f"unknown DF method {m!r}; "
+                         f"valid: {available_methods()}")
     return m
 
 
-def _get_model(tpms_type: str, method: str | None = None) -> "object":
-    """Return cached surrogate backend for (tpms_type, method)."""
-    m = _resolve_method(method)
-    key = (tpms_type, m)
-    if key not in _CACHE:
-        if m == "gamma_df":
-            from .gamma_df import GammaDF
-            _CACHE[key] = GammaDF(tpms=tpms_type)
-        else:
-            from .surrogate_v3 import SurrogateV3
-            _CACHE[key] = SurrogateV3(tpms=tpms_type)
-    return _CACHE[key]
+def _get_model(tpms_type: str, method: str | None = None):
+    """Return the cached surrogate backend for (tpms_type, method).
+
+    Returns a :class:`backend.DFBackend`; unknown attributes pass through
+    to the wrapped model, so diagnostic call sites (``._rbf_K``,
+    ``.K_min``, ``.summary()``) keep working unchanged.
+    """
+    return get_backend(tpms_type, _resolve_method(method))
 
 
 # ==================================================================
@@ -187,29 +186,14 @@ def predict_K_cF_vec(tpms_type: str, L_mm: np.ndarray, t_mm: np.ndarray,
     e_arr = np.asarray(eps_f, dtype=np.float64)
     shape = np.broadcast(L_arr, t_arr, e_arr).shape
 
-    if _resolve_method(method) == "gamma_df":
-        model = _get_model(tpms_type, "gamma_df")
-        Lf = np.broadcast_to(L_arr, shape).ravel()
-        tf = np.broadcast_to(t_arr, shape).ravel()
-        K = np.empty(Lf.size); cF = np.empty(Lf.size)
-        pair_cache: dict[tuple[float, float], tuple[float, float]] = {}
-        for i in range(Lf.size):
-            key = (Lf[i], tf[i])
-            if key not in pair_cache:
-                pair_cache[key] = model.predict(key[0], key[1])
-            K[i], cF[i] = pair_cache[key]
-        return K.reshape(shape), cF.reshape(shape)
-
-    model = _get_model(tpms_type, "rbf")
-    X = np.column_stack([
+    # B2 2.2: per-backend vectorisation lives in backend.predict_vec
+    # (rbf: native batch + internal K clamp; gamma_df: unique-pair cache).
+    model = _get_model(tpms_type, method)
+    K, cF = model.predict_vec(
         np.broadcast_to(L_arr, shape).ravel(),
         np.broadcast_to(t_arr, shape).ravel(),
         np.broadcast_to(e_arr, shape).ravel(),
-    ])
-    log_K = model._rbf_K(X)
-    log_cF = model._rbf_cF(X)
-    K = np.maximum(10.0 ** log_K, model.K_min)
-    cF = 10.0 ** log_cF
+    )
     return K.reshape(shape), cF.reshape(shape)
 
 
