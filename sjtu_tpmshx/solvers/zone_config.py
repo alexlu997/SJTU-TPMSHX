@@ -160,7 +160,8 @@ class ZoneConfig:
                 else:
                     arr[k, :] = val
 
-        return {
+        from .grid_schema import validate_grid_arrays
+        return validate_grid_arrays({
             'zone_id':   zone_id,
             'eps_arr':   eps_arr,
             'eps_f_arr': eps_f_arr,
@@ -187,7 +188,7 @@ class ZoneConfig:
                 }
                 for z in self.zones
             ],
-        }
+        }, Nx, Ny, where='ZoneConfig.build_structured_arrays')
 
     # ── Grid (2D) structured arrays ──────────────────────────────
 

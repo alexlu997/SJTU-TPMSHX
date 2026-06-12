@@ -298,7 +298,8 @@ class ContinuousFieldConfig:
             f_rh[m]   = pA['D_h'] / 2.0; f_A0[m]   = pA['A_0']
         n_unique = int(uniq.shape[0])
 
-        return {
+        from .grid_schema import validate_grid_arrays
+        return validate_grid_arrays({
             'zone_id':   np.zeros((Nx, Ny), dtype=np.int32),  # not used downstream
             'eps_arr':   eps_arr,
             'eps_f_arr': eps_f_arr,
@@ -313,7 +314,7 @@ class ContinuousFieldConfig:
             'L_field': L_field,
             't_field': t_field,
             'cache_size': n_unique,
-        }
+        }, Nx, Ny, where='ContinuousFieldConfig.build_grid_arrays')
 
     # ─── Manufacturability checks ────────────────────────────────────
 
@@ -449,10 +450,9 @@ if __name__ == '__main__':
     # Test 3: build_grid_arrays returns expected dict keys
     arrays = fc.build_grid_arrays(20, 20, u_A=5.0, u_B=3.0,
                                    T_inA=400.0, T_inB=300.0)
-    expected_keys = {'eps_arr', 'eps_f_arr', 'K_ffA_arr', 'K_ffB_arr',
-                     'K_ss_arr', 'h_vA_arr', 'h_vB_arr', 'r_h_arr',
-                     'A_0_arr', 'L_field', 't_field', 'axis', 'cache_size',
-                     'zone_id'}
+    from solvers.grid_schema import GRID_ARRAY_KEYS
+    expected_keys = set(GRID_ARRAY_KEYS) | {'L_field', 't_field', 'axis',
+                                            'cache_size', 'zone_id'}
     assert expected_keys.issubset(set(arrays.keys()))
     print(f"  arrays keys OK; cache_size = {arrays['cache_size']} "
           f"(uniform field → expect 1)")
