@@ -112,8 +112,18 @@ def test_unsupported_lattice_raises():
 
 # ---------------- predict.py routing ----------------
 
-def test_default_path_is_rbf_bit_identical(monkeypatch):
+def test_default_is_gamma_df(monkeypatch, gyroid):
+    """Default backend switched rbf -> gamma_df on 2026-06-12."""
     monkeypatch.delenv("TPMSHX_DF_METHOD", raising=False)
+    ef = _ef("Gyroid", 7.0, 0.6)
+    K, cF = P.predict_K_cF("Gyroid", 7.0, 0.6, ef)
+    Kg, cFg = gyroid.predict(7.0, 0.6)
+    assert (K, cF) == (Kg, cFg)
+
+
+def test_rbf_restorable(monkeypatch):
+    """Old default must stay reachable: env=rbf -> SurrogateV3 bit-identical."""
+    monkeypatch.setenv("TPMSHX_DF_METHOD", "rbf")
     ef = _ef("Gyroid", 7.0, 0.6)
     K, cF = P.predict_K_cF("Gyroid", 7.0, 0.6, ef)
     K0, cF0 = P._get_model("Gyroid", "rbf").predict(7.0, 0.6, ef)
@@ -153,12 +163,24 @@ def test_vec_gamma_matches_scalar(monkeypatch, diamond):
         assert cv[i] == pytest.approx(cs, rel=1e-12)
 
 
-def test_vec_default_unchanged(monkeypatch):
-    """Default vec path = pure RBF batched eval, untouched by routing."""
+def test_vec_default_is_gamma_df(monkeypatch, gyroid):
+    """Default vec path routes to gamma_df like the scalar path."""
     monkeypatch.delenv("TPMSHX_DF_METHOD", raising=False)
     L = np.array([5.0, 7.0]); t = np.array([0.4, 0.6])
     ef = np.array([_ef("Gyroid", 5.0, 0.4), _ef("Gyroid", 7.0, 0.6)])
     Kv, cv = P.predict_K_cF_vec("Gyroid", L, t, ef)
+    for i in range(2):
+        Ks, cs = gyroid.predict(L[i], t[i])
+        assert Kv[i] == pytest.approx(Ks, rel=1e-12)
+        assert cv[i] == pytest.approx(cs, rel=1e-12)
+
+
+def test_vec_rbf_batch_contract(monkeypatch):
+    """method='rbf' vec path = pure RBF batched eval (legacy contract)."""
+    monkeypatch.delenv("TPMSHX_DF_METHOD", raising=False)
+    L = np.array([5.0, 7.0]); t = np.array([0.4, 0.6])
+    ef = np.array([_ef("Gyroid", 5.0, 0.4), _ef("Gyroid", 7.0, 0.6)])
+    Kv, cv = P.predict_K_cF_vec("Gyroid", L, t, ef, method="rbf")
     model = P._get_model("Gyroid", "rbf")
     X = np.column_stack([L, t, ef])
     assert np.allclose(Kv, np.maximum(10.0 ** model._rbf_K(X), model.K_min))

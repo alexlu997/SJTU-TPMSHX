@@ -50,7 +50,9 @@ def test_batched_matches_loop_bit_exact(gyroid_model, shape):
     e = rng.uniform(0.30, 0.45, size=shape)
 
     K_loop, cF_loop = _loop_reference(gyroid_model, L, t, e)
-    K_batch, cF_batch = predict_K_cF_vec('Gyroid', L, t, e)
+    # method='rbf' explicit: this test pins the RBF batch-vs-loop contract
+    # (default backend is gamma_df since 2026-06-12)
+    K_batch, cF_batch = predict_K_cF_vec('Gyroid', L, t, e, method='rbf')
 
     assert K_batch.shape == shape, f"K shape {K_batch.shape} != {shape}"
     assert cF_batch.shape == shape, f"cF shape {cF_batch.shape} != {shape}"
@@ -66,7 +68,7 @@ def test_K_min_floor_preserved():
     from df_surrogate.surrogate_v3 import K_MIN
     K, _ = predict_K_cF_vec('Gyroid',
                              np.array([4.0]), np.array([0.5]),
-                             np.array([0.30]))
+                             np.array([0.30]), method='rbf')
     assert np.all(K >= K_MIN), f"K floor breached: min(K)={K.min():.2e} < {K_MIN:.2e}"
 
 

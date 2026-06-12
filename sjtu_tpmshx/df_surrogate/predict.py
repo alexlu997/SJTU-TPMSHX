@@ -14,14 +14,20 @@ Interface
 Backends (selectable per call via ``method=`` or globally via env
 ``TPMSHX_DF_METHOD``):
 
-    "rbf" (default)  SurrogateV3 — RBF interpolation with compressible
-                     calibration and boundary effect correction.
-                     See surrogate_v3.py.
-    "gamma_df"       GammaDF — multi-fidelity smooth-CFD-surface x
-                     experimental roughness factor (opt-in, 2026-06-12).
-                     Gate-point cF identical to production (534.8); K is
-                     the SMOOTH D_h^2 trend and differs from the RBF K.
+    "gamma_df" (default since 2026-06-12)
+                     GammaDF — multi-fidelity smooth-CFD-surface x
+                     experimental roughness factor.  Trusted-anchor LOO
+                     2.5%/2.6%; D7 blind 454.2 vs ~454.  Gate-point cF
+                     identical to the RBF (534.8); K is the SMOOTH D_h^2
+                     trend — Shanghai 3D Nz=3: dP 9.82% / Q 3.20%.
                      See gamma_df.py.
+    "rbf"            SurrogateV3 — RBF interpolation with compressible
+                     calibration and boundary effect correction; the
+                     pre-2026-06-12 production default (Shanghai 3D Nz=3
+                     dP 7.19% / Q 3.22%, but D7-class extrapolation
+                     falsified: 745 vs ~454, end-to-end 67.4%).
+                     Restore globally with TPMSHX_DF_METHOD=rbf.
+                     See surrogate_v3.py.
 
 Usage
 -----
@@ -112,13 +118,14 @@ def _apply_override(tpms: str, L_mm: float, t_mm: float,
 # ==================================================================
 
 _DF_METHODS = ("rbf", "gamma_df")
+_DF_DEFAULT = "gamma_df"     # default switched rbf -> gamma_df 2026-06-12
 _CACHE: dict[tuple[str, str], "object"] = {}
 
 
 def _resolve_method(method: str | None = None) -> str:
-    """Per-call ``method`` wins; else env TPMSHX_DF_METHOD; else rbf."""
+    """Per-call ``method`` wins; else env TPMSHX_DF_METHOD; else default."""
     m = (method if method is not None
-         else os.environ.get("TPMSHX_DF_METHOD", "rbf")).strip().lower()
+         else os.environ.get("TPMSHX_DF_METHOD", _DF_DEFAULT)).strip().lower()
     if m not in _DF_METHODS:
         raise ValueError(f"unknown DF method {m!r}; valid: {_DF_METHODS}")
     return m
@@ -147,7 +154,8 @@ def predict_K_cF(tpms_type: str, L_mm: float, t_mm: float,
                  ) -> tuple[float, float]:
     """Return (K [m^2], c_F [1/m]) for this geometry.
 
-    method: None (env TPMSHX_DF_METHOD or "rbf") | "rbf" | "gamma_df".
+    method: None (env TPMSHX_DF_METHOD, default "gamma_df") | "rbf"
+    | "gamma_df".
     c_F passes through the end-to-end calibrated override layer (see
     _OVERRIDES above) regardless of backend; outside the override
     regions this is the pure backend value.

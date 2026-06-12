@@ -159,8 +159,15 @@ def test_shanghai_3d_baseline():
     # See vault 2026-06-04-reverse-dir-convention-fix-plan-CN.md §6 and
     # [[feedback_dp_gap_attribution]] (the "inlet convention" contributor is
     # now the identified+fixed part of the gap). Conservative kernel, Nz=3.
-    BASELINE_DP = 7.19
-    BASELINE_Q = 3.22
+    # 2026-06-12 — DF surrogate default switched rbf -> gamma_df (user
+    # decision; see df_surrogate/gamma_df.py). Full-chain Nz=3 measured:
+    # dP 9.82% / Q 3.20% (rbf: 7.19% / 3.22%; the +2.6pp is entirely the
+    # smooth-trend K — cF is gate-identical 534.8 by construction).
+    # Traded for sane extrapolation outside the gate geometry (D7-class:
+    # 454 vs rbf 745, end-to-end 67.4%). Old numbers reproducible with
+    # TPMSHX_DF_METHOD=rbf.
+    BASELINE_DP = 9.82
+    BASELINE_Q = 3.20
     tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (

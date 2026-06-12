@@ -46,10 +46,15 @@ SEMANTICS / LIMITS
   clamped to [4, 8]; t handled by linear continuation outside [0.3, 0.5].
   Diamond / Gyroid only (no experimental anchors for other lattices).
 
-NOT the production default.  Opt in per call (method="gamma_df"), or
-globally via env TPMSHX_DF_METHOD=gamma_df.  Default switch requires the
-Shanghai 3D gate re-run (K differs) + L4/L5 arbitration (rough-wall CFD
-or boundary-coefficient re-derivation).
+PRODUCTION DEFAULT since 2026-06-12 (user decision, taken with the
+measured trade-off on the table): full-chain Shanghai 3D Nz=3 gate with
+this backend = dP RMSRE 9.82% / Q 3.20% vs the RBF's 7.19% / 3.22% —
+the +2.6pp is entirely the smooth-trend K (cF is gate-identical), in
+exchange for sane extrapolation everywhere outside the gate geometry
+(D7: 454 vs RBF 745).  Restore the old default per call
+(method="rbf") or globally via env TPMSHX_DF_METHOD=rbf.  Open items:
+L4/L5 arbitration (rough-wall CFD or boundary-coefficient
+re-derivation) and a rough-K upgrade.
 """
 from __future__ import annotations
 
