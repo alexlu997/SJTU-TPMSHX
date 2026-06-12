@@ -137,54 +137,107 @@ def _qt_int(widget, default: int) -> int:
 # Required widget attributes for strict-mode validation. The labels mirror
 # the human-friendly names that the legacy ``runs.run_calculation._parse``
 # helper surfaced in its ``ValueError`` payload.
-_REQUIRED_2D = [
-    ('le_L', "Domain Length (L)"),
-    ('le_H', "Domain Height (H)"),
-    ('le_Nx', "Grid Nx"),
-    ('le_Ny', "Grid Ny"),
-    ('le_uA', "Velocity A (u_A)"),
-    ('le_uB', "Velocity B (u_B)"),
-    ('le_TinA', "Inlet Temp A (T_inA)"),
-    ('le_TinB', "Inlet Temp B (T_inB)"),
-    ('le_Lcell', "TPMS L_cell"),
-    ('le_t', "TPMS t"),
-    ('le_ks', "TPMS k_s"),
-]
-_REQUIRED_3D_EXTRA = [
-    ('le_Lz', "Width Lz"),
-    ('le_Nz', "Grid Nz"),
-]
+@dataclass(frozen=True)
+class FieldSpec:
+    """One scalar ComputeConfig field's wiring: dataclass slot ↔ Qt widget
+    ↔ parse kind ↔ required-validation membership (B2 2.4, 2026-06-12).
+
+    Single source for the add-a-field procedure — previously adding one
+    field meant touching the dataclass, ``from_qt_window``, and the
+    ``_REQUIRED_*`` lists independently (silent-default drift when one
+    was missed). ``kind``: 'float' | 'int' | 'temp' (unit-aware Kelvin).
+    ``special=True`` rows participate in validation only; their read has
+    bespoke semantics kept explicit in ``from_qt_window`` (cross-field
+    defaults, None-when-missing, combo parsing).
+    """
+    section: str            # 'geometry' | 'solver' | 'fluid_A' | 'fluid_B'
+    name: str               # dataclass field name
+    widget: str             # window attribute, e.g. 'le_Lcell'
+    kind: str               # 'float' | 'int' | 'temp'
+    default: Any
+    label: str = ''         # human label for the validation message
+    required_2d: bool = False
+    required_3d_extra: bool = False
+    special: bool = False   # validated here, read bespokely
+
+
+# Declaration order == legacy validation-message order (2D block first,
+# then the 3D extras), preserved verbatim from the retired _REQUIRED_* lists.
+CONFIG_FIELDS: tuple = (
+    FieldSpec('geometry', 'L_dom_m',   'le_L',     'float', 0.182,
+              label="Domain Length (L)", required_2d=True),
+    FieldSpec('geometry', 'H_dom_m',   'le_H',     'float', 0.042,
+              label="Domain Height (H)", required_2d=True),
+    FieldSpec('solver',   'Nx',        'le_Nx',    'int',   30,
+              label="Grid Nx", required_2d=True),
+    FieldSpec('solver',   'Ny',        'le_Ny',    'int',   60,
+              label="Grid Ny", required_2d=True),
+    FieldSpec('fluid_A',  'u_mps',     'le_uA',    'float', 5.0,
+              label="Velocity A (u_A)", required_2d=True),
+    FieldSpec('fluid_B',  'u_mps',     'le_uB',    'float', None,
+              label="Velocity B (u_B)", required_2d=True,
+              special=True),   # default = fluid_A.u_mps (cross-field)
+    FieldSpec('fluid_A',  'T_in_K',    'le_TinA',  'temp',  300.0,
+              label="Inlet Temp A (T_inA)", required_2d=True),
+    FieldSpec('fluid_B',  'T_in_K',    'le_TinB',  'temp',  300.0,
+              label="Inlet Temp B (T_inB)", required_2d=True),
+    FieldSpec('geometry', 'L_cell_mm', 'le_Lcell', 'float', 7.0,
+              label="TPMS L_cell", required_2d=True),
+    FieldSpec('geometry', 't_wall_mm', 'le_t',     'float', 0.6,
+              label="TPMS t", required_2d=True),
+    FieldSpec('geometry', 'k_s_W_mK',  'le_ks',    'float', 16.0,
+              label="TPMS k_s", required_2d=True),
+    FieldSpec('geometry', 'Lz_m',      'le_Lz',    'float', 0.042,
+              label="Width Lz", required_3d_extra=True,
+              special=True),   # None when the widget is absent (2D flag)
+    FieldSpec('solver',   'Nz',        'le_Nz',    'int',   1,
+              label="Grid Nz", required_3d_extra=True),
+    # Non-required scalars (read table-driven, no validation membership):
+    FieldSpec('fluid_A',  'P_in_Pa',   'le_PinA',  'float', 101325.0),
+    FieldSpec('fluid_B',  'P_in_Pa',   'le_PinB',  'float', 101325.0),
+)
+
+
+def _read_section_fields(window, section: str) -> dict:
+    """Table-driven scalar reads for one config section (non-special rows)."""
+    out = {}
+    for fs in CONFIG_FIELDS:
+        if fs.section != section or fs.special:
+            continue
+        w = getattr(window, fs.widget, None)
+        if fs.kind == 'float':
+            out[fs.name] = _qt_float(w, fs.default)
+        elif fs.kind == 'int':
+            out[fs.name] = _qt_int(w, fs.default)
+        elif fs.kind == 'temp':
+            out[fs.name] = _temp_in_K(window, w, default_K=fs.default)
+    return out
 
 
 def _validate_required_widgets(window, *, is_3d: bool) -> None:
     """Raise ``ValueError`` listing every blank / non-numeric required
     widget — preserves the legacy behaviour of
-    ``runs.run_calculation._parse``.
+    ``runs.run_calculation._parse``. Membership and message order come
+    from CONFIG_FIELDS (B2 2.4).
     """
-    required = list(_REQUIRED_2D)
+    required = [fs for fs in CONFIG_FIELDS if fs.required_2d]
     if is_3d:
-        required = required + _REQUIRED_3D_EXTRA
+        required += [fs for fs in CONFIG_FIELDS if fs.required_3d_extra]
     bad = []
-    for attr, label in required:
-        widget = getattr(window, attr, None)
+    for fs in required:
+        widget = getattr(window, fs.widget, None)
         if widget is None:
-            bad.append(label)
+            bad.append(fs.label)
             continue
         txt = _qt_text(widget).strip()
         if not txt:
-            bad.append(label)
+            bad.append(fs.label)
             continue
-        # int widgets get a tighter check
-        if attr in ('le_Nx', 'le_Ny', 'le_Nz'):
-            try:
-                int(txt)
-            except ValueError:
-                bad.append(label)
-        else:
-            try:
-                float(txt)
-            except ValueError:
-                bad.append(label)
+        caster = int if fs.kind == 'int' else float
+        try:
+            caster(txt)
+        except ValueError:
+            bad.append(fs.label)
     if bad:
         raise ValueError(f"Invalid input in: {', '.join(bad)}")
 
@@ -589,51 +642,40 @@ class ComputeConfig:
                 except ValueError:
                     is_3d_for_check = False
             _validate_required_widgets(window, is_3d=bool(is_3d_for_check))
-        # ── geometry ────────────────────────────────────────────
+        # ── table-driven scalar reads (B2 2.4: CONFIG_FIELDS single source;
+        # ── special rows keep their bespoke semantics explicit below) ──
+        # geometry — tpms combo parse + Lz None-when-absent are special:
         tpms = _qt_text(getattr(window, 'combo_tpms', None)) or 'Gyroid'
         if tpms not in ('Diamond', 'Gyroid'):
             tpms = 'Gyroid'
         geom = GeometryConfig(
             tpms=tpms,
-            L_cell_mm=_qt_float(getattr(window, 'le_Lcell', None), 7.0),
-            t_wall_mm=_qt_float(getattr(window, 'le_t', None), 0.6),
-            k_s_W_mK=_qt_float(getattr(window, 'le_ks', None), 16.0),
-            L_dom_m=_qt_float(getattr(window, 'le_L', None), 0.182),
-            H_dom_m=_qt_float(getattr(window, 'le_H', None), 0.042),
             Lz_m=(_qt_float(getattr(window, 'le_Lz', None), 0.042)
                   if getattr(window, 'le_Lz', None) is not None else None),
+            **_read_section_fields(window, 'geometry'),
         )
 
-        # ── solver ──────────────────────────────────────────────
-        Nz = _qt_int(getattr(window, 'le_Nz', None), 1)
-        # Optional Ts init: empty / None → solver default seed
+        # solver — optional Ts init (empty / None → solver default seed):
         T_s_init: Optional[float] = None
         le_ts = getattr(window, 'le_TsInit', None)
         if le_ts is not None and _qt_text(le_ts).strip():
             T_s_init = _temp_in_K(window, le_ts, default_K=0.0) or None
         solver = SolverConfig(
-            Nx=_qt_int(getattr(window, 'le_Nx', None), 30),
-            Ny=_qt_int(getattr(window, 'le_Ny', None), 60),
-            Nz=Nz,
             T_s_init_K=T_s_init,
             # remaining knobs keep dataclass defaults; UI does not surface
             # them yet (audit deferred to a later phase)
+            **_read_section_fields(window, 'solver'),
         )
 
-        # ── fluids ──────────────────────────────────────────────
+        # fluids — type combos special; fluid_B.u_mps defaults to A's value:
         fluid_A = FluidConfig(
             type=_parse_fluid_label(getattr(window, 'combo_fluidA', None)),
-            u_mps=_qt_float(getattr(window, 'le_uA', None), 5.0),
-            T_in_K=_temp_in_K(window, getattr(window, 'le_TinA', None),
-                              default_K=300.0),
-            P_in_Pa=_qt_float(getattr(window, 'le_PinA', None), 101325.0),
+            **_read_section_fields(window, 'fluid_A'),
         )
         fluid_B = FluidConfig(
             type=_parse_fluid_label(getattr(window, 'combo_fluidB', None)),
             u_mps=_qt_float(getattr(window, 'le_uB', None), fluid_A.u_mps),
-            T_in_K=_temp_in_K(window, getattr(window, 'le_TinB', None),
-                              default_K=300.0),
-            P_in_Pa=_qt_float(getattr(window, 'le_PinB', None), 101325.0),
+            **_read_section_fields(window, 'fluid_B'),
         )
 
         # ── audit C4 additions ──────────────────────────────────
