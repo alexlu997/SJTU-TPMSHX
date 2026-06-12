@@ -2,10 +2,9 @@
 from __future__ import annotations
 import os, sys
 
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSize
 from pathlib import Path
 
@@ -14,7 +13,7 @@ def main():
     out = Path('vault/diagrams/ui_screenshots_2026-05-13')
     out.mkdir(parents=True, exist_ok=True)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = _smoke_boot.get_app()
     from main import Main_Menu
     win = Main_Menu()
     win.resize(1600, 1000)

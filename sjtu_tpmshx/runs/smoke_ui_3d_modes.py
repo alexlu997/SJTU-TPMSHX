@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 warnings.filterwarnings('ignore')
 
 from runs.run_calculation_3d import _run_3d_stack
-from solvers.tpms_calc import geometry as tpms_geometry
+from runs._case_template import build_cfg as _template_cfg
 
 
 def build_cfg(tpms='Gyroid', Lcell=7.0, t_wall=0.6, k_s=16.0,
@@ -22,23 +22,19 @@ def build_cfg(tpms='Gyroid', Lcell=7.0, t_wall=0.6, k_s=16.0,
                u_A=12.0, T_inA=422.0, P_inA=101325.0,
                u_B=8.0, T_inB=302.0, P_inB=101325.0,
                fluid_type_A='air', fluid_type_B='air'):
-    g = tpms_geometry(tpms, Lcell, t_wall, k_s)
-    return {
-        'tpms_type': tpms, 'Lcell': Lcell, 't_wall': t_wall, 'k_s': k_s,
-        'eps': g['epsilon'],
-        'L': L, 'H': H, 'Lz': Lz,
-        'Nx': Nx, 'Ny': Ny, 'Nz': Nz,
-        'u_A': u_A, 'T_inA': T_inA, 'P_inA': P_inA,
-        'u_B': u_B, 'T_inB': T_inB, 'P_inB': P_inB,
-        'fluid_type_A': fluid_type_A, 'fluid_type_B': fluid_type_B,
-        'fluid_A_cfg': dict(dir=0, in_ctr=H/2, in_w=H,
-                             out_ctr=H/2, out_w=H),
-        'fluid_B_cfg': dict(dir=3, in_ctr=L/2, in_w=0.042,
-                             out_ctr=L/2, out_w=0.042),
-        'sweep_profile': 'fast_sweep',
-        'wall_refine_3d': False,
-        'use_adaptive_amg_tol': True,
-    }
+    # B2 2.6: canonical template + this smoke's deltas (fast_sweep
+    # profile, fixed-width 42 mm crossflow B inlet).
+    return _template_cfg(
+        tpms_type=tpms, Lcell=Lcell, t_wall=t_wall, k_s=k_s,
+        L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
+        u_A=u_A, T_inA=T_inA, P_inA=P_inA,
+        u_B=u_B, T_inB=T_inB, P_inB=P_inB,
+        fluid_type_A=fluid_type_A, fluid_type_B=fluid_type_B,
+        fluid_B_cfg=dict(dir=3, in_ctr=L/2, in_w=0.042,
+                         out_ctr=L/2, out_w=0.042),
+        sweep_profile='fast_sweep',
+        use_adaptive_amg_tol=True,
+    )
 
 
 def run_with_mode(label, mode, eps_um=100, **kw):
