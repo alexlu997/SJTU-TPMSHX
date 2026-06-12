@@ -228,6 +228,19 @@ class RunControllerMixin:
         if not ok:
             return
 
+        # B2 2.1c (2026-06-13): the 3D compute path drives Pipeline3D —
+        # the legacy run_calculation_3d_inner(window) entrypoint is
+        # deleted. Qt widgets are read exactly once HERE on the main
+        # thread (before the UI locks, so a validation error leaves the
+        # window usable).
+        from controllers.compute_config import ComputeConfig
+        try:
+            compute_cfg = ComputeConfig.from_qt_window(self, strict=True,
+                                                       force_3d=True)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Input", str(e))
+            return
+
         self._compute_t0 = _time.time()
         self._begin_compute_ui(
             status=f"Computing 3D ({_cell_label} = "
@@ -236,15 +249,27 @@ class RunControllerMixin:
 
         # ComputeOrchestrator path (Plan #4 P1.3 — A.3, 2026-05-06).
         # Replaces the legacy threading.Thread + 600 s poll _check closure.
-        # Hard wall-clock budget (10 min) implemented as a separate QTimer
+        # Hard wall-clock budget implemented as a separate QTimer
         # that calls self.compute.cancel() — orchestrator forwards as
         # cooperative cancel to the worker, which exits at next checkpoint.
         from PySide6.QtCore import QTimer
 
         def _3d_worker(cfg, cancel_token, progress_cb):
             self._cancel_token = cancel_token
-            from runs.run_calculation_3d import run_calculation_3d_inner
-            run_calculation_3d_inner(self)
+            from controllers.compute_pipeline import (Pipeline3D,
+                                                      CancelledError)
+            pipe = Pipeline3D(
+                compute_cfg,
+                progress_cb=lambda p: setattr(self, '_compute_progress',
+                                              int(p)),
+                cancel_token=cancel_token,
+                ui_hooks={'iter_cb': lambda k, n: setattr(
+                    self, '_iter_label_now', f"outer {k}/{n}")})
+            try:
+                result = pipe.run()
+            except CancelledError:
+                raise self.compute.CancelledError()
+            self.write_result(result)
             return {}
 
         self._compute_error = None
@@ -329,11 +354,22 @@ class RunControllerMixin:
         Audit C4 (L-a-2, 2026-05-28). This is the *UI adapter*
         counterpart to ``_finalize_cfg`` — together they replace the
         pre-C4 ``runs.run_calculation._store_results(window, cfg, raw)``
-        which conflated UI writes with result assembly. Since B2 2.1b
+        which conflated UI writes with result assembly. Since B2 2.1b/c
         (2026-06-13) this is the ONLY ComputeResult→window copy: the GUI
-        worker drives Pipeline2D and the legacy
-        ``run_calculation_inner`` path is deleted.
+        worker drives Pipeline2D/3D and the legacy
+        ``run_calculation_inner`` / ``run_calculation_3d_inner`` paths
+        are deleted.
         """
+        # ── 3D branch: the renderer (ui/plot_3d_results) consumes the
+        # raw _run_3d_stack dict directly; publish the transitional
+        # carrier by reference and stop — no key loss possible.
+        raw3d = result.diagnostics.get('raw_3d')
+        if raw3d is not None:
+            self._result_3d = raw3d
+            self._extrap_reasons = list(result.extrap_reasons)
+            self._has_extrap = bool(result.extrap_reasons)
+            return
+
         f = result.fields
         self._compute_results = {
             'Ta': f.get('Ta'), 'Tb': f.get('Tb'), 'Ts': f.get('Ts'),
@@ -867,6 +903,13 @@ class RunControllerMixin:
         button stays disabled until the worker reaches the next checkpoint
         and returns through `_check`."""
         self._compute_cancel = True
+        # B2 2.1c: the Pipeline path polls the orchestrator CancelToken
+        # (token.cancelled), not the window flag — bridge both cancel
+        # mechanisms onto the token so either converges.
+        try:
+            self.compute.cancel()
+        except Exception:
+            pass
         if hasattr(self, 'btn_compute'):
             self.btn_compute.setEnabled(False)
             self.btn_compute.setText("Cancelling…")

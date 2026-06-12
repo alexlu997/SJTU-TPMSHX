@@ -89,3 +89,17 @@ def test_finalize_3d_result_matches_raw():
         rv = raw.get(key)
         if rv is not None and np.isfinite(float(rv)):
             assert result.residuals[key] == pytest.approx(float(rv)), key
+
+    # ── B2 2.1c transitional carrier: diagnostics['raw_3d'] must be the
+    # raw dict BY REFERENCE (zero copy — write_result publishes it as
+    # window._result_3d) and must contain every key the 3D renderer +
+    # _on_orch_finished consume directly off _result_3d.
+    assert result.diagnostics['raw_3d'] is raw
+    _plot_consumed = {
+        'Ta', 'Tb', 'Ts', 'vmag', 'P_kPa',
+        'dx', 'dy', 'dz', 'Lx', 'Ly', 'Lz',
+        'dP', 'dP_B', 'dir_A', 'dir_B',
+        'extrapolated', 'extrap_reasons',
+    }
+    missing = _plot_consumed - set(raw)
+    assert not missing, f"raw_3d carrier lost renderer keys: {sorted(missing)}"
