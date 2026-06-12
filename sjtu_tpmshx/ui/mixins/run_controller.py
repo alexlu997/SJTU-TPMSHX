@@ -124,29 +124,15 @@ class RunControllerMixin:
         # threading.Thread + QTimer poll block is gone (~100 lines deleted).
         return
 
-    def _run_calculation_3d(self):
-        """Threaded 3D solve → auto-switch to 3D View tab on success."""
-        # Re-entrancy guard — same rationale as 2D run_calculation. Without
-        # this a fast re-Compute spawned two QTimer instances + two threads,
-        # both alive, racing to call _finalize_plots_3d().
-        if getattr(self, '_compute_running', False):
-            QMessageBox.information(
-                self, "Compute Busy",
-                "A 3D computation is already running.\n\n"
-                "Click Cancel (red Compute button) and wait for the solver "
-                "to reach its next checkpoint, then re-Compute.")
-            return
-        # Do not initialise PyVista/VTK on button click. The GL context is
-        # expensive and made Compute feel frozen before progress appeared;
-        # finalize_plots_3d creates/populates the panel after the solve.
-
-        # Large-grid warning (wall-refine expands cells ~6-9x)
+    def _preflight_3d(self):
+        """3D-only input guards (B1 1.4 — extracted from
+        _run_calculation_3d so future preflights have ONE home).
+        Returns (proceed, est_cells_refined, cell_label).
+        """
         # 2026-05-20 UI sweep (Tier 22): pre-initialise Nx_u/Ny_u/Nz_u
-        # BEFORE the try. Previously they were only assigned inside the
-        # try; a parse failure (empty field, stray unit text) left the
-        # `except` branch setting only `est_cells=0`, and the
-        # `if Nz_u < 2:` check below then raised NameError on an
-        # undefined local — turning a bad-input case into a hard crash.
+        # BEFORE the try. Previously a parse failure (empty field, stray
+        # unit text) left `Nz_u` undefined and the guard below raised
+        # NameError — turning a bad-input case into a hard crash.
         Nx_u = Ny_u = Nz_u = 0
         try:
             Nx_u = int(self.le_Nx.text()); Ny_u = int(self.le_Ny.text())
@@ -168,7 +154,8 @@ class RunControllerMixin:
                 "Options:\n"
                 "  • Increase Nz to 5 or more for a real 3D run (recommended).\n"
                 "  • Switch Dimensionality to 2D for single-layer homogeneous cases.")
-            return
+            return False, 0, ''
+        # Large-grid warning (wall-refine expands cells ~6-9x)
         if est_cells > 100_000:
             reply = QMessageBox.question(
                 self, "Large 3D Grid",
@@ -180,9 +167,8 @@ class RunControllerMixin:
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.No:
-                return
+                return False, 0, ''
 
-        self._compute_t0 = _time.time()
         # Cell count must reflect the actual refine setting — adding +16 per
         # axis unconditionally inflated the displayed grid by ~5x when refine
         # was OFF and made the ETA estimate way too generous.
@@ -194,7 +180,29 @@ class RunControllerMixin:
         else:
             Nx_r, Ny_r, Nz_r = Nx_u, Ny_u, Nz_u
             _cell_label = f"{Nx_r}×{Ny_r}×{Nz_r}"
-        est_cells_r = Nx_r * Ny_r * Nz_r
+        return True, Nx_r * Ny_r * Nz_r, _cell_label
+
+    def _run_calculation_3d(self):
+        """Threaded 3D solve → auto-switch to 3D View tab on success."""
+        # Re-entrancy guard — same rationale as 2D run_calculation. Without
+        # this a fast re-Compute spawned two QTimer instances + two threads,
+        # both alive, racing to call _finalize_plots_3d().
+        if getattr(self, '_compute_running', False):
+            QMessageBox.information(
+                self, "Compute Busy",
+                "A 3D computation is already running.\n\n"
+                "Click Cancel (red Compute button) and wait for the solver "
+                "to reach its next checkpoint, then re-Compute.")
+            return
+        # Do not initialise PyVista/VTK on button click. The GL context is
+        # expensive and made Compute feel frozen before progress appeared;
+        # finalize_plots_3d creates/populates the panel after the solve.
+
+        ok, est_cells_r, _cell_label = self._preflight_3d()
+        if not ok:
+            return
+
+        self._compute_t0 = _time.time()
         self._begin_compute_ui(
             status=f"Computing 3D ({_cell_label} = "
                    f"{est_cells_r:,} cells, compressible dual-fluid SIMPLE; "

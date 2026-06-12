@@ -42,12 +42,22 @@ def zone_init_1d(window, n):
     zone_resize(window)
 
 
-def zone_add_row(window):
-    """Ex-Main_Menu._zone_add_row(self)."""
+def _adjust_zones(window, axis, delta):
+    """Grow/shrink the zone grid along one axis (B1 1.4 — collapses the
+    four add/remove mirrors). axis ∈ {'row','col'}, delta ∈ {+1,-1}.
+    Columns exist only in grid mode; rows fall back to plain-table
+    insert/remove when not in grid mode.
+    """
+    ny = window.zone_table.rowCount() // max(window._grid_nx, 1)
+    if axis == 'col':
+        if delta > 0 or window._grid_nx > 1:
+            window._grid_nx += delta
+            zone_rebuild_grid(window, ny=ny)
+        return
     if zone_is_grid(window):
-        ny = window.zone_table.rowCount() // max(window._grid_nx, 1) + 1
-        zone_rebuild_grid(window, ny=ny)
-    else:
+        if delta > 0 or ny > 1:
+            zone_rebuild_grid(window, ny=ny + delta)
+    elif delta > 0:
         r = window.zone_table.rowCount()
         last_end = "100.0"
         if r > 0:
@@ -57,33 +67,30 @@ def zone_add_row(window):
         for c, v in enumerate([last_end, "100.0", "6.0", "0.3"]):
             window.zone_table.setItem(r, c, QTableWidgetItem(v))
         zone_resize(window)
-
-
-def zone_remove_row(window):
-    """Ex-Main_Menu._zone_remove_row(self)."""
-    if zone_is_grid(window):
-        ny = window.zone_table.rowCount() // max(window._grid_nx, 1)
-        if ny > 1:
-            zone_rebuild_grid(window, ny=ny - 1)
     else:
         if window.zone_table.rowCount() > 1:
             window.zone_table.removeRow(window.zone_table.rowCount() - 1)
             zone_resize(window)
 
 
+def zone_add_row(window):
+    """Ex-Main_Menu._zone_add_row(self)."""
+    _adjust_zones(window, 'row', +1)
+
+
+def zone_remove_row(window):
+    """Ex-Main_Menu._zone_remove_row(self)."""
+    _adjust_zones(window, 'row', -1)
+
+
 def zone_add_col(window):
     """Ex-Main_Menu._zone_add_col(self)."""
-    ny = window.zone_table.rowCount() // max(window._grid_nx, 1)
-    window._grid_nx += 1
-    zone_rebuild_grid(window, ny=ny)
+    _adjust_zones(window, 'col', +1)
 
 
 def zone_remove_col(window):
     """Ex-Main_Menu._zone_remove_col(self)."""
-    ny = window.zone_table.rowCount() // max(window._grid_nx, 1)
-    if window._grid_nx > 1:
-        window._grid_nx -= 1
-        zone_rebuild_grid(window, ny=ny)
+    _adjust_zones(window, 'col', -1)
 
 
 def zone_rebuild_grid(window, ny=None):
