@@ -20,6 +20,7 @@ direct ``le_*`` widget reads; the window is still required for non-le state
 """
 import numpy as np
 from controllers.compute_config import ComputeConfig, bc_to_dict
+from solvers.coupling_skeleton import OuterConvergence
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
@@ -1246,7 +1247,9 @@ def _run_solvers(window, cfg, fields):
     coupling_converged = False
     drho_A = drho_B = float('inf')
     dT_A = dT_B = float('inf')
-    Ta_prev = Tb_prev = None
+    # Warm-start delta tracker (shared with the 3D driver) — dual ΔTa/ΔTb < tol
+    # AND mass-flux-weighted Δρ < tol; owns the prev-copy bookkeeping.
+    _outer_conv = OuterConvergence(tol_T=_DT_TOL_K, track=('Ta', 'Tb'))
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
     Ta = Tb = Ts = None
     # User-provided solid warm-start seed. Empty → solver fallback
@@ -1457,21 +1460,20 @@ def _run_solvers(window, cfg, fields):
         # rho-only criterion can flag converged while the T field is still
         # drifting (rho = P / (R·T) damps temperature swings); requiring
         # both is a tighter guarantee the coupled state is stationary.
-        if Ta_prev is not None:
-            dT_A = float(np.max(np.abs(Ta - Ta_prev)))
-            dT_B = float(np.max(np.abs(Tb - Tb_prev)))
-        else:
-            dT_A = dT_B = float('inf')  # first iter — always not converged
+        # Dual ΔTa/ΔTb (tol _DT_TOL_K) AND mass-flux-weighted Δρ (tol
+        # _COUPLING_TOL) — the shared tracker owns the ΔT deltas + warm-start
+        # prev-copy; Δρ is the 2D-specific extra criterion.
+        _converged, _deltas = _outer_conv.check(
+            {'Ta': Ta, 'Tb': Tb},
+            extra=(drho_A, drho_B), extra_tol=_COUPLING_TOL)
+        dT_A = _deltas['Ta']; dT_B = _deltas['Tb']
         print(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
               f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
               f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
-        if (drho_A < _COUPLING_TOL and drho_B < _COUPLING_TOL
-                and dT_A < _DT_TOL_K and dT_B < _DT_TOL_K):
+        if _converged:
             coupling_converged = True
             break
-
-        Ta_prev = Ta.copy(); Tb_prev = Tb.copy()
 
         # Under-relax (field-wise)
         rho_A_field = _ALPHA_COUP * rho_A_field_new + (1 - _ALPHA_COUP) * rho_A_field
