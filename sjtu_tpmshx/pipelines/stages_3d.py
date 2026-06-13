@@ -1,6 +1,6 @@
-"""run_calculation_3d.py — 3D compute pipeline for SJTU-TPMSHX UI.
+"""pipelines/stages_3d.py — 3D compute stage functions for SJTU-TPMSHX.
 
-Mirrors `runs.run_calculation` (2D) but dispatches the 3D stack:
+Mirrors `pipelines.stages_2d` (2D) but dispatches the 3D stack:
     SIMPLESolver3D (fluid A: air compressible, fluid B: air or water) +
     LTNE 3-temp coupling + solve_full_domain_3d (3D LTNE) + outer non-iso.
 
@@ -8,19 +8,21 @@ MVP (2026-04-20): uniform geometry only (no zoning from UI). Mirrors
 `validation/validate_shanghai_3d_real.py::_run_one_case` but with UI-sourced
 parameters instead of Shanghai Excel.
 
-Entry (since B2 2.1c): the cfg stage functions consumed by
+Entry: the cfg stage functions consumed by
 controllers.compute_pipeline.Pipeline3D (_parse_inputs_3d_cfg →
 _build_fields_3d_cfg → _run_solvers_3d_cfg → _finalize_3d_cfg).
     (visualisation — finalize_plots_3d(window) — lives in
      ui/plot_3d_results.py so this module stays Qt/matplotlib-free.)
 
-Stored on window:
-    window._result_3d = dict(
-        Ta=..., vmag=..., P_kPa=..., L_mm=...,
-        dx=..., dy=..., dz=...,
-        Lx=..., Ly=..., Lz=...,
-        Q=..., dP=..., u_A=..., T_in=...,
-    )
+Moved out of `runs/run_calculation_3d.py` in batch-3 (2026-06-13) to fix
+the controllers→runs layer inversion.  This module imports nothing from
+`runs/`; the function-level `ComputeResult` import in `_finalize_3d_cfg`
+stays function-level (do not hoist — it would close a
+pipelines↔controllers import cycle).
+
+The finished :class:`ComputeResult` carries the 3D render/export contract
+(``fields`` arrays, headline scalars, ``diagnostics['mode']='3d'``);
+``Main_Menu.write_result`` publishes it to ``window._result_3d``.
 """
 
 from __future__ import annotations
@@ -579,12 +581,13 @@ def _finalize_3d_cfg(raw, fields):
     ``ComputeResult.diagnostics``. The headline scalars (``Q_total``,
     ``dP_A`` / ``dP_B``, ``T_out_A`` / ``T_out_B``) lift directly.
 
-    ⚠ Dual-representation contract: the raw dict (this function's ``raw`` arg)
-    is the LIVE result carrier (window._result_3d → ui.plot_3d_results); the
-    ComputeResult below is the C4 Pipeline view. They must not drift — the
-    mapping here is locked by ``tests/test_finalize_3d_result_sync.py`` (G1).
-    Full unification (live UI → ComputeResult) is the deliberate C4 migration,
-    not done here.
+    B3 C5 (2026-06-13): the ComputeResult is now the SINGLE result carrier.
+    ``Main_Menu.write_result`` publishes it directly as
+    ``window._result_3d`` and ``ui/plot_3d_results`` reads ``res.fields`` /
+    the dataclass attributes — the old raw-dict ``diagnostics['raw_3d']``
+    carrier is gone. The render/export contract (every key the renderer +
+    CSV/NPZ export consume) is locked by
+    ``tests/test_finalize_3d_result_sync.py``.
     """
     from controllers.compute_pipeline import ComputeResult
     compute_cfg = fields.get('compute_cfg')
@@ -645,6 +648,9 @@ def _finalize_3d_cfg(raw, fields):
             'Lx': raw.get('Lx'),
             'Ly': raw.get('Ly'),
             'Lz': raw.get('Lz'),
+            # per-cell unit-cell length field (mm) — renderer label axis;
+            # carried so the live UI can drop the raw_3d dict (C5).
+            'L_mm': raw.get('L_mm'),
             'dir_A': raw.get('dir_A'),
             'dir_B': raw.get('dir_B'),
             'vmag_A': raw.get('vmag'),
@@ -664,6 +670,10 @@ def _finalize_3d_cfg(raw, fields):
             'A_0_m2': A_0_m2,
             'rho_cp_A': raw.get('_audit_rho_cp_fA'),
             'rho_cp_B': raw.get('_audit_rho_cp_fB'),
+            # CSV-export scalars (main._export_results) — carried so the
+            # export can read ComputeResult instead of the raw_3d dict (C5).
+            'u_A_in_mps': raw.get('u_A'),
+            'T_in_A_K': raw.get('T_in'),
         },
         residuals={
             'Q_enthalpy_A': _safe_float(raw.get('Q_enthalpy_A')),
@@ -685,17 +695,13 @@ def _finalize_3d_cfg(raw, fields):
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
+            '_max_outer': raw.get('_max_outer'),
+            # Dimension marker for write_result dispatch (C4); '3d' here,
+            # '2d' in stages_2d._finalize_cfg.
+            'mode': '3d',
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
-            # B2 2.1c TRANSITIONAL carrier: ui/plot_3d_results consumes
-            # the raw dict's keys directly (P_kPa / L_mm / dx / vmag …) —
-            # several are renamed or absent in the ComputeResult view
-            # above. Passed BY REFERENCE (zero copy) so the GUI worker's
-            # write_result can publish it as window._result_3d unchanged.
-            # Scheduled for retirement when the live UI moves onto
-            # ComputeResult (batch-3 item).
-            'raw_3d': raw,
         },
     )
 

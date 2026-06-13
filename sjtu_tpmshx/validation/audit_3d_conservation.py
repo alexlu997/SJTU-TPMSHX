@@ -48,7 +48,7 @@ except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 from solvers.tpms_calc import air_density
 
 

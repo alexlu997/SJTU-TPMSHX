@@ -22,7 +22,7 @@ from controllers.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-import runs.run_calculation_3d as R
+import pipelines.stages_3d as R
 
 
 def _air_water_cfg():

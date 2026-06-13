@@ -23,7 +23,7 @@ pv.global_theme.background = 'white'
 pv.global_theme.font.color = 'black'
 
 from solvers.tpms_calc import geometry as tpms_geometry
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 
 
 def build_cube_cfg():

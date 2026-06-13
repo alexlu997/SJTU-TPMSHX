@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from types import SimpleNamespace
 
-from runs.run_calculation_3d import _mass_weighted_T_out  # after refactor
+from pipelines.stages_3d import _mass_weighted_T_out  # after refactor
 
 
 def _mock_solver(NX=12, NY=6, NZ=12, eps=0.5, rho=1000.0):

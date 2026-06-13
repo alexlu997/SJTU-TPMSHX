@@ -1,17 +1,22 @@
 """runs/smoke_ui_3d_pipeline.py — offscreen end-to-end 3D compute smoke.
 
-Added with the B2 2.1c traffic switch (2026-06-13): boots Main_Menu
-offscreen, drives the REAL 3D Compute path (run_calculation →
-_run_calculation_3d → ComputeOrchestrator worker → Pipeline3D →
-write_result raw_3d carrier). Asserts window._result_3d holds the raw
-dict with every renderer-consumed key. finalize_plots_3d runs too — the
-PyVista panel cannot initialise offscreen (logged + tolerated), but the
-2D mid-z slice canvases and result labels exercise the carrier.
+Boots Main_Menu offscreen, drives the REAL 3D Compute path
+(run_calculation → _run_calculation_3d → ComputeOrchestrator worker →
+Pipeline3D → write_result). Since B3 C5 (2026-06-13) write_result
+publishes the ComputeResult itself as window._result_3d (the raw_3d dict
+carrier was retired), so this smoke asserts the ComputeResult carries the
+full renderer/export contract.
+
+TPMSHX_EAGER_3D_SLICES=1 is forced so finalize_plots_3d actually runs the
+2D mid-z slice renderer offscreen (_render_2d_slices_from_3d) — the
+PyVistaQt volume panel cannot init offscreen (logged + tolerated), but the
+slice path exercises the ComputeResult consumer surface end to end.
 """
 import os
 import sys
 import time
 
+os.environ['TPMSHX_EAGER_3D_SLICES'] = '1'   # run the 2D slice renderer
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
@@ -46,12 +51,11 @@ def main():
     # Offscreen quirk: _on_orch_finished sets `_has_results_3d = _3d_vis_ok`
     # and the PyVista panel cannot init offscreen, so the cached result is
     # CLEARED right after finalize (pre-existing behaviour, identical on
-    # the legacy path). Capture the raw_3d carrier at publish time instead.
+    # the legacy path). Capture the ComputeResult at publish time instead.
     captured = {}
     _orig_write = win.write_result
     def _spy_write(result):
-        captured['raw'] = result.diagnostics.get('raw_3d')
-        captured['extrap'] = list(result.extrap_reasons)
+        captured['result'] = result
         return _orig_write(result)
     win.write_result = _spy_write
 
@@ -63,19 +67,24 @@ def main():
         app.processEvents(); time.sleep(0.05)
     app.processEvents(); time.sleep(0.3); app.processEvents()
 
-    r = captured.get('raw')
-    assert r is not None, 'raw_3d carrier never published via write_result'
+    res = captured.get('result')
+    assert res is not None, 'ComputeResult never published via write_result'
     assert win._compute_error is None, f"worker error: {win._compute_error}"
-    needed = {'Ta', 'Tb', 'Ts', 'vmag', 'P_kPa', 'dx', 'dy', 'dz',
-              'Lx', 'Ly', 'Lz', 'dP', 'dP_B', 'dir_A', 'dir_B',
-              'extrapolated', 'extrap_reasons'}
-    missing = needed - set(r)
-    assert not missing, f'raw_3d carrier missing keys: {sorted(missing)}'
-    assert r['Ta'] is not None and r['Ta'].ndim == 3
+    assert res.diagnostics.get('mode') == '3d', \
+        f"expected 3D ComputeResult, got mode={res.diagnostics.get('mode')!r}"
+
+    # Full render/export contract — every key the 3D renderer + export read.
+    f = res.fields
+    needed_fields = {'Ta', 'Tb', 'Ts', 'vmag_A', 'vmag_B', 'P_fA', 'P_fB',
+                     'L_mm', 'dx', 'dy', 'dz', 'Lx', 'Ly', 'Lz',
+                     'dir_A', 'dir_B', 'ucA', 'vcA', 'wcA'}
+    missing = needed_fields - set(f)
+    assert not missing, f'ComputeResult.fields missing keys: {sorted(missing)}'
+    assert f['Ta'] is not None and f['Ta'].ndim == 3
+    assert 'u_A_in_mps' in res.props and 'T_in_A_K' in res.props
     print(f"[3/3] PASS in {time.time()-t0:.0f}s — "
-          f"Q={float(r.get('Q_total', r.get('Q'))):.1f} W  "
-          f"dP_A={float(r.get('dP_A', r.get('dP'))):.0f} Pa  "
-          f"Ta{r['Ta'].shape}  extrap={r['extrapolated']}", flush=True)
+          f"Q={res.Q_W:.1f} W  dP_A={res.dP_A_Pa:.0f} Pa  "
+          f"Ta{f['Ta'].shape}  extrap={bool(res.extrap_reasons)}", flush=True)
 
 
 if __name__ == '__main__':

@@ -61,19 +61,19 @@ site or one shared helper, listed here. Adding a flag = add a row.
 - ``TPMSHX_PARALLEL_THRESHOLD`` (200000) — red-black prange cell gate;
   ``solvers/simple_solver_3d.py`` (module-level, fixed at import).
 - ``TPMSHX_PHASE_A/B/C`` (1/0/0) — SIMPLE acceleration phases; single
-  helper ``runs.run_calculation_3d._apply_phase_flags`` (cfg keys win).
+  helper ``pipelines.stages_3d._apply_phase_flags`` (cfg keys win).
 - ``TPMSHX_PREINIT_3D`` (0) — prewarm 3D panel at startup; ``main.py``.
 - ``TPMSHX_PROFILE_3D`` (0) — cProfile the 3D solve;
-  ``runs/run_calculation_3d.py``.
+  ``pipelines/stages_3d.py``.
 - ``TPMSHX_ROUGH_MODE`` (baseline; UI path defaults norris_1a) +
   ``TPMSHX_ROUGH_EPS_UM`` (100) — roughness model; single helper
   ``solvers.roughness.resolve_mode_from_env``.
 - ``TPMSHX_RUN_SHANGHAI_REGRESSION`` (0) — opt-in long validation gate;
   ``tests/test_shanghai_regression.py``.
 - ``TPMSHX_SIMPLE_TOL`` (1e-5) — SIMPLE pp tol for diagnostic sweeps;
-  single helper ``runs.run_calculation_3d._simple_tol_default``.
+  single helper ``pipelines.stages_3d._simple_tol_default``.
 - ``TPMSHX_VAR_RHOCP`` (unset) — local-P gas density override (UI checkbox
-  is primary); ``runs/run_calculation_3d.py``.
+  is primary); ``pipelines/stages_3d.py``.
 """
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def _qt_int(widget, default: int) -> int:
 
 
 # Required widget attributes for strict-mode validation. The labels mirror
-# the human-friendly names that the legacy ``runs.run_calculation._parse``
+# the human-friendly names that the legacy ``pipelines.stages_2d._parse``
 # helper surfaced in its ``ValueError`` payload.
 @dataclass(frozen=True)
 class FieldSpec:
@@ -217,7 +217,7 @@ def _read_section_fields(window, section: str) -> dict:
 def _validate_required_widgets(window, *, is_3d: bool) -> None:
     """Raise ``ValueError`` listing every blank / non-numeric required
     widget — preserves the legacy behaviour of
-    ``runs.run_calculation._parse``. Membership and message order come
+    ``pipelines.stages_2d._parse``. Membership and message order come
     from CONFIG_FIELDS (B2 2.4).
     """
     required = [fs for fs in CONFIG_FIELDS if fs.required_2d]
@@ -290,7 +290,7 @@ def _read_partial_bc(window, side: Literal['A', 'B']) -> 'PartialBCConfig':
     ``None`` and the solver treats the z-axis as full-face.
 
     ``side='B'`` defaults to ``dir=3`` (-y) when ``combo_dirB`` is
-    missing, matching the legacy ``runs.run_calculation._parse_inputs``
+    missing, matching the legacy ``pipelines.stages_2d._parse_inputs``
     fall-through (``cfgB = dict(dir=3, …)``).
     """
     le_prefix = f'le_pipe{side}'
@@ -622,7 +622,7 @@ class ComputeConfig:
         strict : bool, optional
             When ``True``, raise ``ValueError`` listing every blank /
             non-numeric required widget — mirrors the legacy validation
-            inside ``runs.run_calculation._parse_inputs``. Defaults to
+            inside ``pipelines.stages_2d._parse_inputs``. Defaults to
             ``False`` so tests / scripts can build partial configs.
         force_3d : bool, optional
             Override the 3D-validation set. ``True`` requires Lz/Nz,

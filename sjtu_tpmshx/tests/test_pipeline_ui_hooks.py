@@ -41,7 +41,7 @@ def test_ui_hooks_stored_and_default_empty():
 
 
 def test_shim_forwards_iter_label_and_progress():
-    from runs.run_calculation import _PipelineWindowShim
+    from pipelines.stages_2d import _PipelineWindowShim
     labels, pcts = [], []
     shim = _PipelineWindowShim(ComputeConfig(),
                                progress_cb=pcts.append,
@@ -55,7 +55,7 @@ def test_shim_forwards_iter_label_and_progress():
 def test_3d_cfg_stage_wires_iter_cb(monkeypatch):
     """_run_solvers_3d_cfg must plant iter_cb as cfg['_iter_cb'] (the key
     _run_3d_stack polls each outer iteration)."""
-    import runs.run_calculation_3d as r3
+    import pipelines.stages_3d as r3
     seen = {}
     monkeypatch.setattr(r3, '_run_3d_stack',
                         lambda cfg: seen.update(cfg) or {'ok': True})

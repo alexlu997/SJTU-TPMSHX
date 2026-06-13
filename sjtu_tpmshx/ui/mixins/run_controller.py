@@ -324,7 +324,7 @@ class RunControllerMixin:
         """Thin wrapper — delegates to run_calculation module (Task B.9).
         Freezes repaints around the multi-canvas population so the user
         sees one clean frame flip instead of five intermediate paints."""
-        from runs.run_calculation import finalize_plots
+        from ui.plot_2d_results import finalize_plots
         self.setUpdatesEnabled(False)
         try:
             out = finalize_plots(self)
@@ -349,23 +349,22 @@ class RunControllerMixin:
         finalize_plots / redraw_temperature_panel renderers keep
         working when the compute path runs via
         :class:`controllers.compute_pipeline.Pipeline2D` instead of
-        the legacy ``runs.run_calculation.run_calculation_inner``.
+        the legacy ``pipelines.stages_2d.run_calculation_inner``.
 
         Audit C4 (L-a-2, 2026-05-28). This is the *UI adapter*
         counterpart to ``_finalize_cfg`` — together they replace the
-        pre-C4 ``runs.run_calculation._store_results(window, cfg, raw)``
+        pre-C4 ``pipelines.stages_2d._store_results(window, cfg, raw)``
         which conflated UI writes with result assembly. Since B2 2.1b/c
         (2026-06-13) this is the ONLY ComputeResult→window copy: the GUI
         worker drives Pipeline2D/3D and the legacy
         ``run_calculation_inner`` / ``run_calculation_3d_inner`` paths
         are deleted.
         """
-        # ── 3D branch: the renderer (ui/plot_3d_results) consumes the
-        # raw _run_3d_stack dict directly; publish the transitional
-        # carrier by reference and stop — no key loss possible.
-        raw3d = result.diagnostics.get('raw_3d')
-        if raw3d is not None:
-            self._result_3d = raw3d
+        # ── 3D branch: the renderer (ui/plot_3d_results) now consumes the
+        # ComputeResult directly (B3 C5 — raw_3d dict carrier retired).
+        # Publish the dataclass as window._result_3d and stop.
+        if result.diagnostics.get('mode') == '3d':
+            self._result_3d = result
             self._extrap_reasons = list(result.extrap_reasons)
             self._has_extrap = bool(result.extrap_reasons)
             return
@@ -578,17 +577,20 @@ class RunControllerMixin:
             self._update_tab_visibility()
             if _3d_vis_ok:
                 self._switch_tab('3d')
-            res = getattr(self, '_result_3d', {})
+            res = getattr(self, '_result_3d', None)
             # Outer-coupling convergence note: the SIMPLE↔LTNE loop exits
             # early once max|ΔTa| < tol, so it usually stops before the cap
             # (e.g. "3/5"). Surface that as "converged after k/N" instead of a
             # bare count, so the user does not read an early exit as an
             # unfinished run. len(_ltne_info) = outers actually executed.
+            # B3 C5: res is a ComputeResult — outer-loop metrics live in
+            # res.diagnostics ('_ltne_info' / '_max_outer').
             def _outer_note(r):
                 try:
-                    info = r.get('_ltne_info') or []
+                    d = r.diagnostics
+                    info = d.get('_ltne_info') or []
                     n_run = len(info)
-                    n_max = int(r.get('_max_outer', n_run) or n_run)
+                    n_max = int(d.get('_max_outer', n_run) or n_run)
                     if n_run and n_run < n_max:
                         return f"  ·  converged after {n_run}/{n_max} outer"
                     if n_run:
@@ -597,17 +599,17 @@ class RunControllerMixin:
                     pass
                 return ""
             try:
-                if res and _3d_vis_ok:
+                if res is not None and _3d_vis_ok:
                     self.statusBar().showMessage(
-                        f"3D done — Q={res.get('Q', 0):.1f} W  "
-                        f"dP={res.get('dP', 0):.0f} Pa{_outer_note(res)}", 8000)
-                elif res:
+                        f"3D done — Q={res.Q_W:.1f} W  "
+                        f"dP={res.dP_A_Pa:.0f} Pa{_outer_note(res)}", 8000)
+                elif res is not None:
                     # Solver succeeded but visualisation did not — surface
                     # explicitly so the user knows numbers are valid but the
                     # rendered canvas is not.
                     self.statusBar().showMessage(
-                        f"3D solve done (Q={res.get('Q', 0):.1f} W  "
-                        f"dP={res.get('dP', 0):.0f} Pa) — visualisation "
+                        f"3D solve done (Q={res.Q_W:.1f} W  "
+                        f"dP={res.dP_A_Pa:.0f} Pa) — visualisation "
                         f"failed; check console.", 10000)
                 else:
                     # finalize returned False with no stashed result dict —

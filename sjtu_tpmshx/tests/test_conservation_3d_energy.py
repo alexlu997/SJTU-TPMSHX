@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from validation.audit_3d_conservation import (
     make_T1, make_T2, make_T3, make_T4, make_T5, make_T6,
 )
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 
 _GATE = 0.01  # < 1 %
 

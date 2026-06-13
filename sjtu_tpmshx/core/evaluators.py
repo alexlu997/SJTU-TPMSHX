@@ -33,7 +33,6 @@ from solvers.tpms_calc import (
     air_viscosity,
     air_cp,
 )
-from solvers import tpms_calc
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.df_projection import (
@@ -64,56 +63,35 @@ def _build_3d_arrays(fc, Nx: int, Ny: int, Nz: int,
     """
     L_field_2D, t_field_2D = fc.evaluate_grid(Nx, Ny)
 
-    # Quantize for cache reuse (same trick as the 2D build_grid_arrays)
-    L_q = np.round(L_field_2D / quant_L) * quant_L
-    t_q = np.round(t_field_2D / quant_t) * quant_t
-
-    eps_arr   = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    eps_f_arr = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    K_ffA_arr = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    K_ffB_arr = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    K_ss_arr  = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    h_vA_arr  = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    h_vB_arr  = np.empty((Nx, Ny, Nz), dtype=np.float64)
-    A_0_arr   = np.empty((Nx, Ny, Nz), dtype=np.float64)
+    # Quantized (L, t) → unique-pair scatter, shared with the 2D builder
+    # (B3 C7: solvers.continuous_field.props_from_Lt_fields). Replaces the
+    # former per-cell dict-cache loop; the quantization key moved from
+    # Python round() to np.round (round-half-even, agrees on the
+    # 0.05/0.01-quantized grid). Result is z-broadcast below.
+    from solvers.continuous_field import props_from_Lt_fields
+    p = props_from_Lt_fields(L_field_2D, t_field_2D, tpms_type, k_s,
+                             u_A, u_B, T_inA, T_inB, P_inA,
+                             quant_L=quant_L, quant_t=quant_t)
 
     L_field_3D = np.broadcast_to(L_field_2D[:, :, None], (Nx, Ny, Nz)).copy()
     t_field_3D = np.broadcast_to(t_field_2D[:, :, None], (Nx, Ny, Nz)).copy()
 
-    from solvers import tpms_calc
-    cache: dict = {}
-    for i in range(Nx):
-        for j in range(Ny):
-            key = (round(float(L_q[i, j]), 4),
-                   round(float(t_q[i, j]), 4))
-            if key not in cache:
-                pA = tpms_calc.compute(tpms_type, key[0], key[1],
-                                       u_A, T_inA, P_inA, k_s)
-                pB = tpms_calc.compute(tpms_type, key[0], key[1],
-                                       u_B, T_inB, P_inA, k_s)
-                cache[key] = (pA, pB)
-            pA, pB = cache[key]
-            eps_arr[i, j, :]   = pA['epsilon']
-            eps_f_arr[i, j, :] = pA['epsilon_A']
-            K_ffA_arr[i, j, :] = pA['K_ff']
-            K_ffB_arr[i, j, :] = pB['K_ff']
-            K_ss_arr[i, j, :]  = pA['K_ss']
-            h_vA_arr[i, j, :]  = pA['H_sf'] * pA['A_0']
-            h_vB_arr[i, j, :]  = pB['H_sf'] * pB['A_0']
-            A_0_arr[i, j, :]   = pA['A_0']
+    def _z(a2d):
+        """Extrude a (Nx, Ny) array uniformly to (Nx, Ny, Nz)."""
+        return np.broadcast_to(a2d[:, :, None], (Nx, Ny, Nz)).copy()
 
     return {
-        'eps_arr':   eps_arr,
-        'eps_f_arr': eps_f_arr,
-        'K_ffA_arr': K_ffA_arr,
-        'K_ffB_arr': K_ffB_arr,
-        'K_ss_arr':  K_ss_arr,
-        'h_vA_arr':  h_vA_arr,
-        'h_vB_arr':  h_vB_arr,
-        'A_0_arr':   A_0_arr,
+        'eps_arr':   _z(p['eps_arr']),
+        'eps_f_arr': _z(p['eps_f_arr']),
+        'K_ffA_arr': _z(p['K_ffA_arr']),
+        'K_ffB_arr': _z(p['K_ffB_arr']),
+        'K_ss_arr':  _z(p['K_ss_arr']),
+        'h_vA_arr':  _z(p['h_vA_arr']),
+        'h_vB_arr':  _z(p['h_vB_arr']),
+        'A_0_arr':   _z(p['A_0_arr']),
         'L_field':   L_field_3D,
         't_field':   t_field_3D,
-        'cache_size': len(cache),
+        'cache_size': p['n_unique'],
     }
 
 

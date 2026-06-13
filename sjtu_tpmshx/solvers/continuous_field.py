@@ -136,6 +136,80 @@ def encode_decision_vector(L_ctrl: np.ndarray,
     return np.concatenate([L_ctrl.ravel(), t_ctrl.ravel()])
 
 
+# ─── shared quantized TPMS-property scatter ─────────────────────────
+
+
+def props_from_Lt_fields(L_field: np.ndarray, t_field: np.ndarray,
+                         tpms_type: str, k_s: float,
+                         u_A: float, u_B: float,
+                         T_inA: float, T_inB: float,
+                         P_in: float = 101325.0,
+                         *, quant_L: float = 0.05,
+                         quant_t: float = 0.01) -> dict:
+    """Per-cell TPMS property arrays from (L, t) fields via quantized scatter.
+
+    Quantise (L, t) to the (quant_L, quant_t) mm grid, evaluate
+    ``tpms_calc.compute`` once per UNIQUE (L, t) pair (A + B side), and
+    scatter into output arrays via boolean masks — calls compute()
+    n_unique times instead of L_field.size. Shared by
+    :meth:`ContinuousFieldConfig.build_grid_arrays` (2D) and
+    ``core.evaluators._build_3d_arrays`` (3D, which z-broadcasts the result),
+    so both dimensions use one quantisation + scatter (B3 C7).
+
+    Returns a dict of nine ``L_field.shape`` arrays — ``eps_arr``,
+    ``eps_f_arr``, ``K_ffA_arr``, ``K_ffB_arr``, ``K_ss_arr``, ``h_vA_arr``,
+    ``h_vB_arr``, ``r_h_arr``, ``A_0_arr`` — plus ``n_unique``.
+    """
+    L_q = np.round(L_field / quant_L) * quant_L
+    t_q = np.round(t_field / quant_t) * quant_t
+
+    shp = L_field.shape
+    eps_arr   = np.empty(shp, dtype=np.float64)
+    eps_f_arr = np.empty(shp, dtype=np.float64)
+    K_ffA_arr = np.empty(shp, dtype=np.float64)
+    K_ffB_arr = np.empty(shp, dtype=np.float64)
+    K_ss_arr  = np.empty(shp, dtype=np.float64)
+    h_vA_arr  = np.empty(shp, dtype=np.float64)
+    h_vB_arr  = np.empty(shp, dtype=np.float64)
+    r_h_arr   = np.empty(shp, dtype=np.float64)
+    A_0_arr   = np.empty(shp, dtype=np.float64)
+
+    # Vectorised scatter: evaluate each unique quantised (L, t) once, then
+    # broadcast into the output arrays via a boolean mask. compute() runs
+    # n_unique times instead of L_field.size — the quantised field has only
+    # a few hundred unique pairs.
+    L_key = np.round(L_q, 4)
+    t_key = np.round(t_q, 4)
+    pairs = np.stack([L_key.ravel(), t_key.ravel()], axis=1)
+    uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
+    inv = inv.reshape(-1)
+    # ravel() returns views of the C-contiguous output arrays.
+    f_eps  = eps_arr.ravel();   f_epsf = eps_f_arr.ravel()
+    f_KffA = K_ffA_arr.ravel(); f_KffB = K_ffB_arr.ravel()
+    f_Kss  = K_ss_arr.ravel()
+    f_hvA  = h_vA_arr.ravel();  f_hvB  = h_vB_arr.ravel()
+    f_rh   = r_h_arr.ravel();   f_A0   = A_0_arr.ravel()
+    for u_idx in range(uniq.shape[0]):
+        L_u = float(uniq[u_idx, 0]); t_u = float(uniq[u_idx, 1])
+        pA = tpms_calc.compute(tpms_type, L_u, t_u, u_A, T_inA, P_in, k_s)
+        pB = tpms_calc.compute(tpms_type, L_u, t_u, u_B, T_inB, P_in, k_s)
+        m = (inv == u_idx)
+        f_eps[m]  = pA['epsilon'];   f_epsf[m] = pA['epsilon_A']
+        f_KffA[m] = pA['K_ff'];      f_KffB[m] = pB['K_ff']
+        f_Kss[m]  = pA['K_ss']
+        f_hvA[m]  = pA['H_sf'] * pA['A_0']
+        f_hvB[m]  = pB['H_sf'] * pB['A_0']
+        f_rh[m]   = pA['D_h'] / 2.0; f_A0[m]   = pA['A_0']
+
+    return {
+        'eps_arr': eps_arr, 'eps_f_arr': eps_f_arr,
+        'K_ffA_arr': K_ffA_arr, 'K_ffB_arr': K_ffB_arr,
+        'K_ss_arr': K_ss_arr, 'h_vA_arr': h_vA_arr, 'h_vB_arr': h_vB_arr,
+        'r_h_arr': r_h_arr, 'A_0_arr': A_0_arr,
+        'n_unique': int(uniq.shape[0]),
+    }
+
+
 # ─── ContinuousFieldConfig ──────────────────────────────────────────
 
 
@@ -254,66 +328,28 @@ class ContinuousFieldConfig:
         3. Pull props from the cache and pack into the standard dict shape.
         """
         L_field, t_field = self.evaluate_grid(Nx, Ny, dx_arr, dy_arr)
-        L_q = np.round(L_field / quant_L) * quant_L
-        t_q = np.round(t_field / quant_t) * quant_t
-
-        eps_arr   = np.empty((Nx, Ny), dtype=np.float64)
-        eps_f_arr = np.empty((Nx, Ny), dtype=np.float64)
-        K_ffA_arr = np.empty((Nx, Ny), dtype=np.float64)
-        K_ffB_arr = np.empty((Nx, Ny), dtype=np.float64)
-        K_ss_arr  = np.empty((Nx, Ny), dtype=np.float64)
-        h_vA_arr  = np.empty((Nx, Ny), dtype=np.float64)
-        h_vB_arr  = np.empty((Nx, Ny), dtype=np.float64)
-        r_h_arr   = np.empty((Nx, Ny), dtype=np.float64)
-        A_0_arr   = np.empty((Nx, Ny), dtype=np.float64)
-
-        # Vectorised scatter: evaluate each unique quantised (L, t) once, then
-        # broadcast into the output arrays via a boolean mask. Bit-identical to
-        # the previous per-cell dict-cached loop (same quantisation + same
-        # tpms_calc.compute inputs), but calls compute() n_unique times instead
-        # of Nx*Ny — the quantised field has only a few hundred unique pairs.
-        L_key = np.round(L_q, 4)
-        t_key = np.round(t_q, 4)
-        pairs = np.stack([L_key.ravel(), t_key.ravel()], axis=1)
-        uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
-        inv = inv.reshape(-1)
-        # ravel() returns views of the C-contiguous output arrays.
-        f_eps  = eps_arr.ravel();   f_epsf = eps_f_arr.ravel()
-        f_KffA = K_ffA_arr.ravel(); f_KffB = K_ffB_arr.ravel()
-        f_Kss  = K_ss_arr.ravel()
-        f_hvA  = h_vA_arr.ravel();  f_hvB  = h_vB_arr.ravel()
-        f_rh   = r_h_arr.ravel();   f_A0   = A_0_arr.ravel()
-        for u_idx in range(uniq.shape[0]):
-            L_u = float(uniq[u_idx, 0]); t_u = float(uniq[u_idx, 1])
-            pA = tpms_calc.compute(self.tpms_type, L_u, t_u,
-                                   u_A, T_inA, P_in, self.k_s)
-            pB = tpms_calc.compute(self.tpms_type, L_u, t_u,
-                                   u_B, T_inB, P_in, self.k_s)
-            m = (inv == u_idx)
-            f_eps[m]  = pA['epsilon'];   f_epsf[m] = pA['epsilon_A']
-            f_KffA[m] = pA['K_ff'];      f_KffB[m] = pB['K_ff']
-            f_Kss[m]  = pA['K_ss']
-            f_hvA[m]  = pA['H_sf'] * pA['A_0']
-            f_hvB[m]  = pB['H_sf'] * pB['A_0']
-            f_rh[m]   = pA['D_h'] / 2.0; f_A0[m]   = pA['A_0']
-        n_unique = int(uniq.shape[0])
+        # Quantized scatter shared with the 3D builder (B3 C7) — same ops,
+        # same order, so bit-identical to the prior inline loop.
+        p = props_from_Lt_fields(L_field, t_field, self.tpms_type, self.k_s,
+                                 u_A, u_B, T_inA, T_inB, P_in,
+                                 quant_L=quant_L, quant_t=quant_t)
 
         from .grid_schema import validate_grid_arrays
         return validate_grid_arrays({
             'zone_id':   np.zeros((Nx, Ny), dtype=np.int32),  # not used downstream
-            'eps_arr':   eps_arr,
-            'eps_f_arr': eps_f_arr,
-            'K_ffA_arr': K_ffA_arr,
-            'K_ffB_arr': K_ffB_arr,
-            'K_ss_arr':  K_ss_arr,
-            'h_vA_arr':  h_vA_arr,
-            'h_vB_arr':  h_vB_arr,
-            'r_h_arr':   r_h_arr,
-            'A_0_arr':   A_0_arr,
+            'eps_arr':   p['eps_arr'],
+            'eps_f_arr': p['eps_f_arr'],
+            'K_ffA_arr': p['K_ffA_arr'],
+            'K_ffB_arr': p['K_ffB_arr'],
+            'K_ss_arr':  p['K_ss_arr'],
+            'h_vA_arr':  p['h_vA_arr'],
+            'h_vB_arr':  p['h_vB_arr'],
+            'r_h_arr':   p['r_h_arr'],
+            'A_0_arr':   p['A_0_arr'],
             'axis': 'continuous',
             'L_field': L_field,
             't_field': t_field,
-            'cache_size': n_unique,
+            'cache_size': p['n_unique'],
         }, Nx, Ny, where='ContinuousFieldConfig.build_grid_arrays')
 
     # ─── Manufacturability checks ────────────────────────────────────
