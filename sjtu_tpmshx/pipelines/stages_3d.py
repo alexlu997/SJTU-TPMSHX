@@ -31,6 +31,7 @@ import time as _time
 import numpy as np
 
 from controllers.compute_config import ComputeConfig, bc_to_dict
+from solvers.coupling_skeleton import OuterConvergence
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.tpms_calc import (
@@ -1908,7 +1909,9 @@ def _run_3d_stack(cfg):
 
     # ── Outer SIMPLE ↔ LTNE coupling ──
     Ta = Tb = Ts = None
-    Ta_prev = None
+    # Warm-start delta tracker (shared with the 2D driver) — single ΔTa < tol
+    # criterion; owns the prev-copy bookkeeping the loop did inline.
+    _outer_conv = OuterConvergence(tol_T=_OUTER_TOL, track=('Ta',))
     chi_B = None         # B flow-path indicator field (χ_B), built each outer iter
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
@@ -2209,11 +2212,9 @@ def _run_3d_stack(cfg):
                   f"res={_ltne_info_d.get('residual',0.0):.2e}  "
                   f"(cap={_ltne_max_iter})", flush=True)
 
-        if Ta_prev is not None:
-            dT = float(np.max(np.abs(Ta - Ta_prev)))
-            if dT < _OUTER_TOL:
-                break
-        Ta_prev = Ta.copy()
+        _converged, _ = _outer_conv.check({'Ta': Ta})
+        if _converged:
+            break
 
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
