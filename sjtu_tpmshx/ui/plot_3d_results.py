@@ -35,13 +35,16 @@ def _store_3d_result_labels(window, result):
 
     The canvas-top summary strip reads these same labels, so keeping this
     centralised prevents the 3D path from showing partial KPI state.
+
+    ``result`` is the :class:`ComputeResult` published on
+    ``window._result_3d`` (B3 C5 — the raw_3d dict carrier was retired).
     """
     values = {
-        '_r_Q': _fmt_metric(result.get('Q'), '{:.2f}'),
-        '_r_dP_A': _fmt_metric(result.get('dP'), '{:.0f}'),
-        '_r_dP_B': _fmt_metric(result.get('dP_B'), '{:.0f}'),
-        '_r_ToutA': _fmt_metric(result.get('T_A_out'), '{:.1f}'),
-        '_r_ToutB': _fmt_metric(result.get('T_B_out'), '{:.1f}'),
+        '_r_Q': _fmt_metric(result.Q_W, '{:.2f}'),
+        '_r_dP_A': _fmt_metric(result.dP_A_Pa, '{:.0f}'),
+        '_r_dP_B': _fmt_metric(result.dP_B_Pa, '{:.0f}'),
+        '_r_ToutA': _fmt_metric(result.T_out_A_K, '{:.1f}'),
+        '_r_ToutB': _fmt_metric(result.T_out_B_K, '{:.1f}'),
     }
     for attr, text in values.items():
         label = getattr(window, attr, None)
@@ -73,8 +76,12 @@ def finalize_plots_3d(window) -> bool:
     res = getattr(window, '_result_3d', None)
     if res is None:
         print("[3D vis] window._result_3d is None — solver produced no "
-              "stashed result dict; nothing to visualise.")
+              "stashed ComputeResult; nothing to visualise.")
         return False
+    # B3 C5: res is the ComputeResult (raw_3d dict carrier retired). The
+    # renderer reads arrays from res.fields and headline scalars from the
+    # dataclass attributes; P_kPa is derived P_fA/1000.0 at render time.
+    f = res.fields
     _store_3d_result_labels(window, res)
     # Skeleton placeholder retires once real 3D data lands.
     sk = getattr(window, '_3d_skeleton', None)
@@ -104,44 +111,44 @@ def finalize_plots_3d(window) -> bool:
     if panel is not None:
         try:
             P_B_kPa = None
-            if res.get('P_Pa_B') is not None:
-                P_B_kPa = np.ascontiguousarray(res['P_Pa_B'] / 1000.0)
+            if f.get('P_fB') is not None:
+                P_B_kPa = np.ascontiguousarray(f['P_fB'] / 1000.0)
             # Map fluid-A dir index (0=+x,1=-x,2=+y,3=-y,4=+z,5=-z) to
             # '±axis' string so the panel can orient inlet/outlet glyphs.
             _dirs = ['+x', '-x', '+y', '-y', '+z', '-z']
-            _dir_idx = res.get('dir_A', 0)
+            _dir_idx = f.get('dir_A', 0)
             _dir_str = _dirs[int(_dir_idx) % 6]
-            _dir_b = res.get('dir_B')
+            _dir_b = f.get('dir_B')
             _dir_str_B = None if _dir_b is None else _dirs[int(_dir_b) % 6]
             # When sB was None, Tb is a uniform prescribed array (T_inB
             # everywhere) and would render as a flat single-color cube,
             # misleading the user into thinking they have a B field.
             # Filter it out at the panel boundary so the combo skips Tb.
             _has_B = _dir_b is not None
-            _Tb_for_panel = res.get('Tb') if _has_B else None
-            _vmag_B_for_panel = res.get('vmag_B') if _has_B else None
+            _Tb_for_panel = f.get('Tb') if _has_B else None
+            _vmag_B_for_panel = f.get('vmag_B') if _has_B else None
             _P_B_for_panel = P_B_kPa if _has_B else None
             panel.set_fields(
-                Ta=res['Ta'],
+                Ta=f['Ta'],
                 Tb=_Tb_for_panel,
-                Ts=res.get('Ts'),
-                vmag=res['vmag'],
+                Ts=f.get('Ts'),
+                vmag=f['vmag_A'],
                 vmag_B=_vmag_B_for_panel,
-                P_kPa=res['P_kPa'],
+                P_kPa=np.ascontiguousarray(f['P_fA'] / 1000.0),
                 P_B_kPa=_P_B_for_panel,
-                L_mm=res['L_mm'],
-                dx=res['dx'], dy=res['dy'], dz=res['dz'],
-                real_dims=(res['Lx'], res['Ly'], res['Lz']),
+                L_mm=f['L_mm'],
+                dx=f['dx'], dy=f['dy'], dz=f['dz'],
+                real_dims=(f['Lx'], f['Ly'], f['Lz']),
                 flow_dir=_dir_str,
                 flow_dir_B=_dir_str_B if _has_B else None,
             )
             # Surrogate-extrapolation watermark — lower-left viewport.
-            if res.get('extrapolated'):
+            if res.extrap_reasons:
                 # Dedupe + condense: fluid A/B repeat the same "Wall thickness"
                 # line (drop exact dups), strip the verbose "(u=…,T=…,P=…)" tail
                 # and the redundant "ConstDF-v1 " (already in the header) so the
                 # watermark is 2–3 short lines, not a wall of text.
-                _reasons = list(dict.fromkeys(res.get('extrap_reasons', [])))
+                _reasons = list(dict.fromkeys(res.extrap_reasons))
                 _short = [r.split(' (')[0].rstrip('.').replace('ConstDF-v1 ', '')
                           for r in _reasons]
                 _txt = "⚠ ConstDF-v1 extrapolated\n" + "\n".join(_short)
@@ -176,10 +183,12 @@ def _render_2d_slices_from_3d(window, res):
     Custom renderers (not `plot_temperature`/`plot_pressure`) because refined
     3D grid is non-uniform; legacy 2D plotters assume `np.linspace` spacing.
     """
-    Ta = res['Ta']; Tb = res['Tb']; Ts = res['Ts']
-    P_Pa = res['P_Pa']; uc = res['uc_real']; vc = res['vc_real']
-    wc = res.get('wc_real')
-    dx = res['dx']; dy = res['dy']
+    # B3 C5: res is the ComputeResult — arrays live in res.fields.
+    f = res.fields
+    Ta = f['Ta']; Tb = f['Tb']; Ts = f['Ts']
+    P_Pa = f['P_fA']; uc = f['ucA']; vc = f['vcA']
+    wc = f.get('wcA')
+    dx = f['dx']; dy = f['dy']
     Nx, Ny, Nz = Ta.shape
     k_mid = Nz // 2
     z_info = f'mid-z (k={k_mid}/{Nz})'
@@ -195,13 +204,13 @@ def _render_2d_slices_from_3d(window, res):
     xc = (np.cumsum(dx) - dx / 2) * 1000.0
     yc = (np.cumsum(dy) - dy / 2) * 1000.0
 
-    # Fluid B optional (cross-flow). Detect by presence of P_Pa_B
-    P_Pa_B = res.get('P_Pa_B')
-    vmag_B = res.get('vmag_B')
-    uc_B = res.get('uc_real_B')
-    vc_B = res.get('vc_real_B')
-    wc_B = res.get('wc_real_B')
-    dP_B = res.get('dP_B', 0.0)
+    # Fluid B optional (cross-flow). Detect by presence of P_fB
+    P_Pa_B = f.get('P_fB')
+    vmag_B = f.get('vmag_B')
+    uc_B = f.get('ucB')
+    vc_B = f.get('vcB')
+    wc_B = f.get('wcB')
+    dP_B = res.dP_B_Pa
     has_B = P_Pa_B is not None
     if wc is None:
         wc = np.zeros_like(uc)
@@ -214,7 +223,7 @@ def _render_2d_slices_from_3d(window, res):
         ('canvas_pres', _plot_3d_pressure,
             (P_Pa[:, :, k_mid],
              P_Pa_B[:, :, k_mid] if has_B else None,
-             xc, yc, res['dP'], dP_B, z_info)),
+             xc, yc, res.dP_A_Pa, dP_B, z_info)),
         ('canvas_vel', _plot_3d_velocity_slice,
             (uc[:, :, k_mid], vc[:, :, k_mid], wc[:, :, k_mid],
              uc_B[:, :, k_mid] if has_B else None,
@@ -237,8 +246,8 @@ def _render_2d_slices_from_3d(window, res):
     # `⚠ ConstDF-v1 extrapolated` notice the 3D viewport + 2D-native path
     # already show. Without this, a 3D run with t=0.6 mm would hide the
     # extrapolation flag on every canvas except the PyVistaQt viewport.
-    if res.get('extrapolated'):
-        _reasons = list(res.get('extrap_reasons', []) or [])
+    if res.extrap_reasons:
+        _reasons = list(res.extrap_reasons or [])
         from ui.theme import get_theme as _gt
         _tw = _gt().get('warn', '#B45309')
         _wm_text = "⚠ ConstDF-v1 extrapolated: " + " | ".join(_reasons)

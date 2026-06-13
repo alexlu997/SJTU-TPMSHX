@@ -436,34 +436,47 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         try:
             rows = []
             if res_3d is not None:
-                rows.append(["Q [W]", f"{res_3d.get('Q', 0):.4f}"])
-                rows.append(["dP_A [Pa]", f"{res_3d.get('dP', 0):.2f}"])
-                rows.append(["dP_B [Pa]", f"{res_3d.get('dP_B', 0):.2f}"])
-                rows.append(["T_inA [K]", f"{res_3d.get('T_in', 0):.2f}"])
-                rows.append(["u_A [m/s]", f"{res_3d.get('u_A', 0):.4f}"])
-                Ta = res_3d.get('Ta')
+                # B3 C5: res_3d is the ComputeResult (raw_3d dict retired).
+                # Scalars come off the dataclass / props; arrays off fields.
+                _rf = res_3d.fields
+                rows.append(["Q [W]", f"{res_3d.Q_W:.4f}"])
+                rows.append(["dP_A [Pa]", f"{res_3d.dP_A_Pa:.2f}"])
+                rows.append(["dP_B [Pa]", f"{res_3d.dP_B_Pa:.2f}"])
+                rows.append(["T_inA [K]",
+                             f"{res_3d.props.get('T_in_A_K', 0) or 0:.2f}"])
+                rows.append(["u_A [m/s]",
+                             f"{res_3d.props.get('u_A_in_mps', 0) or 0:.4f}"])
+                Ta = _rf.get('Ta')
                 if Ta is not None:
                     rows.append(["Ta_min [K]", f"{float(Ta.min()):.2f}"])
                     rows.append(["Ta_max [K]", f"{float(Ta.max()):.2f}"])
                     rows.append(["Grid Nx", str(Ta.shape[0])])
                     rows.append(["Grid Ny", str(Ta.shape[1])])
                     rows.append(["Grid Nz", str(Ta.shape[2])])
-                rows.append(["Lx [m]", f"{res_3d.get('Lx', 0):.6f}"])
-                rows.append(["Ly [m]", f"{res_3d.get('Ly', 0):.6f}"])
-                rows.append(["Lz [m]", f"{res_3d.get('Lz', 0):.6f}"])
+                rows.append(["Lx [m]", f"{_rf.get('Lx', 0) or 0:.6f}"])
+                rows.append(["Ly [m]", f"{_rf.get('Ly', 0) or 0:.6f}"])
+                rows.append(["Lz [m]", f"{_rf.get('Lz', 0) or 0:.6f}"])
             with open(path, 'w', newline='') as f:
                 w = csv.writer(f)
                 w.writerow(["Parameter", "Value"])
                 w.writerows(rows)
-            # Optional: save 3D fields as NPZ alongside
+            # Optional: save 3D fields as NPZ alongside. Keep the legacy
+            # NPZ schema (vmag, P_kPa) stable: map from ComputeResult.fields
+            # (vmag_A → vmag; P_fA/1000 → P_kPa).
             npz_path = os.path.splitext(path)[0] + '_fields.npz'
             if res_3d is not None:
+                _rf = res_3d.fields
                 save_dict = {}
-                for k in ('Ta', 'Tb', 'Ts', 'vmag', 'P_kPa', 'L_mm',
-                          'dx', 'dy', 'dz'):
-                    v = res_3d.get(k)
+                for npz_key, src in (('Ta', 'Ta'), ('Tb', 'Tb'),
+                                     ('Ts', 'Ts'), ('vmag', 'vmag_A'),
+                                     ('L_mm', 'L_mm'), ('dx', 'dx'),
+                                     ('dy', 'dy'), ('dz', 'dz')):
+                    v = _rf.get(src)
                     if v is not None:
-                        save_dict[k] = v
+                        save_dict[npz_key] = v
+                _p_fa = _rf.get('P_fA')
+                if _p_fa is not None:
+                    save_dict['P_kPa'] = _p_fa / 1000.0
                 if save_dict:
                     import numpy as _np_exp
                     _np_exp.savez_compressed(npz_path, **save_dict)

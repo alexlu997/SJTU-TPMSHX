@@ -1,19 +1,19 @@
-"""G1 anti-drift guard: _finalize_3d_cfg's ComputeResult must stay in sync with
-the _run_3d_stack raw result dict.
+"""Anti-drift guard: _finalize_3d_cfg's ComputeResult must faithfully
+surface every value the _run_3d_stack raw dict produces AND every key the
+3D renderer / CSV-NPZ export consume.
 
-The 3D path carries two result representations: the raw dict (the LIVE carrier,
-stored on window._result_3d, consumed by ui/plot_3d_results.finalize_plots_3d)
-and the ComputeResult dataclass (built by _finalize_3d_cfg, consumed by the C4
-Pipeline3D). They can silently DRIFT — add/rename a key in the raw dict and
-forget to map it in _finalize_3d_cfg, and nothing catches it (test_compute_
-pipeline only exercises the ABC with stubs, never the real mapping).
+Since B3 C5 (2026-06-13) the ComputeResult is the SINGLE 3D result carrier:
+``Main_Menu.write_result`` publishes it as ``window._result_3d`` and
+``ui/plot_3d_results`` reads ``res.fields`` / the dataclass attributes.
+The old raw-dict ``diagnostics['raw_3d']`` carrier is gone. A key dropped
+or renamed in _finalize_3d_cfg would silently blank the 3D view / export
+(offscreen smokes cannot populate the PyVista panel to catch it).
 
-This test runs a real (small) 3D solve, builds both representations, and asserts
-the ComputeResult faithfully surfaces the raw dict's headline scalars + key
-fields. It does NOT migrate the live UI to ComputeResult — that full
-unification is the deliberate C4 ComputePipeline effort (the raw dict stays the
-live carrier). This guard just locks the adapter contract so the two cannot
-diverge unnoticed. 2026-06-09 G1.
+This test runs a real (small) 3D solve, builds the raw dict + the
+ComputeResult, asserts the ComputeResult surfaces the raw headline scalars
++ field arrays faithfully, and locks the full render/export key contract.
+Originally 2026-06-09 G1 (dual-representation sync); upgraded to the
+single-carrier contract guard in B3 C5.
 """
 import os
 import sys
@@ -90,9 +90,9 @@ def test_finalize_3d_result_matches_raw():
         if rv is not None and np.isfinite(float(rv)):
             assert result.residuals[key] == pytest.approx(float(rv)), key
 
-    # ── B3 C4: ComputeResult now carries the full render/export contract
-    # additively (raw_3d still present until C5). New slots must equal
-    # their raw counterparts so C5 can drop raw_3d without losing keys.
+    # ── B3 C4/C5: ComputeResult carries the full render/export contract
+    # and is now the SINGLE carrier (raw_3d dict retired). New slots must
+    # equal their raw counterparts.
     np.testing.assert_array_equal(
         np.asarray(result.fields['L_mm']), np.asarray(raw['L_mm']),
         err_msg="fields['L_mm'] != raw['L_mm']")
@@ -101,16 +101,29 @@ def test_finalize_3d_result_matches_raw():
     assert result.diagnostics['_max_outer'] == raw['_max_outer']
     assert result.diagnostics['mode'] == '3d'
 
-    # ── B2 2.1c transitional carrier: diagnostics['raw_3d'] must be the
-    # raw dict BY REFERENCE (zero copy — write_result publishes it as
-    # window._result_3d) and must contain every key the 3D renderer +
-    # _on_orch_finished consume directly off _result_3d.
-    assert result.diagnostics['raw_3d'] is raw
-    _plot_consumed = {
-        'Ta', 'Tb', 'Ts', 'vmag', 'P_kPa',
-        'dx', 'dy', 'dz', 'Lx', 'Ly', 'Lz',
-        'dP', 'dP_B', 'dir_A', 'dir_B',
-        'extrapolated', 'extrap_reasons',
+    # ── B3 C5: the raw_3d carrier is GONE — the ComputeResult is what
+    # window._result_3d now holds. Lock the FULL render/export contract:
+    # every key ui/plot_3d_results.finalize_plots_3d +
+    # _render_2d_slices_from_3d + main._export_results consume must be
+    # present (fields arrays + dataclass scalars). If a future change
+    # drops one, the 3D view / export silently blanks — this guard
+    # catches it without a live PyVista panel.
+    assert 'raw_3d' not in result.diagnostics, (
+        "raw_3d carrier must be retired (B3 C5)")
+    _fields_consumed = {
+        'Ta', 'Tb', 'Ts', 'vmag_A', 'vmag_B',
+        'P_fA', 'P_fB', 'L_mm',
+        'dx', 'dy', 'dz', 'Lx', 'Ly', 'Lz', 'dir_A', 'dir_B',
+        'ucA', 'vcA', 'wcA', 'ucB', 'vcB', 'wcB',
     }
-    missing = _plot_consumed - set(raw)
-    assert not missing, f"raw_3d carrier lost renderer keys: {sorted(missing)}"
+    missing_f = _fields_consumed - set(result.fields)
+    assert not missing_f, (
+        f"ComputeResult.fields lost renderer keys: {sorted(missing_f)}")
+    _diag_consumed = {'_ltne_info', '_max_outer', 'mode'}
+    missing_d = _diag_consumed - set(result.diagnostics)
+    assert not missing_d, (
+        f"ComputeResult.diagnostics lost keys: {sorted(missing_d)}")
+    # Scalars the renderer + export read off the dataclass / props.
+    for attr in ('Q_W', 'dP_A_Pa', 'dP_B_Pa', 'T_out_A_K', 'T_out_B_K'):
+        assert hasattr(result, attr), f"ComputeResult missing {attr}"
+    assert 'u_A_in_mps' in result.props and 'T_in_A_K' in result.props

@@ -50,7 +50,11 @@ class _DummyWindow:
         # Stale prior 3D state we want to see reset.
         self._has_results_3d = True
         self._has_results = False
-        self._result_3d = {'Q': 100.0, 'dP': 50.0}
+        # B3 C5: window._result_3d is the ComputeResult (raw_3d dict retired);
+        # _on_orch_finished reads res.Q_W / res.dP_A_Pa / res.diagnostics.
+        from controllers.compute_pipeline import ComputeResult
+        self._result_3d = ComputeResult(Q_W=100.0, dP_A_Pa=50.0,
+                                        diagnostics={'mode': '3d'})
         self._rendered_3d_slices = False
         self._drawn_tabs = set()
         self._compute_running = True

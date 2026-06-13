@@ -581,12 +581,13 @@ def _finalize_3d_cfg(raw, fields):
     ``ComputeResult.diagnostics``. The headline scalars (``Q_total``,
     ``dP_A`` / ``dP_B``, ``T_out_A`` / ``T_out_B``) lift directly.
 
-    ⚠ Dual-representation contract: the raw dict (this function's ``raw`` arg)
-    is the LIVE result carrier (window._result_3d → ui.plot_3d_results); the
-    ComputeResult below is the C4 Pipeline view. They must not drift — the
-    mapping here is locked by ``tests/test_finalize_3d_result_sync.py`` (G1).
-    Full unification (live UI → ComputeResult) is the deliberate C4 migration,
-    not done here.
+    B3 C5 (2026-06-13): the ComputeResult is now the SINGLE result carrier.
+    ``Main_Menu.write_result`` publishes it directly as
+    ``window._result_3d`` and ``ui/plot_3d_results`` reads ``res.fields`` /
+    the dataclass attributes — the old raw-dict ``diagnostics['raw_3d']``
+    carrier is gone. The render/export contract (every key the renderer +
+    CSV/NPZ export consume) is locked by
+    ``tests/test_finalize_3d_result_sync.py``.
     """
     from controllers.compute_pipeline import ComputeResult
     compute_cfg = fields.get('compute_cfg')
@@ -701,14 +702,6 @@ def _finalize_3d_cfg(raw, fields):
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
-            # B2 2.1c TRANSITIONAL carrier: ui/plot_3d_results consumes
-            # the raw dict's keys directly (P_kPa / L_mm / dx / vmag …) —
-            # several are renamed or absent in the ComputeResult view
-            # above. Passed BY REFERENCE (zero copy) so the GUI worker's
-            # write_result can publish it as window._result_3d unchanged.
-            # Scheduled for retirement when the live UI moves onto
-            # ComputeResult (batch-3 item).
-            'raw_3d': raw,
         },
     )
 
