@@ -8,9 +8,10 @@ MVP (2026-04-20): uniform geometry only (no zoning from UI). Mirrors
 `validation/validate_shanghai_3d_real.py::_run_one_case` but with UI-sourced
 parameters instead of Shanghai Excel.
 
-Entry:
-    run_calculation_3d_inner(window)     — runs stack, stores fields on window
-    (visualisation — finalize_plots_3d(window) — now lives in
+Entry (since B2 2.1c): the cfg stage functions consumed by
+controllers.compute_pipeline.Pipeline3D (_parse_inputs_3d_cfg →
+_build_fields_3d_cfg → _run_solvers_3d_cfg → _finalize_3d_cfg).
+    (visualisation — finalize_plots_3d(window) — lives in
      ui/plot_3d_results.py so this module stays Qt/matplotlib-free.)
 
 Stored on window:
@@ -402,49 +403,13 @@ _M4_DEFAULT_EXPONENT = 0.67
 _M4_DEFAULT_MODE = 'sqrt'
 
 
-def run_calculation_3d_inner(window):
-    """Adapter (audit C3): builds a strict :class:`ComputeConfig` from
-    the window then delegates to :func:`run_calculation_3d_inner_cfg`.
-
-    Callers that already hold a :class:`ComputeConfig` (tests, future
-    C4 Pipeline) should call ``_cfg`` directly to skip the Qt read.
-    """
-    compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
-                                                force_3d=True)
-    return run_calculation_3d_inner_cfg(compute_cfg, window)
-
-
-def run_calculation_3d_inner_cfg(compute_cfg, window):
-    """Phase 1: parse inputs → build fields → solve → store.
-
-    ``window`` still required for non-le_* state (zone_grid, cancel
-    token, _compute_progress, extrap reasons, K/°C hook). C4 task to
-    extract that into a SessionState object.
-    """
-    cfg = _parse_inputs(window, compute_cfg)
-    def _prog(pct):
-        window._compute_progress = pct
-    cfg['_progress_cb'] = _prog
-    cfg['_cancel_check'] = lambda: bool(getattr(window, '_compute_cancel', False))
-    # Outer-iteration label hook — the UI ticker (_tick_btn / _tick_3d) reads
-    # window._iter_label_now to show "outer k/N" so the user sees progress
-    # through the SIMPLE↔LTNE coupling loop (3D previously published none, so
-    # the button/status showed only elapsed time).
-    def _iter_cb(outer, n_outer):
-        window._iter_label_now = f"outer {outer}/{n_outer}"
-    cfg['_iter_cb'] = _iter_cb
-    # Phase A/B/C acceleration flags — see _apply_phase_flags.
-    _apply_phase_flags(cfg)
-    result = _run_3d_stack(cfg)
-    # Tag extrap provenance — set by `_parse_inputs` when surrogate domain
-    # guard downgraded to warn. Lets downstream (UI panel, export) flag the
-    # result without re-running the range check.
-    _reasons = list(getattr(window, '_extrap_reasons', []) or [])
-    result['extrapolated'] = bool(_reasons)
-    result['extrap_reasons'] = _reasons
-    window._result_3d = result
-    window._has_extrap = bool(_reasons)
-    # Qt widgets are updated by finalize_plots_3d on the GUI thread.
+# B2 2.1c (2026-06-13): the legacy window entrypoints
+# run_calculation_3d_inner / run_calculation_3d_inner_cfg and the
+# _parse_inputs window adapter were DELETED — the GUI 3D path drives
+# controllers.compute_pipeline.Pipeline3D (cfg stage functions below);
+# the raw _run_3d_stack dict reaches the renderer via the transitional
+# ComputeResult.diagnostics['raw_3d'] carrier published by
+# Main_Menu.write_result as window._result_3d.
 
 
 # ── 3D result visualisation (PyVistaQt panel + 2D mid-z slice canvases) was
@@ -575,7 +540,7 @@ def _build_fields_3d_cfg(parsed):
 
 
 def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
-                         cancel_token=None):
+                         cancel_token=None, iter_cb=None):
     """Phase 3 (Qt-free) 3D: drive :func:`_run_3d_stack` with the
     progress + cancel hooks read off the cfg dict.
 
@@ -583,6 +548,10 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     without modifying it.  ``parsed`` and ``fields`` are the same dict
     (the build phase is a passthrough); the Pipeline ABC contract
     surfaces both so the signature matches :class:`Pipeline2D`.
+
+    ``iter_cb(outer, n_outer)`` (B2 2.1a) mirrors the legacy window
+    path's ``cfg['_iter_cb']`` wiring — drives the UI "outer k/N"
+    ticker label through the SIMPLE↔LTNE coupling loop.
     """
     cfg = dict(parsed)  # shallow copy — _run_3d_stack mutates a few keys
 
@@ -592,6 +561,8 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     if cancel_token is not None:
         cfg['_cancel_check'] = (lambda _tok=cancel_token:
                                 bool(getattr(_tok, 'cancelled', False)))
+    if iter_cb is not None:
+        cfg['_iter_cb'] = iter_cb
 
     # Phase A/B/C acceleration flags — see _apply_phase_flags.
     _apply_phase_flags(cfg)
@@ -617,6 +588,12 @@ def _finalize_3d_cfg(raw, fields):
     """
     from controllers.compute_pipeline import ComputeResult
     compute_cfg = fields.get('compute_cfg')
+
+    # B2 2.1c (2026-06-13): mirror the legacy extrap tagging onto the raw
+    # dict (the retired window path stamped these after _run_3d_stack) so
+    # the live carrier below is self-contained.
+    raw['extrapolated'] = bool(fields.get('extrap_reasons'))
+    raw['extrap_reasons'] = list(fields.get('extrap_reasons', []))
 
     # 3D solver already computed mass-weighted outlet T per side.
     # ``raw.get(key, default)`` only returns ``default`` when ``key`` is
@@ -711,25 +688,16 @@ def _finalize_3d_cfg(raw, fields):
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
+            # B2 2.1c TRANSITIONAL carrier: ui/plot_3d_results consumes
+            # the raw dict's keys directly (P_kPa / L_mm / dx / vmag …) —
+            # several are renamed or absent in the ComputeResult view
+            # above. Passed BY REFERENCE (zero copy) so the GUI worker's
+            # write_result can publish it as window._result_3d unchanged.
+            # Scheduled for retirement when the live UI moves onto
+            # ComputeResult (batch-3 item).
+            'raw_3d': raw,
         },
     )
-
-
-def _parse_inputs(window, compute_cfg=None):
-    """Phase 1 adapter: thin wrapper around :func:`_parse_inputs_3d_cfg`
-    that propagates the extrap-reasons list back onto ``window`` so the
-    UI watermark + status-bar handler keep working.
-
-    Audit C4 (L-a-2): the cfg-pure body lives in ``_parse_inputs_3d_cfg``;
-    Pipeline3D drives that directly without a window.
-    """
-    if compute_cfg is None:
-        compute_cfg = ComputeConfig.from_qt_window(window, strict=True,
-                                                    force_3d=True)
-    parsed = _parse_inputs_3d_cfg(compute_cfg)
-    if window is not None:
-        window._extrap_reasons = list(parsed.get('extrap_reasons', []))
-    return parsed
 
 
 def _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz):

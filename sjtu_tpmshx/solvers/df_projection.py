@@ -70,14 +70,8 @@ def project_cells_to_streamwise_K_cF(grid_cells: List[dict],
     """
     from df_surrogate.predict import predict_K_cF_vec
 
-    # Cell-centre s_frac: uniform or from streamwise_dx
-    if streamwise_dx is None:
-        s_fracs = (np.arange(Ny_sim) + 0.5) / Ny_sim
-    else:
-        sw = np.asarray(streamwise_dx, dtype=np.float64)
-        total = sw.sum()
-        cum = np.concatenate([[0.0], np.cumsum(sw)])
-        s_fracs = 0.5 * (cum[:-1] + cum[1:]) / total
+    # Cell-centre s_frac: uniform or from streamwise_dx (B2 2.3 helper)
+    s_fracs = _cell_centre_fracs(Ny_sim, streamwise_dx)
 
     L_row = np.empty(Ny_sim, dtype=np.float64)
     t_row = np.empty(Ny_sim, dtype=np.float64)
@@ -114,6 +108,38 @@ def project_cells_to_streamwise_K_cF(grid_cells: List[dict],
     return K_arr.astype(np.float64), cF_arr.astype(np.float64)
 
 
+def _cell_centre_fracs(n_target: int,
+                       widths: Optional[np.ndarray]) -> np.ndarray:
+    """Cell-centre fractional coordinates of a target axis (B2 2.3 —
+    single source for the block previously copy-pasted in the 2D
+    projector, the 3D streamwise axis and the 3D z axis). ``widths``
+    None → uniform; else non-uniform cell widths (wall-refined grids)."""
+    if widths is None:
+        return (np.arange(n_target) + 0.5) / n_target
+    w = np.asarray(widths, dtype=np.float64)
+    cum = np.concatenate([[0.0], np.cumsum(w)])
+    return 0.5 * (cum[:-1] + cum[1:]) / w.sum()
+
+
+def _nearest_src_idx(fracs: np.ndarray, src_n: int) -> np.ndarray:
+    """Nearest-neighbour source indices for fractional probe points."""
+    return np.clip((fracs * src_n).astype(int), 0, src_n - 1)
+
+
+def _stream_profile(fields: Tuple[np.ndarray, ...], fluid: str
+                    ) -> Tuple[Tuple[np.ndarray, ...], int]:
+    """Streamwise 1-lower-dim profiles of ``fields`` for one fluid:
+    A = mean over real y (axis 1); B = mean over real x (axis 0) then
+    flip (B flows -y). Returns (profiles, src_stream_n)."""
+    if fluid == 'A':
+        prof = tuple(f.mean(axis=1) for f in fields)
+        return prof, fields[0].shape[0]
+    if fluid == 'B':
+        prof = tuple(f.mean(axis=0)[::-1].copy() for f in fields)
+        return prof, fields[0].shape[1]
+    raise ValueError(f"fluid must be 'A' or 'B', got {fluid!r}")
+
+
 def project_fields_to_streamwise_K_cF(L_field: np.ndarray,
                                        t_field: np.ndarray,
                                        tpms_type: str,
@@ -134,35 +160,20 @@ def project_fields_to_streamwise_K_cF(L_field: np.ndarray,
     """
     from df_surrogate.predict import predict_K_cF_vec
 
-    if fluid == 'A':
-        L_1d = L_field.mean(axis=1)
-        t_1d = t_field.mean(axis=1)
-        src_n = Nx_field
-    elif fluid == 'B':
-        L_1d = L_field.mean(axis=0)
-        t_1d = t_field.mean(axis=0)
-        L_1d = L_1d[::-1].copy()   # flip for -y flow
-        t_1d = t_1d[::-1].copy()
-        src_n = Ny_field
-    else:
-        raise ValueError(f"fluid must be 'A' or 'B', got {fluid!r}")
+    (L_1d, t_1d), _src_n = _stream_profile((L_field, t_field), fluid)
+    del Nx_field, Ny_field   # kept in the signature for call-site compat
+    src_n = _src_n
 
-    # Cell-centre s_frac supports non-uniform streamwise grid
-    if streamwise_dx is None:
-        s_fracs = (np.arange(Ny_sim) + 0.5) / Ny_sim
-    else:
-        sw = np.asarray(streamwise_dx, dtype=np.float64)
-        total = sw.sum()
-        cum = np.concatenate([[0.0], np.cumsum(sw)])
-        s_fracs = 0.5 * (cum[:-1] + cum[1:]) / total
+    s_fracs = _cell_centre_fracs(Ny_sim, streamwise_dx)
+    src_idx = _nearest_src_idx(s_fracs, src_n)
 
+    # Per-cell loop kept loop-form: eps_f derives from tpms_geometry per
+    # (L, t) probe and the float evaluation order is gate-pinned.
     L_row = np.empty(Ny_sim, dtype=np.float64)
     t_row = np.empty(Ny_sim, dtype=np.float64)
     eps_f_row = np.empty(Ny_sim, dtype=np.float64)
     for j in range(Ny_sim):
-        s_frac = float(s_fracs[j])
-        src_idx = int(min(s_frac * src_n, src_n - 1))
-        L_avg = float(L_1d[src_idx]); t_avg = float(t_1d[src_idx])
+        L_avg = float(L_1d[src_idx[j]]); t_avg = float(t_1d[src_idx[j]])
         g = tpms_geometry(tpms_type, L_avg, t_avg, k_s)
         L_row[j] = L_avg; t_row[j] = t_avg; eps_f_row[j] = g['epsilon'] / 2.0
 
@@ -247,42 +258,15 @@ def project_fields_to_streamwise_K_cF_3d(L_field: np.ndarray,
     """
     from df_surrogate.predict import predict_K_cF_vec
 
-    if fluid == 'A':
-        L2 = L_field.mean(axis=1)
-        t2 = t_field.mean(axis=1)
-        e2 = eps_f_field.mean(axis=1)
-        src_stream = L_field.shape[0]
-    elif fluid == 'B':
-        L2 = L_field.mean(axis=0)
-        t2 = t_field.mean(axis=0)
-        e2 = eps_f_field.mean(axis=0)
-        L2 = L2[::-1].copy(); t2 = t2[::-1].copy(); e2 = e2[::-1].copy()
-        src_stream = L_field.shape[1]
-    else:
-        raise ValueError(f"fluid must be 'A' or 'B', got {fluid!r}")
+    (L2, t2, e2), src_stream = _stream_profile(
+        (L_field, t_field, eps_f_field), fluid)
     src_z = L_field.shape[2]
 
-    # Streamwise cell-centre fractions
-    if streamwise_dx is None:
-        s_fracs = (np.arange(Ny_sim) + 0.5) / Ny_sim
-    else:
-        sw = np.asarray(streamwise_dx, dtype=np.float64)
-        total = sw.sum()
-        cum = np.concatenate([[0.0], np.cumsum(sw)])
-        s_fracs = 0.5 * (cum[:-1] + cum[1:]) / total
-
-    # Z cell-centre fractions
-    if z_dx is None:
-        z_fracs = (np.arange(Nz_sim) + 0.5) / Nz_sim
-    else:
-        zw = np.asarray(z_dx, dtype=np.float64)
-        total_z = zw.sum()
-        cum_z = np.concatenate([[0.0], np.cumsum(zw)])
-        z_fracs = 0.5 * (cum_z[:-1] + cum_z[1:]) / total_z
-
-    # Nearest-neighbor resample on (stream, z) indices
-    s_idx = np.clip((s_fracs * src_stream).astype(int), 0, src_stream - 1)
-    z_idx = np.clip((z_fracs * src_z).astype(int), 0, src_z - 1)
+    # Nearest-neighbor resample on (stream, z) probe indices (B2 2.3:
+    # fraction + index blocks via the shared helpers)
+    s_idx = _nearest_src_idx(_cell_centre_fracs(Ny_sim, streamwise_dx),
+                             src_stream)
+    z_idx = _nearest_src_idx(_cell_centre_fracs(Nz_sim, z_dx), src_z)
 
     L_proj = L2[np.ix_(s_idx, z_idx)]
     t_proj = t2[np.ix_(s_idx, z_idx)]

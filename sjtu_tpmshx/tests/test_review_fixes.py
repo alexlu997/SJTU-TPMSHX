@@ -24,48 +24,23 @@ import pytest
 
 
 def test_domain_firewall_blocks_meter_typed_as_mm():
-    """`run_calculation_3d._parse_inputs` must raise when L > 10 m to catch
-    the classic mm-to-m unit slip (typing 182 into a metre field instead of
-    0.182). The guard sits at the parse boundary — any solver call that
-    survives means the firewall is broken.
+    """The domain unit firewall (L > 10 m → ValueError, catching the
+    classic mm-vs-m slip of typing 182 into a metre field) must guard the
+    PRODUCTION parse boundary. Since B2 2.1c that boundary is
+    ``_parse_inputs_3d_cfg`` (driven by Pipeline3D.build_fields); the
+    window adapter the original test used was deleted with the legacy
+    entrypoints.
     """
-    from runs.run_calculation_3d import _parse_inputs
+    from controllers.compute_config import ComputeConfig, GeometryConfig, SolverConfig
+    from runs.run_calculation_3d import _parse_inputs_3d_cfg
 
-    class _Ed:
-        def __init__(self, t):
-            self._t = str(t)
-
-        def text(self):
-            return self._t
-
-    class _Combo:
-        def __init__(self, idx=0):
-            self._idx = idx
-
-        def currentIndex(self):
-            return self._idx
-
-        def currentText(self):
-            return "Air"
-
-    class _Win:
-        # 182 m would be a unit slip for L (intended 0.182 m)
-        le_L = _Ed(182.0)
-        le_H = _Ed(0.042)
-        le_Lz = _Ed(0.042)
-        le_Nx = _Ed(30); le_Ny = _Ed(20); le_Nz = _Ed(5)
-        le_uA = _Ed(20.0); le_uB = _Ed(10.0)
-        le_TinA = _Ed(422.0); le_TinB = _Ed(293.15)
-        le_PinA = _Ed(192362); le_PinB = _Ed(101325)
-        le_Lcell = _Ed(7.0); le_t = _Ed(0.5); le_ks = _Ed(16.0)
-        le_TsInit = _Ed("")
-        combo_tpms = _Combo()
-
-        def _temp_to_K(self, le):
-            return float(le.text())
-
+    cc = ComputeConfig(
+        geometry=GeometryConfig(L_dom_m=182.0,    # unit slip: meant 0.182
+                                H_dom_m=0.042, Lz_m=0.042),
+        solver=SolverConfig(Nx=30, Ny=20, Nz=5),
+    )
     with pytest.raises(ValueError) as excinfo:
-        _parse_inputs(_Win())
+        _parse_inputs_3d_cfg(cc)
     assert "exceeds" in str(excinfo.value) or "unit" in str(excinfo.value).lower(), (
         f"Expected unit firewall message, got: {excinfo.value}")
     print("test_domain_firewall_blocks_meter_typed_as_mm PASS")

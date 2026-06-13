@@ -1,6 +1,7 @@
 """Main calculation pipeline for SJTU-TPMSHX (non-polygon case).
 
-Extracted from main.py (Task B.9). Entry: run_calculation_inner.
+Extracted from main.py (Task B.9). Entry (since B2 2.1b): the cfg-only
+stage functions consumed by controllers.compute_pipeline.Pipeline2D.
 Also contains finalize_plots which renders results on canvas widgets.
 
 C3 refactor (2026-05-28, L-a-1): scalar UI inputs now route through
@@ -63,30 +64,11 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
     return m_dot_cp * (T_in_avg - T_out_avg)
 
 
-def run_calculation_inner(window):
-    """Orchestrator: split into 4 phases for readability.
-
-    Backward-compatible adapter — builds a strict-validated
-    :class:`ComputeConfig` from the window and delegates to
-    :func:`run_calculation_inner_cfg`. Callers that already hold a
-    cfg (tests, future C4 Pipeline) can call ``_cfg`` directly.
-    """
-    compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
-    return run_calculation_inner_cfg(compute_cfg, window)
-
-
-def run_calculation_inner_cfg(compute_cfg, window):
-    """Orchestrator with explicit :class:`ComputeConfig` (C3, L-a-1).
-
-    ``window`` is still required for non-le_* state (zone config,
-    ``_eps_A``, ``_DIR_MAP``, extrap reasons, K/°C toggle, …); C4 will
-    extract that into a ``SessionState`` object so the cfg is the only
-    contract.
-    """
-    cfg = _parse_inputs(window, compute_cfg)
-    fields = _build_fields_cfg(cfg)
-    result = _run_solvers(window, cfg, fields)
-    _store_results(window, cfg, result)
+# B2 2.1b (2026-06-13): the legacy window entrypoints
+# run_calculation_inner / run_calculation_inner_cfg and the
+# _parse_inputs window adapter were DELETED — the GUI 2D path now drives
+# controllers.compute_pipeline.Pipeline2D (cfg-only stage functions
+# below) and copies the ComputeResult back via Main_Menu.write_result.
 
 
 def _parse_inputs_cfg(compute_cfg):
@@ -277,25 +259,6 @@ def _parse_inputs_cfg(compute_cfg):
         # P_inA / P_inB etc. without re-reading ``le_*`` widget.
         'compute_cfg': compute_cfg,
     }
-
-
-def _parse_inputs(window, compute_cfg=None):
-    """Phase 1 adapter: builds cfg-only ``_parse_inputs_cfg`` output
-    and propagates the extrap-reasons list back onto ``window`` so the
-    UI watermark + status-bar handler keep working.
-
-    Audit C4 (L-a-2): legacy window-coupled signature kept for the UI
-    entrypoint; the Pipeline ABC calls ``_parse_inputs_cfg`` directly.
-    """
-    if compute_cfg is None:
-        compute_cfg = ComputeConfig.from_qt_window(window, strict=True)
-    parsed = _parse_inputs_cfg(compute_cfg)
-    if window is not None:
-        # Legacy UI side-effect — mirror to the window so existing
-        # render code that reads ``window._extrap_reasons`` keeps
-        # working until the Phase 5 (Main_Menu.write_result) cleanup.
-        window._extrap_reasons = list(parsed.get('extrap_reasons', []))
-    return parsed
 
 
 def _build_fields_cfg(cfg, *, live_residuals=None):
@@ -668,7 +631,7 @@ class _PipelineWindowShim:
     # constructor's many attribute assignments.
     _init_done = False
 
-    def __init__(self, compute_cfg, progress_cb=None):
+    def __init__(self, compute_cfg, progress_cb=None, iter_label_cb=None):
         from solvers import tpms_calc as _tc
         from solvers.tpms_calc import geometry as _tpms_geom
         from domain.validator import compute_volumetric_htc
@@ -677,6 +640,10 @@ class _PipelineWindowShim:
         # callback only fires on the real loop updates below.
         object.__setattr__(self, '_progress_cb',
                            progress_cb or (lambda _pct: None))
+        # B2 2.1a: forward `_iter_label_now` writes ("iter k/N") to the UI
+        # ticker — the legacy window path read this attribute directly.
+        object.__setattr__(self, '_iter_label_cb',
+                           iter_label_cb or (lambda _s: None))
 
         # Re-run tpms_calc.compute per side — the same call
         # ``Main_Menu._auto_fill_fluid`` would have made in the UI
@@ -737,15 +704,22 @@ class _PipelineWindowShim:
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
-        if (name == '_compute_progress' and
-                getattr(self, '_init_done', False)):
+        if not getattr(self, '_init_done', False):
+            return
+        if name == '_compute_progress':
             try:
                 self._progress_cb(int(value))
             except Exception:
                 pass
+        elif name == '_iter_label_now':
+            try:
+                self._iter_label_cb(str(value))
+            except Exception:
+                pass
 
 
-def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None):
+def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None,
+                     ui_hooks=None):
     """Phase 3 (Qt-free): drive ``_run_solvers`` via the
     :class:`_PipelineWindowShim` adapter.
 
@@ -759,9 +733,14 @@ def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None):
     poll for cancellation inside its inner loops. The Pipeline ABC
     checks the token between phases, so worst case the user waits one
     full solver pass.  C5+ may push cancel polling inward.
+
+    ``ui_hooks`` (B2 2.1a): optional dict; ``'iter_label_cb'`` receives
+    the shim-captured ``_iter_label_now`` strings ("iter k/N").
     """
     compute_cfg = cfg['compute_cfg']
-    shim = _PipelineWindowShim(compute_cfg, progress_cb=progress_cb)
+    _hooks = ui_hooks or {}
+    shim = _PipelineWindowShim(compute_cfg, progress_cb=progress_cb,
+                               iter_label_cb=_hooks.get('iter_label_cb'))
     result = _run_solvers(shim, cfg, fields)
     # Forward shim-captured state into the result dict so Pipeline2D's
     # finalize step can promote it into ComputeResult slots.
@@ -1741,41 +1720,11 @@ def _finalize_cfg(raw, fields):
     )
 
 
-def _store_results(window, cfg, result):
-    """Phase 4 adapter: copy a (legacy-shaped or
-    :class:`ComputeResult`) result onto the Qt window so
-    ``finalize_plots`` can render. Audit C4 keeps the legacy attribute
-    names so the rendering / signal-router code does not have to
-    change in this PR; C5 will hoist this into
-    ``Main_Menu.write_result``.
-    """
-    N_x = cfg['N_x']; N_y = cfg['N_y']
-    L = cfg['L']; H = cfg['H']
-    dir_A = cfg['dir_A']; dir_B = cfg['dir_B']
-    zone_config = cfg['zone_config']; za = cfg['za']
-
-    # Legacy raw-dict path (run_calculation_inner_cfg → _run_solvers).
-    window._compute_results = {
-        'Ta': result['Ta'], 'Tb': result['Tb'], 'Ts': result['Ts'],
-        'ucA': result['ucA'], 'vcA': result['vcA'],
-        'ucB': result['ucB'], 'vcB': result['vcB'],
-        'P_fA': result['P_fA'], 'P_fB': result['P_fB'],
-        'dP_A': result['dP_A'], 'dP_B': result['dP_B'],
-        'Q_total': result['Q_total'],
-        'N_x': N_x, 'N_y': N_y, 'L': L, 'H': H,
-        'dir_A': dir_A, 'dir_B': dir_B,
-        'zone_config': zone_config, 'za': za,
-        'dx_arr': result['energy_dx'], 'dy_arr': result['energy_dy'],
-        'residuals_A': result.get('residuals_A'),
-        'residuals_B': result.get('residuals_B'),
-        # Conservation diagnostics (per-fluid enthalpy change, net, relative)
-        'Q_A': result.get('Q_A', float('nan')),
-        'Q_B': result.get('Q_B', float('nan')),
-        'Q_net': result.get('Q_net', float('nan')),
-        'energy_imbalance_rel': result.get('energy_imbalance_rel', float('nan')),
-    }
-    window._compute_warnings = result['warnings_list']
-    return  # rendering happens in finalize_plots on main thread
+# B2 2.1b: the _store_results(window, cfg, result) adapter was DELETED —
+# Main_Menu.write_result (ui/mixins/run_controller.py) is the single
+# ComputeResult→window copy now. Note: the old dict's residuals_A/B
+# snapshots are not forwarded (they only fed the removed 2D convergence
+# plot; verified no UI consumer).
 
 
 def plot_temperature_3panel(window, r, _t):

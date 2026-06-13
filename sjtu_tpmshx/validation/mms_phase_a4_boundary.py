@@ -51,6 +51,7 @@ warnings.filterwarnings('ignore')
 from validation.mms_3d_air_air import run_mms, L_DOM
 from validation._provenance import write_csv_with_provenance
 from validation._order_fit import fit_order_loglog
+from validation._mms_driver import run_grid_sequence
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a4_boundary.py'
 
@@ -110,15 +111,8 @@ def main():
     print(f"  Case: MMS-{args.case}  Grids: {grids}")
     print(f"  Regions: inlet_A, outlet_A, inlet_B, outlet_B, lat_z, interior\n")
 
-    rows = []
-    for g in grids:
-        t0 = time.time()
-        r = run_mms(args.case, Nx=g, Ny=g, Nz=g,
-                    max_outer=args.max_outer, inner=args.inner,
-                    alpha_f=args.alpha_f, verbose=False)
-        dt = time.time() - t0
+    def _row(g, r, dt):
         masks = _region_masks(g, g, g)
-
         result = dict(N=g, h=L_DOM/g, elapsed=dt,
                       outer_iters=r['outer_iters'], last_chg=r['last_chg'])
         for region, mask in masks.items():
@@ -129,14 +123,26 @@ def main():
                 l2, linf = _l2_linf_masked(num, exact, mask)
                 result[f'L2_{phase}_{region}']   = l2
                 result[f'Linf_{phase}_{region}'] = linf
-        rows.append(result)
+        return result
+
+    _REGIONS = ['inlet_A', 'outlet_A', 'inlet_B', 'outlet_B',
+                'lat_z', 'interior']   # == _region_masks key order
+
+    def _progress(g, r, result, dt):
         print(f"  N={g:>3d}  [{dt:.0f}s]")
-        for region in masks.keys():
+        for region in _REGIONS:
             print(f"    {region:<10}  "
                   f"L2_A={result[f'L2_A_{region}']:.3e}  "
                   f"L2_B={result[f'L2_B_{region}']:.3e}  "
                   f"L2_s={result[f'L2_s_{region}']:.3e}  "
                   f"Linf_A={result[f'Linf_A_{region}']:.3e}")
+
+    rows = run_grid_sequence(
+        grids,
+        lambda g: run_mms(args.case, Nx=g, Ny=g, Nz=g,
+                          max_outer=args.max_outer, inner=args.inner,
+                          alpha_f=args.alpha_f, verbose=False),
+        _row, on_grid=_progress)
 
     df = pd.DataFrame(rows)
     out_csv = ROOT / args.out_csv

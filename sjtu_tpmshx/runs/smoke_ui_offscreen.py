@@ -10,13 +10,13 @@ Boots MainWindow with QT_QPA_PLATFORM=offscreen, simulates user flow:
 from __future__ import annotations
 import os, sys, traceback
 
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QTabBar, QComboBox
+from PySide6.QtWidgets import QPushButton, QToolButton, QTabBar, QComboBox
 from PySide6.QtCore import Qt, QTimer
 
-app = QApplication.instance() or QApplication(sys.argv)
+app = _smoke_boot.get_app()
 
 # Capture any unhandled exception
 caught = []

@@ -428,9 +428,86 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     }
 
 
+def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
+                           max_outer=None):
+    """B2 2.1d — production-path runner: ComputeConfig → Pipeline3D
+    (the exact stack the GUI drives: _run_3d_stack with a REAL
+    incompressible water-B SIMPLE solve).
+
+    Deliberately a DIFFERENT physics path from :func:`_run_one_case`
+    (kernel-direct, frozen-B ``Tb_prescribed`` linear profile) — the
+    gate runner stays kernel-direct; this runner exists so the
+    production path is scored against the same truth table
+    (``--runner pipeline``). Do not silently swap the gate.
+    """
+    spec = SPEC if spec is None else spec
+    from controllers.compute_config import (ComputeConfig, FluidConfig,
+                                            GeometryConfig, SolverConfig,
+                                            PartialBCConfig, ExtrapPolicy)
+    from controllers.compute_pipeline import Pipeline3D
+
+    case = ci + 1
+    m_air = float(df.iloc[ci, 5])
+    T_Ain_K = float(df.iloc[ci, 28]) + 273.15
+    P_Ain = P_atm + float(df.iloc[ci, 30])
+    m_water = float(df.iloc[ci, 7])
+    T_Bin_K = float(df.iloc[ci, 24]) + 273.15
+    dP_A_exp = float(df.iloc[ci, 30]) - float(df.iloc[ci, 31])
+    Q_exp = float(df.iloc[ci, 33])
+
+    rho_A = air_density(T_Ain_K, P_Ain)
+    u_A = m_air / (rho_A * spec.a_flow_m2)
+    rho_B = water_rho(T_Bin_K)
+    u_B = m_water / (rho_B * spec.a_flow_m2)
+
+    L, H, Lz = spec.L_dom_m, spec.H_dom_m, spec.Lz_m
+    cc = ComputeConfig(
+        fluid_A=FluidConfig(type='air', u_mps=u_A, T_in_K=T_Ain_K,
+                            P_in_Pa=P_Ain),
+        fluid_B=FluidConfig(type='water', u_mps=u_B, T_in_K=T_Bin_K,
+                            P_in_Pa=101325.0),
+        geometry=GeometryConfig(tpms=spec.tpms, L_cell_mm=spec.L_cell_mm,
+                                t_wall_mm=spec.t_wall_mm,
+                                k_s_W_mK=spec.k_s_W_mK,
+                                L_dom_m=L, H_dom_m=H, Lz_m=Lz),
+        solver=SolverConfig(Nx=Nx_u, Ny=Ny_u, Nz=Nz_u),
+        # full-face crossflow: A +x, B -y (production Shanghai topology)
+        bc_A=PartialBCConfig(dir=0, in_ctr=H / 2, in_w=H,
+                             out_ctr=H / 2, out_w=H,
+                             in_z_ctr=Lz / 2, in_z_w=Lz,
+                             out_z_ctr=Lz / 2, out_z_w=Lz),
+        bc_B=PartialBCConfig(dir=3, in_ctr=L / 2, in_w=L,
+                             out_ctr=L / 2, out_w=L,
+                             in_z_ctr=Lz / 2, in_z_w=Lz,
+                             out_z_ctr=Lz / 2, out_z_w=Lz),
+        extrap=ExtrapPolicy(allow=True),
+    )
+    result = Pipeline3D(cc).run()
+    dP_sim = result.dP_A_Pa
+    Q_sim = result.Q_W
+    err_dP = ((dP_sim - dP_A_exp) / dP_A_exp * 100
+              if dP_A_exp != 0 else float('nan'))
+    err_Q = (Q_sim - Q_exp) / Q_exp * 100 if Q_exp != 0 else float('nan')
+    return {
+        'case': case, 'u_air': u_A, 'u_water': u_B,
+        'dP_exp': dP_A_exp, 'dP_sim': dP_sim, 'err_dP%': err_dP,
+        'Q_exp': Q_exp, 'Q_sim': Q_sim, 'err_Q%': err_Q,
+        'Q_sim_am': float('nan'), 'Q_mw_am_rel%': float('nan'),
+        'outer_iters': -1,
+        'Qs_A': float('nan'), 'Qs_B': float('nan'),
+        'Q_net_rel': float('nan'), 'mass_rel_A': float('nan'),
+        'pressure_clip_hits': 0,
+        'pressure_state_valid': 1,
+    }
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
+    ap.add_argument('--runner', choices=['kernel', 'pipeline'],
+                    default='kernel',
+                    help="kernel = frozen-B gate runner (headline 9.82/3.20);"
+                         " pipeline = production Pipeline3D dual-solve path")
     ap.add_argument('--wall-refine', action='store_true', help='Enable 6-wall refinement')
     ap.add_argument('--nx', type=int, default=20)
     ap.add_argument('--ny', type=int, default=10)
@@ -455,14 +532,21 @@ def main():
           f"(wall_refine={args.wall_refine})")
     print(f"Outer coupling: max_outer={args.max_outer}, alpha_T={ALPHA_T}, tol={OUTER_TOL}K\n")
 
-    print(f"Inlet profile: kind={args.profile}, eta={args.eta:.2f}\n")
+    print(f"Inlet profile: kind={args.profile}, eta={args.eta:.2f}")
+    print(f"Runner: {args.runner}"
+          + ("  (production Pipeline3D dual-solve — NOT the gate runner)"
+             if args.runner == 'pipeline' else "") + "\n")
     results = []
     for ci in range(args.cases):
-        r = _run_one_case(ci, df, Nx_u, Ny_u, Nz_u,
-                          wall_refine=args.wall_refine,
-                          profile_kind=args.profile,
-                          profile_eta=args.eta,
-                          max_outer=args.max_outer)
+        if args.runner == 'pipeline':
+            r = _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u,
+                                       max_outer=args.max_outer)
+        else:
+            r = _run_one_case(ci, df, Nx_u, Ny_u, Nz_u,
+                              wall_refine=args.wall_refine,
+                              profile_kind=args.profile,
+                              profile_eta=args.eta,
+                              max_outer=args.max_outer)
         results.append(r)
         print(f"Case {r['case']:2d}: dP {r['dP_exp']:.0f}/{r['dP_sim']:.0f} "
               f"({r['err_dP%']:+.1f}%)  Q {r['Q_exp']:.0f}/{r['Q_sim']:.0f} "
@@ -513,8 +597,10 @@ def main():
     print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.69%)")
     print("=" * 70)
 
-    # Save CSV
-    csv_name = f"shanghai_3d_baseline{args.suffix}.csv"
+    # Save CSV (pipeline runner auto-suffixes — must never overwrite the
+    # kernel gate baseline CSV)
+    _suffix = args.suffix + ('_pipeline' if args.runner == 'pipeline' else '')
+    csv_name = f"shanghai_3d_baseline{_suffix}.csv"
     out_path = Path(__file__).parent / csv_name
     pd.DataFrame(results).to_csv(out_path, index=False, encoding='utf-8-sig')
     print(f"\nSaved: {out_path}")

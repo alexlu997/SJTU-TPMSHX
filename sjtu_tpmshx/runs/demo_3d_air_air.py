@@ -20,31 +20,14 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from solvers.tpms_calc import geometry as tpms_geometry
 from runs.run_calculation_3d import _run_3d_stack
+from runs._case_template import build_cfg as _template_cfg
 
 
 def build_cfg():
-    L, H, Lz = 0.182, 0.042, 0.042
-    Nx, Ny, Nz = 30, 20, 5
-    Lcell, t_wall, k_s = 7.0, 0.5, 16.0
-    tpms_type = 'Gyroid'
-    g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
-    return dict(
-        L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
-        u_A=20.0, u_B=10.0,
-        T_inA=422.0, T_inB=293.15,
-        P_inA=192362.0, P_inB=101325.0,
-        T_s_init=None,
-        Lcell=Lcell, t_wall=t_wall, k_s=k_s,
-        tpms_type=tpms_type,
-        eps=g['epsilon'], D_h=g['D_h'],
-        fluid_A_cfg=dict(dir=0, in_ctr=H/2, in_w=H, out_ctr=H/2, out_w=H),
-        fluid_B_cfg=dict(dir=3, in_ctr=L/2, in_w=L, out_ctr=L/2, out_w=L),
-        wall_refine_3d=False,
-        zone_grid_cells=None,
-        fluid_type_A='air', fluid_type_B='air',
-    )
+    # B2 2.6: canonical template; this demo IS the template defaults
+    # except its 30x20x5 grid.
+    return _template_cfg(Nx=30, Ny=20, Nz=5)
 
 
 def print_metrics(res, cfg):

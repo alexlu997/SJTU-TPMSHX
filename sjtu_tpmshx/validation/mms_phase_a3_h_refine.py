@@ -39,6 +39,7 @@ warnings.filterwarnings('ignore')
 from validation.mms_3d_air_air import run_mms, L_DOM
 from validation._provenance import write_csv_with_provenance
 from validation._order_fit import fit_order_loglog
+from validation._mms_driver import run_grid_sequence
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a3_h_refine.py'
 
@@ -75,23 +76,24 @@ def main():
     t_start = time.time()
     for c in cases:
         print(f"--- MMS-{c} ---")
-        for g in grids:
-            t0 = time.time()
-            r = run_mms(c, Nx=g, Ny=g, Nz=g,
-                        max_outer=args.max_outer, inner=args.inner,
-                        alpha_f=args.alpha_f, alpha_s=args.alpha_s,
-                        verbose=False)
-            dt = time.time() - t0
-            print(f"  N={g:>3d}  L2_A={r['L2_A']:.4%}  L2_B={r['L2_B']:.4%}  "
-                  f"L2_s={r['L2_s']:.4%}  Linf_A={r['Linf_A']:.3f}K  "
-                  f"[{dt:.0f}s, conv={r['converged']}]")
-            rows.append(dict(
-                case=c, N=g, h=L_DOM / g,
+        rows += run_grid_sequence(
+            grids,
+            lambda g, _c=c: run_mms(_c, Nx=g, Ny=g, Nz=g,
+                                    max_outer=args.max_outer,
+                                    inner=args.inner,
+                                    alpha_f=args.alpha_f,
+                                    alpha_s=args.alpha_s,
+                                    verbose=False),
+            lambda g, r, dt, _c=c: dict(
+                case=_c, N=g, h=L_DOM / g,
                 L2_A=r['L2_A'], L2_B=r['L2_B'], L2_s=r['L2_s'],
                 Linf_A=r['Linf_A'], Linf_B=r['Linf_B'], Linf_s=r['Linf_s'],
                 outer_iters=r['outer_iters'], last_chg=r['last_chg'],
-                elapsed=dt,
-            ))
+                elapsed=dt),
+            on_grid=lambda g, r, row, dt: print(
+                f"  N={g:>3d}  L2_A={r['L2_A']:.4%}  L2_B={r['L2_B']:.4%}  "
+                f"L2_s={r['L2_s']:.4%}  Linf_A={r['Linf_A']:.3f}K  "
+                f"[{dt:.0f}s, conv={r['converged']}]"))
         print()
 
     df = pd.DataFrame(rows)
