@@ -76,3 +76,155 @@ class DialogsMixin:
         btn_row.addWidget(btn_copy); btn_row.addWidget(btn_close)
         v.addLayout(btn_row)
         dlg.exec()
+
+    # Note: _show_about (version-coupled to main.__version__/_git_commit_hash)
+    # and _maybe_show_onboarding / _show_quick_tour (locate `.first_run_done`
+    # via __file__, which must stay anchored to main.py's directory) remain in
+    # main.py by design; _show_help_menu below self-dispatches to them via the
+    # MRO. The methods here are the dialogs with no main.py-module coupling.
+
+    _SHORTCUT_ROWS = (
+        ("Command palette",        "Ctrl+K"),
+        ("Overview dashboard",     "Ctrl+D"),
+        ("Coordinate inspector",   "Ctrl+I"),
+        ("Filter parameters",      "Ctrl+F"),
+        ("Launch NSGA-II",         "Ctrl+Enter"),
+        ("Cycle tabs",             "Ctrl+↑ / Ctrl+↓"),
+        ("Quick fluid (A / B)",    "Alt+1/2/3  ·  Alt+Shift+1/2/3"),
+        ("Cycle density",          "[  /  ]"),
+        ("Scrub recent runs",      "Alt+↑ / Alt+↓"),
+        ("Compute",                "Ctrl+R"),
+        ("Reset parameters",       "Ctrl+Shift+R"),
+        ("Undo field edit",        "Ctrl+Z"),
+        ("Redo field edit",        "Ctrl+Y"),
+        ("Tab — Layout",           "Ctrl+1"),
+        ("Tab — Temperature",      "Ctrl+2"),
+        ("Tab — Pressure",         "Ctrl+3"),
+        ("Tab — Velocity",         "Ctrl+4"),
+        ("Tab — 3D View",          "Ctrl+5"),
+        ("3D immersive toggle",    "F  (in 3D tab)"),
+        ("Keyboard cheat sheet",   "Ctrl+?"),
+        ("Compute button",         "Alt+C"),
+        ("Reset button",           "Alt+R"),
+        ("Export results",         "Alt+E"),
+        ("Preview layout",         "Alt+P"),
+        ("Optimize (NSGA-II)",     "Alt+O"),
+    )
+
+    def _show_shortcuts(self):
+        """Popup dialog listing all keyboard shortcuts as a two-column table."""
+        rows_html = "".join(
+            f"<tr><td style='padding:4px 16px 4px 0;'>{label}</td>"
+            f"<td style='padding:4px 0; font-family:monospace;'><b>{key}</b></td></tr>"
+            for label, key in self._SHORTCUT_ROWS)
+        html = (
+            "<h3 style='margin:0 0 8px 0;'>Keyboard shortcuts</h3>"
+            "<table style='border-collapse:collapse;'>"
+            f"{rows_html}"
+            "</table>"
+            "<p style='margin-top:12px; color:#888;'>Alt-mnemonics activate "
+            "the underlined letter on any button when Alt is held.</p>")
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Keyboard Shortcuts")
+        msg.setIcon(QMessageBox.Icon.NoIcon)
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(html)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
+
+    def _show_help_menu(self, anchor_btn=None):
+        """Pop a menu at the Help button with About / Shortcuts / Quick tour."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act_cmd = menu.addAction("&Command palette…\tCtrl+K")
+        act_cmd.triggered.connect(self._open_command_palette)
+        menu.addSeparator()
+        act_about = menu.addAction("&About SJTU-TPMSHX…")
+        act_about.triggered.connect(self._show_about)
+        act_kb = menu.addAction("&Keyboard shortcuts…\tCtrl+?")
+        act_kb.triggered.connect(self._show_shortcuts)
+        menu.addSeparator()
+        act_tour = menu.addAction("Quick &tour")
+        act_tour.triggered.connect(self._show_quick_tour)
+        if anchor_btn is not None:
+            from PySide6.QtCore import QPoint
+            pos = anchor_btn.mapToGlobal(QPoint(0, anchor_btn.height()))
+            menu.exec(pos)
+        else:
+            menu.exec()
+
+    def _open_command_palette(self):
+        """Open the Ctrl+K command palette menu-driven (Help menu entry)."""
+        pal = getattr(self, '_command_palette', None)
+        if pal is None:
+            from ui.command_palette import CommandPalette
+            pal = CommandPalette(self)
+            self._command_palette = pal
+        pal.open_palette()
+
+    def _install_dialog_theme(self):
+        """Apply a narrowly-scoped app-level stylesheet so transient
+        QMessageBox / QInputDialog popups follow the active theme. The
+        selectors only match those dialog classes, so the explicitly-styled
+        main UI is unaffected. Rebuilt on the theme-switch restart (__init__).
+        """
+        from PySide6.QtWidgets import QApplication
+        from ui.theme import get_theme
+        app = QApplication.instance()
+        if app is None:
+            return
+        t = get_theme()
+        app.setStyleSheet(
+            f"QMessageBox{{background:{t['bg']};}}"
+            f"QMessageBox QLabel{{color:{t['fg']}; background:transparent;}}"
+            f"QInputDialog{{background:{t['bg']};}}"
+            f"QInputDialog QLabel{{color:{t['fg']}; background:transparent;}}"
+            f"QInputDialog QLineEdit{{background:{t['inp_bg']}; color:{t['inp_fg']};"
+            f" border:1px solid {t['inp_border']}; border-radius:6px; padding:4px 8px;}}"
+            f"QInputDialog QComboBox, QInputDialog QSpinBox{{background:{t['inp_bg']};"
+            f" color:{t['inp_fg']}; border:1px solid {t['inp_border']};"
+            f" border-radius:6px; padding:3px 6px;}}"
+            f"QMessageBox QPushButton, QInputDialog QPushButton{{"
+            f" background:transparent; color:{t['btn_sec_fg']};"
+            f" border:1px solid {t['btn_sec_border']}; border-radius:6px;"
+            f" padding:5px 16px; font-weight:600; min-width:72px;}}"
+            f"QMessageBox QPushButton:hover, QInputDialog QPushButton:hover{{"
+            f" background:{t['btn_sec_hover_bg']};}}"
+        )
+
+    def _show_status_log(self):
+        """Pop up the last 50 status-bar messages in a read-only dialog."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QPlainTextEdit,
+                                        QDialogButtonBox)
+        from ui.theme import get_theme
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Status Log")
+        dlg.resize(640, 380)
+        # Theme the whole dialog (not just the text area) so the chrome around
+        # the editor matches it in both palettes — otherwise the dialog
+        # background falls back to the parent palette (white editor + dark
+        # surround on the light theme).
+        _t = get_theme()
+        dlg.setStyleSheet(
+            f"QDialog{{background:{_t['bg']};}}"
+            f"QPlainTextEdit{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+            f" border:1px solid {_t['card_border']}; border-radius:6px;"
+            f" font-family:'Fira Code','Consolas',monospace; font-size:9pt;}}"
+            f"QPushButton{{background:transparent; color:{_t['btn_sec_fg']};"
+            f" border:1px solid {_t['btn_sec_border']}; border-radius:6px;"
+            f" padding:5px 16px; font-weight:600;}}"
+            f"QPushButton:hover{{background:{_t['btn_sec_hover_bg']};}}")
+        lay = QVBoxLayout(dlg)
+        txt = QPlainTextEdit()
+        txt.setReadOnly(True)
+        lines = list(getattr(self, '_log_history', []))
+        txt.setPlainText("\n".join(lines) if lines
+                         else "(no status messages yet)")
+        lay.addWidget(txt)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        btns.accepted.connect(dlg.accept)
+        btns.button(QDialogButtonBox.StandardButton.Close).clicked.connect(
+            dlg.accept)
+        lay.addWidget(btns)
+        dlg.exec()
