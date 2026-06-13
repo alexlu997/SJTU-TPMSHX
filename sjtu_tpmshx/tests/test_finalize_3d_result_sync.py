@@ -90,6 +90,17 @@ def test_finalize_3d_result_matches_raw():
         if rv is not None and np.isfinite(float(rv)):
             assert result.residuals[key] == pytest.approx(float(rv)), key
 
+    # ── B3 C4: ComputeResult now carries the full render/export contract
+    # additively (raw_3d still present until C5). New slots must equal
+    # their raw counterparts so C5 can drop raw_3d without losing keys.
+    np.testing.assert_array_equal(
+        np.asarray(result.fields['L_mm']), np.asarray(raw['L_mm']),
+        err_msg="fields['L_mm'] != raw['L_mm']")
+    assert result.props['u_A_in_mps'] == pytest.approx(raw['u_A'])
+    assert result.props['T_in_A_K'] == pytest.approx(raw['T_in'])
+    assert result.diagnostics['_max_outer'] == raw['_max_outer']
+    assert result.diagnostics['mode'] == '3d'
+
     # ── B2 2.1c transitional carrier: diagnostics['raw_3d'] must be the
     # raw dict BY REFERENCE (zero copy — write_result publishes it as
     # window._result_3d) and must contain every key the 3D renderer +

@@ -1719,6 +1719,8 @@ def _finalize_cfg(raw, fields):
         warnings=list(raw.get('warnings_list', [])),
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
+            # Dimension marker for write_result dispatch (C4).
+            'mode': '2d',
             'Q_enthalpy_A': raw.get('Q_enthalpy_A'),
             'Q_enthalpy_B': raw.get('Q_enthalpy_B'),
             'Q_solid_richardson': raw.get('Q_solid_richardson'),

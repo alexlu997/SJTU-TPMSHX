@@ -647,6 +647,9 @@ def _finalize_3d_cfg(raw, fields):
             'Lx': raw.get('Lx'),
             'Ly': raw.get('Ly'),
             'Lz': raw.get('Lz'),
+            # per-cell unit-cell length field (mm) — renderer label axis;
+            # carried so the live UI can drop the raw_3d dict (C5).
+            'L_mm': raw.get('L_mm'),
             'dir_A': raw.get('dir_A'),
             'dir_B': raw.get('dir_B'),
             'vmag_A': raw.get('vmag'),
@@ -666,6 +669,10 @@ def _finalize_3d_cfg(raw, fields):
             'A_0_m2': A_0_m2,
             'rho_cp_A': raw.get('_audit_rho_cp_fA'),
             'rho_cp_B': raw.get('_audit_rho_cp_fB'),
+            # CSV-export scalars (main._export_results) — carried so the
+            # export can read ComputeResult instead of the raw_3d dict (C5).
+            'u_A_in_mps': raw.get('u_A'),
+            'T_in_A_K': raw.get('T_in'),
         },
         residuals={
             'Q_enthalpy_A': _safe_float(raw.get('Q_enthalpy_A')),
@@ -687,6 +694,10 @@ def _finalize_3d_cfg(raw, fields):
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
+            '_max_outer': raw.get('_max_outer'),
+            # Dimension marker for write_result dispatch (C4); '3d' here,
+            # '2d' in stages_2d._finalize_cfg.
+            'mode': '3d',
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
