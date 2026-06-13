@@ -20,7 +20,7 @@ direct ``le_*`` widget reads; the window is still required for non-le state
 """
 import numpy as np
 from controllers.compute_config import ComputeConfig, bc_to_dict
-from solvers.coupling_skeleton import OuterConvergence
+from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
@@ -1277,7 +1277,15 @@ def _run_solvers(window, cfg, fields):
     rho_A_field = np.full((N_x, N_y), _pA['rho'](T_inA, P_inA_val))
     rho_B_field = np.full((N_x, N_y), _pB['rho'](T_inB, P_inB_val))
 
-    for _coup_it in range(_MAX_COUPLING):
+    # Outer SIMPLE↔LTNE loop, driven by the shared run_outer_coupling skeleton
+    # (2D = SIMPLE-first: `step` solves SIMPLE A/B + the coupled energy + the
+    # dual ΔT/Δρ check; `post` under-relaxes the rho/rho·cp fields for the next
+    # iter via the carry). Body below is the verbatim former loop body; the
+    # `nonlocal`s are the vars that persist across iters or are read afterwards.
+    def _step_2d(_coup_it):
+        nonlocal ucA, vcA, ucB, vcB, simpA, simpB, Ta, Tb, Ts, e_info
+        nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
+        nonlocal drho_A, drho_B, dT_A, dT_B
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
         # Live iteration label for the UI button ticker (replaces the
         # dropped ETA text). 2026-05-14.
@@ -1471,15 +1479,22 @@ def _run_solvers(window, cfg, fields):
               f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
               f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
-        if _converged:
-            coupling_converged = True
-            break
+        # Carry the under-relaxation inputs to `post` (avoids 4 more nonlocals).
+        return _converged, (rho_A_field_new, rho_B_field_new,
+                            rho_cp_A_new, rho_cp_B_new)
 
+    def _post_2d(_coup_it, _carry):
+        nonlocal rho_A_field, rho_B_field, rho_cp_A, rho_cp_B
+        (rho_A_field_new, rho_B_field_new,
+         rho_cp_A_new, rho_cp_B_new) = _carry
         # Under-relax (field-wise)
         rho_A_field = _ALPHA_COUP * rho_A_field_new + (1 - _ALPHA_COUP) * rho_A_field
         rho_B_field = _ALPHA_COUP * rho_B_field_new + (1 - _ALPHA_COUP) * rho_B_field
         rho_cp_A = _ALPHA_COUP * rho_cp_A_new + (1 - _ALPHA_COUP) * rho_cp_A
         rho_cp_B = _ALPHA_COUP * rho_cp_B_new + (1 - _ALPHA_COUP) * rho_cp_B
+
+    _last_coup, coupling_converged = run_outer_coupling(
+        max_iter=_MAX_COUPLING, step=_step_2d, post=_post_2d)
 
     if not coupling_converged:
         warnings_list.append(

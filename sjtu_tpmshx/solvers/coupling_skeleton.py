@@ -4,35 +4,34 @@ The 2D (`pipelines.stages_2d._run_solvers`) and 3D
 (`pipelines.stages_3d._run_3d_stack`) drivers each run an outer Picard
 loop that couples the momentum solve (SIMPLE) to the energy solve (LTNE)
 by feeding temperature-dependent properties (ρ, μ, cp, K) back into
-SIMPLE until the temperature field stops moving. The two loop *bodies*
-are deliberately NOT shared — they differ in solve order (2D SIMPLE→LTNE;
-3D LTNE→SIMPLE), in the physics one side carries (χ_B closure,
-conservative staggered-face LTNE, frozen-B, per-outer P_ref recompute),
-and in Q extraction (2D Richardson vs 3D enthalpy). See the batch-4 design
-note for why a full body-step driver was assessed and declined (the
-shareable substance is exactly the convergence bookkeeping below; progress
-plumbing and Q extraction are dim-specific, not deferrable shared code).
+SIMPLE until the temperature field stops moving. This module owns the two
+pieces of that loop both drivers share:
 
-What IS genuinely shared — and all this module owns — is the convergence
-bookkeeping both bodies duplicated:
+  * :class:`OuterConvergence` — the warm-start ``prev = field.copy()``
+    tracking + the ``max|field − prev|`` delta and AND-gate break decision
+    (2D: dual ΔT_A/ΔT_B + mass-flux-weighted Δρ; 3D: single ΔT).
+  * :func:`run_outer_coupling` — the loop skeleton itself: iterate, run a
+    ``step``, break on convergence, otherwise run the between-iteration
+    ``post`` update.
 
-  * the warm-start ``prev = field.copy()`` tracking,
-  * the ``max|field − prev|`` convergence delta + the AND-gate break
-    decision (2D: dual ΔT_A/ΔT_B + mass-flux-weighted Δρ; 3D: single ΔT).
-
-:class:`OuterConvergence` is a stateful tracker each driver instantiates
-once and calls at its own point in its own loop body, so behaviour stays
-bit-identical to the prior inline code (same arithmetic, same copy
-timing — verified by the 3D golden hash and the 2D golden gate). It is the
-one clean shared seam; the per-iteration progress/label writes stay inline
-in each driver because their fills differ per dimension (2D's _MAX_COUPLING
-denominator + a 0.3 mid-iter sub-fill on a window attribute vs 3D's
-_MAX_OUTER-const progress denominator but per-run _max_outer iter ticks via
-callbacks) — sharing them would contort the helper for no real dedup.
+The loop *bodies* (the ``step``/``post`` callables each driver passes in)
+stay dimension-specific — they differ in solve order (2D SIMPLE→LTNE;
+3D LTNE→SIMPLE), in the physics one side carries (χ_B closure, conservative
+staggered-face LTNE, frozen-B, per-outer P_ref recompute), in their
+progress plumbing (2D's _MAX_COUPLING denominator + a 0.3 mid-iter sub-fill
+on a window attribute vs 3D's _MAX_OUTER-const denominator + per-run iter
+ticks via callbacks), and in Q extraction (2D Richardson vs 3D enthalpy).
+The driver owns only the control flow; the ``step``/``post`` closures keep
+each body's arithmetic and copy timing verbatim, so behaviour stays
+bit-identical to the prior inline loops — verified end-to-end by the 3D
+golden hash and the 2D golden gate. ``OuterConvergence`` is the predicate
+seam those closures call; ``run_outer_coupling`` is the loop seam that, when
+a third consumer (e.g. a quasi-2.5D mode) appears, gives the unification a
+ready insertion point.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
@@ -114,3 +113,65 @@ class OuterConvergence:
         for k in self.track:
             self._prev[k] = fields[k].copy()
         return converged, deltas
+
+
+def run_outer_coupling(
+    *,
+    max_iter: int,
+    step: Callable[[int], Tuple[bool, Any]],
+    post: Optional[Callable[[int, Any], None]] = None,
+) -> Tuple[int, bool]:
+    """Drive the outer SIMPLE↔LTNE Picard loop shared by the 2D and 3D stacks.
+
+    Both drivers run the identical control flow — solve the coupled phases,
+    test convergence, and (only if not yet converged) update the carried
+    state for the next iteration::
+
+        for it in range(max_iter):
+            converged, carry = step(it)
+            if converged:
+                break
+            post(it, carry)
+
+    The ``step``/``post`` bodies are dimension-specific (2D SIMPLE→LTNE with
+    a dual ΔT + Δρ gate; 3D LTNE→SIMPLE with a single ΔT gate) and live in
+    their own modules — this owns only the loop skeleton and the
+    converged / last-iteration bookkeeping each caller needs afterwards.
+
+    Note the legacy ``for`` loops ran ``post`` on EVERY non-converged
+    iteration, including the final one when the cap is hit without
+    converging; this driver preserves that (``post`` runs whenever ``step``
+    did not converge), so the post-loop solver state is identical.
+
+    Parameters
+    ----------
+    max_iter : int
+        Outer-iteration cap (2D ``_MAX_COUPLING``, 3D ``_max_outer``).
+    step : callable(it) -> (converged: bool, carry)
+        Runs one iteration's solves and the convergence check. Returns the
+        break decision and an opaque ``carry`` handed straight to ``post``
+        (2D passes its under-relaxation inputs through it; 3D passes
+        ``None``). May raise (e.g. ``InterruptedError`` for a cooperative
+        cancel) — the exception propagates unchanged, matching the inline
+        ``raise`` inside the legacy loop body.
+    post : callable(it, carry) -> None, optional
+        Applied between iterations, only when ``step`` did NOT converge —
+        the next-iteration property update (2D under-relax / 3D SIMPLE
+        re-solve). Omitted ⇒ no between-iteration work.
+
+    Returns
+    -------
+    (last_iter, converged) : (int, bool)
+        ``last_iter`` is the 0-based index of the final iteration executed
+        (for the caller's not-converged warning); ``converged`` is whether
+        ``step`` ever reported convergence.
+    """
+    last_iter = 0
+    for it in range(max_iter):
+        last_iter = it
+        converged, carry = step(it)
+        if converged:
+            return it, True
+        if post is not None:
+            post(it, carry)
+    return last_iter, False

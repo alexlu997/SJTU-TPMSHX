@@ -31,7 +31,7 @@ import time as _time
 import numpy as np
 
 from controllers.compute_config import ComputeConfig, bc_to_dict
-from solvers.coupling_skeleton import OuterConvergence
+from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.ltne_energy_3d import solve_full_domain_3d
 from solvers.tpms_calc import (
@@ -1933,7 +1933,28 @@ def _run_3d_stack(cfg):
     _progress_cb = cfg.get('_progress_cb')
     _cancel_check = cfg.get('_cancel_check')
     _iter_cb = cfg.get('_iter_cb')
-    for outer in range(_max_outer):
+    # B2 strict-conservation certificates — assigned each outer iter, read
+    # after the loop for the result dict; pre-init so the step closure's
+    # `nonlocal` has an enclosing binding (loop always runs ≥1 iter so the
+    # None default is dead, but it keeps the scope valid).
+    _eps_A_strict = _eps_B_strict = None
+    _eps_A_strict_cellmax = _eps_B_strict_cellmax = None
+    # LTNE inlet-patch masks — assigned each iter inside the step, read after
+    # the loop (χ_B inlet-patch slice + audit dict); pre-init so the step
+    # closure's `nonlocal` has an enclosing binding (legacy relied on the
+    # loop variable leaking to function scope).
+    _ltne_mask_A = _ltne_mask_B = None
+
+    # Outer SIMPLE↔LTNE loop, driven by the shared run_outer_coupling skeleton
+    # (3D = LTNE-first: `step` builds props + solves LTNE + checks ΔTa; `post`
+    # re-solves SIMPLE A/B with the updated fields for the next iter). The body
+    # below is the verbatim former loop body, wrapped so the only `nonlocal`s
+    # are the fields that persist across iters or are read after the loop.
+    def _outer_step_3d(outer):
+        nonlocal Ta, Tb, Ts, chi_B, h_vA_field, h_vB_field, K_ffB
+        nonlocal _ltne_mask_A, _ltne_mask_B
+        nonlocal _eps_A_strict, _eps_B_strict
+        nonlocal _eps_A_strict_cellmax, _eps_B_strict_cellmax
         # Cooperative cancel: only safe boundary is between outer iterations
         # — a JIT'd SIMPLE inner sweep cannot be interrupted. The UI sets the
         # flag via the Cancel button or the wall-clock timeout.
@@ -2213,9 +2234,9 @@ def _run_3d_stack(cfg):
                   f"(cap={_ltne_max_iter})", flush=True)
 
         _converged, _ = _outer_conv.check({'Ta': Ta})
-        if _converged:
-            break
+        return _converged, None
 
+    def _outer_post_3d(outer, _carry):
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
         # Critical: propagate Ta to T_field so SIMPLE inner _update_density()
@@ -2337,6 +2358,9 @@ def _run_3d_stack(cfg):
             ucB[:] = ucB2
             vcB[:] = vcB2
             wcB[:] = wcB2
+
+    run_outer_coupling(
+        max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
 
     # ── Extract metrics + fields ──
     # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
