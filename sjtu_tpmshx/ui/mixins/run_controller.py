@@ -324,7 +324,7 @@ class RunControllerMixin:
         """Thin wrapper — delegates to run_calculation module (Task B.9).
         Freezes repaints around the multi-canvas population so the user
         sees one clean frame flip instead of five intermediate paints."""
-        from runs.run_calculation import finalize_plots
+        from ui.plot_2d_results import finalize_plots
         self.setUpdatesEnabled(False)
         try:
             out = finalize_plots(self)

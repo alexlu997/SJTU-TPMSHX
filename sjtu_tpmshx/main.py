@@ -886,7 +886,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         Invoked by the Sync-colorbar toggle on canvas_temp's mini toolbar.
         """
         try:
-            from runs.run_calculation import redraw_temperature_panel
+            from ui.plot_2d_results import redraw_temperature_panel
             redraw_temperature_panel(self)
         except Exception:
             pass
