@@ -1,16 +1,22 @@
-"""Main calculation pipeline for SJTU-TPMSHX (non-polygon case).
+"""pipelines/stages_2d.py — 2D compute stage functions for SJTU-TPMSHX.
 
-Extracted from main.py (Task B.9). Entry (since B2 2.1b): the cfg-only
-stage functions consumed by controllers.compute_pipeline.Pipeline2D.
-Compute-only (Qt/matplotlib-free); 2D result rendering lives in
-``ui/plot_2d_results.py`` since batch-3 (2026-06-13). A batch-3 follow-up
-(C3) renames this module to ``pipelines/stages_2d.py``.
+The cfg-only stage functions consumed by
+controllers.compute_pipeline.Pipeline2D (_parse_inputs_cfg →
+_build_fields_cfg → _run_solvers_cfg → _finalize_cfg).  Compute-only
+(Qt/matplotlib-free); 2D result rendering lives in
+``ui/plot_2d_results.py``.
 
-C3 refactor (2026-05-28, L-a-1): scalar UI inputs now route through
-``controllers.compute_config.ComputeConfig.from_qt_window`` instead of
-direct ````le_*`` widget.text()`` reads. The window is still required for
-non-le state (zone config, _eps_A, extrap reasons, _temp_to_K hook,
-_DIR_MAP, etc.) — C4 task to extract that into a SessionState object.
+Moved out of `runs/run_calculation.py` in batch-3 (2026-06-13) — completing
+the controllers→runs layer-inversion fix.  This module imports nothing from
+`runs/`; the function-level `ComputeResult` import in `_finalize_cfg` stays
+function-level (do not hoist — it would close a pipelines↔controllers import
+cycle).
+
+Originally extracted from main.py (Task B.9). C3 audit (2026-05-28, L-a-1):
+scalar UI inputs route through
+``controllers.compute_config.ComputeConfig.from_qt_window`` rather than
+direct ``le_*`` widget reads; the window is still required for non-le state
+(zone config, _eps_A, extrap reasons, _temp_to_K hook, _DIR_MAP).
 """
 import numpy as np
 from controllers.compute_config import ComputeConfig, bc_to_dict

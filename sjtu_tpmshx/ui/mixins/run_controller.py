@@ -349,11 +349,11 @@ class RunControllerMixin:
         finalize_plots / redraw_temperature_panel renderers keep
         working when the compute path runs via
         :class:`controllers.compute_pipeline.Pipeline2D` instead of
-        the legacy ``runs.run_calculation.run_calculation_inner``.
+        the legacy ``pipelines.stages_2d.run_calculation_inner``.
 
         Audit C4 (L-a-2, 2026-05-28). This is the *UI adapter*
         counterpart to ``_finalize_cfg`` — together they replace the
-        pre-C4 ``runs.run_calculation._store_results(window, cfg, raw)``
+        pre-C4 ``pipelines.stages_2d._store_results(window, cfg, raw)``
         which conflated UI writes with result assembly. Since B2 2.1b/c
         (2026-06-13) this is the ONLY ComputeResult→window copy: the GUI
         worker drives Pipeline2D/3D and the legacy

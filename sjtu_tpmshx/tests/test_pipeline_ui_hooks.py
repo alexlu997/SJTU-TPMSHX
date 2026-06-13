@@ -41,7 +41,7 @@ def test_ui_hooks_stored_and_default_empty():
 
 
 def test_shim_forwards_iter_label_and_progress():
-    from runs.run_calculation import _PipelineWindowShim
+    from pipelines.stages_2d import _PipelineWindowShim
     labels, pcts = [], []
     shim = _PipelineWindowShim(ComputeConfig(),
                                progress_cb=pcts.append,

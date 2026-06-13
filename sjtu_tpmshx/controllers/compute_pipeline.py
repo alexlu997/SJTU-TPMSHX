@@ -23,7 +23,7 @@ Implementations
 ~~~~~~~~~~~~~~~
 
 - :class:`Pipeline2D` wires the legacy
-  ``runs.run_calculation._parse_inputs / _build_fields / _run_solvers /
+  ``pipelines.stages_2d._parse_inputs / _build_fields / _run_solvers /
   _store_results`` business logic. The Qt-write side (``window.T_fA = …``,
   ``window._compute_results = {…}``) is *not* in scope here; that lives
   in ``Main_Menu.write_result(result)``.
@@ -194,11 +194,11 @@ class ComputePipeline(ABC):
 
 
 class Pipeline2D(ComputePipeline):
-    """2D compute pipeline backed by ``runs.run_calculation`` helpers.
+    """2D compute pipeline backed by ``pipelines.stages_2d`` helpers.
 
     The three phases delegate to the cfg-only refactor of the legacy
     ``_parse_inputs / _build_fields / _run_solvers / _store_results``
-    business logic.  Keeping the helpers in ``runs.run_calculation``
+    business logic.  Keeping the helpers in ``pipelines.stages_2d``
     (rather than copying them here) avoids a multi-thousand-line move
     in this PR.  A future C5 phase will hoist them.
 
@@ -214,7 +214,7 @@ class Pipeline2D(ComputePipeline):
         self._parsed: Optional[Dict[str, Any]] = None
 
     def build_fields(self) -> Dict[str, Any]:
-        from runs.run_calculation import (
+        from pipelines.stages_2d import (
             _parse_inputs_cfg, _build_fields_cfg,
         )
         self._parsed = _parse_inputs_cfg(self.cfg)
@@ -223,7 +223,7 @@ class Pipeline2D(ComputePipeline):
             live_residuals=self.ui_hooks.get('live_residuals'))
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
-        from runs.run_calculation import _run_solvers_cfg
+        from pipelines.stages_2d import _run_solvers_cfg
         assert self._parsed is not None, (
             "Pipeline2D.run_solvers called before build_fields")
         return _run_solvers_cfg(self._parsed, fields,
@@ -233,7 +233,7 @@ class Pipeline2D(ComputePipeline):
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
-        from runs.run_calculation import _finalize_cfg
+        from pipelines.stages_2d import _finalize_cfg
         assert self._parsed is not None, (
             "Pipeline2D.finalize called before build_fields")
         return _finalize_cfg(raw, self._parsed)
