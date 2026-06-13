@@ -17,7 +17,7 @@ import numpy as np
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _ROOT)
 
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 
 
 def _air_air_cfg(**ov):

@@ -55,7 +55,7 @@ def test_shim_forwards_iter_label_and_progress():
 def test_3d_cfg_stage_wires_iter_cb(monkeypatch):
     """_run_solvers_3d_cfg must plant iter_cb as cfg['_iter_cb'] (the key
     _run_3d_stack polls each outer iteration)."""
-    import runs.run_calculation_3d as r3
+    import pipelines.stages_3d as r3
     seen = {}
     monkeypatch.setattr(r3, '_run_3d_stack',
                         lambda cfg: seen.update(cfg) or {'ok': True})

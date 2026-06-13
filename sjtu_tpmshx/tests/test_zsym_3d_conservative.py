@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from solvers.tpms_calc import geometry as tpms_geometry
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 
 
 def _z_mirror_asym_pct(field):

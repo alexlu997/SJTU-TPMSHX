@@ -40,7 +40,7 @@ except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 from validation.audit_3d_conservation import (
     make_T2, make_T4_H8, L_DOM, H_DOM, LZ,
 )

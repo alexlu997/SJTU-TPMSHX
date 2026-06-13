@@ -32,7 +32,7 @@ def test_domain_firewall_blocks_meter_typed_as_mm():
     entrypoints.
     """
     from controllers.compute_config import ComputeConfig, GeometryConfig, SolverConfig
-    from runs.run_calculation_3d import _parse_inputs_3d_cfg
+    from pipelines.stages_3d import _parse_inputs_3d_cfg
 
     cc = ComputeConfig(
         geometry=GeometryConfig(L_dom_m=182.0,    # unit slip: meant 0.182

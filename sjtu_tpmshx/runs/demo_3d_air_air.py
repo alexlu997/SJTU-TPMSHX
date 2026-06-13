@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from runs.run_calculation_3d import _run_3d_stack
+from pipelines.stages_3d import _run_3d_stack
 from runs._case_template import build_cfg as _template_cfg
 
 

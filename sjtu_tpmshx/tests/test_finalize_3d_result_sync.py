@@ -31,7 +31,7 @@ from controllers.compute_config import (
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
 from controllers.compute_pipeline import ComputeResult
-import runs.run_calculation_3d as R
+import pipelines.stages_3d as R
 
 
 def _small_air_air_cfg():

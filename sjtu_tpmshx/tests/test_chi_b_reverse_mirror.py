@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from runs.run_calculation_3d import _build_chi_B_mass_flux_threshold
+from pipelines.stages_3d import _build_chi_B_mass_flux_threshold
 
 
 def _fake_solver(Nx, Ny, Nz):
