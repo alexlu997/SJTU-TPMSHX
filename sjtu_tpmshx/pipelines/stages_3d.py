@@ -41,6 +41,7 @@ from solvers.tpms_calc import (
 )
 from solvers import fluid_props
 from df_surrogate.predict import predict_K_cF
+from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
@@ -70,7 +71,7 @@ def _resolve_ui_roughness():
 # ---------------------------------------------------------------------------
 def _face_flux_weights(solver, dir_code, face='real_outlet',
                        eps_mode='ltne', chi_face=None,
-                       eps_f_per_side=None):
+                       eps_f_per_side=None, eps_side_override=None):
     """Unified face-flux weight array for T_out, m_dot, Q_enth.
 
     Parameters
@@ -106,16 +107,23 @@ def _face_flux_weights(solver, dir_code, face='real_outlet',
     dx_sol = solver.dx[:, None]; dz_sol = solver.dz[None, :]
     w = rho_face * np.abs(v_face) * dx_sol * dz_sol
     if eps_mode == 'ltne':
-        eps_full = getattr(solver, 'eps_field', None)
-        if eps_full is not None:
-            w = w * (0.5 * np.asarray(eps_full[:, face_idx, :],
-                                      dtype=np.float64))
+        if eps_side_override is not None:
+            # Asymmetric (offset-isosurface δ): per-side single-channel void
+            # fraction ε_side directly (already split, NOT halved). Takes
+            # precedence over the symmetric 0.5·eps_field path so m_dot ≡
+            # ∫ ε_side·ρ·u·dA matches the per-side advective mass flow.
+            w = w * float(eps_side_override)
         else:
-            if eps_f_per_side is None:
-                raise ValueError(
-                    "_face_flux_weights: eps_mode='ltne' requires either "
-                    "solver.eps_field or explicit eps_f_per_side")
-            w = w * float(eps_f_per_side)
+            eps_full = getattr(solver, 'eps_field', None)
+            if eps_full is not None:
+                w = w * (0.5 * np.asarray(eps_full[:, face_idx, :],
+                                          dtype=np.float64))
+            else:
+                if eps_f_per_side is None:
+                    raise ValueError(
+                        "_face_flux_weights: eps_mode='ltne' requires either "
+                        "solver.eps_field or explicit eps_f_per_side")
+                w = w * float(eps_f_per_side)
     if mask_face is not None:
         w = w * np.asarray(mask_face, dtype=np.float64)
     if chi_face is not None:
@@ -124,7 +132,7 @@ def _face_flux_weights(solver, dir_code, face='real_outlet',
 
 
 def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
-                          chi_face=None):
+                          chi_face=None, eps_side_override=None):
     """Mass-flux-weighted T average at the REAL outlet face.
     Delegates to _face_flux_weights for consistent weighting.
 
@@ -135,7 +143,8 @@ def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
     try:
         w = _face_flux_weights(solver, dir_code, face='real_outlet',
                                eps_mode='ltne', chi_face=chi_face,
-                               eps_f_per_side=eps_f_scalar)
+                               eps_f_per_side=eps_f_scalar,
+                               eps_side_override=eps_side_override)
         tot = float(np.sum(w))
         if tot < 1e-30:
             return float(np.mean(T_face))
@@ -184,12 +193,14 @@ def _real_outlet_slice(T_field, dir_code):
     return _face_slice(T_field, dir_code, 'outlet')
 
 
-def _simple_mass_flow(solver, dir_code, eps_f_per_side=None):
+def _simple_mass_flow(solver, dir_code, eps_f_per_side=None,
+                      eps_side_override=None):
     """LTNE-effective m_dot at REAL inlet face via _face_flux_weights."""
     try:
         w = _face_flux_weights(solver, dir_code, face='real_inlet',
                                eps_mode='ltne',
-                               eps_f_per_side=eps_f_per_side)
+                               eps_f_per_side=eps_f_per_side,
+                               eps_side_override=eps_side_override)
         return float(np.sum(w))
     except Exception:
         return 0.0
@@ -519,6 +530,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
         T_s_init=T_s_init,
         Lcell=Lcell, t_wall=t_wall, k_s=k_s, tpms_type=tpms_type,
         eps=eps, D_h=D_h,
+        delta_levelset=float(compute_cfg.geometry.delta_levelset),
         fluid_A_cfg=fluid_A_cfg,
         fluid_B_cfg=fluid_B_cfg,
         wall_refine_3d=wall_refine,
@@ -1435,6 +1447,41 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
         Q_interior_primary=Q_interior_primary, AB_interior=AB_interior)
 
 
+def _asym_split_A(cfg, tpms_type, Lcell, t_wall):
+    """Fraction of total ε assigned to side A under offset-isosurface δ.
+
+    Returns 0.5 at δ=0 (symmetric). δ≠0 → the geometry split ratio
+    εA/(εA+εB) from ``asym_geometry.eps_sides`` at C = C(t/L).
+    δ = ``cfg['delta_levelset']`` (φ-units). Shared by ``_eps_sides_for_run``
+    (per-cell void arrays) and the per-side D-F κ closure so both consume one
+    split definition.
+    """
+    delta = float(cfg.get('delta_levelset', 0.0))
+    if delta == 0.0:
+        return 0.5
+    from solvers.tpms_geometry import _phi_grid, _C_from_tL
+    from solvers import asym_geometry as _ag
+    phi = _phi_grid(tpms_type, 128)
+    C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
+    eA, eB, _etot = _ag.eps_sides(phi, C, delta)
+    return eA / (eA + eB)
+
+
+def _eps_sides_for_run(cfg, tpms_type, Lcell, t_wall, eps_arr, eps_f_arr):
+    """Per-side single-channel void fractions for asymmetric offset-isosurface δ.
+
+    δ=0 → returns the symmetric ``eps_f_arr`` (= eps_arr/2) object for BOTH
+    sides → bit-identical to the legacy path. δ≠0 → split the run's total
+    ``eps_arr`` by the geometry ratio (``_asym_split_A``), PRESERVING the total
+    (so cfg['eps'] is honoured, not the calibration ε from C(t/L); the split
+    *ratio* is the geometry signal). Returns ``(eps_fA_arr, eps_fB_arr)``.
+    """
+    if float(cfg.get('delta_levelset', 0.0)) == 0.0:
+        return eps_f_arr, eps_f_arr
+    s = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
+    return eps_arr * s, eps_arr * (1.0 - s)
+
+
 def _run_3d_stack(cfg):
     """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
 
@@ -1535,8 +1582,20 @@ def _run_3d_stack(cfg):
         cF_pred = float(cF_A_arr.mean())
         print(f"[3D zones] using {len(zone_cells)} zone cells; "
               f"K range [{K_field_3d.min():.2e}, {K_field_3d.max():.2e}]")
+        # Zoned path is a uniform-only-δ exception: no asymmetric split here.
+        K_pred_B, cF_pred_B = K_pred, cF_pred
     else:
-        K_pred, cF_pred = predict_K_cF(tpms_type, Lcell, t_wall, 0.5 * eps)
+        K0, cF0 = predict_K_cF(tpms_type, Lcell, t_wall, 0.5 * eps)
+        # Per-side asymmetric D-F κ correction (offset-isosurface δ). κ=1 when
+        # δ=0 / disabled / no-CFD-table → K_pred_B==K_pred==K0 (bit-identical).
+        # κ multiplies the symmetric baseline output; backend (gamma_df/rbf)
+        # and predict_K_cF signature are untouched.
+        _split_A = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
+        _eps_sym = 0.5 * eps
+        _kKA, _kcFA = kappa_KcF(tpms_type, eps * _split_A, _eps_sym)
+        _kKB, _kcFB = kappa_KcF(tpms_type, eps * (1.0 - _split_A), _eps_sym)
+        K_pred, cF_pred = K0 * _kKA, cF0 * _kcFA
+        K_pred_B, cF_pred_B = K0 * _kKB, cF0 * _kcFB
         K_A_arr = np.full((N_stream, N_cross2), K_pred)
         cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
 
@@ -1625,8 +1684,8 @@ def _run_3d_stack(cfg):
         L_stream_B = axis_map_B['L_stream']
         dcross1_B = axis_map_B['dcross1']; dcross2_B = axis_map_B['dcross2']
         perm_B = axis_map_B['solver_to_real_perm']
-        K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred)
-        cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred)
+        K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred_B)
+        cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred_B)
         # 2026-05-13 — apply UI roughness correction to K_B / cF_B. Skip for
         # water (Yan [6] correlation embeds AM roughness; double-counting
         # would over-predict friction).
@@ -1634,7 +1693,7 @@ def _run_3d_stack(cfg):
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
         G_B = rho_B * u_B
-        C_B = mu_B * G_B / max(K_pred, 1e-16) + cF_pred * G_B * G_B
+        C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
         if _mB.compressible:
             P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
@@ -1711,8 +1770,14 @@ def _run_3d_stack(cfg):
     # Per-cell single-channel void fraction (#2/#3). When zoned, eps varies
     # with (L, t) over space, so K_ffA/B and K_ss must track local eps too.
     eps_f_arr = eps_arr / 2.0
-    K_ffA = eps_f_arr * k_A
-    K_ffB = eps_f_arr * k_B
+    # Per-side (asymmetric offset-isosurface δ) single-channel void fractions.
+    # δ=0 → both are the symmetric eps_f_arr object (bit-identical legacy path);
+    # δ≠0 → geometry-derived A:B split preserving total eps_arr. Threaded into
+    # the LTNE kernel (eps_A/eps_B), Q/dP extraction and balance projection.
+    eps_fA_arr, eps_fB_arr = _eps_sides_for_run(
+        cfg, tpms_type, Lcell, t_wall, eps_arr, eps_f_arr)
+    K_ffA = eps_fA_arr * k_A
+    K_ffB = eps_fB_arr * k_B
     # Optional thermal dispersion: K_disp = C * ρ·cp·|u|·D_h added to K_ff.
     # Off by default (disp_C_* = 0). Standard homogenisation has K_ff = ε·k_f
     # (molecular only); at high Pe the effective fluid conductivity is larger
@@ -1849,17 +1914,58 @@ def _run_3d_stack(cfg):
                     out[i,j,k] = g['A_0'] * Nu_l * k_f / D_h_m_l
         return out
 
+    # Per-side h_v geometric multiplier for asymmetric offset-isosurface δ.
+    # h_v = A_0·Nu·k/D_h; for δ≠0 each side's (A_0, D_h) shifts. The ratio is
+    # taken vs asym_geometry's OWN δ=0 reference (same method) so it is EXACTLY
+    # 1.0 at δ=0 → multiplying the existing symmetric h_v is bit-identical
+    # (×1.0). k_f cancels; Nu's ε arg is inert (air/water Nu ignore ε); the
+    # ratio is u-independent (Re_side/Re_ref = D_h_side/D_h_ref) so it applies
+    # equally to the bulk and the later local-Re h_v. Captures the geometric
+    # Nu/area effect; the residual (κ_Nu) is a CFD calibration left to
+    # ingest_cfd_kappa (Nu is secondary per the Phase-1 plan; dP is primary).
+    def _hv_side_geom_ratio(fluid_type, u_side, T_side, P_side, side):
+        if float(cfg.get('delta_levelset', 0.0)) == 0.0:
+            return 1.0
+        from solvers.tpms_geometry import _phi_grid, _C_from_tL
+        from solvers import asym_geometry as _ag
+        _N = 128
+        _phi = _phi_grid(tpms_type, _N)
+        _C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
+        _delta = float(cfg['delta_levelset'])
+        _Lm = float(Lcell) / 1000.0
+        A0A, A0B = _ag.a0_sides(_phi, _C, _delta, _Lm, _N)
+        DhA, DhB = _ag.dh_sides(_phi, _C, _delta, _Lm, _N, mc=True)
+        A0A0, A0B0 = _ag.a0_sides(_phi, _C, 0.0, _Lm, _N)
+        DhA0, DhB0 = _ag.dh_sides(_phi, _C, 0.0, _Lm, _N, mc=True)
+        A0_s, Dh_s, A0_r, Dh_r = ((A0A, DhA, A0A0, DhA0) if side == 'A'
+                                  else (A0B, DhB, A0B0, DhB0))
+        _rho, _mu, _kf, _Pr = _fluid_transport_props(fluid_type, T_side, P_side)
+
+        def _hv(A0, Dh):
+            Dh_m = max(float(Dh), 1e-12)
+            Re = _rho * max(abs(float(u_side)), 0.0) * Dh_m / max(_mu, 1e-30)
+            Nu = _nu_for_fluid(fluid_type, Re, 0.5 * float(eps),
+                               Lcell, Dh_m * 1000.0, _Pr)
+            return A0 * Nu / Dh_m
+        _ref = _hv(A0_r, Dh_r)
+        return (_hv(A0_s, Dh_s) / _ref) if _ref > 0 else 1.0
+
+    _hv_ratio_A = _hv_side_geom_ratio(fluid_type_A, u_A, T_inA, P_inA, 'A')
+    _hv_ratio_B = _hv_side_geom_ratio(fluid_type_B, u_B_val, T_inB, P_inB, 'B')
+
     # Initial bulk h_v (used at outer=0 before SIMPLE solves; becomes local
     # after first outer iter when ucA/B are available).
     h_vA_field = _build_hv_field_3d(
         L_mm_field, t_field_3d, u_A, T_inA, P_inA, fluid_type_A)
     h_vA_field = _apply_roughness_h_v(
         h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
+    h_vA_field = h_vA_field * _hv_ratio_A
     if sB is not None:
         h_vB_field = _build_hv_field_3d(
             L_mm_field, t_field_3d, u_B_val, T_inB, P_inB, fluid_type_B)
         h_vB_field = _apply_roughness_h_v(
             h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
+        h_vB_field = h_vB_field * _hv_ratio_B
     else:
         # No B fluid solver → "no B fluid" should mean ZERO B-side coupling,
         # not "infinite reservoir at T_inB". The previous behaviour kept
@@ -1974,6 +2080,7 @@ def _run_3d_stack(cfg):
             L_mm_field, t_field_3d, u_stream_A, T_inA, P_inA, fluid_type_A)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
+        h_vA_field = h_vA_field * _hv_ratio_A   # per-side asym geom (1.0 at δ=0)
         # Pre-compute LTNE inlet masks (needed by χ_B block and LTNE solve).
         # approach-(a): the kernel applies the inlet BC at its inlet face using
         # this mask; with the reverse spatial flip + no mask swap, the physical
@@ -1989,6 +2096,7 @@ def _run_3d_stack(cfg):
                 L_mm_field, t_field_3d, u_stream_B, T_inB, P_inB, fluid_type_B)
             h_vB_field = _apply_roughness_h_v(
                 h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
+            h_vB_field = h_vB_field * _hv_ratio_B   # per-side asym geom (1.0 at δ=0)
             # ── partial-B closure dispatch ──
             # Three options selectable via cfg['partial_B_closure']:
             #   'none'                 — no correction (χ_B ≡ 1; legacy)
@@ -2143,11 +2251,14 @@ def _run_3d_stack(cfg):
             # rho_cp = ρ_local·cp matches SIMPLE's conserved mass flux, so the
             # balance scale ≈ 1 and it removes only the residual — see _var_rhocp).
             if (not fluid_props.get(fluid_type_A).compressible) or _var_rhocp:
-                _coefA = 0.5 * eps_arr * rho_cp_fA
+                # Per-side ε must match the LTNE kernel's eps_fA/eps_fB exactly,
+                # else the MAC projection corrupts and reverse-dir Q drift
+                # silently returns. δ=0 → eps_fA_arr == eps_arr/2 (identical).
+                _coefA = eps_fA_arr * rho_cp_fA
                 _balance_stream_outflow([ufA, vfA, wfA], axis_map, _coefA, dx, dy, dz)
             if sB is not None and (
                     (not fluid_props.get(fluid_type_B).compressible) or _var_rhocp):
-                _coefB = 0.5 * eps_arr * rho_cp_fB
+                _coefB = eps_fB_arr * rho_cp_fB
                 _balance_stream_outflow([ufB, vfB, wfB], axis_map_B, _coefB, dx, dy, dz)
 
         # H6 ghost-pin: pass chi_B_field + threshold to LTNE kernel. At cells
@@ -2212,6 +2323,15 @@ def _run_3d_stack(cfg):
             mms_S_B_field=_mms_S_B,
             mms_S_s_field=_mms_S_s,
             conservative_ltne=_conservative_ltne,
+            # Asymmetric per-side ε (offset-isosurface δ). Passed ONLY when δ≠0
+            # → δ=0 omits the kwargs → kernel's symmetric 0.5·ε default path →
+            # bit-identical. eps_fA/eps_fB are single-channel (already-split)
+            # fractions in the same real axes as eps_arr; kernel consumes them
+            # without further halving.
+            eps_A=(eps_fA_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0
+                   else None),
+            eps_B=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0
+                   else None),
             cancel_check=_cancel_check,
             return_info=True)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
@@ -2405,12 +2525,22 @@ def _run_3d_stack(cfg):
     # LTNE uses ε_A = ε_B = ε/2 per side (symmetric 2-fluid split). Metric
     # must mirror that so m_dot ≡ ∫ ε_A·ρ·u·dA matches the solver's
     # internal advective mass flow.
-    eps_f_per_side = 0.5 * float(eps)   # ε_A
+    eps_f_per_side = 0.5 * float(eps)   # ε_A (symmetric)
+    # Asymmetric per-side single-channel void fractions (offset-isosurface δ).
+    # None at δ=0 → symmetric 0.5·ε path (bit-identical). δ≠0 → per-side ε_side
+    # so m_dot/Q weight by the actual channel void fraction, not 0.5·ε
+    # (else ṁ_A/ṁ_B mis-scale by split/0.5 on the asymmetric geometry).
+    _split_A_ex = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
+    _delta_ex = float(cfg.get('delta_levelset', 0.0))
+    _eps_ov_A = (float(eps) * _split_A_ex) if _delta_ex != 0.0 else None
+    _eps_ov_B = (float(eps) * (1.0 - _split_A_ex)) if _delta_ex != 0.0 else None
 
     # Fluid A — unified face-flux weights for T_out and m_dot consistency
-    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side)
+    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side,
+                                       eps_side_override=_eps_ov_A)
     T_A_out_face = _real_outlet_slice(Ta, fA['dir'])
-    T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side)
+    T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side,
+                                   eps_side_override=_eps_ov_A)
     # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
     #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
     Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
@@ -2419,16 +2549,19 @@ def _run_3d_stack(cfg):
     Q_enthalpy_B = 0.0
     chi_B_out_face = None
     if sB is not None:
-        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'], eps_f_per_side=eps_f_per_side)
+        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'], eps_f_per_side=eps_f_per_side,
+                                           eps_side_override=_eps_ov_B)
         T_B_out_face = _real_outlet_slice(Tb, fB['dir'])
         # χ_B at outlet face for ghost-B suppression
         if chi_B is not None:
             chi_B_out_face = _real_outlet_slice(chi_B, fB['dir'])
         # T_out with and without χ_B for diagnostic comparison
         T_B_out_no_chi = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'],
-                                               eps_f_per_side)
+                                               eps_f_per_side,
+                                               eps_side_override=_eps_ov_B)
         T_B_out = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'], eps_f_per_side,
-                                        chi_face=chi_B_out_face)
+                                        chi_face=chi_B_out_face,
+                                        eps_side_override=_eps_ov_B)
         # m_dot variants for diagnostic
         m_dot_B_phys_in = float(np.sum(_face_flux_weights(
             sB, fB['dir'], face='real_inlet', eps_mode='physical')))
