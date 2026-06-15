@@ -37,6 +37,13 @@ def main():
     body_md = re.sub(r"\[\[([^\]]+)\]\]",
                      lambda mm: mm.group(1).split("|")[0].split("/")[-1], body_md)
 
+    # the **Label**: metadata lines before the first '---' are consecutive →
+    # markdown would collapse them into ONE run-on paragraph. Hard-break each
+    # (two trailing spaces) so they render as separate lines.
+    head, sep, tail = body_md.partition("\n---")
+    head = head.replace("\n**", "  \n**")
+    body_md = head + sep + tail
+
     html_body = markdown.markdown(
         body_md, extensions=["tables", "fenced_code", "sane_lists"])
 
@@ -72,10 +79,20 @@ def main():
     header_b64 = _b64(ASSETS / "sjtu_header.png")
     gate_b64 = _b64(ASSETS / "sjtu_gate.png")
 
+    # CJK override: justify (template default) stretches inter-character gaps
+    # ugly in Chinese → left-align body text. Tighten the metadata head block.
+    override = """<style>
+  .content p, .content li, .content td, .content th { text-align: left; }
+  .content > p:first-of-type{ font-size:0.82rem; color:var(--muted); line-height:2.0;
+        background:var(--soft); border-left:3px solid var(--accent); border-radius:0 6px 6px 0;
+        padding:12px 18px; max-width:none; }
+</style>"""
+
     html = f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
 <title>{title}</title>
 {style}
+{override}
 </head><body>
 
 <div class="layout">
