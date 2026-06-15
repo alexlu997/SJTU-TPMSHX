@@ -494,7 +494,7 @@ def _inlet_neighbor(T, dir_code, i, j, k, Nx, Ny, Nz):
 def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             dx_arr, dy_arr, dz_arr,
                             K_ffA_arr, K_ffB_arr, K_ss_arr,
-                            h_vA_arr, h_vB_arr, eps_f_arr,
+                            h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                             rho_cp_fA, rho_cp_fB,
                             ufA, vfA, wfA, ufB, vfB, wfB,
                             bc_A, bc_B, T_inA_arr, T_inB_arr,
@@ -568,19 +568,19 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                         w_b = wfA[i, j, k]
 
                         # ρcp and eps_f at faces — arithmetic mean of cell values.
-                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_f_arr[i,j,k]
+                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
                         rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
                         rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
                         rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
                         rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
                         rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
                         rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
-                        ef_e = 0.5*(ef_c + eps_f_arr[i+1,j,k]) if i < Nx-1 else ef_c
-                        ef_w = 0.5*(eps_f_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
-                        ef_n = 0.5*(ef_c + eps_f_arr[i,j+1,k]) if j < Ny-1 else ef_c
-                        ef_s = 0.5*(eps_f_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
-                        ef_t = 0.5*(ef_c + eps_f_arr[i,j,k+1]) if k < Nz-1 else ef_c
-                        ef_b = 0.5*(eps_f_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
+                        ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
+                        ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
+                        ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
+                        ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
+                        ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
+                        ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
 
                         # Signed face mass-flux (+axis direction)
                         F_e = ef_e * rcp_e * u_e * Ax
@@ -741,19 +741,19 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             wB_t = wfB[i, j, k+1]
                             wB_b = wfB[i, j, k]
 
-                            rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_f_arr[i,j,k]
+                            rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_fB_arr[i,j,k]
                             rcpB_e = 0.5*(rcpB_c + rho_cp_fB[i+1,j,k]) if i < Nx-1 else rcpB_c
                             rcpB_w = 0.5*(rho_cp_fB[i-1,j,k] + rcpB_c) if i > 0 else rcpB_c
                             rcpB_n = 0.5*(rcpB_c + rho_cp_fB[i,j+1,k]) if j < Ny-1 else rcpB_c
                             rcpB_s = 0.5*(rho_cp_fB[i,j-1,k] + rcpB_c) if j > 0 else rcpB_c
                             rcpB_t = 0.5*(rcpB_c + rho_cp_fB[i,j,k+1]) if k < Nz-1 else rcpB_c
                             rcpB_b = 0.5*(rho_cp_fB[i,j,k-1] + rcpB_c) if k > 0 else rcpB_c
-                            efB_e = 0.5*(efB_c + eps_f_arr[i+1,j,k]) if i < Nx-1 else efB_c
-                            efB_w = 0.5*(eps_f_arr[i-1,j,k] + efB_c) if i > 0 else efB_c
-                            efB_n = 0.5*(efB_c + eps_f_arr[i,j+1,k]) if j < Ny-1 else efB_c
-                            efB_s = 0.5*(eps_f_arr[i,j-1,k] + efB_c) if j > 0 else efB_c
-                            efB_t = 0.5*(efB_c + eps_f_arr[i,j,k+1]) if k < Nz-1 else efB_c
-                            efB_b = 0.5*(eps_f_arr[i,j,k-1] + efB_c) if k > 0 else efB_c
+                            efB_e = 0.5*(efB_c + eps_fB_arr[i+1,j,k]) if i < Nx-1 else efB_c
+                            efB_w = 0.5*(eps_fB_arr[i-1,j,k] + efB_c) if i > 0 else efB_c
+                            efB_n = 0.5*(efB_c + eps_fB_arr[i,j+1,k]) if j < Ny-1 else efB_c
+                            efB_s = 0.5*(eps_fB_arr[i,j-1,k] + efB_c) if j > 0 else efB_c
+                            efB_t = 0.5*(efB_c + eps_fB_arr[i,j,k+1]) if k < Nz-1 else efB_c
+                            efB_b = 0.5*(eps_fB_arr[i,j,k-1] + efB_c) if k > 0 else efB_c
 
                             FB_e = efB_e * rcpB_e * uB_e * Ax
                             FB_w = efB_w * rcpB_w * uB_w * Ax
@@ -885,7 +885,7 @@ def _Tin_at_face(T_in_arr, dir_code, i, j, k, Nx, Ny, Nz):
 def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
                       dx_arr, dy_arr, dz_arr,
                       K_ffA_arr, K_ffB_arr, K_ss_arr,
-                      h_vA_arr, h_vB_arr, eps_f_arr,
+                      h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                       rho_cp_fA, rho_cp_fB,
                       ucA, vcA, wcA, ucB, vcB, wcB,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
@@ -957,7 +957,7 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
                         # discrete mass conservation cell-wise. 2D has used this
                         # cell-local pattern forever with <1% AB imbalance.
                         u_c = ucA[i,j,k]; v_c = vcA[i,j,k]; w_c = wcA[i,j,k]
-                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_f_arr[i,j,k]
+                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
                         Fx = ef_c * rcpA_c * abs(u_c) * Ax
                         Fy = ef_c * rcpA_c * abs(v_c) * Ay
                         Fz = ef_c * rcpA_c * abs(w_c) * Az
@@ -1059,7 +1059,7 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
 
                             # Cell-local upwind (2026-04-25 FV#5): match A branch + 2D.
                             uBc = ucB[i,j,k]; vBc = vcB[i,j,k]; wBc = wcB[i,j,k]
-                            rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_f_arr[i,j,k]
+                            rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_fB_arr[i,j,k]
                             FxB = efB_c * rcpB_c * abs(uBc) * Ax
                             FyB = efB_c * rcpB_c * abs(vBc) * Ay
                             FzB = efB_c * rcpB_c * abs(wBc) * Az
@@ -1323,30 +1323,29 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     rho_cp_fA_arr = _to_3d(rho_cp_fA)
     rho_cp_fB_arr = _to_3d(rho_cp_fB)
 
-    # Per-fluid void-fraction split. Default = symmetric ε_A = ε_B = ε/2;
-    # asymmetric eps_A / eps_B raises NotImplementedError because the njit
-    # kernel currently takes a single eps_f_arr. Mirrors ltne_energy.py.
+    # Per-fluid single-channel void fractions. Default (eps_A/eps_B None) =
+    # symmetric ε_A = ε_B = ε/2 — both names bind the SAME array object, so the
+    # dual-ε kernel reproduces the legacy single-eps_f arithmetic bit-for-bit.
+    # Explicit eps_A/eps_B (asymmetric offset-isosurface δ) are single-channel
+    # per-side fractions, routed per-side through the kernel WITHOUT further
+    # halving (caller passes ε_A, ε_B directly; see docstring).
     if eps_A is None and eps_B is None:
         if np.ndim(epsilon) == 0:
-            eps_f_arr = np.full((Nx, Ny, Nz), 0.5 * float(epsilon), dtype=np.float64)
+            eps_fA_arr = np.full((Nx, Ny, Nz), 0.5 * float(epsilon), dtype=np.float64)
         else:
-            eps_f_arr = np.ascontiguousarray(0.5 * np.asarray(epsilon, dtype=np.float64))
-            if eps_f_arr.shape != (Nx, Ny, Nz):
+            eps_fA_arr = np.ascontiguousarray(0.5 * np.asarray(epsilon, dtype=np.float64))
+            if eps_fA_arr.shape != (Nx, Ny, Nz):
                 raise ValueError("epsilon 3D shape mismatch")
+        eps_fB_arr = eps_fA_arr
     else:
         if eps_A is None or eps_B is None:
             raise ValueError("eps_A and eps_B must be provided together.")
-        eps_A_arr = _to_3d(eps_A)
-        eps_B_arr = _to_3d(eps_B)
+        eps_fA_arr = _to_3d(eps_A)
+        eps_fB_arr = _to_3d(eps_B)
         eps_tot_arr = _to_3d(epsilon)
-        if np.any(eps_A_arr + eps_B_arr > eps_tot_arr + 1e-9):
+        if np.any(eps_fA_arr + eps_fB_arr > eps_tot_arr + 1e-9):
             raise ValueError(
                 "eps_A + eps_B exceeds epsilon at some cells.")
-        if not np.allclose(eps_A_arr, eps_B_arr):
-            raise NotImplementedError(
-                "Asymmetric ε_A / ε_B is not yet routed through the 3D "
-                "LTNE kernel (currently assumes symmetric ε_A = ε_B = ε/2).")
-        eps_f_arr = eps_A_arr
 
     # Cell-centre velocity shape check
     for name, arr in (('ucA', ucA), ('vcA', vcA), ('wcA', wcA),
@@ -1500,9 +1499,9 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     # transform leaves a per-cell mass divergence; forward fluids are unchanged.
     if _cons == 1:
         ufA, vfA, wfA = _project_faces_div_free(
-            ufA, vfA, wfA, eps_f_arr, rho_cp_fA_arr, dx_arr, dy_arr, dz_arr)
+            ufA, vfA, wfA, eps_fA_arr, rho_cp_fA_arr, dx_arr, dy_arr, dz_arr)
         ufB, vfB, wfB = _project_faces_div_free(
-            ufB, vfB, wfB, eps_f_arr, rho_cp_fB_arr, dx_arr, dy_arr, dz_arr)
+            ufB, vfB, wfB, eps_fB_arr, rho_cp_fB_arr, dx_arr, dy_arr, dz_arr)
 
     while done < max_iter:
         n = min(chunk, max_iter - done)
@@ -1511,7 +1510,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 Ta, Tb, Ts, Nx, Ny, Nz,
                 dx_arr, dy_arr, dz_arr,
                 K_ffA_arr, K_ffB_arr, K_ss_arr,
-                h_vA_arr, h_vB_arr, eps_f_arr,
+                h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                 rho_cp_fA_arr, rho_cp_fB_arr,
                 ufA, vfA, wfA, ufB, vfB, wfB,
                 dir_A, dir_B, T_inA_arr, T_inB_arr,
@@ -1525,7 +1524,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 Ta, Tb, Ts, Nx, Ny, Nz,
                 dx_arr, dy_arr, dz_arr,
                 K_ffA_arr, K_ffB_arr, K_ss_arr,
-                h_vA_arr, h_vB_arr, eps_f_arr,
+                h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                 rho_cp_fA_arr, rho_cp_fB_arr,
                 ucA, vcA, wcA, ucB, vcB, wcB,
                 dir_A, dir_B, T_inA_arr, T_inB_arr,
@@ -1579,13 +1578,13 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         # the mean per-cell source) certifies per-cell ∮F·n = ∫S.
         ncell = Ta.size
         rA, QA, mA = _conservation_residual_sum(
-            Ta, Ts, ufA, vfA, wfA, eps_f_arr, K_ffA_arr, rho_cp_fA_arr,
+            Ta, Ts, ufA, vfA, wfA, eps_fA_arr, K_ffA_arr, rho_cp_fA_arr,
             h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A)
         info['eps_A_strict'] = abs(rA) / max(abs(QA), _Q_FLOOR_W)
         info['eps_A_strict_cellmax'] = mA * ncell / max(abs(QA), _Q_FLOOR_W)
         if freeze_Tb == 0:
             rB, QB, mB = _conservation_residual_sum(
-                Tb, Ts, ufB, vfB, wfB, eps_f_arr, K_ffB_arr, rho_cp_fB_arr,
+                Tb, Ts, ufB, vfB, wfB, eps_fB_arr, K_ffB_arr, rho_cp_fB_arr,
                 h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B)
             info['eps_B_strict'] = abs(rB) / max(abs(QB), _Q_FLOOR_W)
             info['eps_B_strict_cellmax'] = mB * ncell / max(abs(QB), _Q_FLOOR_W)
