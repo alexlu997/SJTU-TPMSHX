@@ -44,6 +44,24 @@ def main():
     head = head.replace("\n**", "  \n**")
     body_md = head + sep + tail
 
+    # a list directly after a text line (no blank line between) won't be
+    # recognized by sane_lists → bullets render inline as run-on " - " text.
+    # Insert the missing blank line before each list-start (fence-guarded so
+    # formula/code blocks are untouched).
+    _item = re.compile(r"^\s*([-*+]|\d+\.)\s")
+    out, in_fence = [], False
+    for ln in body_md.split("\n"):
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        if not in_fence and _item.match(ln):
+            prev = out[-1] if out else ""
+            if prev.strip() and not _item.match(prev):
+                out.append("")
+        out.append(ln)
+    body_md = "\n".join(out)
+
     html_body = markdown.markdown(
         body_md, extensions=["tables", "fenced_code", "sane_lists"])
 
