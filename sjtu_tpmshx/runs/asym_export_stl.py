@@ -1,7 +1,10 @@
 """
+⚠ DEPRECATED (2026-06-15): 几何改走 nTopology (用户决定)。本 marching-cubes STL
+导出不再用于 Phase 1 CFD; 见 runs/asym_build_cfd_design_xlsx.py + 计划 §5。仅留历史。
+
 Phase 1 预备：指定配比的非对称 TPMS 固体壁 → STL（marching cubes + trimesh）。
 
-Phase-1 CFD 的几何输入起点（snappyHexMesh 等用 STL 表面）。
+Phase-1 CFD 的几何输入起点（Fluent Meshing 用 STL 表面）。
 ⚠ 单胞、box 边未封口（非 watertight）→ 仅几何样本；CFD-ready 周期水密网格
 （封口 / 多胞 / 周期 BC）= Phase 1 proper。
 用法：python -u runs/asym_export_stl.py

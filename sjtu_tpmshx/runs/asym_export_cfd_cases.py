@@ -1,5 +1,10 @@
 """asym_export_cfd_cases.py — Phase 1 CFD case generator for asymmetric porosity.
 
+⚠ DEPRECATED (2026-06-15): geometry now built in nTopology (user decision). This
+marching-cubes STL exporter is retired for Phase 1. Use the finalized design
+matrix from runs/asym_build_cfd_design_xlsx.py (→ asym_cfd_design_matrix.xlsx)
+and feed geom_cases to nTop. See vault plan §4–§5. Kept for history only.
+
 Given Phase-1 design points (tpms × target split (A%,B%) × per-side Re), emit:
   (a) per-side solid-wall STL (marching cubes, reuse asym_geometry) for ANSYS
       Fluent meshing — ONE offset cell per (tpms, split); both fluid channels
