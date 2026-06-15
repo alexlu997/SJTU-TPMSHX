@@ -73,6 +73,8 @@ def main():
     html_body = re.sub(r"<blockquote>\s*(.*?)\s*</blockquote>",
                        lambda mm: '<div class="callout">' + mm.group(1) + "</div>",
                        html_body, flags=re.S)
+    # first paragraph = the metadata head → template .meta block
+    html_body = html_body.replace("<p>", '<p class="meta">', 1)
 
     # assign ids to h2 + collect sidebar TOC
     toc = []
@@ -97,20 +99,10 @@ def main():
     header_b64 = _b64(ASSETS / "sjtu_header.png")
     gate_b64 = _b64(ASSETS / "sjtu_gate.png")
 
-    # CJK override: justify (template default) stretches inter-character gaps
-    # ugly in Chinese → left-align body text. Tighten the metadata head block.
-    override = """<style>
-  .content p, .content li, .content td, .content th { text-align: left; }
-  .content > p:first-of-type{ font-size:0.82rem; color:var(--muted); line-height:2.0;
-        background:var(--soft); border-left:3px solid var(--accent); border-radius:0 6px 6px 0;
-        padding:12px 18px; max-width:none; }
-</style>"""
-
     html = f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
 <title>{title}</title>
 {style}
-{override}
 </head><body>
 
 <div class="layout">
