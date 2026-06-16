@@ -43,7 +43,7 @@ def _exprs(phi):
     return {
         "solid (壁，组会式)": f"(({phi}) - delta)^2 - C^2",
         "void_A (大/气)": f"(({phi}) - delta) + C",
-        "void_B (小/液)": f"delta + C - ({phi})",
+        "void_B (小/液)": f"C - (({phi}) - delta)",
     }
 
 
