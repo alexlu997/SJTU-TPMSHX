@@ -15,7 +15,7 @@ from pathlib import Path
 
 import markdown
 
-MD = Path(r"D:\Postgraduate\vault\reports\engineering\2026-06-05-asym-porosity-phase1-CFD-plan-CN.md")
+MD = Path(r"D:\Postgraduate\vault\reports\engineering\asym-porosity-phase1\2026-06-05-asym-porosity-phase1-CFD-plan-CN.md")
 TPL = Path(r"D:\Postgraduate\vault\templates\academic-report-template-CN.html")
 ASSETS = TPL.parent / "assets"
 OUT = Path(r"C:\Users\ALEX\Desktop\asym-porosity-phase1-CFD-plan-CN.html")
