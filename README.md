@@ -123,7 +123,7 @@ sjtu_tpmshx/
 ├── controllers/    # Qt: ComputeOrchestrator, ResultCache, SessionManager, pipelines
 ├── core/           # Qt-free evaluators + shared numerics
 ├── ui/             # PySide6 widgets, themes, ui_builders
-├── df_fit/         # Darcy–Forchheimer RBF surrogate fitting
+├── df_surrogate/   # Darcy–Forchheimer RBF surrogate fitting
 ├── design/         # quick multi-case TPMS sizing tool
 ├── optimization/   # NSGA-II Pareto (2D)
 ├── domain/         # domain / unit validators
