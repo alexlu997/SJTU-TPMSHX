@@ -235,6 +235,7 @@ from .nu_correlations import (
     nu_from_Re,
     nu_vec,
     nu_water_from_Re,
+    nu_water_topo,
     NU_ROUGHNESS_FACTOR as _NU_ROUGHNESS_FACTOR,  # back-compat re-export
     NU_RE_FIT_RANGE,
     NU_COEFFS,

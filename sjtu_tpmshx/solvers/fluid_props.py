@@ -10,7 +10,7 @@ Behavior contract (must stay byte-identical to the old inline dispatch):
   * air.rho == tpms_calc.air_density (P defaults to 101325 like the old lambda)
   * water.rho ignores P (incompressible), like ``lambda T, P=None: water_density(T)``
   * air.nu ignores Pr → tpms_calc.nu_from_Re uses its built-in Pr_AIR default
-  * water.nu forwards the caller-computed Pr to tpms_calc.nu_water_from_Re
+  * water.nu uses the per-topology nu_water_topo fit (forwards caller Pr)
 """
 from __future__ import annotations
 
@@ -27,7 +27,11 @@ def _nu_air(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr=None):
 
 
 def _nu_water(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
-    return tpms_calc.nu_water_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr)
+    # Direct per-topology water Nu fit (nu_correlations.WATER_NU_COEFFS;
+    # smooth-wall water CFD, no air x1.28). eps_f / L_mm / D_h_mm unused —
+    # kept for the FluidModel.nu signature contract.
+    del eps_f, L_mm, D_h_mm
+    return tpms_calc.nu_water_topo(tpms_type, Re, Pr)
 
 
 @dataclass(frozen=True)
@@ -39,11 +43,11 @@ class FluidModel:
     mu: Callable     # (T) -> dynamic viscosity [Pa.s]
     k: Callable      # (T) -> thermal conductivity [W/m/K]
     nu: Callable     # (tpms, Re, eps_f, L_mm, D_h_mm, Pr) -> Nu (pre-floor)
-    # True when the fluid's Nu/D-F closure was fitted on AM (SLM) data and
-    # therefore already CONTAINS surface roughness — the roughness.py
-    # multipliers must NOT be applied on top (double-count). Water's
-    # Yan [6] 2024 correlation embeds it; air's closure takes the
-    # env-gated roughness modes.
+    # Guard for the (air-calibrated) roughness.py multipliers: when True they
+    # must NOT be applied to this fluid. Water's D-F closure is experiment-
+    # trained (already contains SLM roughness) and its Nu is the smooth-wall
+    # per-topology fit (nu_water_topo) — the air roughness modes don't apply
+    # either way. Air takes the env-gated roughness modes.
     embeds_roughness: bool = False
 
 

@@ -9,7 +9,7 @@ Pipeline
 1. Inlet props per side — ρ, μ, k, cp, Pr at T_in (then iterate with T_avg).
 2. Re_A = ρ_A·u_A·D_h/μ_A;  Re_B = ρ_B·u_B·D_h/μ_B  (single-stream).
 3. Nu_A = nu_from_Re(Gyroid, Re_A, ε_A, L, D_h_mm)        [v4.1 ×1.28].
-   Nu_B = nu_water_gyroid_yan6(Re_B, Pr_B) = 0.471·Re^0.627·Pr^(1/3).
+   Nu_B = nu_water_topo('Gyroid', Re_B, Pr_B) = 0.4445·Re^0.6361·Pr^(1/3).
 4. h_A = Nu_A·k_A/D_h;   h_B = Nu_B·k_B/D_h.
 5. UA = 1 / [1/(A_tot·h_A) + t_wall/(k_steel·A_tot) + 1/(A_tot·h_B)].
 6. C_A = m_air·cp_A;  C_B = m_water·cp_B;  C_min, C_max, Cr = C_min/C_max.
@@ -51,7 +51,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from solvers.tpms_calc import (
-    geometry as tpms_geometry, nu_from_Re, nu_water_gyroid_yan6,
+    geometry as tpms_geometry, nu_from_Re, nu_water_gyroid_yan6, nu_water_topo,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
     P_atm,
@@ -192,7 +192,7 @@ def main() -> None:
             Pr_B  = mu_B * cp_B / k_B
             u_B   = m_water / (rho_B * A_FLOW_WATER)
             Re_B  = rho_B * u_B * D_H / mu_B
-            Nu_B  = float(nu_water_gyroid_yan6(max(Re_B, 1.0), Pr_B))
+            Nu_B  = float(nu_water_topo('Gyroid', max(Re_B, 1.0), Pr_B))
             h_B   = Nu_B * k_B / D_H
 
             R_A = 1.0 / (h_A * A_TOT)

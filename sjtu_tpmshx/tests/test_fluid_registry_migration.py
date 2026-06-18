@@ -52,7 +52,7 @@ def test_flow_model_mapping():
 
 def test_embeds_roughness_flags():
     assert fluid_props.get('air').embeds_roughness is False
-    assert fluid_props.get('water').embeds_roughness is True   # Yan [6] AM data
+    assert fluid_props.get('water').embeds_roughness is True   # experiment-trained D-F closure; skip air roughness modes
 
 
 def test_roughness_skip_uses_flag():

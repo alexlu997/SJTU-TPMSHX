@@ -149,6 +149,8 @@ WATER_NU_COEFFS = {
 
 def nu_water_topo(tpms_type, Re, Pr_water):
     """Topology-specific direct water Nu = c·Re^a·Pr^(1/3) (table above).
-    ``max(Re, 1.0)`` floor preserved verbatim from the design-tool fit."""
+    ``np.maximum(Re, 1.0)`` floor (array-safe; identical to the design-tool
+    fit's ``max(Re, 1.0)`` for scalar Re, but also works on per-cell arrays
+    when the solver routes its vectorised water path through here)."""
     co = WATER_NU_COEFFS[tpms_type]
-    return co['c'] * max(Re, 1.0) ** co['a'] * Pr_water ** (1 / 3)
+    return co['c'] * np.maximum(Re, 1.0) ** co['a'] * Pr_water ** (1 / 3)

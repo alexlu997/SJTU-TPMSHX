@@ -28,7 +28,7 @@ from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_from_Re, nu_water_gyroid_yan6,
+    nu_from_Re, nu_water_gyroid_yan6, nu_water_topo,
 )
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
@@ -202,14 +202,14 @@ for ci in range(16):
     k_A  = r_A['k_f']
     K_ffA = EPS_A * k_A
 
-    # Fluid B: water. Use Yan et al 2024 [6] gyroid water correlation:
-    #   Nu = 0.471 · Re^0.627 · Pr^(1/3)   (Re 150-3000 in-range)
-    # Replaces legacy air-fit + Pr substitution form (2026-04-29).
-    # Cases 1-2 (Re 54, 108) extrapolate; err vs in-range ref ≈ -9 %.
+    # Fluid B: water. Per-topology direct water-CFD fit (nu_water_topo):
+    #   Gyroid Nu = 0.4445 · Re^0.6361 · Pr^(1/3)   (Re 100-50000)
+    # No air ×1.28; replaces the Yan [6] correlation (2026-06-18).
+    # Cases 1-2 (Re 54, 108) extrapolate below the 100 floor.
     k_B  = float(water_conductivity(T_Bin_K))
     Pr_B = float(mu_B0 * cp_B0 / k_B)
     Re_B = rho_B0 * abs(u_B) * D_H / mu_B0
-    Nu_B = float(nu_water_gyroid_yan6(max(Re_B, 1.0), Pr_B))
+    Nu_B = float(nu_water_topo('Gyroid', max(Re_B, 1.0), Pr_B))
     H_sf_B = Nu_B * k_B / D_H
     h_vB = A0 * H_sf_B
     K_ffB = EPS_A * k_B    # symmetric sheet HX: ε_B = ε_A

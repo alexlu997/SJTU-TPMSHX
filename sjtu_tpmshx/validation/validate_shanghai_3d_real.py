@@ -31,7 +31,7 @@ from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_water_gyroid_yan6,
+    nu_water_gyroid_yan6, nu_water_topo,
     P_atm, Sa_mm, Pr,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
@@ -247,7 +247,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     # m_water already read at line ~172 (Excel col 7); reuse, don't re-read.
     u_B = m_water / (rho_B * A_FLOW)
     Re_B = rho_B * abs(u_B) * D_H / mu_B0
-    Nu_B = float(nu_water_gyroid_yan6(max(Re_B, 1.0), Pr_B))
+    Nu_B = float(nu_water_topo('Gyroid', max(Re_B, 1.0), Pr_B))
     H_sf_B = Nu_B * k_B / D_H
     h_vB0 = A0 * H_sf_B
     h_vB_field = np.full((Nx, Ny, Nz), h_vB0)

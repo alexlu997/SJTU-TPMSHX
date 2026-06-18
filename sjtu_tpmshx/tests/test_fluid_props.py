@@ -44,7 +44,7 @@ def test_nu_air_matches_and_ignores_pr(tpms, Re, eps, L, Dh):
 ])
 def test_nu_water_forwards_pr(tpms, Re, eps, L, Dh, Pr):
     m = fp.get('water')
-    assert m.nu(tpms, Re, eps, L, Dh, Pr) == t.nu_water_from_Re(tpms, Re, eps, L, Dh, Pr)
+    assert m.nu(tpms, Re, eps, L, Dh, Pr) == t.nu_water_topo(tpms, Re, Pr)
 
 
 def test_unknown_fluid_raises():
