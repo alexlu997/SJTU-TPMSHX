@@ -63,9 +63,10 @@ DEFAULT_CONFIG_3D: dict = {
     # tpms_calc air-Gyroid is the only roughness compensation. c_F is
     # trained on real SLM dP from 试验记录表 → already encodes Sa-driven
     # friction; any f-side multiplier double-counts. See
-    # solvers/roughness.py module docstring. Post-revert Shanghai 3D
-    # baseline dP RMSRE ≈ 47% (smooth-wall ConstDF + ε_A fix; cF closure
-    # gap, not a multiplier issue). Water side (Yan [6]) embeds AM
+    # solvers/roughness.py module docstring. Current Shanghai 3D
+    # baseline dP RMSRE ≈ 9.82% (gamma_df) / 7.19% (rbf); the old ≈ 47%
+    # figure is retired (smooth-wall ConstDF + ε_A fix era). Water side
+    # (the topology-specific water Nu, `nu_water_topo`) embeds AM
     # roughness already and is untouched here.
     'roughness_mode':   'norris_1a',
     'roughness_eps_um': 100.0,        # only used by bhatti_shah_1b

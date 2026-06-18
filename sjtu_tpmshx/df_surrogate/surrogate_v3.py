@@ -5,7 +5,8 @@ Model:
     1D compressible isothermal D-F equation:
         P_out² = P_in² − 2·R·T·(μG/K + c_F·G²)·L
 
-    Geometry → (K, c_F) regressor — method="rbf" (production default):
+    Geometry → (K, c_F) regressor — method="rbf" (opt-in via
+        TPMSHX_DF_METHOD=rbf; gamma_df is the default since 2026-06-12):
         RBF cubic s=0.1 on (L_mm, t_mm, eps_f) + K clamp 1e-8.
         Validated end-to-end: Shanghai 3D Nz=3 dP RMSRE 7.19% / Q 3.22%.
 

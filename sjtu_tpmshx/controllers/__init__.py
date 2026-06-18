@@ -6,7 +6,7 @@ Phase 1: ComputeOrchestrator — solver thread lifecycle. ✅ refactor-p1-done
 Phase 2: ResultCache + SessionManager — result + state aggregation.
 Phase 3: ThemeManager + SignalRouter — theme + connection lifecycle.
 Phase 4: DomainValidator (TODO).
-Phase 5: FieldFactory (TODO).
+Phase 5: FieldFactory — done (ui/field_factory.py, installed in main.py).
 """
 from .compute_config import (
     ComputeConfig,

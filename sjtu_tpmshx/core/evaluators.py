@@ -153,7 +153,8 @@ def evaluate_3d(x_decision: np.ndarray,
 
     # 2026-05-13 — air-side wall-roughness correction (Norris 1971 or
     # Bhatti-Shah-Haaland). Resolve mode + ε from env if not passed in.
-    # Water side untouched (Yan [6] embeds AM roughness already).
+    # Water side untouched (the per-topology water fit (`nu_water_topo`)
+    # embeds AM roughness already).
     if roughness_mode is None or roughness_eps_um is None:
         from solvers.roughness import resolve_mode_from_env as _resolve
         _env_mode, _env_eps = _resolve(default='baseline')

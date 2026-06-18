@@ -67,7 +67,8 @@ def _residual_correction_enabled() -> bool:
 # into the production surface via the measured convention factor
 #     cF_SIMPLE / cF_1D = 534.8 / 472.7 = 1.131   (G_7_6, Shanghai-validated)
 # Validated end-to-end on D_7_6 (17 cases): production RBF extrapolation
-# dP RMSRE 67.4% / bias +64%  ->  override 454.3 gives 14.1% / +0.2%.
+# dP RMSRE 67.4% / bias +64%  ->  override 454.3 gives 14.1% / +0.2%
+# (HISTORICAL/SUPERSEDED — d76 gate later re-baselined to ≈11.29% / −7.5%).
 # The RBF kernel and its col47-convention anchors are UNTOUCHED; this is a
 # thin query-level layer with a local Gaussian influence region (log-space
 # blend, exact at the calibrated point, hard zero beyond w<0.05 so existing

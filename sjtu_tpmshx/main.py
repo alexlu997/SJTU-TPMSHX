@@ -401,7 +401,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             tag='sc-scrub-next')
         # D7 — Ctrl+D overview dashboard
         ts("Ctrl+D", self._show_overview, tag='sc-overview')
-        # NSGA-II launch
+        # qNEHVI launch
         ts("Ctrl+Return", self._run_optimize, tag='sc-opt-return')
         ts("Ctrl+Enter", self._run_optimize, tag='sc-opt-enter')
         # E18 — Ctrl+↑/↓ cycle tabs
@@ -692,8 +692,10 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         #   2D: alpha=0.4 (~5% Q accuracy)
         #   3D: alpha=1.0 (streamwise x), 0.5 (cross-stream y, z) — with
         #       wall-refine adding 16 BL cells/axis, N_user ~ 2-3x Nx_target
-        #       gives "paper-run" ~90k-cell refined grid matching Shanghai
-        #       17.83% RMSRE baseline without runaway timing.
+        #       gives "paper-run" ~90k-cell refined grid matching the
+        #       current Shanghai 3D dP baseline ≈ 9.82% (gamma_df) /
+        #       7.19% (rbf) RMSRE without runaway timing (17.83% is
+        #       historical).
         is_3d = (hasattr(self, 'combo_dim')
                  and self.combo_dim.currentIndex() == 1)
         try:
@@ -1961,7 +1963,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             "1.  Left panel — configure Geometry, Boundary Conditions, "
             "Zone Layout.\n"
             "2.  Header ▶ Compute — run a single-point solve "
-            "(menu → Optimize for NSGA-II).\n"
+            "(menu → Optimize for qNEHVI optimization).\n"
             "3.  Right canvas — explore Temperature / Pressure / "
             "Velocity / 3D View tabs once compute finishes.\n\n"
             "Presets, theme toggle (☀/☾), and K/°C units live in the "
@@ -2019,7 +2021,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             ('btn_tab_pareto', "Pareto tab",
              "Show Pareto-front optimisation results"),
             ('_opt_btn', "Optimize",
-             "Start NSGA-II multi-objective search — runs for minutes to hours"),
+             "Start qNEHVI Bayesian multi-objective search — runs for minutes to hours"),
             ('progress', "Computation progress",
              "Current solve progress as a percentage"),
             ('zone_table', "Zone table",
@@ -2076,7 +2078,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         lines.append("")
         lines.append("TPMS heat-exchanger homogenised solver for SJTU.")
         lines.append(
-            "2D/3D compressible D-F + SIMPLE with NSGA-II zoning search.")
+            "2D/3D compressible D-F + SIMPLE with qNEHVI Bayesian zoning search.")
         lines.append("")
         import sys as _sys_ab, platform as _plat
         try:

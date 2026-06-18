@@ -28,7 +28,7 @@ from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_from_Re, nu_water_gyroid_yan6, nu_water_topo,
+    nu_from_Re, nu_water_topo,
 )
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain

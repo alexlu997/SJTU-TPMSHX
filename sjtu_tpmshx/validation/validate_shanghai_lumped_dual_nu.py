@@ -1,8 +1,9 @@
 """validate_shanghai_lumped_dual_nu.py — Shanghai 16-case dual-Nu ε-NTU.
 
 Forward prediction of Q from inlet conditions only — no T_Aout / T_Bout
-leak. Uses both air-side (Nu v4.1 + ×1.28) and water-side (Yan [6] 2024)
-correlations to build a two-sided UA, then standard ε-NTU.
+leak. Uses both air-side (Nu v4.1 + ×1.28) and water-side
+(`nu_water_topo` per-topology fit) correlations to build a two-sided UA,
+then standard ε-NTU.
 
 Pipeline
 --------
@@ -51,7 +52,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from solvers.tpms_calc import (
-    geometry as tpms_geometry, nu_from_Re, nu_water_gyroid_yan6, nu_water_topo,
+    geometry as tpms_geometry, nu_from_Re, nu_water_topo,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
     P_atm,
@@ -148,7 +149,7 @@ def main() -> None:
     print(f"  A_0={A_0:.1f} 1/m  V_HX_total={V_HX_TOTAL*1e6:.1f}cm³  "
           f"A_tot={A_TOT:.4f}m² (full sheet HX gyroid wall)")
     print(f"  Air Nu: nu_from_Re (Gyroid v4.1 ×1.28 roughness)")
-    print(f"  Water Nu: Yan [6] 2024  Nu = 0.471·Re^0.627·Pr^(1/3)\n")
+    print(f"  Water Nu: nu_water_topo(Gyroid)  Nu = 0.4445·Re^0.6361·Pr^(1/3)\n")
 
     from validation._harness import load_cases_df
     from validation._case_sets import SHANGHAI_XLSX
@@ -180,7 +181,7 @@ def main() -> None:
         Nu_A  = nu_from_Re(TPMS, Re_A, EPS_A, L_CELL, D_H * 1000.0)
         h_A   = Nu_A * k_A / D_H
 
-        # ── Water-side iterates on T_avg_B per Yan [6] convention ──
+        # ── Water-side iterates on T_avg_B ──
         T_Bout_pred = T_Bin   # init
         n_iter = 0
         for n_iter in range(1, 51):

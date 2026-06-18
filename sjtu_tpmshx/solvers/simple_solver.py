@@ -182,11 +182,10 @@ def _porous_src_df(umag, K, cF, mu, rho):
     """Linearised porous resistance coefficient [kg/(m3 s)] for ConstDF-v1.
 
     Darcy-Forchheimer closure: Sp * u = (mu/K) * u + rho * c_F * |u| * u.
-    K and c_F are geometry-level constants from the SurrogateV3 RBF surrogate
-    (df_surrogate/predict.py:predict_K_cF → surrogate_v3.SurrogateV3, default
-    method="rbf"; the opt-in "plhub_gp" alternative was rejected as default
-    by Shanghai 3D evidence — see surrogate_v3 module docstring). Caller
-    provides K, cF per-row.
+    K and c_F are geometry-level constants from the DF surrogate
+    (df_surrogate/predict.py:predict_K_cF), default backend "gamma_df"
+    (switched rbf → gamma_df 2026-06-12; RBF is opt-in via env
+    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-row.
     """
     if umag < 1e-10:
         return mu / K  # pure Darcy when velocity vanishes

@@ -1,6 +1,6 @@
 """Multi-objective optimization + quick-design launchers for ``Main_Menu``.
 
-Extracted from the ``main`` god object: the NSGA-II zone-optimization panel
+Extracted from the ``main`` god object: the qNEHVI zone-optimization panel
 handlers (run/cancel, Pareto show/reshow/pick, save, load-solution) — all thin
 delegators to ``ui.optimize_panel`` — plus the quick-design dialog launcher.
 

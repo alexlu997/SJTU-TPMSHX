@@ -31,7 +31,7 @@ from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_water_gyroid_yan6, nu_water_topo,
+    nu_water_topo,
     P_atm, Sa_mm, Pr,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
@@ -209,7 +209,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)
     # 2026-05-13 — roughness correction (Norris 1971 / Bhatti-Shah-Haaland) for
     # air side only. Env-controlled; baseline preserves prior behavior. Water
-    # side (Yan [6] 2024) already embeds AM roughness, do NOT apply here.
+    # side (nu_water_topo) already embeds AM roughness, do NOT apply here.
     _rough_mode, _rough_eps = resolve_mode_from_env()
     if _rough_mode != 'baseline':
         Re_A_case = rho_A * abs(u_A) * D_H / mu_A
@@ -234,12 +234,12 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
         h_vA0 *= _nu_extra
     h_vA_field = np.full((Nx, Ny, Nz), h_vA0)
 
-    # Physical h_vB via Yan et al 2024 [6] gyroid water correlation
-    # (Nu = 0.471 · Re^0.627 · Pr^(1/3), valid Re 150-3000).
+    # Physical h_vB via nu_water_topo('Gyroid') gyroid water correlation
+    # (Nu = 0.4445 · Re^0.6361 · Pr^(1/3), Re 100-50000).
     # 2026-05-13 audit fix: previously used `nu_from_Re` (air, ×1.28
     # roughness) which inflated water Nu by ~ Pr^(1/3) factor missing
     # and applied an air-only roughness multiplier; mirror the 2D
-    # validate_shanghai_aligned.py path (line 156).
+    # validate_shanghai_aligned.py nu_water_topo water path.
     mu_B0 = water_mu(T_Bin_K)
     cp_B0 = float(water_cp(T_Bin_K))
     k_B = float(water_conductivity(T_Bin_K))

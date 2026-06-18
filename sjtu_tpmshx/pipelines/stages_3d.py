@@ -208,7 +208,8 @@ def _simple_mass_flow(solver, dir_code, eps_f_per_side=None,
 
 def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
     """Scale K/cF arrays by f_enhancement; skip fluids whose closure already
-    embeds AM roughness (water: Yan [6]) — registry flag, B1 1.1."""
+    embeds AM roughness (water: the per-topology water fit (`nu_water_topo`))
+    — registry flag, B1 1.1."""
     if fluid_props.get(fluid_type).embeds_roughness:
         return K_arr, cF_arr
     mode, eps_um = _resolve_ui_roughness()
@@ -421,9 +422,9 @@ _M4_DEFAULT_MODE = 'sqrt'
 # run_calculation_3d_inner / run_calculation_3d_inner_cfg and the
 # _parse_inputs window adapter were DELETED — the GUI 3D path drives
 # controllers.compute_pipeline.Pipeline3D (cfg stage functions below);
-# the raw _run_3d_stack dict reaches the renderer via the transitional
-# ComputeResult.diagnostics['raw_3d'] carrier published by
-# Main_Menu.write_result as window._result_3d.
+# B3 (2026-06-13) retired the transitional raw_3d carrier: the GUI 3D path
+# now publishes the ComputeResult directly as window._result_3d
+# (Main_Menu.write_result), so diagnostics['raw_3d'] no longer exists.
 
 
 # ── 3D result visualisation (PyVistaQt panel + 2D mid-z slice canvases) was
@@ -1600,7 +1601,8 @@ def _run_3d_stack(cfg):
         cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
 
     # 2026-05-13 — apply UI roughness correction (norris_1a default) to K_A,
-    # cF_A. Air side only; water skipped (Yan [6] embeds AM roughness).
+    # cF_A. Air side only; water skipped (the per-topology water fit
+    # (`nu_water_topo`) embeds AM roughness).
     K_A_arr, cF_A_arr = _apply_roughness_KcF(
         K_A_arr, cF_A_arr, cfg.get('fluid_type_A', 'air'),
         rho_A, mu_A, u_A, D_h)
@@ -1687,8 +1689,8 @@ def _run_3d_stack(cfg):
         K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred_B)
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred_B)
         # 2026-05-13 — apply UI roughness correction to K_B / cF_B. Skip for
-        # water (Yan [6] correlation embeds AM roughness; double-counting
-        # would over-predict friction).
+        # water (the per-topology water fit (`nu_water_topo`) embeds AM
+        # roughness; double-counting would over-predict friction).
         K_B_arr, cF_B_arr = _apply_roughness_KcF(
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
@@ -1804,7 +1806,6 @@ def _run_3d_stack(cfg):
     # Uniform case reduces to the old scalar path.
     from solvers.tpms_calc import compute as tpms_compute
     from solvers.tpms_calc import nu_from_Re as _nu_from_Re
-    from solvers.tpms_calc import nu_water_from_Re as _nu_water_from_Re
     from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
     u_B_val = cfg.get('u_B', u_A)
 

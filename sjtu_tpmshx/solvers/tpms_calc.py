@@ -9,7 +9,7 @@ Includes:
   - Geometry via numerical TPMS voxelization (epsilon, A_0 for any L, t)
   - Air property correlations (Sutherland, ideal gas)
   - Nu correlations (Diamond / Gyroid)
-  - f-Re friction factor correlations (Diamond / Gyroid)
+  - Darcy-Forchheimer dP closure (no f-Re): dP via df_surrogate K / c_F
 
 Supported TPMS types: 'Diamond', 'Gyroid'
 Fluid: air (Pr = 0.72, properties from T_in and P_in)
@@ -181,9 +181,9 @@ def nu_water_gyroid_yan6(Re, Pr):
 # D-F surrogate (predict_K_cF) was fitted on air training data only, so the
 # per-cell K / c_F coefficients for water are NOT physically calibrated; the
 # water-side dP is a placeholder. Heat transfer is still rigorous via
-# nu_water_from_Re (Pr-substitution onto the air-fit Nu correlation, with
-# Yan [6] available for Gyroid). Treat water dP as engineering estimate;
-# water Q is publication-grade for Gyroid and engineering for Diamond.
+# nu_water_topo (per-topology direct water-CFD fit, WATER_NU_COEFFS, Re
+# 100-50000, smooth-wall, no air ×1.28). Treat water dP as engineering
+# estimate; water Q is publication-grade for Gyroid and engineering for Diamond.
 _SUPPORTED_FLUIDS = {'air', 'water'}
 
 
@@ -208,10 +208,10 @@ def validate_fluid_type(fluid_type: str, side: str) -> None:
 
     For water:
       * Properties: NIST-grade rho/mu/k (Vogel viscosity, < 2 % vs NIST 0–90 °C).
-      * Nu (heat transfer): nu_water_from_Re — Pr-substitution onto the
-        air-fit Diamond / Gyroid correlations (Reynolds analogy). Gyroid
-        case 1 also has nu_water_gyroid_yan6 (Yan 2024 [6]) for direct
-        cross-check.
+      * Nu (heat transfer): nu_water_topo — per-topology direct water-CFD
+        fit (WATER_NU_COEFFS, Re 100-50000, smooth-wall, no air ×1.28).
+        nu_water_from_Re (Pr-substitution) and nu_water_gyroid_yan6 (Yan
+        2024 [6]) are retired to cross-check / test only.
       * dP closure: predict_K_cF reuses the air-fit ConstDF-v1 K/c_F. NOT
         physically calibrated for water; dP for water side is engineering
         placeholder. Use validate_shanghai_lumped_dual_nu.py for Shanghai
@@ -360,7 +360,8 @@ def compute(tpms_type: str,
         D_h       – hydraulic diameter [m]
         Re        – Reynolds number (based on D_h, interstitial velocity) [-]
         Nu        – Nusselt number [-]
-        f         – friction factor (from f-Re correlation) [-]
+        K_df      – permeability [m²] (ConstDF-v1 D-F closure)
+        cF_df     – Forchheimer coefficient [1/m] (ConstDF-v1 D-F closure)
         dP_per_L  – pressure drop per unit length [Pa/m]
         H_sf      – face heat transfer coefficient [W/(m²·K)]
         K_ff      – fluid effective thermal conductivity [W/(m·K)]
@@ -418,11 +419,12 @@ def compute(tpms_type: str,
     # returned the smooth-wall Nu, which under-displayed Nu in the UI by 28%
     # while the SIMPLE/LTNE runtime correctly used ×1.28 via nu_from_Re —
     # cosmetic mismatch that confused users sanity-checking Nu vs Q.
-    # Water path already routes through nu_water_from_Re → nu_from_Re,
-    # so it picked up ×1.28 correctly; only the air branch was buggy.
+    # Water path routes through nu_water_topo (per-topology direct water-CFD
+    # fit, no ×1.28); the ×1.28 _NU_ROUGHNESS_FACTOR is AIR-only. Only the
+    # air branch was ever buggy on the ×1.28 display.
     # B1 1.1: Nu via the registry's per-fluid dispatch — water forwards the
-    # caller-computed Pr to nu_water_from_Re (Pr-substitution); the air
-    # adapter ignores Pr and uses nu_from_Re's built-in Pr_AIR.
+    # caller-computed Pr to nu_water_topo; the air adapter ignores Pr and
+    # uses nu_from_Re's built-in Pr_AIR.
     Pr_f = mu * cp_f / k_f
     Nu = _m.nu(tpms_type, Re, eps_A, L_cell_mm, D_h_mm, Pr_f)
 

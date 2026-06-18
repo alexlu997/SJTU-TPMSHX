@@ -65,7 +65,7 @@ if __name__ == '__main__':
     results['bs100']     = run_with_mode('bhatti_shah_1b ε=100',     'bhatti_shah_1b', 100)
     results['bs150']     = run_with_mode('bhatti_shah_1b ε=150',     'bhatti_shah_1b', 150)
 
-    # Water B test — should NOT change dP_B (Yan baked-in)
+    # Water B test — should NOT change dP_B (water Nu (`nu_water_topo`) baked-in)
     print("\n=== Water B test (Shanghai HX type, dP_B should NOT respond to mode) ===", flush=True)
     res_w_base = run_with_mode('water B baseline', 'baseline', fluid_type_B='water',
                                 T_inB=290.0, u_B=0.5)
@@ -85,7 +85,7 @@ if __name__ == '__main__':
         print(f"{'water-B norris_1a':<25} {res_w_norr['Q']:>10.1f} {res_w_norr['dP_A']:>12.0f} {res_w_norr['dP_B']:>12.0f}", flush=True)
         dPB_diff = abs(res_w_base['dP_B'] - res_w_norr['dP_B'])
         if dPB_diff < 1.0:
-            print(f"\n  [OK] water-B dP_B unchanged ({dPB_diff:.2f} Pa diff) - Yan protected", flush=True)
+            print(f"\n  [OK] water-B dP_B unchanged ({dPB_diff:.2f} Pa diff) - water Nu (`nu_water_topo`) protected", flush=True)
         else:
             print(f"\n  [WARN] water-B dP_B differs by {dPB_diff:.0f} Pa - leak?", flush=True)
 
