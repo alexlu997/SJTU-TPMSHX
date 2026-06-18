@@ -30,8 +30,9 @@ Picture.zip
 *.ico
 *.npz
 
-# Run logs and benchmark result snapshots (regeneratable)
+# Run logs, caches and benchmark result snapshots (regeneratable)
 *.log
+*.pkl
 sjtu_tpmshx/benchmark_a_*.json
 
 # Shanghai validation probe outputs (suffixed runs = diagnostics; the
