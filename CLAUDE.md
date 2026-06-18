@@ -8,19 +8,19 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
 - Research notes and experiment reports are kept in a **separate vault outside this repository** (this package is a sub-repo of a larger research workspace). The in-repo `reports/` holds computed CSV / figures, not the report archive.
 
 ## Hard invariants — violating these causes real regressions
-- **Compressible is required.** Air uses ideal-gas ρ=ρ(P,T). Dropping it regressed Shanghai 3D Δp ~18 % → ~39 %. Never substitute isothermal as a "simplification".
+- **Compressible is required.** Air uses ideal-gas ρ=ρ(P,T) — the code default (`variable_rho_cp=True` in `controllers/compute_config.py`, `fluid_type='ideal_gas'`). Removing compressibility roughly doubled the Shanghai 3D Δp error in the compressibility-fix benchmark; it is the single biggest correctness lever. Never substitute isothermal as a "simplification".
 - **Porosity ε is split in ONE place.** `solvers/ltne_energy.py` halves total ε internally to ε_A = ε_B = ε/2. **Callers pass the FULL ε.** The `eps_A` / `eps_B` kwargs are private hooks — passing pre-halved values double-halves (historical bug). Don't.
 - **Mass-flux inlet is the 3D air-inlet default** (`massflux_inlet=True` in `solvers/simple_solver_3d.py`). It removes a compressible velocity-inlet positive-feedback blow-up. Don't revert to velocity-inlet.
 - **Closures already embed SLM surface roughness** (experiment-trained Darcy–Forchheimer). Do NOT add any friction / roughness multiplier — it double-counts.
 - **Nu coefficients have a single source:** `solvers/nu_correlations.py` → `NU_COEFFS` (air) / `WATER_NU_COEFFS` (water). Never duplicate them elsewhere.
-- **A surrogate-backend change must pass the Shanghai 3D gate before it becomes default.** Past candidates regressed Δp from ~7 % to 60 %+.
+- **A surrogate-backend change must reproduce the Shanghai 3D baseline before it becomes default** (target = the README headline Δp / Q; gate script `validation/validate_shanghai_3d_real.py`). Past candidates regressed Δp by roughly an order of magnitude.
 
 ## Before claiming "done"
 - Run the **full** pytest suite, not just the golden gate — golden configs don't cover every closure branch:
   ```
   pytest sjtu_tpmshx/tests/ -q
   ```
-- Golden gates `sjtu_tpmshx/runs/_out/_golden_2d.py` and `_golden_3d.py` must stay bit-identical unless you intentionally re-baseline.
+- Golden gates `sjtu_tpmshx/runs/_out/_golden_2d.py` and `_golden_3d.py` (local — `runs/_out/` is gitignored) must stay bit-identical unless you intentionally re-baseline.
 - Long runs: use `python -u …` or stdout block-buffers and the run looks hung.
 
 ## Validation commands
@@ -30,7 +30,7 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
   `python sjtu_tpmshx/validation/validate_shanghai_3d_real.py`
 
 ## Gotchas
-- The README repo-layout block still says `df_fit/`; the actual package is **`df_surrogate/`** (renamed). Trust `PROJECT_MANUAL.md` over the README layout block.
+- The DF surrogate package is **`df_surrogate/`** (renamed from `df_fit/`; older commits / external notes may still use the old name).
 - Units are K / Pa / m — **but TPMS cell size and wall thickness are in mm**. Common trap.
 - Velocities are **interstitial** (in-pore) throughout; mixing in a superficial velocity is a bug.
 - The current default surrogate backend (gamma_df vs rbf) and the headline Shanghai Δp / Q numbers drift between revisions — verify in code or the latest report before quoting them.
