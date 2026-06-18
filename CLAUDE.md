@@ -1,0 +1,39 @@
+# SJTU-TPMSHX — agent guide
+
+Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, NOT OpenFOAM — follow this repo's own conventions.
+
+## Read first (canonical docs — don't duplicate them here)
+- **`PROJECT_MANUAL.md`** — start here. Glossary (名词表) + directory map + per-file API index + physics one-pager. Written for both humans and AI agents.
+- **`README.md`** — headline results, install / run commands, V&V table.
+- Research notes and experiment reports are kept in a **separate vault outside this repository** (this package is a sub-repo of a larger research workspace). The in-repo `reports/` holds computed CSV / figures, not the report archive.
+
+## Hard invariants — violating these causes real regressions
+- **Compressible is required.** Air uses ideal-gas ρ=ρ(P,T). Dropping it regressed Shanghai 3D Δp ~18 % → ~39 %. Never substitute isothermal as a "simplification".
+- **Porosity ε is split in ONE place.** `solvers/ltne_energy.py` halves total ε internally to ε_A = ε_B = ε/2. **Callers pass the FULL ε.** The `eps_A` / `eps_B` kwargs are private hooks — passing pre-halved values double-halves (historical bug). Don't.
+- **Mass-flux inlet is the 3D air-inlet default** (`massflux_inlet=True` in `solvers/simple_solver_3d.py`). It removes a compressible velocity-inlet positive-feedback blow-up. Don't revert to velocity-inlet.
+- **Closures already embed SLM surface roughness** (experiment-trained Darcy–Forchheimer). Do NOT add any friction / roughness multiplier — it double-counts.
+- **Nu coefficients have a single source:** `solvers/nu_correlations.py` → `NU_COEFFS` (air) / `WATER_NU_COEFFS` (water). Never duplicate them elsewhere.
+- **A surrogate-backend change must pass the Shanghai 3D gate before it becomes default.** Past candidates regressed Δp from ~7 % to 60 %+.
+
+## Before claiming "done"
+- Run the **full** pytest suite, not just the golden gate — golden configs don't cover every closure branch:
+  ```
+  pytest sjtu_tpmshx/tests/ -q
+  ```
+- Golden gates `sjtu_tpmshx/runs/_out/_golden_2d.py` and `_golden_3d.py` must stay bit-identical unless you intentionally re-baseline.
+- Long runs: use `python -u …` or stdout block-buffers and the run looks hung.
+
+## Validation commands
+- Lumped ε-NTU dual-Nu (current paper baseline):
+  `python sjtu_tpmshx/validation/validate_shanghai_lumped_dual_nu.py`
+- 3D real solver (SIMPLE, mass-flux inlet):
+  `python sjtu_tpmshx/validation/validate_shanghai_3d_real.py`
+
+## Gotchas
+- The README repo-layout block still says `df_fit/`; the actual package is **`df_surrogate/`** (renamed). Trust `PROJECT_MANUAL.md` over the README layout block.
+- Units are K / Pa / m — **but TPMS cell size and wall thickness are in mm**. Common trap.
+- Velocities are **interstitial** (in-pore) throughout; mixing in a superficial velocity is a bug.
+- The current default surrogate backend (gamma_df vs rbf) and the headline Shanghai Δp / Q numbers drift between revisions — verify in code or the latest report before quoting them.
+
+## Git
+This repo: `github.com/alexlu997/SJTU-TPMSHX`, default branch **master**. Commit / push only when asked.
