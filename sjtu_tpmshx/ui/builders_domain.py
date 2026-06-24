@@ -243,6 +243,32 @@ def build_page_domain(window):
     g4.addWidget(window.chk_var_rhocp, 4, 0, 1, 2)
     window._3d_only_widgets.append(window.chk_var_rhocp)
 
+    # CPU cores for the parallel (red-black) energy GS kernel. Default = all
+    # cores (Numba pool); lower it to leave cores for other work. Funnels
+    # through solvers.threads.set_solver_threads (clamped to the pool size); the
+    # count is global to every parallel @njit kernel. Headless/batch runs use
+    # the TPMSHX_NUM_THREADS env var instead. GS is memory-bandwidth bound, so
+    # gains taper past ~8-16 cores.
+    from PySide6.QtWidgets import QSpinBox
+    from solvers.threads import (max_threads as _max_threads,
+                                 get_solver_threads as _get_threads,
+                                 set_solver_threads as _set_threads)
+    _lbl_cores = QLabel("CPU cores (energy ‖)")
+    _mx_cores = _max_threads()
+    window.spin_cpu_cores = QSpinBox()
+    window.spin_cpu_cores.setRange(1, _mx_cores)
+    window.spin_cpu_cores.setValue(_get_threads())
+    window.spin_cpu_cores.setToolTip(
+        f"CPU cores for the parallel energy kernel (red-black GS), 1–{_mx_cores}. "
+        "Default = all cores; lower it to leave cores for other work. The count "
+        "is global to every parallel kernel. GS is memory-bandwidth bound, so "
+        "gains taper past ~8–16 cores. Headless / batch runs can set the "
+        "env var TPMSHX_NUM_THREADS instead.")
+    window.spin_cpu_cores.valueChanged.connect(lambda n: _set_threads(int(n)))
+    g4.addWidget(_lbl_cores, 5, 0)
+    g4.addWidget(window.spin_cpu_cores, 5, 1)
+    window._3d_only_widgets += [_lbl_cores, window.spin_cpu_cores]
+
     # Hide 3D-only inputs by default (2D mode)
     _on_dim_changed(window)
 

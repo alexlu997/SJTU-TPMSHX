@@ -20,7 +20,7 @@ so that coupling information propagates within a single sweep.
 """
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 from ._kernels_2d import minmod
 
 
@@ -313,9 +313,210 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     return max_chg
 
 
+@njit(cache=True, parallel=True)
+def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
+                      K_ffA_arr, K_ffB_arr, K_ss_arr,
+                      h_vA_arr, h_vB_arr, eps_f_arr,
+                      rho_cp_fA, rho_cp_fB,
+                      ucA, vcA, ucB, vcB,
+                      bc_A, bc_B, T_inA_arr, T_inB_arr,
+                      ifrac_A, ifrac_B,
+                      n_iters, freeze_Tb):
+    """Red-black `prange`-parallel twin of `_gs_full_chunk` (2D).
+
+    Same construction as the 3D `_gs_full_chunk_3d_stag_rb`: cells are swept by
+    checkerboard colour (i+j parity) so same-colour cells update independently,
+    and the 2-away SOU deferred correction is read from a start-of-sweep snapshot
+    (the only same-colour dependency). Converges to the same field as the serial
+    kernel; used on large 2D grids (> `_RB_ENERGY_2D_GATE`).
+    """
+    max_chg = 0.0
+    ncell = Nx * Ny
+    for _it in range(n_iters):
+        Ta_snap = Ta.copy()
+        Tb_snap = Tb.copy()
+        sweep_chg = 0.0
+        for color in range(2):
+            color_chg = 0.0
+            for idx in prange(ncell):
+                i = idx // Ny
+                j = idx - i * Ny
+                if ((i + j) & 1) != color:
+                    continue
+                cell_chg = 0.0
+
+                # ── Fluid A ──
+                is_inlet_A = ((bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or
+                              (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1))
+                if is_inlet_A:
+                    fidx = j if bc_A <= 1 else i
+                    frac = ifrac_A[fidx]
+                    if frac > 0.99:
+                        if bc_A <= 1:
+                            Ta[i, j] = T_inA_arr[j]
+                        else:
+                            Ta[i, j] = T_inA_arr[i]
+                    elif frac > 0.01:
+                        T_in_val = T_inA_arr[j] if bc_A <= 1 else T_inA_arr[i]
+                        if bc_A == 0:   T_nbr = Ta[1, j]
+                        elif bc_A == 1: T_nbr = Ta[Nx-2, j]
+                        elif bc_A == 2: T_nbr = Ta[i, 1]
+                        else:           T_nbr = Ta[i, Ny-2]
+                        Ta[i, j] = frac * T_in_val + (1.0 - frac) * T_nbr
+                else:
+                    dxi = dx_arr[i]; dyj = dy_arr[j]
+                    vol = dxi * dyj
+                    K = K_ffA_arr[i, j]
+                    hvA = h_vA_arr[i, j] * vol
+                    ef = eps_f_arr[i, j]
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                    dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                    dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                    dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                    u_loc = ucA[i,j]; v_loc = vcA[i,j]
+                    Fx = ef * rho_cp_fA[i, j] * abs(u_loc) * dyj
+                    Fy = ef * rho_cp_fA[i, j] * abs(v_loc) * dxi
+                    if u_loc >= 0: aW = dW + Fx; aE = dE
+                    else:          aE = dE + Fx; aW = dW
+                    if v_loc >= 0: aS = dS + Fy; aN = dN
+                    else:          aN = dN + Fy; aS = dS
+                    tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
+                    tW = Ta[i-1,j] if i > 0    else Ta[i,j]
+                    tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
+                    tS = Ta[i,j-1] if j > 0    else Ta[i,j]
+                    sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, Fx)
+                           + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, Fy))
+                    aP = aE + aW + aN + aS + hvA
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                    c = abs(new - Ta[i,j])
+                    if c > cell_chg: cell_chg = c
+                    Ta[i,j] = new
+
+                # ── Solid ──
+                dxi = dx_arr[i]; dyj = dy_arr[j]
+                vol_s = dxi * dyj
+                Ks_loc = K_ss_arr[i, j]
+                hvA_s = h_vA_arr[i, j] * vol_s
+                hvB_s = h_vB_arr[i, j] * vol_s
+                dxe_s = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw_s = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn_s = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys_s = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                Ds_e = 2.0*Ks_loc*K_ss_arr[i+1,j]/(Ks_loc+K_ss_arr[i+1,j]+1e-30)*dyj/dxe_s if i < Nx-1 else Ks_loc*dyj/dxi
+                Ds_w = 2.0*Ks_loc*K_ss_arr[i-1,j]/(Ks_loc+K_ss_arr[i-1,j]+1e-30)*dyj/dxw_s if i > 0    else Ks_loc*dyj/dxi
+                Ds_n = 2.0*Ks_loc*K_ss_arr[i,j+1]/(Ks_loc+K_ss_arr[i,j+1]+1e-30)*dxi/dyn_s if j < Ny-1 else Ks_loc*dxi/dyj
+                Ds_s = 2.0*Ks_loc*K_ss_arr[i,j-1]/(Ks_loc+K_ss_arr[i,j-1]+1e-30)*dxi/dys_s if j > 0    else Ks_loc*dxi/dyj
+                sE = Ts[i+1,j] if i < Nx-1 else Ts[i,j]
+                sW = Ts[i-1,j] if i > 0    else Ts[i,j]
+                sN = Ts[i,j+1] if j < Ny-1 else Ts[i,j]
+                sS = Ts[i,j-1] if j > 0    else Ts[i,j]
+                aP_s = Ds_e + Ds_w + Ds_n + Ds_s + hvA_s + hvB_s
+                new_s = (Ds_e*sE + Ds_w*sW + Ds_n*sN + Ds_s*sS + hvA_s*Ta[i,j] + hvB_s*Tb[i,j]) / aP_s
+                c = abs(new_s - Ts[i,j])
+                if c > cell_chg: cell_chg = c
+                Ts[i,j] = new_s
+
+                # ── Fluid B ──
+                if freeze_Tb == 0:
+                    is_inlet_B = ((bc_B == 0 and i == 0) or (bc_B == 1 and i == Nx-1) or
+                                  (bc_B == 2 and j == 0) or (bc_B == 3 and j == Ny-1))
+                    if is_inlet_B:
+                        fidx_b = j if bc_B <= 1 else i
+                        frac_b = ifrac_B[fidx_b]
+                        if frac_b > 0.99:
+                            if bc_B <= 1:
+                                Tb[i, j] = T_inB_arr[j]
+                            else:
+                                Tb[i, j] = T_inB_arr[i]
+                        elif frac_b > 0.01:
+                            T_in_b = T_inB_arr[j] if bc_B <= 1 else T_inB_arr[i]
+                            if bc_B == 0:   T_nbr_b = Tb[1, j]
+                            elif bc_B == 1: T_nbr_b = Tb[Nx-2, j]
+                            elif bc_B == 2: T_nbr_b = Tb[i, 1]
+                            else:           T_nbr_b = Tb[i, Ny-2]
+                            Tb[i, j] = frac_b * T_in_b + (1.0 - frac_b) * T_nbr_b
+                    else:
+                        dxi = dx_arr[i]; dyj = dy_arr[j]
+                        vol_b = dxi * dyj
+                        K = K_ffB_arr[i, j]
+                        hvB = h_vB_arr[i, j] * vol_b
+                        ef = eps_f_arr[i, j]
+                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                        dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                        dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                        dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                        dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                        u_loc = ucB[i,j]; v_loc = vcB[i,j]
+                        Fx = ef * rho_cp_fB[i, j] * abs(u_loc) * dyj
+                        Fy = ef * rho_cp_fB[i, j] * abs(v_loc) * dxi
+                        if u_loc >= 0: aW = dW + Fx; aE = dE
+                        else:          aE = dE + Fx; aW = dW
+                        if v_loc >= 0: aS = dS + Fy; aN = dN
+                        else:          aN = dN + Fy; aS = dS
+                        tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
+                        tW = Tb[i-1,j] if i > 0    else Tb[i,j]
+                        tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
+                        tS = Tb[i,j-1] if j > 0    else Tb[i,j]
+                        sou = (_sou_corr_x(Tb_snap, i, j, Nx, u_loc, Fx)
+                               + _sou_corr_y(Tb_snap, i, j, Ny, v_loc, Fy))
+                        aP = aE + aW + aN + aS + hvB
+                        new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
+                        c = abs(new - Tb[i,j])
+                        if c > cell_chg: cell_chg = c
+                        Tb[i,j] = new
+
+                color_chg = max(color_chg, cell_chg)
+            if color_chg > sweep_chg:
+                sweep_chg = color_chg
+
+        # Outlet zero-gradient BCs
+        if bc_A == 0:
+            for j2 in range(Ny): Ta[Nx-1,j2] = Ta[Nx-2,j2]
+        elif bc_A == 1:
+            for j2 in range(Ny): Ta[0,j2] = Ta[1,j2]
+        elif bc_A == 2:
+            for i2 in range(Nx): Ta[i2,Ny-1] = Ta[i2,Ny-2]
+        else:
+            for i2 in range(Nx): Ta[i2,0] = Ta[i2,1]
+        if freeze_Tb == 0:
+            if bc_B == 0:
+                for j2 in range(Ny): Tb[Nx-1,j2] = Tb[Nx-2,j2]
+            elif bc_B == 1:
+                for j2 in range(Ny): Tb[0,j2] = Tb[1,j2]
+            elif bc_B == 2:
+                for i2 in range(Nx): Tb[i2,Ny-1] = Tb[i2,Ny-2]
+            else:
+                for i2 in range(Nx): Tb[i2,0] = Tb[i2,1]
+
+        max_chg = sweep_chg
+        if max_chg < 1e-10:
+            break
+
+    return max_chg
+
+
 # Diagnostic-only convergence trace (point 0 quantify, 2026-05-22) — mirrors
 # ltne_energy_3d._CONV_TRACE. None in production → zero overhead.
 _CONV_TRACE = None
+
+# Red-black parallel 2D energy kernel selector (mirrors ltne_energy_3d).
+# OPT-IN (default off): unlike the 3D conservative face-shared SOU — whose
+# deferred (snapshot) form matches the serial kernel to ~1e-5 K — the 2D
+# NON-conservative cell-centre SOU (`_sou_corr_x/y`, minmod limiter) is more
+# sensitive to lagging, so the RB converged field can differ from serial by
+# ~0.1 K on strongly-advective cases (still <0.03% of T, Q-negligible). 2D grids
+# are also usually < the gate (so RB rarely fires anyway). Enable explicitly
+# (`_RB_ENERGY_2D = True`) for large 2D runs where the small difference is
+# acceptable. The 3D path is default-on because its conservative kernel is clean.
+_RB_ENERGY_2D = False
+_RB_ENERGY_2D_GATE = 30_000
 
 
 def solve_full_domain(L, H, Nx, Ny,
@@ -521,9 +722,11 @@ def solve_full_domain(L, H, Nx, Ny,
     # already guards this; mirror it here.
     chg = 0.0
 
+    _use_rb = _RB_ENERGY_2D and (Nx * Ny > _RB_ENERGY_2D_GATE)
+    _gs_fn = _gs_full_chunk_rb if _use_rb else _gs_full_chunk
     while done < max_iter:
         n = min(chunk, max_iter - done)
-        chg = _gs_full_chunk(
+        chg = _gs_fn(
             Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
             K_ffA_arr, K_ffB_arr, K_ss_arr,
             h_vA_arr, h_vB_arr, eps_f_arr,

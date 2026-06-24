@@ -24,7 +24,7 @@ Phase 1 additions (2026-04-20):
 """
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 from solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
@@ -32,6 +32,54 @@ from solvers.ltne_energy import solve_full_domain as _solve_full_2d
 # ---------------------------------------------------------------------------
 # Helmholtz/MAC divergence cleaner (B-plan B2)
 # ---------------------------------------------------------------------------
+
+# Relative-divergence threshold below which a face field is treated as already
+# solenoidal and the projection solve is skipped (forward-dir fluids).
+_PROJ_SKIP_TOL = 1e-9
+
+# Cache: grid shape (Nx,Ny,Nz) -> {'L': graph Laplacian csr, 'ml': AMG hierarchy}.
+_LAPLACIAN_AMG_CACHE = {}
+
+
+def _laplacian_amg_cache(Nx, Ny, Nz):
+    """Pure 7-point graph Laplacian + its Ruge-Stuben AMG hierarchy, cached by
+    grid shape.
+
+    The projection operator depends only on cell connectivity (unit ±1 face
+    couplings — the ε·ρcp·A face weights enter only the post-solve velocity
+    correction, never the Laplacian), so a single build is reused across both
+    fluids and every outer iteration. This is what makes the AMG-CG path cheap:
+    the hierarchy is assembled once per grid, not per solve.
+    """
+    key = (Nx, Ny, Nz)
+    cached = _LAPLACIAN_AMG_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import pyamg
+    from scipy.sparse import csr_matrix
+    n = Nx * Ny * Nz
+    idx = np.arange(n).reshape(Nx, Ny, Nz)
+    rows = []; cols = []; vals = []
+
+    def _add(a, b):
+        # Symmetric Laplacian coupling for an interior face between cells a,b
+        a = a.ravel(); b = b.ravel()
+        rows.append(a); cols.append(a); vals.append(np.ones_like(a, np.float64))
+        rows.append(a); cols.append(b); vals.append(-np.ones_like(a, np.float64))
+        rows.append(b); cols.append(b); vals.append(np.ones_like(b, np.float64))
+        rows.append(b); cols.append(a); vals.append(-np.ones_like(b, np.float64))
+
+    if Nx > 1: _add(idx[:-1, :, :], idx[1:, :, :])
+    if Ny > 1: _add(idx[:, :-1, :], idx[:, 1:, :])
+    if Nz > 1: _add(idx[:, :, :-1], idx[:, :, 1:])
+    L = csr_matrix((np.concatenate(vals),
+                    (np.concatenate(rows), np.concatenate(cols))),
+                   shape=(n, n))
+    ml = pyamg.ruge_stuben_solver(L, max_coarse=200)
+    cached = {'L': L, 'ml': ml}
+    _LAPLACIAN_AMG_CACHE[key] = cached
+    return cached
+
 
 def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
     """Project staggered real-coords face velocities onto a discretely
@@ -93,41 +141,49 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
     n = Nx * Ny * Nz
     if n == 0:
         return uf, vf, wf
-    idx = np.arange(n).reshape(Nx, Ny, Nz)
-    rows = []; cols = []; vals = []
 
-    def _add(a, b):
-        # Symmetric Laplacian coupling for an interior face between cells a,b
-        a = a.ravel(); b = b.ravel()
-        rows.append(a); cols.append(a); vals.append(np.ones_like(a, np.float64))
-        rows.append(a); cols.append(b); vals.append(-np.ones_like(a, np.float64))
-        rows.append(b); cols.append(b); vals.append(np.ones_like(b, np.float64))
-        rows.append(b); cols.append(a); vals.append(-np.ones_like(b, np.float64))
+    # #2 — skip the O(N) solve when the field is already (near-)solenoidal.
+    # Forward-dir fluids enter divergence-free (the reverse-dir staggered→real
+    # transform is what injects divergence); for them φ ~ 0 and the correction
+    # is pure roundoff, so returning the input unchanged is both faster and
+    # cleaner. The threshold is relative to the face-flux scale and sits far
+    # below any physical divergence (reverse-dir D is O(0.1–0.7) of the h_v
+    # scale, measured 2026-06-03), so a real correction is never skipped.
+    flux_scale = max(float(np.abs(Fx).max()),
+                     float(np.abs(Fy).max()),
+                     float(np.abs(Fz).max()), 1e-300)
+    if float(np.abs(D).max()) <= _PROJ_SKIP_TOL * flux_scale:
+        return uf, vf, wf
 
-    if Nx > 1: _add(idx[:-1, :, :], idx[1:, :, :])
-    if Ny > 1: _add(idx[:, :-1, :], idx[:, 1:, :])
-    if Nz > 1: _add(idx[:, :, :-1], idx[:, :, 1:])
-    rows = np.concatenate(rows); cols = np.concatenate(cols)
-    vals = np.concatenate(vals)
-    L = csr_matrix((vals, (rows, cols)), shape=(n, n))
-
-    # Homogeneous-Neumann Laplacian is singular (constant null space). Remove the
-    # null space with a mean-zero constraint (Σφ=0) via a Lagrange multiplier
-    # (bordered system), NOT by pinning a single corner cell.
+    # #1 — solve the singular SPD graph-Laplacian system L φ = D with a cached
+    # AMG-preconditioned CG. This replaces a dense-bordered direct LU which, at
+    # 64k cells, cost ~56 s/solve: the Lagrange border row/column destroyed the
+    # sparse fill pattern, making the LU factor near-dense. L is the pure 7-point
+    # connectivity Laplacian — a function of (Nx,Ny,Nz) only — so it and its AMG
+    # hierarchy are built once (`_laplacian_amg_cache`) and reused everywhere.
     #
-    # 2026-06-09 z-symmetry fix: the old approach replaced the Laplacian row of
-    # cell 0 = corner (0,0,0) with φ[0]=0. That corner is off every reflection
-    # mid-plane, so replacing its row breaks the x/y/z reflection symmetry of L;
-    # the resulting φ is asymmetric and the face correction wf += dφ/Cz becomes a
-    # non-odd spurious z-velocity, breaking T-field symmetry (~30% z-asymmetry on
-    # a fully symmetric cross-flow case). The bordered operator below pins the
-    # MEAN of φ instead — a reflection-symmetric constraint — so a symmetric D
-    # yields a symmetric φ and a correctly odd velocity correction.
-    from scipy.sparse import bmat
-    e = np.ones((n, 1))
-    L_aug = bmat([[L, e], [e.T, None]], format='csr')
-    rhs_aug = np.concatenate([D, [0.0]])
-    phi = spsolve(L_aug, rhs_aug)[:n].reshape(Nx, Ny, Nz)
+    # The bordered Lagrange system [[L,e],[eᵀ,0]][φ;μ]=[D;0] is algebraically
+    # equivalent to solving L φ = D − mean(D) with mean(φ)=0 (μ = mean(D)).
+    # Projecting D onto range(L) (subtract its mean) makes the singular system
+    # consistent for CG; de-meaning φ afterwards removes the null-space part.
+    # Both the operator and the mean-zero constraint are reflection-symmetric,
+    # so a z-even D yields a z-even φ — preserving the 2026-06-09 z-symmetry fix
+    # WITHOUT the corner-pin that originally broke it.
+    cache = _laplacian_amg_cache(Nx, Ny, Nz)
+    L = cache['L']
+    D0 = D - D.mean()
+    M = cache['ml'].aspreconditioner(cycle='V')
+    from scipy.sparse.linalg import cg as _cg
+    phi_flat, info = _cg(L, D0, M=M, rtol=1e-10, maxiter=500)
+    if info != 0:
+        # Robustness fallback: the original dense-bordered direct solve (exact
+        # and symmetric, just slow). Should never trigger for a well-posed L.
+        from scipy.sparse import bmat
+        e = np.ones((n, 1))
+        L_aug = bmat([[L, e], [e.T, None]], format='csr')
+        phi_flat = spsolve(L_aug, np.concatenate([D, [0.0]]))[:n]
+    phi_flat = phi_flat - phi_flat.mean()
+    phi = phi_flat.reshape(Nx, Ny, Nz)
 
     # Correct interior faces only. With L φ = D (L = graph Laplacian), the
     # per-cell post-correction divergence is D − Lφ = 0 iff the face flux is
@@ -819,6 +875,291 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
     return max_chg
 
 
+@njit(cache=True, fastmath=True, parallel=True)
+def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
+                               dx_arr, dy_arr, dz_arr,
+                               K_ffA_arr, K_ffB_arr, K_ss_arr,
+                               h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
+                               rho_cp_fA, rho_cp_fB,
+                               ufA, vfA, wfA, ufB, vfB, wfB,
+                               bc_A, bc_B, T_inA_arr, T_inB_arr,
+                               ifrac_A, ifrac_B,
+                               n_iters, freeze_Tb,
+                               alpha_fA, alpha_s, alpha_fB,
+                               chi_B_arr, chi_B_kernel_threshold,
+                               mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
+                               conservative):
+    """Red-black parallel twin of `_gs_full_chunk_3d_stag`.
+
+    Two race-free changes vs the serial kernel make it `prange`-parallelisable:
+      1. Cells are swept by checkerboard colour (i+j+k parity). Within a colour
+         pass every cell's 7-point neighbours are the OTHER colour (frozen this
+         pass), so same-colour cells update independently — no GS read/write race.
+      2. The SOU deferred correction reaches 2 cells away (same colour), so it is
+         read from a START-OF-SWEEP SNAPSHOT (`Ta_snap`/`Tb_snap`) instead of the
+         live field. SOU is a deferred (lagged) correction and the advection
+         face fluxes are T-independent, so this changes only the iteration path,
+         not the converged fixpoint — Q/dP and the conservation certificate match
+         the serial kernel at convergence.
+
+    The per-cell update math is otherwise identical to the serial kernel.
+    Parity note: a z-reflection flips colour when Nz is even, so the colour
+    SWEEP order is not reflection-symmetric — but neither is the serial
+    lexicographic order, and both converge to the same (symmetric) linear-system
+    solution, so a converged z-symmetric case stays z-symmetric (verified).
+    """
+    max_chg = 0.0
+    ncell = Nx * Ny * Nz
+    nyz = Ny * Nz
+    for _it in range(n_iters):
+        # Start-of-sweep snapshot for the (2-away, same-colour) deferred SOU.
+        Ta_snap = Ta.copy()
+        Tb_snap = Tb.copy()
+        sweep_chg = 0.0
+        for color in range(2):
+            color_chg = 0.0
+            for idx in prange(ncell):
+                i = idx // nyz
+                rem = idx - i * nyz
+                j = rem // Nz
+                k = rem - j * Nz
+                if ((i + j + k) & 1) != color:
+                    continue
+                cell_chg = 0.0
+
+                # ── Fluid A ──
+                is_inA = _is_inlet(bc_A, i, j, k, Nx, Ny, Nz)
+                if is_inA:
+                    frac = _inlet_frac(ifrac_A, bc_A, i, j, k)
+                    if frac > 0.99:
+                        Ta[i, j, k] = _inlet_val(T_inA_arr, bc_A, i, j, k)
+                    elif frac > 0.01:
+                        Tin = _inlet_val(T_inA_arr, bc_A, i, j, k)
+                        Tnb = _inlet_neighbor(Ta, bc_A, i, j, k, Nx, Ny, Nz)
+                        Ta[i, j, k] = frac * Tin + (1.0 - frac) * Tnb
+                else:
+                    dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
+                    vol = dxi * dyj * dzk
+                    Kc = K_ffA_arr[i, j, k]
+                    hvA = h_vA_arr[i, j, k] * vol
+
+                    Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                    dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                    dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
+                    dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
+                    dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
+                    dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
+                    dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
+                    dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
+
+                    u_e = ufA[i+1, j, k]; u_w = ufA[i, j, k]
+                    v_n = vfA[i, j+1, k]; v_s = vfA[i, j, k]
+                    w_t = wfA[i, j, k+1]; w_b = wfA[i, j, k]
+
+                    rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
+                    rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
+                    rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
+                    rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
+                    rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
+                    rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
+                    rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
+                    ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
+                    ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
+                    ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
+                    ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
+                    ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
+                    ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
+
+                    F_e = ef_e * rcp_e * u_e * Ax
+                    F_w = ef_w * rcp_w * u_w * Ax
+                    F_n = ef_n * rcp_n * v_n * Ay
+                    F_s = ef_s * rcp_s * v_s * Ay
+                    F_t = ef_t * rcp_t * w_t * Az
+                    F_b = ef_b * rcp_b * w_b * Az
+
+                    aE = dE + max(-F_e, 0.0); aW = dW + max( F_w, 0.0)
+                    aN = dN + max(-F_n, 0.0); aS = dS + max( F_s, 0.0)
+                    aT = dT_ + max(-F_t, 0.0); aB = dB + max( F_b, 0.0)
+
+                    tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
+                    tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
+                    tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
+                    tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
+                    tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
+                    tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
+
+                    if conservative == 1:
+                        sou = (_sou_face_x_cons(Ta_snap, i, j, k, Nx, F_w, F_e)
+                               + _sou_face_y_cons(Ta_snap, i, j, k, Ny, F_s, F_n)
+                               + _sou_face_z_cons(Ta_snap, i, j, k, Nz, F_b, F_t))
+                        net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
+                        aP = aE + aW + aN + aS + aT + aB + net_out + hvA
+                    else:
+                        u_c_sou = 0.5*(u_e + u_w); v_c_sou = 0.5*(v_n + v_s)
+                        w_c_sou = 0.5*(w_t + w_b)
+                        Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
+                        Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
+                        Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
+                        sou = (_sou_corr_x_3d(Ta_snap, i, j, k, Nx, u_c_sou, Fx_mag)
+                               + _sou_corr_y_3d(Ta_snap, i, j, k, Ny, v_c_sou, Fy_mag)
+                               + _sou_corr_z_3d(Ta_snap, i, j, k, Nz, w_c_sou, Fz_mag))
+                        aP = aE + aW + aN + aS + aT + aB + hvA
+                    if aP < 1e-30:
+                        aP = 1e-30
+                    S_A_cell = mms_S_A_arr[i, j, k] * vol
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
+                           + hvA * Ts[i, j, k] + sou + S_A_cell) / aP
+                    old = Ta[i, j, k]
+                    upd = old + alpha_fA * (new - old)
+                    c = abs(upd - old)
+                    if c > cell_chg: cell_chg = c
+                    Ta[i, j, k] = upd
+
+                # ── Solid ──
+                dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
+                vol_s = dxi * dyj * dzk
+                Ks = K_ss_arr[i, j, k]
+                hvA_s = h_vA_arr[i, j, k] * vol_s
+                hvB_s = h_vB_arr[i, j, k] * vol_s
+                Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                dxe_s = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw_s = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn_s = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys_s = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                dzt_s = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                dzb_s = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                De = 2.0*Ks*K_ss_arr[i+1, j, k]/(Ks+K_ss_arr[i+1, j, k]+1e-30)*Ax/dxe_s if i < Nx-1 else Ks*Ax/dxi
+                Dw = 2.0*Ks*K_ss_arr[i-1, j, k]/(Ks+K_ss_arr[i-1, j, k]+1e-30)*Ax/dxw_s if i > 0    else Ks*Ax/dxi
+                Dn = 2.0*Ks*K_ss_arr[i, j+1, k]/(Ks+K_ss_arr[i, j+1, k]+1e-30)*Ay/dyn_s if j < Ny-1 else Ks*Ay/dyj
+                Ds = 2.0*Ks*K_ss_arr[i, j-1, k]/(Ks+K_ss_arr[i, j-1, k]+1e-30)*Ay/dys_s if j > 0    else Ks*Ay/dyj
+                Dt = 2.0*Ks*K_ss_arr[i, j, k+1]/(Ks+K_ss_arr[i, j, k+1]+1e-30)*Az/dzt_s if k < Nz-1 else Ks*Az/dzk
+                Db = 2.0*Ks*K_ss_arr[i, j, k-1]/(Ks+K_ss_arr[i, j, k-1]+1e-30)*Az/dzb_s if k > 0    else Ks*Az/dzk
+                sE = Ts[i+1, j, k] if i < Nx-1 else Ts[i, j, k]
+                sW = Ts[i-1, j, k] if i > 0    else Ts[i, j, k]
+                sN = Ts[i, j+1, k] if j < Ny-1 else Ts[i, j, k]
+                sS = Ts[i, j-1, k] if j > 0    else Ts[i, j, k]
+                sT = Ts[i, j, k+1] if k < Nz-1 else Ts[i, j, k]
+                sB = Ts[i, j, k-1] if k > 0    else Ts[i, j, k]
+                aP_s = De + Dw + Dn + Ds + Dt + Db + hvA_s + hvB_s
+                S_s_cell = mms_S_s_arr[i, j, k] * vol_s
+                new_s = (De*sE + Dw*sW + Dn*sN + Ds*sS + Dt*sT + Db*sB
+                         + hvA_s*Ta[i, j, k] + hvB_s*Tb[i, j, k]
+                         + S_s_cell) / aP_s
+                old_s = Ts[i, j, k]
+                upd_s = old_s + alpha_s * (new_s - old_s)
+                c = abs(upd_s - old_s)
+                if c > cell_chg: cell_chg = c
+                Ts[i, j, k] = upd_s
+
+                # ── Fluid B ──
+                if freeze_Tb == 0:
+                    is_inB = _is_inlet(bc_B, i, j, k, Nx, Ny, Nz)
+                    if is_inB:
+                        frac_b = _inlet_frac(ifrac_B, bc_B, i, j, k)
+                        if frac_b > 0.99:
+                            Tb[i, j, k] = _inlet_val(T_inB_arr, bc_B, i, j, k)
+                        elif frac_b > 0.01:
+                            Tin_b = _inlet_val(T_inB_arr, bc_B, i, j, k)
+                            Tnb_b = _inlet_neighbor(Tb, bc_B, i, j, k, Nx, Ny, Nz)
+                            Tb[i, j, k] = frac_b * Tin_b + (1.0 - frac_b) * Tnb_b
+                    elif chi_B_arr[i, j, k] < chi_B_kernel_threshold:
+                        pass
+                    else:
+                        vol_b = dxi * dyj * dzk
+                        Kc_b = K_ffB_arr[i, j, k]
+                        hvB = h_vB_arr[i, j, k] * vol_b
+                        dxe_b = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                        dxw_b = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                        dyn_b = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                        dys_b = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                        dzt_b = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                        dzb_b = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                        dEb = 2.0*Kc_b*K_ffB_arr[i+1, j, k]/(Kc_b+K_ffB_arr[i+1, j, k]+1e-30)*Ax/dxe_b if i < Nx-1 else 0.0
+                        dWb = 2.0*Kc_b*K_ffB_arr[i-1, j, k]/(Kc_b+K_ffB_arr[i-1, j, k]+1e-30)*Ax/dxw_b if i > 0 else 0.0
+                        dNb = 2.0*Kc_b*K_ffB_arr[i, j+1, k]/(Kc_b+K_ffB_arr[i, j+1, k]+1e-30)*Ay/dyn_b if j < Ny-1 else 0.0
+                        dSb = 2.0*Kc_b*K_ffB_arr[i, j-1, k]/(Kc_b+K_ffB_arr[i, j-1, k]+1e-30)*Ay/dys_b if j > 0 else 0.0
+                        dTb_ = 2.0*Kc_b*K_ffB_arr[i, j, k+1]/(Kc_b+K_ffB_arr[i, j, k+1]+1e-30)*Az/dzt_b if k < Nz-1 else 0.0
+                        dBb = 2.0*Kc_b*K_ffB_arr[i, j, k-1]/(Kc_b+K_ffB_arr[i, j, k-1]+1e-30)*Az/dzb_b if k > 0 else 0.0
+                        uB_e = ufB[i+1, j, k]; uB_w = ufB[i, j, k]
+                        vB_n = vfB[i, j+1, k]; vB_s = vfB[i, j, k]
+                        wB_t = wfB[i, j, k+1]; wB_b = wfB[i, j, k]
+                        rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_fB_arr[i,j,k]
+                        rcpB_e = 0.5*(rcpB_c + rho_cp_fB[i+1,j,k]) if i < Nx-1 else rcpB_c
+                        rcpB_w = 0.5*(rho_cp_fB[i-1,j,k] + rcpB_c) if i > 0 else rcpB_c
+                        rcpB_n = 0.5*(rcpB_c + rho_cp_fB[i,j+1,k]) if j < Ny-1 else rcpB_c
+                        rcpB_s = 0.5*(rho_cp_fB[i,j-1,k] + rcpB_c) if j > 0 else rcpB_c
+                        rcpB_t = 0.5*(rcpB_c + rho_cp_fB[i,j,k+1]) if k < Nz-1 else rcpB_c
+                        rcpB_b = 0.5*(rho_cp_fB[i,j,k-1] + rcpB_c) if k > 0 else rcpB_c
+                        efB_e = 0.5*(efB_c + eps_fB_arr[i+1,j,k]) if i < Nx-1 else efB_c
+                        efB_w = 0.5*(eps_fB_arr[i-1,j,k] + efB_c) if i > 0 else efB_c
+                        efB_n = 0.5*(efB_c + eps_fB_arr[i,j+1,k]) if j < Ny-1 else efB_c
+                        efB_s = 0.5*(eps_fB_arr[i,j-1,k] + efB_c) if j > 0 else efB_c
+                        efB_t = 0.5*(efB_c + eps_fB_arr[i,j,k+1]) if k < Nz-1 else efB_c
+                        efB_b = 0.5*(eps_fB_arr[i,j,k-1] + efB_c) if k > 0 else efB_c
+                        FB_e = efB_e * rcpB_e * uB_e * Ax
+                        FB_w = efB_w * rcpB_w * uB_w * Ax
+                        FB_n = efB_n * rcpB_n * vB_n * Ay
+                        FB_s = efB_s * rcpB_s * vB_s * Ay
+                        FB_t = efB_t * rcpB_t * wB_t * Az
+                        FB_b = efB_b * rcpB_b * wB_b * Az
+                        aEb = dEb  + max(-FB_e, 0.0); aWb = dWb  + max( FB_w, 0.0)
+                        aNb = dNb  + max(-FB_n, 0.0); aSb = dSb  + max( FB_s, 0.0)
+                        aTb = dTb_ + max(-FB_t, 0.0); aBb = dBb  + max( FB_b, 0.0)
+                        tEb = Tb[i+1, j, k] if i < Nx-1 else Tb[i, j, k]
+                        tWb = Tb[i-1, j, k] if i > 0    else Tb[i, j, k]
+                        tNb = Tb[i, j+1, k] if j < Ny-1 else Tb[i, j, k]
+                        tSb = Tb[i, j-1, k] if j > 0    else Tb[i, j, k]
+                        tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
+                        tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
+                        if conservative == 1:
+                            soub = (_sou_face_x_cons(Tb_snap, i, j, k, Nx, FB_w, FB_e)
+                                    + _sou_face_y_cons(Tb_snap, i, j, k, Ny, FB_s, FB_n)
+                                    + _sou_face_z_cons(Tb_snap, i, j, k, Nz, FB_b, FB_t))
+                            net_outB = ((FB_e - FB_w) + (FB_n - FB_s)
+                                        + (FB_t - FB_b))
+                            aPb = (aEb + aWb + aNb + aSb + aTb + aBb
+                                   + net_outB + hvB)
+                        else:
+                            uBc_sou = 0.5*(uB_e + uB_w); vBc_sou = 0.5*(vB_n + vB_s)
+                            wBc_sou = 0.5*(wB_t + wB_b)
+                            FxB_mag = efB_c * rcpB_c * abs(uBc_sou) * Ax
+                            FyB_mag = efB_c * rcpB_c * abs(vBc_sou) * Ay
+                            FzB_mag = efB_c * rcpB_c * abs(wBc_sou) * Az
+                            soub = (_sou_corr_x_3d(Tb_snap, i, j, k, Nx, uBc_sou, FxB_mag)
+                                    + _sou_corr_y_3d(Tb_snap, i, j, k, Ny, vBc_sou, FyB_mag)
+                                    + _sou_corr_z_3d(Tb_snap, i, j, k, Nz, wBc_sou, FzB_mag))
+                            aPb = aEb + aWb + aNb + aSb + aTb + aBb + hvB
+                        if aPb < 1e-30:
+                            aPb = 1e-30
+                        S_B_cell = mms_S_B_arr[i, j, k] * vol_b
+                        new_b = (aEb*tEb + aWb*tWb + aNb*tNb + aSb*tSb
+                                 + aTb*tTb + aBb*tBb + hvB*Ts[i, j, k]
+                                 + soub + S_B_cell) / aPb
+                        old_b = Tb[i, j, k]
+                        upd_b = old_b + alpha_fB * (new_b - old_b)
+                        c = abs(upd_b - old_b)
+                        if c > cell_chg: cell_chg = c
+                        Tb[i, j, k] = upd_b
+
+                color_chg = max(color_chg, cell_chg)
+            if color_chg > sweep_chg:
+                sweep_chg = color_chg
+
+        _apply_outlet_3d(Ta, bc_A, Nx, Ny, Nz)
+        if freeze_Tb == 0:
+            _apply_outlet_3d(Tb, bc_B, Nx, Ny, Nz)
+
+        max_chg = sweep_chg
+        if max_chg < 1e-10:
+            break
+    return max_chg
+
+
 # ---------------------------------------------------------------------------
 # Gauss-Seidel chunk — face-centered Patankar with Moukalled BC source
 # (2026-04-26 strict-conservation refactor; PoC validated AB imbal < 0.1% in 1D)
@@ -1213,6 +1554,15 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
 # None in production → zero overhead, no behaviour change.
 _CONV_TRACE = None
 
+# Energy GS kernel selector. The red-black `prange`-parallel twin
+# (`_gs_full_chunk_3d_stag_rb`) converges to the same solution as the serial
+# lexicographic `_gs_full_chunk_3d_stag` but uses all cores. Gated by grid size:
+# below `_RB_ENERGY_GATE` cells the thread-launch overhead outweighs the benefit
+# AND small grids stay bit-for-bit on the proven serial reference (so the test
+# suite is unaffected). Set `_RB_ENERGY=False` to force serial everywhere.
+_RB_ENERGY = True
+_RB_ENERGY_GATE = 30_000
+
 
 def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           T_inA, T_inB,
@@ -1428,13 +1778,17 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     if freeze_Tb == 0:
         _apply_inlet_3d(Tb, dir_B, T_inB_arr, ifrac_B, Nx, Ny, Nz)
 
-    # Chunk iterate, Q-based convergence.
-    # Chunk=500 kept as conservative default — tiny-grid smokes (14×8×3)
-    # can false-exit at chunk=200 because first Q-delta check fires at
-    # `done>=chunk` and Q_prev starts at 0, so two full chunks are needed
-    # to register meaningful stall. Larger grids (>30k cells) converge in
-    # 1-3 chunks regardless, so chunk=500 overshoots ≤ chunk=200 there.
-    chunk = 500 if conv_chunk is None else int(conv_chunk); done = 0
+    # Chunk iterate, convergence = (Q stable) AND (field stable per chunk).
+    # chunk=250 (2026-06-24): the old chunk=500 forced >=2 chunks (=1000 sweeps)
+    # because the first Q-delta check is skipped (Q_prev starts at 0), so a
+    # field that converged within the first chunk still ran a second, fully
+    # redundant one (measured: the 2nd 500-sweep chunk changed the 40^3 field by
+    # 1.7e-13 — pure waste; halving energy time at identical Q/dP). A finer
+    # chunk detects convergence earlier. The tiny-grid false-exit the old
+    # comment guarded against is now prevented by the `max ΔT < T_abs_tol`
+    # AND-guard in the convergence test below (Q-stable alone could false-exit;
+    # Q-stable AND field-stable cannot), so 250 is safe on small grids too.
+    chunk = 250 if conv_chunk is None else int(conv_chunk); done = 0
     cell_vol = dx_arr[:, None, None] * dy_arr[None, :, None] * dz_arr[None, None, :]
     Q_prev = 0.0
     Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
@@ -1506,7 +1860,10 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     while done < max_iter:
         n = min(chunk, max_iter - done)
         if use_stag:
-            chg = _gs_full_chunk_3d_stag(
+            _use_rb = _RB_ENERGY and (Nx * Ny * Nz > _RB_ENERGY_GATE)
+            _stag_fn = (_gs_full_chunk_3d_stag_rb if _use_rb
+                        else _gs_full_chunk_3d_stag)
+            chg = _stag_fn(
                 Ta, Tb, Ts, Nx, Ny, Nz,
                 dx_arr, dy_arr, dz_arr,
                 K_ffA_arr, K_ffB_arr, K_ss_arr,
@@ -1555,11 +1912,14 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                                 Q_cur))
         if done >= chunk and Q_prev != 0.0:
             rel_chg = abs(Q_cur - Q_prev) / (abs(Q_cur) + 1e-30)
-            # Strict convergence (2026-04-24 FV hardening): drop the T_abs_tol
-            # early-exit and demand both Q stable AND Ts residual bounded.
-            # Previously iteration could terminate after 2 chunks while Q still
-            # drifted 10-15% because max|ΔT| was simply < 0.01 K per chunk.
-            if rel_chg < q_tol:
+            # Converge on BOTH Q-stable AND field-stable (max per-chunk ΔT below
+            # T_abs_tol). Q-alone can false-exit while Ta/Ts still drift (10-15%
+            # Q error — 2026-04-24 FV finding); field-stable alone can false-exit
+            # while Q drifts. Requiring both is robust AND lets a genuinely
+            # converged solve stop at the first qualifying chunk instead of
+            # overshooting to max_iter (2026-06-24 — with chunk=250 this halves
+            # energy sweeps at bit-identical Q/dP on the 40^3 benchmark).
+            if rel_chg < q_tol and max(dTa_max, dTb_max, dTs_max) < T_abs_tol:
                 converged = True
                 break
         Q_prev = Q_cur
