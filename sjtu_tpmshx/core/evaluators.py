@@ -318,7 +318,7 @@ def evaluate_3d(x_decision: np.ndarray,
             ucB_real, vcB_real, wcB_real,
             cfg.get('dir_A', 0), cfg.get('dir_B', 3),
             dx_arr=dx_arr, dy_arr=dy_arr, dz_arr=dz_arr,
-            max_iter=max_iter_energy, tol=outer_tol_K,
+            max_iter=max_iter_energy, tol=tol_energy,  # FIX (2026-06-24 audit): use the advertised inner tol_energy, not outer_tol_K (the outer dT break below still uses outer_tol_K). Both default 0.5 → production unchanged.
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             alpha_T=0.7,
             ufA=ufA, vfA=vfA, wfA=wfA, ufB=ufB, vfB=vfB, wfB=wfB,

@@ -577,7 +577,20 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                                 ('combo_fluidB', 1)):
             try:
                 c = getattr(self, combo_attr, None)
-                if c is not None and 0 <= idx < c.count():
+                if c is None or not (0 <= idx < c.count()):
+                    continue
+                # FIX (2026-06-24 audit): suppress combo_fluidB's
+                # currentIndexChanged so setCurrentIndex does NOT re-fire
+                # _apply_fluid_defaults('B'), which would overwrite the preset's
+                # explicit le_uB=0.133 / le_PinB=101973 with generic Water defaults
+                # (0.15 / 101325). Manifested on every reset/preset/workspace-switch
+                # once the user had moved Fluid B off Water. Direction combos keep
+                # their signals (harmless layout redraw only).
+                if combo_attr == 'combo_fluidB':
+                    c.blockSignals(True)
+                    c.setCurrentIndex(idx)
+                    c.blockSignals(False)
+                else:
                     c.setCurrentIndex(idx)
             except Exception:
                 pass

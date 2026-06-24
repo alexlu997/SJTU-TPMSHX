@@ -317,16 +317,25 @@ def _read_partial_bc(window, side: Literal['A', 'B']) -> 'PartialBCConfig':
         except Exception:
             visible = True
         if visible:
+            # FIX (2026-06-24 audit): parse all four z-values into locals first,
+            # then commit to bc only if EVERY parse succeeds. The old code mutated
+            # bc field-by-field, so a mid-sequence ValueError/AttributeError (e.g.
+            # one z-widget blank/non-numeric) left a HALF-populated config (some
+            # float, some None). bc_to_dict gates only on in_z_ctr is not None and
+            # then emits all four keys, so a half state writes out_z_w=None, and
+            # _build_partial_masks (stages_3d) crashes on `None / 2`. Atomic
+            # all-or-nothing matches the documented all-None fallback.
             try:
-                bc.in_z_ctr = float(le_in_z_ctr.text())
-                bc.in_z_w = float(getattr(window, f'{le_prefix}_in_z_w').text())
-                bc.out_z_ctr = float(
-                    getattr(window, f'{le_prefix}_out_z_ctr').text())
-                bc.out_z_w = float(
-                    getattr(window, f'{le_prefix}_out_z_w').text())
+                _in_z_ctr  = float(le_in_z_ctr.text())
+                _in_z_w    = float(getattr(window, f'{le_prefix}_in_z_w').text())
+                _out_z_ctr = float(getattr(window, f'{le_prefix}_out_z_ctr').text())
+                _out_z_w   = float(getattr(window, f'{le_prefix}_out_z_w').text())
             except (AttributeError, ValueError):
                 # Leave z-fields as None — solver treats as full face.
                 pass
+            else:
+                bc.in_z_ctr, bc.in_z_w = _in_z_ctr, _in_z_w
+                bc.out_z_ctr, bc.out_z_w = _out_z_ctr, _out_z_w
     return bc
 
 

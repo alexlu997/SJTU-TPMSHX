@@ -200,6 +200,7 @@ def _parse_inputs_cfg(compute_cfg):
                         N_x, N_y, L, H,
                         tpms_type, k_s,
                         u_A, u_B, T_inA, T_inB, _lut,
+                        P_in=P_in_val,  # FIX (2026-06-24 audit): was defaulting to P_atm
                         allow_extrap=_allow_extrap)
                     print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
@@ -1018,8 +1019,18 @@ def _compute_Q_richardson(
         # 2nd-order extrapolation stays valid. Prior pipeline applied
         # Richardson after max(), which fails if max-argument flips
         # between the coarse and fine grids.
-        Q_A_ext = (4.0 * abs(Q_A_fine)   - abs(Q_A_coarse)  ) / 3.0
-        Q_B_ext = (4.0 * abs(Q_B_fine)   - abs(Q_B_coarse)  ) / 3.0
+        # FIX (2026-06-24 audit): Richardson r=2 weights the FINER grid by r^2=4.
+        # The historical names here are INVERTED relative to grid resolution:
+        # Q_*_fine is built from `Ta`/`energy_dx` (the USER grid = COARSER), while
+        # Q_*_coarse is built from `Ta2`/`energy_dx2` (the 2x-REFINED = FINER) solve.
+        # So the 4x weight must sit on Q_*_coarse (the finer value). Disambiguate
+        # with explicit aliases. Prior code put 4x on Q_*_fine (user/coarse grid),
+        # which AMPLIFIES the O(h^2) error ~1.25x instead of cancelling it; the
+        # solid-side Richardson in this same function (the _200/_100 site) is correct.
+        Q_A_user, Q_A_ref2x = abs(Q_A_fine), abs(Q_A_coarse)
+        Q_B_user, Q_B_ref2x = abs(Q_B_fine), abs(Q_B_coarse)
+        Q_A_ext = (4.0 * Q_A_ref2x - Q_A_user) / 3.0
+        Q_B_ext = (4.0 * Q_B_ref2x - Q_B_user) / 3.0
         # 2026-05-09 — NaN-fallback: if either side's 2× refined solve
         # NaN-blew up (e.g. ConstDF-v1 K extrapolation at t outside
         # [0.3, 0.5] mm produces unphysical Brinkman coefficients on the

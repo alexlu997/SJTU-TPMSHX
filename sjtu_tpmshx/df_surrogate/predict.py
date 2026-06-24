@@ -242,7 +242,16 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
     if not _residual_correction_enabled():
         return dP_baseline
 
-    # Apply residual learning correction
+    # FIX (2026-06-24 audit): the residual corrector g() is fit against the RBF
+    # baseline (residual_correction._build builds SurrogateV3 method='rbf' with
+    # g=(actual-pred_rbf)/pred_rbf). Multiplying it onto a non-rbf baseline (the
+    # production default flipped rbf->gamma_df on 2026-06-12) is a backend
+    # mismatch that corrupts rather than corrects. Only apply when the ACTIVE
+    # backend is actually rbf; gamma_df already bakes the closure into K/cF.
+    if _resolve_method(method) != 'rbf':
+        return dP_baseline
+
+    # Apply residual learning correction (rbf baseline only)
     from .residual_correction import get_corrector
     from solvers.tpms_calc import geometry as tpms_geometry
     geom = tpms_geometry(tpms_type, L_mm, t_mm, 16.0)

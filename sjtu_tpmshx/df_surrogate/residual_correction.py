@@ -226,7 +226,13 @@ def predict_dP_compressible_corrected(tpms_type: str, L_mm: float, t_mm: float,
     """
     from .predict import predict_K_cF
 
-    K, c_F = predict_K_cF(tpms_type, L_mm, t_mm, eps_f)
+    # FIX (2026-06-24 audit): build the baseline with the RBF backend to match
+    # the corrector, which is fit as g=(actual-pred_rbf)/pred_rbf. Without method=
+    # 'rbf' this defaulted to gamma_df (production default since 2026-06-12) and
+    # multiplied an rbf-fit residual onto a gamma_df baseline — a backend mismatch
+    # that corrupts rather than corrects. This function's whole purpose is the
+    # rbf residual-learning prediction, so the baseline must be rbf.
+    K, c_F = predict_K_cF(tpms_type, L_mm, t_mm, eps_f, method='rbf')
     C = mu * G / K + c_F * G * G
     P_out_sq = P_in ** 2 - 2.0 * R_AIR * T * C * L
     if P_out_sq <= 0:

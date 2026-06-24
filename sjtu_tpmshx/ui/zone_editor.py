@@ -102,8 +102,20 @@ class ZoneHandleManager:
                 prev_start_val = float(prev_start.text())
             except Exception:
                 pass
-        # Enforce monotonic ordering with neighbours.
-        pct = max(prev_start_val + 1.0, min(99.0, pct))
+        # Enforce monotonic ordering with BOTH neighbours. FIX (2026-06-24 audit):
+        # this boundary is written to row r's END *and* row r+1's START, so it must
+        # also stay below row r+1's END — otherwise dragging past the next zone's
+        # end inverts that zone (start>end). The old clamp only bounded the lower
+        # side (own start) and an absolute 99.
+        next_end_val = 99.0
+        if (r + 1) < w.zone_table.rowCount():
+            _ne = w.zone_table.item(r + 1, 1)
+            if _ne is not None:
+                try:
+                    next_end_val = float(_ne.text())
+                except Exception:
+                    pass
+        pct = max(prev_start_val + 1.0, min(99.0, next_end_val - 1.0, pct))
         # 2026-05-20 UI sweep (Tier 19): writing the table cells on every
         # mouse-motion event triggered the table's `cellChanged` signal
         # chain (validation re-runs, stylesheet recompute, table model

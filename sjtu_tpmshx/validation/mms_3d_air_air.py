@@ -234,7 +234,7 @@ def run_mms(case='3d', Nx=20, Ny=20, Nz=20,
             Ta, Tb, Ts, Nx, Ny, Nz,
             dx_arr, dy_arr, dz_arr,
             K_ffA_arr, K_ffB_arr, K_ss_arr,
-            h_vA_arr, h_vB_arr, eps_f_arr,
+            h_vA_arr, h_vB_arr, eps_f_arr, eps_f_arr,  # eps_fA=eps_fB (symmetric MMS): per-asym kernel split, same array reproduces pre-asym single-eps behavior
             rho_cp_fA, rho_cp_fB,
             ufA, vfA, wfA, ufB, vfB, wfB,
             0, 2,                              # bc_A=+x, bc_B=+y
