@@ -904,10 +904,20 @@ def compute_phase4(res):
         # outward at +x = +u_east·A; outward at -x = -u_west·A; etc.
         net_out_solver = (m_east - m_west) + (m_north - m_south) + (m_top - m_bot)
 
-        # SIMPLE conv: mass enters at j=0 (south face) with v>0. Streamwise
-        # "in" face = j=0 (positive flux into solver), "out" face = j=Ny.
-        m_in_face = m_south    # signed positive entering
-        m_out_face = m_north   # signed positive leaving
+        # SIMPLE conv: forward streams enter at solver j=0 (south, v>0); the
+        # streamwise "out" face is j=Ny. FIX (2026-06-24 audit): reverse-direction
+        # fluids (dir_real in {1,3,5}, e.g. fluid B with dir=3 in the T2 case)
+        # physically enter at solver j=-1 (north), so swap in/out — otherwise the
+        # imbalance is normalized on the OUTLET flux. Mirrors the is_reverse branch
+        # in audit_partial_b_ltne._solver_face_flux_2d. (net_out_solver above is
+        # signed/direction-independent and stays unchanged.)
+        is_reverse = dir_real in (1, 3, 5)
+        if is_reverse:
+            m_in_face = m_north    # signed positive entering
+            m_out_face = m_south   # signed positive leaving
+        else:
+            m_in_face = m_south
+            m_out_face = m_north
         imbal = (m_in_face - m_out_face) / max(abs(m_in_face), 1e-30)
 
         # Compressible drift expectation: |ΔT/T_in| + |ΔP/P_in|

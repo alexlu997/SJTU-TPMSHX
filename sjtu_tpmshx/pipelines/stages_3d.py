@@ -2403,7 +2403,15 @@ def _run_3d_stack(cfg):
         # runs and flattened any non-uniform K_ff / h_v / rho_cp back to
         # a uniform field.
         T_avgA = float(Ta.mean())
-        K_ffA[:] = eps_f_arr * air_conductivity(Ta)
+        # FIX (2026-06-24 audit): rebuild K_ffA from the per-side asymmetric void
+        # fraction (eps_fA_arr), NOT the symmetric eps_f_arr — otherwise the δ≠0
+        # offset-isosurface path reverts to the eps/2 split after outer iter 0.
+        # Also re-add the optional thermal-dispersion term that the old in-place
+        # refresh silently dropped. δ=0 ⇒ eps_fA_arr IS eps_f_arr (bit-identical);
+        # disp_C_A=0 ⇒ no-op.
+        K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
+        if disp_C_A > 0.0:
+            K_ffA[:] += K_disp_A
         if _var_rhocp and sA is not None:
             # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
             _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
@@ -2418,7 +2426,9 @@ def _run_3d_stack(cfg):
             T_avgB = float(Tb.mean())
             # B1 1.1: per-fluid primitives via registry; the local-P
             # rho·cp path is compressible-only physics (water keeps ρ(T)).
-            K_ffB[:] = eps_f_arr * _mB.k(Tb)
+            K_ffB[:] = eps_fB_arr * _mB.k(Tb)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above)
+            if disp_C_B > 0.0:
+                K_ffB[:] += K_disp_B
             if _mB.compressible and _var_rhocp and sB is not None:
                 _rhoB_real = sB.rho_field.transpose(perm_B)
                 if axis_map_B['is_reverse']:

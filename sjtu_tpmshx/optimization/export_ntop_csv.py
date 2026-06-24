@@ -191,7 +191,7 @@ def export_pareto_row(pareto_csv_path: str,
                       row_index: int,
                       out_dir: str,
                       *,
-                      decision_dim_expected: int = 16,
+                      decision_dim_expected: int = None,
                       **kwargs) -> dict:
     """Pull one row from a pareto_final.csv (or history.csv), strip the
     trailing (Q, dP) columns, and route through export_decision_vector.
@@ -207,14 +207,27 @@ def export_pareto_row(pareto_csv_path: str,
         raise IndexError(
             f"row_index {row_index} out of range [0, {data.shape[0]})")
     row = data[row_index]
-    if row.size < decision_dim_expected + 2:
+    # FIX (2026-06-24 audit): infer the decision dimension instead of hardcoding
+    # 16. The writer (optimizer_qnehvi._save_pareto_csv) ALWAYS appends exactly
+    # Q + dP after the D decision columns, so D = row.size - 2. The old fixed
+    # decision_dim_expected=16 only matched the (n_ctrl_x,n_ctrl_y,symmetric_y)
+    # = (4,4,True) default grid; a non-default grid (e.g. D=24) passed the
+    # `>=18` guard and then mis-sliced columns 16/17 as Q/dP and exported a
+    # truncated (wrong) decision vector. decision_dim_expected is now an
+    # optional assertion (default None = infer).
+    if row.size < 3:
         raise ValueError(
-            f"CSV row has {row.size} columns; expected ≥ "
-            f"{decision_dim_expected + 2} (decision dim + Q + dP)")
+            f"CSV row has {row.size} columns; need ≥3 (≥1 decision col + Q + dP)")
+    decision_dim = row.size - 2
+    if (decision_dim_expected is not None
+            and decision_dim != decision_dim_expected):
+        raise ValueError(
+            f"CSV row has {row.size} columns ⇒ decision_dim={decision_dim}, "
+            f"but decision_dim_expected={decision_dim_expected}")
 
-    x_decision = row[:decision_dim_expected]
-    Q   = float(row[decision_dim_expected])
-    dP  = float(row[decision_dim_expected + 1])
+    x_decision = row[:decision_dim]
+    Q   = float(row[decision_dim])
+    dP  = float(row[decision_dim + 1])
     src = {
         'pareto_csv':    os.path.abspath(pareto_csv_path),
         'pareto_row':    int(row_index),

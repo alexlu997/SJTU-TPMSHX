@@ -129,9 +129,18 @@ def size_fixed_area(cases, topo, l, t, A_f, arr="cross", k_s=16.0,
         if r.dP_cold_frac > c.dPlim_c: warns.add("水dP>限")       # 加厚到 cap 仍超 → 面积太小
         if r.dP_hot_frac > DP_DEGEN: warns.add("热dP退化")
         if r.dP_cold_frac > DP_DEGEN: warns.add("冷dP退化")
-    dp_ok = (dPh <= cases[0].dPlim_h + 1e-9) and (dPc <= cases[0].dPlim_c + 1e-9)
+    # FIX (2026-06-24 audit): check EACH case against its OWN dP ceiling, not
+    # cases[0]'s. dPh/dPc are max-over-cases; with build_cases(dp_frac=None) the
+    # per-case dPlim differ (dlh=AIR_DP_PA/P_h varies with P_h), so a higher-
+    # pressure case could exceed its own tighter limit yet pass the cases[0] gate.
+    # Mirrors the per-case thickening loop (line 106) and design.sizing._maxnorm_dP.
+    hot_ok = all(pc['dP_hot_frac'] <= c.dPlim_h + 1e-9
+                 for pc, c in zip(percase, cases))
+    cold_ok = all(pc['dP_cold_frac'] <= c.dPlim_c + 1e-9
+                  for pc, c in zip(percase, cases))
+    dp_ok = hot_ok and cold_ok
     feasible = dp_ok and Lx <= SZ.LX_MAX
-    reason = "" if feasible else ("气dP>限@面积" if dPh > cases[0].dPlim_h else "水dP>限@面积")
+    reason = "" if feasible else ("气dP>限@面积" if not hot_ok else "水dP>限@面积")
     V = A_f * Lx
     return Design(feasible, topo, l, t, s, Lx, arr, V, (1.0 - EPS) * V * rho_s,
                   dPh, dPc, Tout, reason=reason, percase=percase, height=0.0,

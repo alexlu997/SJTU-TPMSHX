@@ -189,9 +189,9 @@ def build_continuous_arrays_3d(x, L0, t0,
     D_h_arr = 2.0 * eps_arr / (A0_arr + 1e-30)  # [m]
 
     k_fA = air_conductivity(T_inA); mu_A = air_viscosity(T_inA)
-    rho_ref_A = air_density(T_inA, P_atm)
+    rho_ref_A = air_density(T_inA, P_in)  # FIX (2026-06-24 audit): use actual P_in, not P_atm (matches tpms_calc.compute + 2D builder)
     k_fB = air_conductivity(T_inB); mu_B = air_viscosity(T_inB)
-    rho_ref_B = air_density(T_inB, P_atm)
+    rho_ref_B = air_density(T_inB, P_in)
 
     # Reynolds (D_h convention, confirmed 2026-04-22)
     Re_A = np.maximum(rho_ref_A * u_A * D_h_arr / mu_A, 10.0)
