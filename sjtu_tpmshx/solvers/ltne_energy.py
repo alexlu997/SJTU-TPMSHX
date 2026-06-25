@@ -278,7 +278,19 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
                         tS = Tb[i,j-1] if j > 0    else Tb[i,j]
 
-                        sou = _sou_corr_x(Tb, i, j, Nx, u_loc, Fx) + _sou_corr_y(Tb, i, j, Ny, v_loc, Fy)
+                        # FIX (2026-06-24): fluid B (coolant) uses stable 1st-order
+                        # convection, NOT SOU. Fluid B is near-isothermal in HX use
+                        # (high ρ·cp → tiny ΔT), so the SOU deferred correction is
+                        # negligible for accuracy but DESTABILISES the stiff outer
+                        # coupling at fine grids: with SOU, water dT_B oscillates
+                        # 2.4→11.5→13 K at N=80 (never reaches steady state, so Q is
+                        # grid-dependent); without it, dT_B→0.13 K in 4 iters and Q
+                        # changes <0.4%. The instability comes from the converged Tb
+                        # becoming velocity-sensitive via the ρ·cp-scaled SOU, which
+                        # iteration-path tweaks (under-relaxation, snapshotting) can't
+                        # cure — only limiting SOU's contribution to the fixed point.
+                        # Fluid A (primary, steep thermal gradients) keeps SOU above.
+                        sou = 0.0
 
                         aP = aE + aW + aN + aS + hvB
                         new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
@@ -464,8 +476,9 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         tW = Tb[i-1,j] if i > 0    else Tb[i,j]
                         tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
                         tS = Tb[i,j-1] if j > 0    else Tb[i,j]
-                        sou = (_sou_corr_x(Tb_snap, i, j, Nx, u_loc, Fx)
-                               + _sou_corr_y(Tb_snap, i, j, Ny, v_loc, Fy))
+                        # FIX (2026-06-24): fluid B 1st-order (no SOU) for outer-
+                        # coupling stability — see _gs_full_chunk for the rationale.
+                        sou = 0.0
                         aP = aE + aW + aN + aS + hvB
                         new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
                         c = abs(new - Tb[i,j])

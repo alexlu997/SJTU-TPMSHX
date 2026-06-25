@@ -50,9 +50,26 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
                        0.40, 0.45, 0.50, 0.55, 0.42, 0.48, 0.52, 0.46])
 
 # ── frozen outputs captured on master pre-C7 (2026-06-13) ──
-_FROZEN_2D_UNIFORM = (-8577.196126819217, 11140.595170866562,
+# 2D Q re-baselined 2026-06-24: the 2D-coupling-stability fix makes fluid B use
+# 1st-order convection (no SOU) — needed because the SOU deferred correction
+# destabilises the stiff outer coupling at fine grids (water dT_B oscillates).
+# Effect is isolated to the energy Q[0] (~0.48% shift, deterministic); dP[1] and
+# mass[2] are unchanged. See solvers/ltne_energy.py `_gs_full_chunk` fluid-B block.
+#
+# 2D re-baselined 2026-06-25: the 2D air solve switched to the MASS-FLUX inlet
+# (hold inlet ρ·v constant, SIMPLESolver._apply_massflux_inlet — the 2D port of
+# the 3D Bug-B fix, per-cell v_inlet_field[i] = G/ρ[i,0] = "Option A"). It pins
+# the physical inlet throughput instead of letting it float with the
+# compressible inlet density, fixing the velocity-inlet grid drift (Shanghai 2D
+# dP RMSRE 35.8%→8.4%, ≈ 3D). Verified the entire drift here is attributable to
+# it: with massflux_inlet=False both tuples reproduce the prior frozen values to
+# rel=1e-9. Q[0] and dP[1] move (deterministic); mass[2] (geometry) is unchanged.
+# Per-cell (Option A) vs lateral-mean (Option B) differs only at rel≤2e-6 here
+# (inlet density near-uniform on a full-face inlet). Old: (-8536.46.., 11140.60..)
+# / (-7992.76.., 8246.63..).
+_FROZEN_2D_UNIFORM = (-8168.931136825195, 10057.99677021549,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-8031.512050066764, 8246.633586006588,
+_FROZEN_2D_NONUNIF = (-7734.528734545178, 7584.5716386808235,
                       3.6729327392578126)
 _FROZEN_3D_UNIFORM = (-8030.108755476857, 16636.495632326456,
                       6.323593139648438)

@@ -492,6 +492,15 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
         rho_simple = _to_simple_coords(rho_f)
         mu_simple = _to_simple_coords(mu_f)
 
+        # Mass-flux inlet reference density ρ(T_in, P_in): the physical inlet
+        # density the pipeline used to convert ṁ → u_f. Passed explicitly so the
+        # pin holds the PHYSICAL throughput even though this pipeline recreates
+        # the solver every outer iter with an already-compressed rho_f (a
+        # field-based capture would ratchet here). Ideal gas only — water is
+        # incompressible (SIMPLE._update_density is a no-op → massflux inert).
+        rho_inlet_ref = (float(P_in_abs) / (287.05 * float(T_in_f))
+                         if fluid_type == 'ideal_gas' else None)
+
         if is_x:
             s = SIMPLESolver(H, L, N_y, N_x, tpms_type, Lcell, t_wall,
                              eps, r_h, rho_simple, mu_simple, T_in_f,
@@ -500,6 +509,7 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
                              zone_arrays=z_arr,
                              wall_refine=False,
                              P_ref_abs=P_in_abs,
+                             rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
@@ -513,6 +523,7 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
                              zone_arrays=z_arr if zc_simple is None else None,
                              wall_refine=False,
                              P_ref_abs=P_in_abs,
+                             rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
@@ -1519,8 +1530,21 @@ def _run_solvers(window, cfg, fields):
     _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
                          energy_dx, energy_dy, Ta, Tb, Ts)
 
-    # Smooth temperature fields for display if partial-width inlets exist
-    # (removes Brinkman-induced stripes; Q/dP already computed from raw fields)
+    # FIX (2026-06-24): keep RAW (unsmoothed) fields for Q extraction. The
+    # display smoothing below blurs the sharp inlet/outlet thermal gradients;
+    # because gaussian_filter `sigma` is in CELLS, that blur is GRID-DEPENDENT
+    # and corrupts the enthalpy-balance Q — it drags the pinned 422 K air inlet
+    # down to ~403 K on a 20-grid (and warms the outlet), halving the apparent
+    # ΔT. This was the root cause of the 2D heat-duty grid non-convergence
+    # (Q_A_fine used the smoothed field, while the Richardson 2× grid is solved
+    # fresh = unsmoothed, so the two disagreed wildly). The old comment "Q/dP
+    # already computed from raw fields" was STALE — Q is computed below, AFTER
+    # this block, so it must be fed the raw fields explicitly.
+    Ta_raw, Tb_raw, Ts_raw = Ta, Tb, Ts
+
+    # Smooth temperature fields FOR DISPLAY ONLY if partial-width inlets exist
+    # (removes Brinkman-induced stripes). Rebinds Ta/Tb/Ts to display copies;
+    # the Q call below uses Ta_raw/Tb_raw/Ts_raw.
     if _has_partial_A or _has_partial_B:
         from scipy.ndimage import gaussian_filter
         _st = 1.5  # temperature smoothing width in cells
@@ -1542,7 +1566,7 @@ def _run_solvers(window, cfg, fields):
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
      richardson_warn) = _compute_Q_richardson(
-        Ta, Tb, Ts, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
+        Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
         simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
         energy_dx, energy_dy, _x_breaks, _y_breaks,
         T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,

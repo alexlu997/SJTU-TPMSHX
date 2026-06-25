@@ -100,7 +100,7 @@ def _apply_rough_to_simple(s, Re_case):
 
 
 def _run_simple_A(rho_field, mu_field, u_in, T_in, P_ref_abs_seed,
-                    Re_case=None, T_field=None):
+                    Re_case=None, T_field=None, rho_inlet_ref=None):
     """Build + solve SIMPLE for Fluid A (+x, full-width).
 
     Mirrors run_calculation.py._run_simple (closure) but with Shanghai-
@@ -123,8 +123,13 @@ def _run_simple_A(rho_field, mu_field, u_in, T_in, P_ref_abs_seed,
         0.0, H_DOM, u_in,
         outlet_lo=0.0, outlet_hi=H_DOM,
         P_ref_abs=P_ref_abs_seed,
+        rho_inlet_ref=rho_inlet_ref,
         wall_refine=False,
     )
+    # A/B toggle: TPMSHX_2D_MASSFLUX=0 reverts to the legacy velocity-inlet
+    # (fixed v) for comparison. Default (unset / '1') = mass-flux inlet on.
+    if os.environ.get('TPMSHX_2D_MASSFLUX', '1') == '0':
+        s.massflux_inlet = False
     s.dx_arr = DY_REFINED.copy()
     s.dy_arr = DX_REFINED.copy()
     if T_field is not None:
@@ -254,7 +259,7 @@ for ci in range(16):
                        if Ta is not None else None)
         ucA_real, vcA_real, sA = _run_simple_A(
             rho_A_simple, mu_A_simple, u_A, T_Ain_K, P_ref_abs_seed,
-            Re_case=_Re_A_case, T_field=T_A_simple)
+            Re_case=_Re_A_case, T_field=T_A_simple, rho_inlet_ref=rho_A0)
 
         # 2. Energy solve with Tb prescribed
         Ta, Tb, Ts, e_info = solve_full_domain(

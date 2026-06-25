@@ -293,7 +293,7 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 
 # ── SIMPLE Step 2: y-momentum with D-F closure ───────────────────
 @njit(cache=True)
-def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
+def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                     K_arr, cF_arr, mu_field,
                     alpha_u, n_sweeps):
@@ -376,7 +376,7 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet, outlet_frac,
                 d_v[i, j] = dxi / aP0
 
     for i in range(Nx):
-        v[i, 0] = v_inlet * inlet_frac[i]
+        v[i, 0] = v_inlet_field[i] * inlet_frac[i]
         if outlet_frac[i] > 0.5:
             if Ny >= 2:
                 rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
@@ -568,7 +568,7 @@ def _solve_pp_sparse_fast(Pp, u, v, d_u, d_v, outlet_frac,
 
 # ── SIMPLE Step 5: correction ─────────────────────────────────────
 @njit(cache=True)
-def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet, outlet_frac,
+def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
                  Nx, Ny, alpha_p, rho_field):
     # Pressure correction (skip only outlet cells at j=Ny-1)
     for i in range(Nx):
@@ -588,7 +588,7 @@ def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet, outlet_frac,
     for j in range(Ny):
         u[0, j] = 0.0; u[Nx, j] = 0.0
     for i in range(Nx):
-        v[i, 0] = v_inlet * inlet_frac[i]
+        v[i, 0] = v_inlet_field[i] * inlet_frac[i]
         # Variable density outflow: ρ·v conserved across last face.
         # Wall cells (outlet_frac ≤ 0.5) must pin v=0 — matches _sweep_v_jit_df
         # end-of-sweep BC. Without this gate, zoned / partial-outlet configs
@@ -807,6 +807,65 @@ def build_wall_refined_1d(W, N_bulk, n_refine=8, first_cell=0.02e-3, growth=1.8)
     return np.concatenate([refine_sizes, bulk, refine_sizes[::-1]])
 
 
+def build_inlet_stretched_1d(L, N, first_cell, end='lo'):
+    """One-sided geometric STREAMWISE grid: fine at the inlet end, coarsening
+    smoothly downstream (no cell-size jump). ``cell[0]=first_cell``,
+    ``cell[k]=first_cell·r**k``; the growth ratio ``r>1`` is solved so the N
+    cells sum exactly to ``L``.
+
+    Purpose: resolve a steep inlet thermal-entry without a globally fine grid.
+    This is the OPT-IN streamwise counterpart of :func:`build_wall_refined_1d`
+    (which refines the two CROSS-STREAM walls). It is NOT wired into the default
+    solver path — ``_aligned_grid`` (uniform) remains the default. The per-cell
+    ``dx_arr`` kernels (``ltne_energy._gs_full_chunk``, ``simple_solver``'s
+    momentum sweep) already consume a non-uniform 1-D array, so a graded
+    ``dx_arr`` from here plugs in with no kernel change.
+
+    Parameters
+    ----------
+    L : float — domain length along this (streamwise) axis [m]
+    N : int — number of cells
+    first_cell : float — width of the cell at the inlet end [m]. Must be < L/N
+        to actually refine; otherwise the function returns a uniform grid.
+    end : {'lo', 'hi'} — 'lo' puts the fine cells at x=0 (dir 0/2 inlet),
+        'hi' mirrors them to x=L (dir 1/3 inlet).
+
+    Returns
+    -------
+    dx_arr : (N,) float64 array, ``sum == L`` (renormalised to machine
+        precision), geometrically graded from ``first_cell``.
+
+    Notes
+    -----
+    The growth ratio is whatever the (L, N, first_cell) triple implies; a very
+    small ``first_cell`` forces a steep ratio. For low truncation error on the
+    second-order-upwind convection term, keep the implied ratio modest
+    (≈≤1.2–1.3 per cell) — i.e. choose ``first_cell`` not far below ``L/N``.
+    """
+    N = int(N)
+    if N < 2 or first_cell <= 0 or first_cell * N >= L:
+        # Cannot refine (first cell already ≥ the uniform width) → uniform.
+        return np.full(N, L / float(N), dtype=np.float64)
+    # Solve first_cell·(r**N − 1)/(r − 1) = L for r>1 by bisection. The
+    # geometric-sum S(r)=(r**N−1)/(r−1) is monotonic increasing in r with
+    # S(1+)=N < L/first_cell (guaranteed by the guard above), so a root r>1
+    # exists; cap the bracket at a steep r=8 (renormalisation absorbs any
+    # residual so the sum is always exact even if the root is clamped).
+    target = L / first_cell
+    lo, hi = 1.0 + 1e-12, 8.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        s = (mid ** N - 1.0) / (mid - 1.0)
+        if s < target:
+            lo = mid
+        else:
+            hi = mid
+    r = 0.5 * (lo + hi)
+    dx = first_cell * r ** np.arange(N, dtype=np.float64)
+    dx *= L / dx.sum()                      # renormalise → exact sum == L
+    return dx[::-1].copy() if end == 'hi' else dx
+
+
 # ===================================================================
 #  SIMPLESolver class
 # ===================================================================
@@ -847,6 +906,7 @@ class SIMPLESolver:
                  T_field=None,
                  P_ref_abs=None,
                  alpha_rho=0.3,
+                 rho_inlet_ref=None,
                  wall_refine=True,
                  n_wall_refine=8,
                  wall_first_cell=0.02e-3,
@@ -854,6 +914,18 @@ class SIMPLESolver:
         # Historical 'closure' kwarg is accepted but ignored; ConstDF-v1 D-F
         # is the only closure since 2026-04-19 f-Re cleanup.
         _legacy_kw.pop('closure', None)
+        # Mass-flux inlet reference density (kg/m³): the physical inlet density
+        # ρ(T_in, P_in) the caller used to convert ṁ → v_inlet. With the
+        # mass-flux inlet on, the pinned inlet mass flux is G = v_inlet ·
+        # rho_inlet_ref (grid- and convention-independent). None → fall back to
+        # capturing G from rho_field[:,0] at the first solve(); that is correct
+        # when the solver is reused across outer iters (3D) or when P_ref_abs is
+        # an outlet datum (the rho_field inlet row then stays at the reference),
+        # but NOT when the solver is recreated each outer iter with an
+        # inlet-pressure datum (the inlet row inflates → target would ratchet),
+        # so the 2D pipeline / validation pass this explicitly. See solve().
+        self._rho_inlet_ref = (float(rho_inlet_ref)
+                               if rho_inlet_ref is not None else None)
 
         # Wall refinement (cross-stream, x direction): geometric grid at both
         # side walls to resolve Brinkman boundary layer. Default ON since
@@ -981,7 +1053,16 @@ class SIMPLESolver:
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
 
         # Inlet — use overlap fraction for exact mass conservation
+        # v_inlet is the scalar reference inlet velocity (kept for the
+        # mass-flux target capture + back-compat diagnostics). v_inlet_field is
+        # the per-cross-stream-cell inlet velocity the kernels actually impose
+        # (Option A, 2026-06-25): with the mass-flux inlet on it is rescaled
+        # per cell by the local inlet density (see _apply_massflux_inlet), the
+        # 2D analogue of SIMPLESolver3D.v_inlet_field. For a uniform full-face
+        # inlet every cell shares the same density ⇒ v_inlet_field is uniform ⇒
+        # bit-identical to the scalar path.
         self.v_inlet = v_inlet
+        self.v_inlet_field = np.full(Nx, float(v_inlet), dtype=np.float64)
         x_lo_edge = np.concatenate(([0.0], np.cumsum(self.dx_arr[:-1])))
         x_hi_edge = np.cumsum(self.dx_arr)
         self.inlet_frac = np.clip(
@@ -1046,7 +1127,7 @@ class SIMPLESolver:
         Nx, Ny = self.Nx, self.Ny
         self.u[0, :] = 0.0;  self.u[Nx, :] = 0.0
         for i in range(Nx):
-            self.v[i, 0] = self.v_inlet * self.inlet_frac[i]
+            self.v[i, 0] = self.v_inlet_field[i] * self.inlet_frac[i]
             self.v[i, Ny] = self.v[i, Ny - 1]
 
     def update_rho_field(self, rho_field):
@@ -1056,8 +1137,10 @@ class SIMPLESolver:
 
     def _update_density(self):
         """Update rho_field from pressure field (ideal gas: rho = P_abs / (R*T)).
-        Under-relaxed to avoid oscillation. v_inlet stays fixed (velocity-inlet
-        BC); mass flux at inlet floats with density. No-op for incompressible.
+        Under-relaxed to avoid oscillation. With the mass-flux inlet on (default),
+        the inlet mass flux ρ·v is held constant and v_inlet is rescaled to track
+        the (under-relaxed) inlet density — see _apply_massflux_inlet. No-op for
+        incompressible.
 
         Clipping policy (2026-05-06 fix #1):
             Clip the *physical inputs* (P_abs) to the HX operating envelope
@@ -1086,6 +1169,44 @@ class SIMPLESolver:
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
+        # Compressible inlet: hold the inlet MASS FLUX (ρ·v) constant, not v.
+        self._apply_massflux_inlet()
+
+    def _apply_massflux_inlet(self):
+        """Re-impose a mass-flux inlet: v_inlet_field = G_target / ρ_inlet (2D
+        port of SIMPLESolver3D._apply_massflux_inlet, 2026-06-25).
+
+        Velocity-inlet (fixed v) + compressible ρ=P/(RT) + Forchheimer
+        (dP∝ρ·u² at fixed u) is a POSITIVE feedback (dP↑→P↑→ρ↑→dP↑): for
+        high-resistance / strongly-compressible runs (Shanghai air side, P drops
+        a third over the core) it lets the inlet mass flux ρ·u drift with the
+        grid, so Δp never converges (p_obs≈0) and under-reports badly. Holding
+        the mass flux G=ρ·v constant makes it NEGATIVE feedback (ρ↑→v=G/ρ↓→
+        dP↓) → grid-convergent and physically correct. `_massflux_target` is
+        the scalar reference throughput G captured once at solve start from
+        (v_inlet, ρ_inlet,ref).
+
+        Option A (per-cell): rescale EACH cross-stream inlet cell by its own
+        (already α_rho-damped) inlet density rho_field[i,0] — the 2D analogue
+        of the 3D v_inlet_field[:,k] = G/ρ[:,0,k]. No extra under-relaxation is
+        needed (ρ is already damped). For a uniform full-face inlet ρ[:,0] is
+        constant ⇒ v_inlet_field is uniform ⇒ identical to the scalar Option B.
+        self.v_inlet is kept as the lateral mean for back-compat / diagnostics.
+        For low-dP runs (water is incompressible and returns earlier; aligned
+        low-u air) ρ≈ρ_ref so v≈v_specified — behaviour ≈ legacy velocity-inlet.
+
+        No-op when disabled or before the target is captured (keeps the method
+        self-safe for unit tests); the ideal_gas guard in _update_density makes
+        it a no-op for incompressible fluids.
+        """
+        if not getattr(self, 'massflux_inlet', True):
+            return
+        if not hasattr(self, '_massflux_target'):
+            return
+        rho_in = np.maximum(self.rho_field[:, 0], 1e-9)        # per cell (Nx,)
+        self.v_inlet_field = np.ascontiguousarray(
+            self._massflux_target / rho_in, dtype=np.float64)
+        self.v_inlet = float(self.v_inlet_field.mean())        # back-compat scalar
 
     def update_T_field(self, T_field):
         """Update temperature field. Also refreshes mu_field / mu_eff_field via
@@ -1150,6 +1271,25 @@ class SIMPLESolver:
         Nx, Ny = self.Nx, self.Ny
         dx_a, dy_a = self.dx_arr, self.dy_arr
 
+        # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
+        # any pressure build-up. The `not hasattr` guard keeps it fixed across
+        # warm restarts. Prefer the explicit `rho_inlet_ref` (the physical
+        # inlet density the caller used to define v_inlet) — that is grid- and
+        # datum-independent, so it pins the *physical* throughput identically
+        # on every grid and on every recreation of the solver. When it is not
+        # supplied, fall back to the 3D-style capture from rho_field[:,0]: this
+        # is correct for a reused solver (3D) or an outlet-datum P_ref_abs
+        # (the inlet row then stays at the reference density), which is why the
+        # 2D pipeline and validation pass rho_inlet_ref explicitly.
+        if (getattr(self, 'massflux_inlet', True)
+                and self.fluid_type == 'ideal_gas'
+                and not hasattr(self, '_massflux_target')):
+            if self._rho_inlet_ref is not None:
+                _rho_ref_in = self._rho_inlet_ref
+            else:
+                _rho_ref_in = float(self.rho_field[:, 0].mean())
+            self._massflux_target = float(self.v_inlet) * _rho_ref_in
+
         for it in range(1, max_iter + 1):
             # Effective density for continuity (#2 fix): ε·ρ. Uniform ε →
             # multiplicative constant (no functional change). Zoned ε →
@@ -1170,7 +1310,7 @@ class SIMPLESolver:
                             self._K_arr, self._cF_arr, self.mu_field,
                             alpha_u, n_inner)
             _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
-                            self.inlet_frac, self.v_inlet, self.outlet_frac,
+                            self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                             Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                             self._K_arr, self._cF_arr, self.mu_field,
                             alpha_u, n_inner)
@@ -1182,7 +1322,7 @@ class SIMPLESolver:
                                   self._pp_sparsity)
             _correct_jit(self.u, self.v, self.P, self.Pp,
                          self.d_u, self.d_v,
-                         self.inlet_frac, self.v_inlet, self.outlet_frac,
+                         self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                          Nx, Ny, alpha_p, self.rho_field)
             self._update_density()  # compressible: update rho from P
 
