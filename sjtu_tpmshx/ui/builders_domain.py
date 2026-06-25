@@ -267,7 +267,7 @@ def build_page_domain(window):
     _mx_cores = _max_threads()
     # Wrap label + spinbox in a bordered card so this row matches the checkbox
     # boxes above (identical outer frame). The spinbox stays fully editable —
-    # type a value or use the up/down arrows.
+    # type a value, or use the −/+ buttons added below.
     _cpu_card = QFrame()
     _cpu_card.setStyleSheet(
         f"QFrame {{ background:{_tc['chk_bg']}; border:1px solid {_tc['chk_border']};"
@@ -290,23 +290,46 @@ def build_page_domain(window):
         "is global to every parallel kernel. GS is memory-bandwidth bound, so "
         "gains taper past ~8–16 cores. Headless / batch runs can set the "
         "env var TPMSHX_NUM_THREADS instead.")
-    # Spinbox style mirrors the working one in optimize_panel.py. CRITICAL: a
-    # partial QSpinBox stylesheet MUST also define ::up-button/::down-button —
-    # leaving them undefined collapses the up-button to a zero hit-box (Qt
-    # quirk; symptom: could decrement but not increment). Defining BOTH gives
-    # each a clickable area with native arrows. Outer uniform border comes from
-    # the `_cpu_card` frame; this just themes the inner field.
-    window.spin_cpu_cores.setMinimumWidth(72)
+    # Native QSpinBox arrows can't be themed reliably here: an ANCESTOR
+    # stylesheet forces every descendant onto QStyleSheetStyle, and a QSS-styled
+    # spin button with no ::up-arrow/::down-arrow IMAGE renders invisible (the
+    # exact symptom: "no buttons, only manual input"). So drop the native arrows
+    # and drive the value with two real QPushButtons — always visible, always
+    # clickable, fully themeable. The field stays editable for keyboard entry;
+    # stepUp/stepDown honour the [1, max] range.
+    window.spin_cpu_cores.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+    window.spin_cpu_cores.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    window.spin_cpu_cores.setFixedWidth(48)
+    window.spin_cpu_cores.setMinimumHeight(24)
     window.spin_cpu_cores.setStyleSheet(
         f"QSpinBox {{ background:{_tc['inp_bg']}; color:{_tc['inp_fg']};"
-        f" border:1px solid {_tc['inp_border']}; border-radius:6px; padding:3px 6px; }}"
-        f"QSpinBox:focus {{ border:1px solid {_tc['inp_focus']}; }}"
-        f"QSpinBox::up-button, QSpinBox::down-button {{"
-        f" background:{_tc['surface_elevated']}; border:none; width:16px; }}")
+        f" border:1px solid {_tc['inp_border']}; border-radius:4px; padding:2px 4px; }}"
+        f"QSpinBox:focus {{ border-color:{_tc['inp_focus']}; }}")
     window.spin_cpu_cores.valueChanged.connect(lambda n: _set_threads(int(n)))
+
+    _step_qss = (
+        f"QPushButton {{ background:{_tc['surface_elevated']}; color:{_tc['fg']};"
+        f" border:1px solid {_tc['inp_border']}; border-radius:4px;"
+        f" font-size:13pt; font-weight:bold; padding:0; }}"
+        f"QPushButton:hover {{ border-color:{_tc['chk_hover_border']};"
+        f" background:{_tc['chk_hover_bg']}; }}"
+        f"QPushButton:pressed {{ background:{_tc['inp_bg']}; }}")
+    _btn_dn = QPushButton("−")            # U+2212 MINUS SIGN
+    _btn_up = QPushButton("+")
+    window._spin_cpu_btns = (_btn_dn, _btn_up)
+    for _b, _fn, _tip in ((_btn_dn, window.spin_cpu_cores.stepDown, "Fewer cores"),
+                          (_btn_up, window.spin_cpu_cores.stepUp,   "More cores")):
+        _b.setFixedSize(24, 24)
+        _b.setStyleSheet(_step_qss)
+        _b.setToolTip(_tip)
+        _b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        _b.clicked.connect(_fn)
+
     _cpu_h.addWidget(_lbl_cores)
     _cpu_h.addStretch(1)
+    _cpu_h.addWidget(_btn_dn)
     _cpu_h.addWidget(window.spin_cpu_cores)
+    _cpu_h.addWidget(_btn_up)
     g_adv.addWidget(_cpu_card, 3, 0, 1, 2)
     # Register the CARD (one widget) for 3D-only visibility — hiding it hides
     # the label + spinbox together; no separate child entries needed.
