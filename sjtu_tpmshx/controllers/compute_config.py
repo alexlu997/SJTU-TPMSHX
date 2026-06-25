@@ -505,9 +505,17 @@ def bc_to_dict(bc: 'PartialBCConfig', L_dom: float, H_dom: float,
       to a full-face inlet/outlet spanning the cross-stream axis. Used by the
       2D path (both sides) and 3D side A.
     * ``side='B'`` — a *fully* degenerate BC (``in_w<=0`` AND ``out_w<=0``)
-      returns ``None``, which the 3D solver reads as "full-face cross-flow";
-      a partially-degenerate BC returns the raw partial dict (no full-face
+      returns ``None``, which ``_run_3d_stack`` reads as "no B fluid —
+      single-fluid A-alone run" (it skips the B SIMPLE build). A
+      partially-degenerate BC returns the raw partial dict (no full-face
       fallback). 3D side B only.
+
+      NOTE: the ComputeConfig→3D boundary (``stages_3d._parse_inputs_3d_cfg``)
+      rebuilds a full-face B from a None here, because via ComputeConfig
+      fluid_B is always a configured 2nd fluid (a None there is just the
+      ``PartialBCConfig`` default widths, meaning full-face cross-flow). The
+      genuine single-fluid path reaches ``_run_3d_stack`` with an explicit
+      ``fluid_B_cfg=None`` and bypasses that boundary.
     * ``with_z=True`` — append the ``in_z_*``/``out_z_*`` overlay when the cfg
       captured 3D z-partial fields (``None`` = full face along z).
     """
