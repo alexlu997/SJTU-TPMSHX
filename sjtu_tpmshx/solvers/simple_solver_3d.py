@@ -1253,16 +1253,21 @@ class SIMPLESolver3D:
         if self.fluid_type != 'ideal_gas':
             return
         P_abs = self.P_ref_abs + self.P
-        # Diagnostic: count cells outside the envelope BEFORE clipping.
-        # Cheap (one mask + sum) compared to the clip itself.
+        # Diagnostic + robustness: cells outside [1 kPa, 10 MPa] BEFORE clip.
+        # Cheap (one mask) compared to the clip itself.
+        _eng = (P_abs < 1.0e3) | (P_abs > 10.0e6)
         try:
-            n_lo = int(np.count_nonzero(P_abs < 1.0e3))
-            n_hi = int(np.count_nonzero(P_abs > 10.0e6))
             self._p_clip_hits = (
-                getattr(self, '_p_clip_hits', 0) + n_lo + n_hi)
+                getattr(self, '_p_clip_hits', 0) + int(np.count_nonzero(_eng)))
         except Exception:
             pass
         np.clip(P_abs, 1.0e3, 10.0e6, out=P_abs)  # 1 kPa .. 10 MPa
+        # Robustness (2026-06-25): also floor the STORED gauge field where the
+        # clip engaged, so the momentum pressure-gradient source can't carry a
+        # negative absolute pressure into the next sweep. In-envelope solves
+        # never clip (_eng all False) -> self.P untouched -> bit-identical.
+        if _eng.any():
+            self.P = np.where(_eng, P_abs - self.P_ref_abs, self.P)
         rho_new = P_abs / (self.R_gas * self.T_field)
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
         self.rho_field = (self.alpha_rho * rho_new

@@ -44,6 +44,22 @@ from df_surrogate.predict import predict_K_cF
 from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
+from solvers.envelope import (check_compressible_envelope, gate_solution,
+                               ChokedFlowError)
+
+
+def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
+    """Pre-solve choke gate + the legacy 1D P_ref_abs seed.
+
+    ``check_compressible_envelope`` raises (mode='raise') or returns a warning
+    string (mode='warn') when ``P_out_sq <= 0`` (predicted dP >= inlet abs
+    pressure). The returned ``sqrt(max(P_out_sq, 1e4))`` is the unchanged seed
+    used by 'warn'/'off' so a non-raising run still produces a P_ref_abs.
+    """
+    w = check_compressible_envelope(P_out_sq, P_in, mode=mode, context=context)
+    if w:
+        warn_list.append(w)
+    return float(np.sqrt(max(P_out_sq, 1.0e4)))
 
 
 # ⚠ 2026-05-14 (revised): `norris_1a` is now a no-op for friction (f×1.0,
@@ -1529,6 +1545,13 @@ def _run_3d_stack(cfg):
         _compact_diag = False
     # else: use module-level defaults, full diagnostic
 
+    # Compressible validity-envelope mode (robustness, 2026-06-25):
+    #   'raise' (default) -> ChokedFlowError on a choked/supersonic case
+    #   'warn'            -> run anyway, flag the result invalid + collect msgs
+    #   'off'             -> legacy silent behaviour
+    _env_mode = cfg.get('envelope_mode', 'raise')
+    _env_warnings = []
+
     _ltne_info = []  # per-outer {outer, iters, converged, residual}
 
     L, H, Lz = cfg['L'], cfg['H'], cfg['Lz']
@@ -1627,7 +1650,8 @@ def _run_3d_stack(cfg):
     # along pipe by continuity). NOT the local dp/dx = μu/K + ρcFu².
     C_est = mu_A * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
     P_out_sq = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_est * L_stream
-    P_ref_A = float(np.sqrt(max(P_out_sq, 1.0e4)))
+    P_ref_A = _seed_p_ref(P_out_sq, P_inA, mode=_env_mode,
+                          warn_list=_env_warnings, context='fluid A inlet seed')
 
     # Partial inlet / outlet on the 2-axis inlet face.
     in_mask_2d, out_mask_2d = _build_partial_masks(
@@ -1713,7 +1737,11 @@ def _run_3d_stack(cfg):
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
         if _mB.compressible:
             P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * L_stream_B
-            P_ref_B = float(np.sqrt(max(P_out_sq_B, 1.0e4)))
+            # Only an ideal-gas (air) B side can choke; water B is incompressible.
+            _b_mode = _env_mode if solver_fluid_type_B == 'ideal_gas' else 'off'
+            P_ref_B = _seed_p_ref(P_out_sq_B, P_inB, mode=_b_mode,
+                                  warn_list=_env_warnings,
+                                  context='fluid B inlet seed')
         else:
             P_ref_B = float(P_inB - C_B * L_stream_B / rho_B)
             P_ref_B = max(P_ref_B, 1.0e4)
@@ -2397,7 +2425,9 @@ def _run_3d_stack(cfg):
         mu_avg = float(air_viscosity(T_avg))
         C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
         P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_stream
-        sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
+        sA.P_ref_abs = _seed_p_ref(P_out_sq_new, P_inA, mode=_env_mode,
+                                   warn_list=_env_warnings,
+                                   context='fluid A reseed (outer iter)')
 
         # Warm restart: SIMPLE fields nearly converged after outer 0.
         # ρ/μ change is small (α_T=0.6 under-relaxation), so 150 iter is plenty
@@ -2484,7 +2514,10 @@ def _run_3d_stack(cfg):
                            + cF_pred * G_B * G_B)
                 P_out_sq_B_new = (P_inB ** 2
                                   - 2.0 * R_AIR * Tb_avg * C_avg_B * L_stream_B)
-                sB.P_ref_abs = float(np.sqrt(max(P_out_sq_B_new, 1.0e4)))
+                sB.P_ref_abs = _seed_p_ref(P_out_sq_B_new, P_inB,
+                                           mode=_env_mode,
+                                           warn_list=_env_warnings,
+                                           context='fluid B reseed (outer iter)')
 
             sB.update_T_field(Tb_sB)
             _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None
@@ -2822,6 +2855,29 @@ def _run_3d_stack(cfg):
         _needs_full_validate=(_compact_diag and not all(
             d['converged'] for d in _ltne_info)),
     )
+
+    # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
+    # Catches dynamic choking the 1D pre-seed missed: a supersonic |v| or a
+    # non-physical (<=0) absolute pressure in the converged field. The peak
+    # |v| is the reliable signal (the pressure floor in _update_density bounds
+    # the stored gauge, but a choked solve still drives v=G/rho supersonic).
+    # Air (ideal-gas) A side only; an incompressible side cannot choke.
+    _clip_hits = int(getattr(sA, '_p_clip_hits', 0))
+    if sB is not None:
+        _clip_hits += int(getattr(sB, '_p_clip_hits', 0))
+    if cfg.get('fluid_type_A', 'air') == 'air':
+        _P_abs_min = float((sA.P_ref_abs + sA.P).min())
+        _env_valid, _env_reasons = gate_solution(
+            _P_abs_min, float(vmag.max()), float(T_inA),
+            mode=_env_mode, dims='3D')
+    else:
+        _env_valid, _env_reasons = True, []
+    _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
+    _result['envelope_valid'] = _env_valid
+    _result['envelope_reasons'] = _env_reasons
+    _result['envelope_warnings'] = _env_warnings
+    _result['p_clip_hits'] = _clip_hits
+
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
     # LTNE conservation audit (validation/audit_partial_b_ltne.py).

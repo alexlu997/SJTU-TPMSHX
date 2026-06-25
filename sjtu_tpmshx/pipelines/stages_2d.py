@@ -25,6 +25,7 @@ from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
+from solvers.envelope import gate_solution
 
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
@@ -1563,6 +1564,23 @@ def _run_solvers(window, cfg, fields):
     P_fA, P_fB, dP_A, dP_B = _compute_pressure_2d(
         simpA, simpB, dir_A, dir_B, P_inA, P_inB, window)
 
+    # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
+    # Same fail-loud guard as the 3D pipeline: a choked air case (dP -> P_in,
+    # outlet vacuum) drives v=G/rho supersonic; flag it instead of returning
+    # garbage. Air (ideal-gas) A side only; water is incompressible.
+    _env_mode = cfg.get('envelope_mode', 'raise')
+    _env_valid = True
+    _env_reasons = []
+    _clip_hits_2d = 0
+    if simpA is not None and getattr(simpA, 'fluid_type', None) == 'ideal_gas':
+        _clip_hits_2d = int(getattr(simpA, '_p_clip_hits', 0))
+        _P_abs_min_2d = float((simpA.P_ref_abs + simpA.P).min())
+        _vmax_2d = float(np.sqrt(np.asarray(ucA) ** 2
+                                 + np.asarray(vcA) ** 2).max())
+        _env_valid, _env_reasons = gate_solution(
+            _P_abs_min_2d, _vmax_2d, float(T_inA),
+            mode=_env_mode, dims='2D')
+
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
      richardson_warn) = _compute_Q_richardson(
@@ -1635,6 +1653,10 @@ def _run_solvers(window, cfg, fields):
         'Q_enthalpy_B': abs(Q_B_fine) if Q_B_fine == Q_B_fine else float('nan'),
         'Q_solid_richardson': Q_solid_richardson,
         'Q_richardson_warn': bool(richardson_warn),
+        # Compressible validity gate (robustness, 2026-06-25)
+        'envelope_valid': _env_valid,
+        'envelope_reasons': _env_reasons,
+        'p_clip_hits': _clip_hits_2d,
     }
     return result
 
