@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from .theme import get_theme
-from .builders_base import section, row, res_row, add_row
+from .builders_base import section, collapsible_section, row, res_row, add_row
 
 
 def _res_ab_row(window, rg, r, label, attr_a, attr_b, *, unit_lbl_attrs=None):
@@ -128,30 +128,9 @@ def build_page_domain(window):
     window._v_A0   = res_row(window, g0, 6, "<i>A</i><sub>0</sub> [m<sup>-1</sup>]")
     window._v_Dh   = res_row(window, g0, 7, "<i>D<sub>h</sub></i> [mm]")
     window._v_Kss  = res_row(window, g0, 8, "<i>K</i><sub>ss</sub> [W/(m·K)]")
-
-    # Surrogate-domain guard. Default ON — near-boundary extrapolation
-    # (e.g. Shanghai t=0.6 mm, 20% past the [0.3, 0.5] cap) is the common
-    # validation workflow. Unchecking reverts to strict: out-of-window
-    # inputs abort Compute. Either way, extrapolated results carry an
-    # `extrapolated=True` flag and a watermark on every plot for
-    # traceability.
-    window.chk_allow_extrap = QCheckBox("Allow surrogate extrapolation")
-    window.chk_allow_extrap.setChecked(True)
-    window.chk_allow_extrap.setToolTip(
-        "ConstDF-v1 训练域: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm, Re ∈ [400, 16000].\n"
-        "默认严格: 超出任一范围 Compute 拒绝运行.\n"
-        "勾选后: 超出仅 warn, 结果标记为 extrapolated, 图上加水印.\n"
-        "用于 Shanghai t=0.6 mm 等近边界验证工况."
-    )
-    _extrap_t = get_theme()
-    window.chk_allow_extrap.setStyleSheet(
-        f"QCheckBox{{color:{_extrap_t['fg']}; font-size:9pt; background:transparent;}}"
-        f"QCheckBox::indicator{{width:14px; height:14px;"
-        f"border:1px solid {_extrap_t['chk_indicator_border']};"
-        f"border-radius:3px; background:{_extrap_t['chk_bg']};}}"
-        f"QCheckBox::indicator:checked{{background:{_extrap_t['chk_checked_bg']};"
-        f"border-color:{_extrap_t['chk_checked_border']};}}")
-    g0.addWidget(window.chk_allow_extrap, 9, 0, 1, 2)
+    # NOTE: `chk_allow_extrap` used to live here; relocated to the
+    # collapsible "Advanced" sub-section built right after Grid Settings
+    # (2026-06-25 UI declutter). Construction is unchanged — just reparented.
 
     # Material — only rho_s remains (k_s is in the solver/geometry panel).
     # cp_s and cp_f were removed: no solver path reads them. Solid cp is a
@@ -182,17 +161,21 @@ def build_page_domain(window):
     window._lbl_Nz = g4.itemAtPosition(2, 0).widget()
     window._3d_only_widgets += [window.le_Nz, window._lbl_Nz]
 
-    # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces).
-    # OFF by default (5-15× faster, ~1pp accuracy cost). Turn ON for production
-    # validation runs where dP near-wall BL matters more than UX speed.
-    window.chk_wall_refine_3d = QCheckBox("6-wall BL refine (3D)")
-    window.chk_wall_refine_3d.setChecked(False)
-    window.chk_wall_refine_3d.setToolTip(
-        "Enable six-wall boundary-layer refinement for 3D solves. "
-        "Adds 8 cells per wall (first_cell=0.02 mm, growth 1.8). "
-        "ON: 5-15× slower, ~+1pp dP accuracy. OFF: production-fast (default).")
+    # ── Advanced (collapsed by default) ──────────────────────────────
+    # Rarely-touched switches relocated out of the TPMS / Grid sections so
+    # the core inputs (L/H · TPMS · Nx/Ny/Nz · ρ_s) read clean. Click the
+    # header to expand. The 3D-only members register below exactly as before;
+    # the collapse composes with `_on_dim_changed` (see collapsible_section).
+    g_adv, _ = collapsible_section(
+        window, lay, "Advanced", _T_NEUTRAL, _F_NEUTRAL, expanded=False,
+        on_toggle=lambda _open: _on_dim_changed(window))
+
+    # One shared style for every Advanced checkbox so the rows read as a
+    # uniform set (boxed card · 10pt bold · 16px indicator). Previously
+    # `chk_allow_extrap` carried a smaller bespoke style and looked out of
+    # place next to the boxed 3D toggles.
     _tc = get_theme()
-    window.chk_wall_refine_3d.setStyleSheet(f"""
+    _chk_box_qss = f"""
         QCheckBox {{
             color: {_tc['fg']};
             font-size: 10pt;
@@ -220,8 +203,36 @@ def build_page_domain(window):
             outline: 0;
             border: 2px solid {_tc['inp_focus']};
         }}
-    """)
-    g4.addWidget(window.chk_wall_refine_3d, 3, 0, 1, 2)
+    """
+
+    # Surrogate-domain guard. Default ON — near-boundary extrapolation
+    # (e.g. Shanghai t=0.6 mm, 20% past the [0.3, 0.5] cap) is the common
+    # validation workflow. Unchecking reverts to strict: out-of-window
+    # inputs abort Compute. Either way, extrapolated results carry an
+    # `extrapolated=True` flag and a watermark on every plot for
+    # traceability.
+    window.chk_allow_extrap = QCheckBox("Allow surrogate extrapolation")
+    window.chk_allow_extrap.setChecked(True)
+    window.chk_allow_extrap.setToolTip(
+        "ConstDF-v1 训练域: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm, Re ∈ [400, 16000].\n"
+        "默认严格: 超出任一范围 Compute 拒绝运行.\n"
+        "勾选后: 超出仅 warn, 结果标记为 extrapolated, 图上加水印.\n"
+        "用于 Shanghai t=0.6 mm 等近边界验证工况."
+    )
+    window.chk_allow_extrap.setStyleSheet(_chk_box_qss)
+    g_adv.addWidget(window.chk_allow_extrap, 0, 0, 1, 2)
+
+    # 3D wall-refine checkbox — adds 8 BL cells near each wall (all 6 faces).
+    # OFF by default (5-15× faster, ~1pp accuracy cost). Turn ON for production
+    # validation runs where dP near-wall BL matters more than UX speed.
+    window.chk_wall_refine_3d = QCheckBox("6-wall BL refine (3D)")
+    window.chk_wall_refine_3d.setChecked(False)
+    window.chk_wall_refine_3d.setToolTip(
+        "Enable six-wall boundary-layer refinement for 3D solves. "
+        "Adds 8 cells per wall (first_cell=0.02 mm, growth 1.8). "
+        "ON: 5-15× slower, ~+1pp dP accuracy. OFF: production-fast (default).")
+    window.chk_wall_refine_3d.setStyleSheet(_chk_box_qss)
+    g_adv.addWidget(window.chk_wall_refine_3d, 1, 0, 1, 2)
     window._3d_only_widgets.append(window.chk_wall_refine_3d)
     # NOTE: legacy `_chk_wall_refine_3d` alias removed 2026-05-05 audit;
     # no remaining readers (grep confirmed). Use `chk_wall_refine_3d`.
@@ -239,8 +250,8 @@ def build_page_domain(window):
         "compressible reverse-dir flow (Q_A≈Q_B). Strict conservation stays "
         "machine-zero; Shanghai bit-identical; low-ΔP cases unchanged. "
         "ON = default; uncheck for the legacy inlet-pressure density.")
-    window.chk_var_rhocp.setStyleSheet(window.chk_wall_refine_3d.styleSheet())
-    g4.addWidget(window.chk_var_rhocp, 4, 0, 1, 2)
+    window.chk_var_rhocp.setStyleSheet(_chk_box_qss)
+    g_adv.addWidget(window.chk_var_rhocp, 2, 0, 1, 2)
     window._3d_only_widgets.append(window.chk_var_rhocp)
 
     # CPU cores for the parallel (red-black) energy GS kernel. Default = all
@@ -249,12 +260,27 @@ def build_page_domain(window):
     # count is global to every parallel @njit kernel. Headless/batch runs use
     # the TPMSHX_NUM_THREADS env var instead. GS is memory-bandwidth bound, so
     # gains taper past ~8-16 cores.
-    from PySide6.QtWidgets import QSpinBox
+    from PySide6.QtWidgets import QSpinBox, QHBoxLayout
     from solvers.threads import (max_threads as _max_threads,
                                  get_solver_threads as _get_threads,
                                  set_solver_threads as _set_threads)
-    _lbl_cores = QLabel("CPU cores (energy ‖)")
     _mx_cores = _max_threads()
+    # Wrap label + spinbox in a bordered card so this row matches the checkbox
+    # boxes above (identical outer frame). The spinbox stays fully editable —
+    # type a value or use the up/down arrows.
+    _cpu_card = QFrame()
+    _cpu_card.setStyleSheet(
+        f"QFrame {{ background:{_tc['chk_bg']}; border:1px solid {_tc['chk_border']};"
+        f" border-radius:6px; }}"
+        f"QFrame:hover {{ border-color:{_tc['chk_hover_border']};"
+        f" background:{_tc['chk_hover_bg']}; }}")
+    _cpu_h = QHBoxLayout(_cpu_card)
+    _cpu_h.setContentsMargins(10, 6, 10, 6)
+    _cpu_h.setSpacing(8)
+    _lbl_cores = QLabel("CPU cores (energy ‖)")
+    _lbl_cores.setStyleSheet(
+        f"QLabel {{ color:{_tc['fg']}; font-size:10pt; font-weight:bold;"
+        f" background:transparent; border:none; padding:0; }}")
     window.spin_cpu_cores = QSpinBox()
     window.spin_cpu_cores.setRange(1, _mx_cores)
     window.spin_cpu_cores.setValue(_get_threads())
@@ -264,10 +290,27 @@ def build_page_domain(window):
         "is global to every parallel kernel. GS is memory-bandwidth bound, so "
         "gains taper past ~8–16 cores. Headless / batch runs can set the "
         "env var TPMSHX_NUM_THREADS instead.")
+    # Spinbox style mirrors the working one in optimize_panel.py. CRITICAL: a
+    # partial QSpinBox stylesheet MUST also define ::up-button/::down-button —
+    # leaving them undefined collapses the up-button to a zero hit-box (Qt
+    # quirk; symptom: could decrement but not increment). Defining BOTH gives
+    # each a clickable area with native arrows. Outer uniform border comes from
+    # the `_cpu_card` frame; this just themes the inner field.
+    window.spin_cpu_cores.setMinimumWidth(72)
+    window.spin_cpu_cores.setStyleSheet(
+        f"QSpinBox {{ background:{_tc['inp_bg']}; color:{_tc['inp_fg']};"
+        f" border:1px solid {_tc['inp_border']}; border-radius:6px; padding:3px 6px; }}"
+        f"QSpinBox:focus {{ border:1px solid {_tc['inp_focus']}; }}"
+        f"QSpinBox::up-button, QSpinBox::down-button {{"
+        f" background:{_tc['surface_elevated']}; border:none; width:16px; }}")
     window.spin_cpu_cores.valueChanged.connect(lambda n: _set_threads(int(n)))
-    g4.addWidget(_lbl_cores, 5, 0)
-    g4.addWidget(window.spin_cpu_cores, 5, 1)
-    window._3d_only_widgets += [_lbl_cores, window.spin_cpu_cores]
+    _cpu_h.addWidget(_lbl_cores)
+    _cpu_h.addStretch(1)
+    _cpu_h.addWidget(window.spin_cpu_cores)
+    g_adv.addWidget(_cpu_card, 3, 0, 1, 2)
+    # Register the CARD (one widget) for 3D-only visibility — hiding it hides
+    # the label + spinbox together; no separate child entries needed.
+    window._3d_only_widgets.append(_cpu_card)
 
     # Hide 3D-only inputs by default (2D mode)
     _on_dim_changed(window)
