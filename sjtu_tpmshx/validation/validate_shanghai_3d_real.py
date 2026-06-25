@@ -149,7 +149,12 @@ def _build_inlet_profile(Nx_simA, Nz_simA, u_mean, kind='uniform', eta=0.0):
     else:
         raise ValueError(f"unknown profile kind {kind!r}")
 
-    # Normalise so area-mean = 1 (mass conservation)
+    # A large eta drives the corner cells of the parabolic profile (and the
+    # centre of the 'edge' profile) negative — f_raw = 1 - 3*eta < 0 for
+    # eta > 1/3 — which would inject physical BACKFLOW at the inlet. Floor to a
+    # small positive value, THEN renormalise so the area-mean still equals
+    # u_mean (mass conserved, strictly positive). Audit: r2-val-02.
+    f_raw = np.maximum(f_raw, 1e-3)
     f = f_raw / f_raw.mean()
     return (u_mean * f).astype(np.float64)
 

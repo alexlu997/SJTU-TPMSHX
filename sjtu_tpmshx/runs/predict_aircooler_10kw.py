@@ -11,6 +11,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import math
+# 预测模式: 放开 450mm AM 包络。必须在 import design.sizing 之前设环境变量 ——
+# sizing.py 在 import 时读取，spawn 出的 loky 子进程继承本进程 env → 子进程重新
+# import 时也读到放开值。旧的 `SZ.S_MAX=2.0` 模块全局突变不传给子进程 (r2-runs-01)。
+os.environ["TPMSHX_BUILD_S_MAX"] = "2.0"
+os.environ["TPMSHX_BUILD_LX_MAX"] = "2.0"
 import design.sizing as SZ
 from design.cases import DesignCase
 from design.sizing import size_fixed_cell, solve_Lx, Design
@@ -32,10 +37,6 @@ CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_aircooler_run
 
 AREA2 = 0.075        # 解读2: 总迎风面积 [m²] = 750 cm² (方形边 = sqrt = 273.9mm)
 DP_DEGEN = 0.30      # dP frac > 此 → 退化标记 (同 sizing.DP_DEGEN_FRAC)
-
-# 预测模式: 放开 450mm AM 包络 (运行时覆盖, 不动源码 → UI 不受影响)
-SZ.S_MAX = 2.0
-SZ.LX_MAX = 2.0
 
 K = 273.15
 AIR_DP_PA = 300.0       # 气侧许用压降 [Pa] (风机静压预算) → 钉住迎风面

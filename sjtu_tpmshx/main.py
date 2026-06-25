@@ -1517,7 +1517,18 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
             if c is not None:
                 try:
                     if 0 <= int(idx) < c.count():
-                        c.setCurrentIndex(int(idx))
+                        # The preset's explicit line_edits (written just above)
+                        # are the authoritative inlet conditions. Block the
+                        # fluid combos' currentIndexChanged so _apply_fluid_
+                        # defaults can't re-derive generic _FLUID_DEFAULTS and
+                        # clobber them (same hole the 2026-06-24 audit fixed for
+                        # _apply_shanghai_defaults). Audit: r2-ui-03.
+                        if name in ('combo_fluidA', 'combo_fluidB'):
+                            c.blockSignals(True)
+                            c.setCurrentIndex(int(idx))
+                            c.blockSignals(False)
+                        else:
+                            c.setCurrentIndex(int(idx))
                 except Exception: pass
         for name, val in (preset.get('checks') or {}).items():
             if name not in allowed_checks:
@@ -1820,19 +1831,23 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
                 self.restoreState(QByteArray(_b64.b64decode(st_b64)))
             except Exception:
                 pass
-        # User preference: both fluid-type combos open as Air. Combos stay
-        # at construction-time index 0; if the saved session had a *non-Air*
-        # selection (Water / sCO₂), the line-edits are now in that fluid's
-        # value range — push Air defaults to keep u/T/P consistent with the
-        # forced Air combo. If the saved combo was already Air, leave the
-        # restored line-edits alone so user customisations survive.
+        # The restore loop above SKIPS the fluid combos, so each stays at its
+        # construction-time index: A = 0 (Air), B = 1 (Water, pinned by
+        # _apply_shanghai_defaults). The restored line-edits, however, are in
+        # whatever fluid range the SAVED combo had. Push the LIVE fluid's
+        # defaults only when the saved index DIFFERS from the held index — i.e.
+        # the line-edits are in a different fluid's range than the live combo.
+        # Gating on `!= 0` (the old code) was wrong for B (held=1): a saved
+        # Air-B left Air velocities under a Water combo (r2-ui-01), and a saved
+        # Water-B clobbered the user's custom Water inlet (r2-ui-02).
         _saved_combos = payload.get('combos') or {}
         for _side in ('A', 'B'):
+            _held = 0 if _side == 'A' else 1
             try:
-                _saved_idx = int(_saved_combos.get(f'combo_fluid{_side}', 0))
+                _saved_idx = int(_saved_combos.get(f'combo_fluid{_side}', _held))
             except (ValueError, TypeError):
-                _saved_idx = 0
-            if _saved_idx != 0:
+                _saved_idx = _held
+            if _saved_idx != _held:
                 try:
                     self._apply_fluid_defaults(_side)
                 except Exception:

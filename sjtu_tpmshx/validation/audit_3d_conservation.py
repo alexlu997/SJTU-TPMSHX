@@ -719,8 +719,14 @@ def compute_phase3(res):
     m_A = float(res['_audit_m_dot_A_simple'])
     m_B = (float(res.get('_audit_m_dot_B_simple', 0.0))
            if res.get('_audit_m_dot_B_simple') is not None else 0.0)
-    T_A_out = float(res.get('T_A_out', T_inA))
-    T_B_out = float(res.get('T_B_out', T_inB if T_inB is not None else T_inA))
+    # A B-isolated run leaves res['T_B_out'] PRESENT but None; dict.get returns
+    # the stored None (not the fallback), so float(None) would crash Phase 3.
+    # Coerce present-but-None symmetrically for both fluids. Audit: r2-val-01.
+    _ta = res.get('T_A_out')
+    T_A_out = float(_ta if _ta is not None else T_inA)
+    _tb = res.get('T_B_out')
+    T_B_out = float(_tb if _tb is not None
+                    else (T_inB if T_inB is not None else T_inA))
 
     Nx, Ny, Nz = Ta.shape
     cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]

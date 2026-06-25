@@ -2,6 +2,7 @@
 单模块 ≤ 450mm。叉流冷侧迎风 = Lx·s (随 Lx 变) → 冷侧 dP 紧时须加厚 Lx,
 不能只取冷却最小值 (否则薄板憋水, 误报不可行)。逆流冷侧迎风 = s² (与 Lx 无关)。"""
 from __future__ import annotations
+import os
 from dataclasses import dataclass, field
 
 from scipy.optimize import brentq
@@ -12,8 +13,13 @@ from .forward import forward, dP_fracs, K_STEEL, GEOM_N, LTNE_TOL
 
 DP_DEGEN_FRAC = 0.30      # 单侧归一化压损 > 此 = 压降近进口压 → 退化 (超音速/迎风缩崩)
 
-S_MAX = 0.450          # build envelope [m]
-LX_MAX = 0.450
+# Build envelope [m]. Read from env AT IMPORT so loky-spawned sizing workers
+# (fresh re-import in a child process) pick up a relaxed cap set by the parent
+# BEFORE import — a parent-process module-global mutation (the old
+# `SZ.S_MAX = 2.0`) does NOT propagate to spawned workers (audit: r2-runs-01).
+# Default = 0.450 m AM build limit; the UI / default path is unaffected.
+S_MAX = float(os.environ.get("TPMSHX_BUILD_S_MAX", "0.450"))
+LX_MAX = float(os.environ.get("TPMSHX_BUILD_LX_MAX", "0.450"))
 N_MIN = 4              # 每向最少晶胞 (均质化)
 BISECT_IT, TOL = 28, 1e-4
 SIZING_TOL = 1e-4      # 定尺搜索期放松 LTNE 残差 (终点再用 LTNE_TOL 收紧)
