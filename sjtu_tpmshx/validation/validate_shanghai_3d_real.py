@@ -588,13 +588,15 @@ def main():
           f"{n_invalid} pressure-INVALID (clip fired)")
     if n_invalid:
         print(f"  invalid cases : {invalid_cases}  (EXCLUDED from RMSRE below)")
-    # 2026-05-29 post RBF cubic+smoothing=0.1: 2D RMSRE_dP 38.22→35.60%
-    # (G-fix earlier reduced 99.73→38.22%); max|err_Q| 5.46→5.69%.
-    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 35.60%)  "
+    # 2D baseline = validate_shanghai_aligned.py headline. Updated 2026-06-25
+    # after the 2D mass-flux inlet port: 2D RMSRE_dP 35.84->8.35%, Q 2.51%,
+    # max|err_Q| 5.0% (prior velocity-inlet baseline was dP 35.60% / Q 5.69%).
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 8.35%)  "
           f"[over {len(err_dP)} valid]")
     print(f"  max|err_dP|   : {max_err_dP:.2f}%")
-    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  [over {len(err_Q)} valid]")
-    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.69%)")
+    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  (2D baseline 2.51%)  "
+          f"[over {len(err_Q)} valid]")
+    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.0%)")
     print("=" * 70)
 
     # Save CSV (pipeline runner auto-suffixes — must never overwrite the
