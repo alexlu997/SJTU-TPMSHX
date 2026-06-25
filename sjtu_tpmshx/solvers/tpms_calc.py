@@ -156,7 +156,12 @@ def water_viscosity(T_K):
     _warn_range_once('water_viscosity', T_K, *_WATER_T_RANGE)
     _warn_water_two_phase(T_K)
     T_K_arr = np.asarray(T_K, dtype=float)
-    return 2.414e-5 * 10.0 ** (247.8 / (T_K_arr - 140.0))
+    # Floor the (T-140) denominator at 10 K so the 10**(247.8/denom) term stays
+    # finite: at T~141 K the raw exponent ~247.8 overflows to +inf in float64
+    # (robustness 2026-06-25). Physical liquid water (T>=273 K -> denom>=133)
+    # is far above the floor, so this is bit-identical in range.
+    denom = np.maximum(T_K_arr - 140.0, 10.0)
+    return 2.414e-5 * 10.0 ** (247.8 / denom)
 
 
 def water_conductivity(T_K):

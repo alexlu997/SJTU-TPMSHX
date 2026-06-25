@@ -9,6 +9,7 @@ import sys
 import warnings as W
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,9 @@ from solvers.tpms_calc import geometry, compute, water_density
 import solvers.nu_correlations as nu_correlations
 from solvers.nu_correlations import nu_water_topo
 from df_surrogate.predict import predict_dP_compressible
+from controllers.compute_config import (ComputeConfig, FluidConfig,
+                                         ZoneInputConfig)
+from pipelines.stages_2d import _check_zoned_fluid_support
 
 
 # ── geometry degeneracy floor ──────────────────────────────────────────────
@@ -34,6 +38,21 @@ def test_geometry_valid_still_works():
     assert g['epsilon'] > 0.0 and g['D_h'] > 0.0
 
 
+# ── zoned 2D + non-air side -> fail loud (would silently use air props) ─────
+def test_zoned_water_side_raises_not_implemented():
+    cc = ComputeConfig(fluid_B=FluidConfig(type='water'),
+                       zones=ZoneInputConfig(enabled=True))
+    with pytest.raises(NotImplementedError):
+        _check_zoned_fluid_support(cc)
+
+
+def test_zoned_air_air_ok_and_disabled_zones_ok():
+    # air-air zoned: fine. zones disabled with water: fine (uniform path).
+    _check_zoned_fluid_support(ComputeConfig(zones=ZoneInputConfig(enabled=True)))
+    _check_zoned_fluid_support(ComputeConfig(fluid_B=FluidConfig(type='water'),
+                                             zones=ZoneInputConfig(enabled=False)))
+
+
 # ── water two-phase warning above 1-atm boiling ────────────────────────────
 def test_water_density_warns_two_phase_above_boiling():
     tpms_calc._WATER_TWO_PHASE_WARNED.clear()
@@ -43,6 +62,19 @@ def test_water_density_warns_two_phase_above_boiling():
     msgs = [str(w.message).lower() for w in rec]
     assert any('two-phase' in m or 'boil' in m or 'saturation' in m
                for m in msgs), msgs
+
+
+def test_water_viscosity_finite_below_140K():
+    # Audit fix: 10**(247.8/(T-140)) overflowed to +inf near T=141 K.
+    assert np.isfinite(tpms_calc.water_viscosity(141.0))
+    assert np.all(np.isfinite(
+        tpms_calc.water_viscosity(np.array([130.0, 141.0, 200.0]))))
+
+
+def test_water_viscosity_unchanged_for_physical_water():
+    T = 313.15   # 40 C, denom = 173 >> 10 floor -> bit-identical
+    expected = 2.414e-5 * 10.0 ** (247.8 / (T - 140.0))
+    assert tpms_calc.water_viscosity(T) == expected
 
 
 def test_water_density_no_two_phase_warn_in_range():
@@ -89,3 +121,23 @@ def test_predict_dP_choked_warns_when_rescuing_to_pin():
     assert dP == pytest.approx(101325.0)
     assert any('chok' in str(w.message).lower()
                or 'infeasible' in str(w.message).lower() for w in rec)
+
+
+def test_predict_dP_choke_warns_per_geometry_not_once_per_process():
+    # Audit fix (choke-warn-key-too-coarse): the warning was keyed on the
+    # constant string 'choke', so only the FIRST choked candidate in a design
+    # sweep warned. Now keyed on (tpms, L, t) -> a second, different choked
+    # geometry warns too.
+    import df_surrogate.predict as predmod
+    predmod._CHOKE_WARNED.clear()
+    geoms = [('Gyroid', 7.0, 0.5), ('Diamond', 4.0, 0.3)]
+    warned = 0
+    for tpms, L, t in geoms:
+        with W.catch_warnings(record=True) as rec:
+            W.simplefilter('always')
+            predict_dP_compressible(tpms, L, t, 0.78, G=200.0, T=800.0,
+                                    P_in=101325.0, mu=3.6e-5, L=0.7,
+                                    strict=False)
+        if any('chok' in str(w.message).lower() for w in rec):
+            warned += 1
+    assert warned == 2, "each distinct choked geometry must warn"

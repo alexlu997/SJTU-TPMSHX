@@ -421,10 +421,16 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
         'Q_net_rel': e_rel,
         'mass_rel_A': mbal_A['rel'],
         # Codex #6: surface the SIMPLE P_abs-clip engagement (was silent).
-        # >0 means the [1 kPa, 10 MPa] clamp fired → compressible solution
-        # leaned on the clamp; flag the case as suspect, not silently OK.
+        # `pressure_clip_hits` is the LIFETIME count over the reused solver
+        # (accumulates across every outer iter / warm restart) — informational.
+        # Validity must judge the CONVERGED field, not the lifetime counter:
+        # a single transient early-iteration clip that the solve then heals
+        # would otherwise permanently (and wrongly) mark the case suspect and
+        # drop it from the RMSRE (audit: clip-hits-monotonic-validity-poison).
         'pressure_clip_hits': int(getattr(sA, '_p_clip_hits', 0)),
-        'pressure_state_valid': int(getattr(sA, '_p_clip_hits', 0)) == 0,
+        'pressure_state_valid': bool(
+            ((sA.P_ref_abs + sA.P) >= 1.0e3).all()
+            and ((sA.P_ref_abs + sA.P) <= 10.0e6).all()),
     }
 
 

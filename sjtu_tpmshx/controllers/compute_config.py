@@ -615,6 +615,11 @@ class ComputeConfig:
     zones: ZoneInputConfig = field(default_factory=ZoneInputConfig)
     extrap: ExtrapPolicy = field(default_factory=ExtrapPolicy)
     flags: FeatureFlags = field(default_factory=FeatureFlags)
+    # Compressible validity-envelope behaviour (robustness, 2026-06-25):
+    # 'raise' (default) -> ChokedFlowError on a choked/supersonic solve;
+    # 'warn' -> run but flag envelope_valid=False (useful for batch sweeps that
+    # must not abort on one choked operating point); 'off' -> legacy silent.
+    envelope_mode: str = 'raise'
 
     # ── derived ──────────────────────────────────────────────────────
 
@@ -776,6 +781,7 @@ class ComputeConfig:
                 zones=ZoneInputConfig(**zn_d) if zn_d else ZoneInputConfig(),
                 flags=FeatureFlags(**fl_d) if fl_d else FeatureFlags(),
                 extrap=ExtrapPolicy(**ex_d) if ex_d else ExtrapPolicy(),
+                envelope_mode=data.get('envelope_mode', 'raise'),
             )
 
         # ── legacy shanghai_baseline.json layout ────────────────

@@ -37,6 +37,20 @@ def test_choked_warn_mode_returns_flagged_result():
     assert res['envelope_warnings'], "warn mode must surface a choke warning"
 
 
+def test_air_air_b_side_choke_is_flagged():
+    # Fluid A benign (3 m/s), fluid B over-driven (20 m/s through a 0.7 m -y
+    # path) -> B chokes. The post-solve gate must flag it via the B side even
+    # though A is fine (the pre-fix gate checked fluid A only and returned
+    # envelope_valid=True). Audit finding: no-bside-post-solve-gate.
+    cfg = build_cfg(L=0.7, H=0.7, Lz=0.7, Nx=12, Ny=12, Nz=12,
+                    u_A=3.0, T_inA=800.0, u_B=20.0, T_inB=400.0,
+                    fluid_type_A='air', fluid_type_B='air',
+                    envelope_mode='warn', sweep_profile='fast_sweep')
+    res = _run_3d_stack(cfg)
+    assert res['envelope_valid'] is False
+    assert any('[B]' in r for r in res['envelope_reasons'])
+
+
 def test_in_envelope_case_valid_and_unclipped():
     cfg = build_cfg(L=0.05, H=0.05, Lz=0.05, Nx=12, Ny=12, Nz=12,
                     u_A=8.0, T_inA=800.0, u_B=4.0, T_inB=400.0)

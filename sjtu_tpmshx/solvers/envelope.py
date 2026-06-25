@@ -26,10 +26,18 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 R_AIR_DEFAULT = 287.05      # J/(kg K), dry air
 GAMMA_AIR = 1.4
 
 ENVELOPE_MODES = ('raise', 'warn', 'off')
+
+# Mirrors the lower clip bound in SIMPLESolver{,3D}._update_density. The
+# post-solve gate treats a converged field whose minimum absolute pressure sits
+# at this floor as off-envelope: the clip only engages when the compressible
+# solve could not hold a positive pressure on its own.
+PRESSURE_FLOOR_PA = 1.0e3
 
 
 class ChokedFlowError(RuntimeError):
@@ -87,20 +95,42 @@ def mach(vmax, T_ref, *, R=R_AIR_DEFAULT, gamma=GAMMA_AIR):
     return float(vmax) / c
 
 
+def mach_field_max(vmag, T_field, *, R=R_AIR_DEFAULT, gamma=GAMMA_AIR):
+    """Conservative peak Mach over a field: max over cells of
+    ``|v|_cell / sqrt(gamma R T_cell)``.
+
+    Using each cell's LOCAL temperature (not the hot inlet T) matters because
+    the peak |v| sits at the low-density / low-pressure end where the gas can be
+    colder than the inlet — a colder cell has a lower sound speed and thus a
+    HIGHER Mach, which a single hot-inlet sound speed would under-estimate.
+    """
+    v = np.asarray(vmag, dtype=np.float64)
+    if v.size == 0:
+        return 0.0
+    T = np.maximum(np.asarray(T_field, dtype=np.float64), 1.0)
+    c = np.sqrt(float(gamma) * float(R) * T)
+    return float(np.max(v / c))
+
+
 def assess_solution_validity(P_abs_min, vmax, T_ref, *, mach_limit=1.0,
-                             R=R_AIR_DEFAULT, gamma=GAMMA_AIR):
+                             R=R_AIR_DEFAULT, gamma=GAMMA_AIR, ma_max=None):
     """Post-solve physical-validity check on the converged fields.
 
     Returns ``(valid, reasons)``. ``valid`` is False when the minimum absolute
-    pressure is non-positive or the peak speed is sonic/supersonic; ``reasons``
-    lists the human-readable failures (empty when valid).
+    pressure is at/below the clip floor (the compressible solve could not hold a
+    positive pressure → off-envelope) or the peak Mach is sonic/supersonic.
+    ``ma_max`` — if given (the rigorous per-cell value from
+    :func:`mach_field_max`) — is used directly; otherwise a single ``vmax`` /
+    ``T_ref`` Mach is computed (back-compat / scalar callers).
     """
     reasons = []
-    if P_abs_min <= 0.0:
+    if P_abs_min <= PRESSURE_FLOOR_PA * (1.0 + 1.0e-6):
         reasons.append(
-            f"non-physical pressure: min absolute P = {float(P_abs_min):.1f} "
-            f"Pa <= 0")
-    Ma = mach(vmax, T_ref, R=R, gamma=gamma)
+            f"pressure clipped to the {PRESSURE_FLOOR_PA:.0f} Pa floor "
+            f"(min absolute P = {float(P_abs_min):.1f} Pa) — the solve left "
+            "the compressible envelope")
+    Ma = float(ma_max) if ma_max is not None else mach(vmax, T_ref, R=R,
+                                                       gamma=gamma)
     if Ma >= mach_limit:
         reasons.append(
             f"supersonic: Ma_max = {Ma:.2f} >= {float(mach_limit):g}")
@@ -108,7 +138,7 @@ def assess_solution_validity(P_abs_min, vmax, T_ref, *, mach_limit=1.0,
 
 
 def gate_solution(P_abs_min, vmax, T_ref, *, mode='raise', dims='3D',
-                  mach_limit=1.0, R=R_AIR_DEFAULT, gamma=GAMMA_AIR):
+                  mach_limit=1.0, R=R_AIR_DEFAULT, gamma=GAMMA_AIR, ma_max=None):
     """Post-solve gate shared by the 2D and 3D pipelines.
 
     Runs :func:`assess_solution_validity`; with ``mode='raise'`` raise
@@ -117,7 +147,8 @@ def gate_solution(P_abs_min, vmax, T_ref, *, mode='raise', dims='3D',
     ``'off'`` never raise.
     """
     valid, reasons = assess_solution_validity(
-        P_abs_min, vmax, T_ref, mach_limit=mach_limit, R=R, gamma=gamma)
+        P_abs_min, vmax, T_ref, mach_limit=mach_limit, R=R, gamma=gamma,
+        ma_max=ma_max)
     if mode == 'raise' and not valid:
         raise ChokedFlowError(
             f"{dims} solver returned a non-physical field (caught post-solve): "

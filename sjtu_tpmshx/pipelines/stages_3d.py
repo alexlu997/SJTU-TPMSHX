@@ -45,7 +45,7 @@ from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 from solvers.envelope import (check_compressible_envelope, gate_solution,
-                               ChokedFlowError)
+                               mach_field_max, ChokedFlowError)
 
 
 def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
@@ -418,6 +418,7 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
     # InterruptedError the outer loop uses so the worker treats it as a cancel.
     if cancel_check is not None and cancel_check():
         raise InterruptedError("compute cancelled by user")
+    return res    # [(converged_A, iters_A), (converged_B, iters_B)|None]
 
 
 R_AIR = 287.05
@@ -559,6 +560,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
         u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
         P_inA=P_inA, P_inB=P_inB,
         T_s_init=T_s_init,
+        envelope_mode=getattr(compute_cfg, 'envelope_mode', 'raise'),
         Lcell=Lcell, t_wall=t_wall, k_s=k_s, tpms_type=tpms_type,
         eps=eps, D_h=D_h,
         delta_levelset=float(compute_cfg.geometry.delta_levelset),
@@ -1551,6 +1553,10 @@ def _run_3d_stack(cfg):
     #   'off'             -> legacy silent behaviour
     _env_mode = cfg.get('envelope_mode', 'raise')
     _env_warnings = []
+    # Track SIMPLE non-convergence across the outer loop so it can be surfaced
+    # as a user warning (the 2D pipeline already does; 3D used to only print it
+    # under the profiler). Each entry: "A@outer3" etc.
+    _simple_nonconv = []
 
     _ltne_info = []  # per-outer {outer, iters, converged, residual}
 
@@ -1785,7 +1791,12 @@ def _run_3d_stack(cfg):
             G_B=G_B, T_inB=T_inB,
         )
         # ── Parallel SIMPLE A + B solve (threads, njit releases GIL) ──
-        _run_two_simple_parallel(sA, sB, cancel_check=cfg.get('_cancel_check'))
+        _init_res = _run_two_simple_parallel(
+            sA, sB, cancel_check=cfg.get('_cancel_check'))
+        if _init_res and _init_res[0] is not None and not _init_res[0][0]:
+            _simple_nonconv.append('A@init')
+        if _init_res and _init_res[1] is not None and not _init_res[1][0]:
+            _simple_nonconv.append('B@init')
         # LTNE fluid B velocity: full vector remapped to real coordinates.
         ucB, vcB, wcB = _solver_velocity_to_real(
             sB, axis_map_B, (Nx, Ny, Nz))
@@ -1796,6 +1807,8 @@ def _run_3d_stack(cfg):
         _a0_conv, _a0_it = sA.solve(max_iter=2000, tol=_simple_tol_default(),
                                     verbose=False,
                                     cancel_check=cfg.get('_cancel_check'))
+        if not _a0_conv:
+            _simple_nonconv.append('A@init')
         if _prof_t_a0 is not None:
             print(f"[PROF] initial SIMPLE_A (serial, no-B) "
                   f"{_time.perf_counter()-_prof_t_a0:7.2f}s  "
@@ -2436,6 +2449,8 @@ def _run_3d_stack(cfg):
         _prof_t_sa = _time.perf_counter() if _prof_3d_enabled() else None
         _sa_conv, _sa_it = sA.solve(max_iter=600, tol=_simple_tol_default(),
                                     verbose=False, cancel_check=_cancel_check)
+        if not _sa_conv:
+            _simple_nonconv.append(f'A@outer{outer}')
         if _prof_t_sa is not None:
             print(f"[PROF] outer {outer}: SIMPLE_A {_time.perf_counter()-_prof_t_sa:7.2f}s  "
                   f"iters={_sa_it}  conv={_sa_conv}  (cap=600)", flush=True)
@@ -2523,6 +2538,8 @@ def _run_3d_stack(cfg):
             _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None
             _sb_conv, _sb_it = sB.solve(max_iter=600, tol=_simple_tol_default(),
                                         verbose=False, cancel_check=_cancel_check)
+            if not _sb_conv:
+                _simple_nonconv.append(f'B@outer{outer}')
             if _prof_t_sb is not None:
                 print(f"[PROF] outer {outer}: SIMPLE_B {_time.perf_counter()-_prof_t_sb:7.2f}s  "
                       f"iters={_sb_it}  conv={_sb_conv}  (cap=600)", flush=True)
@@ -2858,20 +2875,36 @@ def _run_3d_stack(cfg):
 
     # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
     # Catches dynamic choking the 1D pre-seed missed: a supersonic |v| or a
-    # non-physical (<=0) absolute pressure in the converged field. The peak
-    # |v| is the reliable signal (the pressure floor in _update_density bounds
-    # the stored gauge, but a choked solve still drives v=G/rho supersonic).
-    # Air (ideal-gas) A side only; an incompressible side cannot choke.
+    # pressure clipped to the floor in the converged field. Mach is the load-
+    # bearing signal (the _update_density floor bounds the stored gauge, but a
+    # choked solve still drives v=G/rho supersonic); it is computed per-cell
+    # against the LOCAL temperature so a cold low-density region isn't missed.
+    # BOTH ideal-gas sides are checked — fluid B (air-air) can choke too.
     _clip_hits = int(getattr(sA, '_p_clip_hits', 0))
     if sB is not None:
         _clip_hits += int(getattr(sB, '_p_clip_hits', 0))
+    _env_valid, _env_reasons = True, []
     if cfg.get('fluid_type_A', 'air') == 'air':
-        _P_abs_min = float((sA.P_ref_abs + sA.P).min())
-        _env_valid, _env_reasons = gate_solution(
-            _P_abs_min, float(vmag.max()), float(T_inA),
-            mode=_env_mode, dims='3D')
-    else:
-        _env_valid, _env_reasons = True, []
+        _vA, _rA = gate_solution(
+            float((sA.P_ref_abs + sA.P).min()), float(vmag.max()),
+            float(T_inA), mode=_env_mode, dims='3D-A',
+            ma_max=mach_field_max(vmag, Ta))
+        _env_valid = _env_valid and _vA
+        _env_reasons += [f"[A] {r}" for r in _rA]
+    if (sB is not None and vmag_B is not None
+            and cfg.get('fluid_type_B', 'air') == 'air'):
+        _vB, _rB = gate_solution(
+            float((sB.P_ref_abs + sB.P).min()), float(vmag_B.max()),
+            float(T_inB), mode=_env_mode, dims='3D-B',
+            ma_max=mach_field_max(vmag_B, Tb))
+        _env_valid = _env_valid and _vB
+        _env_reasons += [f"[B] {r}" for r in _rB]
+    if _simple_nonconv:
+        _env_warnings.append(
+            "SIMPLE momentum solve did not converge to tol at: "
+            + ", ".join(_simple_nonconv)
+            + " — the velocity/pressure field may be under-resolved (raise "
+              "max_iter or relax tol).")
     _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
     _result['envelope_valid'] = _env_valid
     _result['envelope_reasons'] = _env_reasons

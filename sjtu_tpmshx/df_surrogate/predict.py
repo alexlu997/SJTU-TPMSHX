@@ -244,8 +244,9 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
         # Robustness (2026-06-25): the non-strict P_in rescue used to be
         # silent. Warn once so a choked operating point isn't mistaken for a
         # genuine dP ≈ P_in result.
-        if 'choke' not in _CHOKE_WARNED:
-            _CHOKE_WARNED.add('choke')
+        _choke_key = (tpms_type, round(float(L_mm), 2), round(float(t_mm), 2))
+        if _choke_key not in _CHOKE_WARNED:
+            _CHOKE_WARNED.add(_choke_key)
             warnings.warn(
                 f"[D-F choke] 1D compressible dP infeasible "
                 f"(P_out^2={P_out_sq:.3e} <= 0, predicted dP >= P_in): the flow "

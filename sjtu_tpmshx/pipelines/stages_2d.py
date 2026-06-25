@@ -25,7 +25,7 @@ from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
-from solvers.envelope import gate_solution
+from solvers.envelope import gate_solution, mach_field_max
 
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
@@ -78,6 +78,28 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
 # _parse_inputs window adapter were DELETED — the GUI 2D path now drives
 # controllers.compute_pipeline.Pipeline2D (cfg-only stage functions
 # below) and copies the ComputeResult back via Main_Menu.write_result.
+
+
+def _check_zoned_fluid_support(compute_cfg):
+    """Guard: the 2D zone property builders (ZoneConfig.compute_properties /
+    build_grid_arrays and sigmoid_field.build_continuous_arrays) hardcode AIR
+    (they call tpms_calc.compute / air_* with no fluid_type), so a water side
+    would silently get air Nu/k — h_v ~280x and K_ff ~25x off (audit:
+    zoned-water-side-uses-air-properties). Raise until per-fluid zoned props
+    are implemented; the caller's broad except turns this into a clear warning
+    and a safe fall-back to the uniform (correctly per-fluid) path. The 3D
+    zoned path threads fluid_type_B and is unaffected.
+    """
+    if not getattr(compute_cfg.zones, 'enabled', False):
+        return
+    fA = compute_cfg.fluid_A.type
+    fB = compute_cfg.fluid_B.type
+    if fA != 'air' or fB != 'air':
+        raise NotImplementedError(
+            f"Zoned 2D compute supports air only (fluid_A={fA!r}, "
+            f"fluid_B={fB!r}); the zone property builders would silently use "
+            "air properties for a non-air side. Disable zones or run a uniform "
+            "(non-zoned) case for water.")
 
 
 def _parse_inputs_cfg(compute_cfg):
@@ -184,6 +206,7 @@ def _parse_inputs_cfg(compute_cfg):
     z_axis = 'y'
     try:
         if compute_cfg.zones.enabled:
+            _check_zoned_fluid_support(compute_cfg)
             z_axis = compute_cfg.zones.axis
             P_in_val = compute_cfg.fluid_A.P_in_Pa
             if z_axis == 'grid' and compute_cfg.zones.grid is not None:
@@ -257,6 +280,7 @@ def _parse_inputs_cfg(compute_cfg):
         'T_s_init': T_s_init,
         'cfgA': cfgA, 'cfgB': cfgB,
         'dir_A': dir_A, 'dir_B': dir_B,
+        'envelope_mode': getattr(compute_cfg, 'envelope_mode', 'raise'),
         'tpms_type': tpms_type,
         'Lcell': Lcell, 't_wall': t_wall, 'k_s': k_s,
         'eps': eps, 'r_h': r_h,
@@ -1567,19 +1591,30 @@ def _run_solvers(window, cfg, fields):
     # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
     # Same fail-loud guard as the 3D pipeline: a choked air case (dP -> P_in,
     # outlet vacuum) drives v=G/rho supersonic; flag it instead of returning
-    # garbage. Air (ideal-gas) A side only; water is incompressible.
+    # garbage. Both ideal-gas sides checked (air-air B can choke too); water is
+    # incompressible. Mach is per-cell against the local temperature.
     _env_mode = cfg.get('envelope_mode', 'raise')
     _env_valid = True
     _env_reasons = []
     _clip_hits_2d = 0
     if simpA is not None and getattr(simpA, 'fluid_type', None) == 'ideal_gas':
-        _clip_hits_2d = int(getattr(simpA, '_p_clip_hits', 0))
-        _P_abs_min_2d = float((simpA.P_ref_abs + simpA.P).min())
-        _vmax_2d = float(np.sqrt(np.asarray(ucA) ** 2
-                                 + np.asarray(vcA) ** 2).max())
-        _env_valid, _env_reasons = gate_solution(
-            _P_abs_min_2d, _vmax_2d, float(T_inA),
-            mode=_env_mode, dims='2D')
+        _clip_hits_2d += int(getattr(simpA, '_p_clip_hits', 0))
+        _vmagA = np.sqrt(np.asarray(ucA) ** 2 + np.asarray(vcA) ** 2)
+        _vA, _rA = gate_solution(
+            float((simpA.P_ref_abs + simpA.P).min()), float(_vmagA.max()),
+            float(T_inA), mode=_env_mode, dims='2D-A',
+            ma_max=mach_field_max(_vmagA, Ta))
+        _env_valid = _env_valid and _vA
+        _env_reasons += [f"[A] {r}" for r in _rA]
+    if simpB is not None and getattr(simpB, 'fluid_type', None) == 'ideal_gas':
+        _clip_hits_2d += int(getattr(simpB, '_p_clip_hits', 0))
+        _vmagB = np.sqrt(np.asarray(ucB) ** 2 + np.asarray(vcB) ** 2)
+        _vB, _rB = gate_solution(
+            float((simpB.P_ref_abs + simpB.P).min()), float(_vmagB.max()),
+            float(T_inB), mode=_env_mode, dims='2D-B',
+            ma_max=mach_field_max(_vmagB, Tb))
+        _env_valid = _env_valid and _vB
+        _env_reasons += [f"[B] {r}" for r in _rB]
 
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,

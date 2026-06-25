@@ -275,6 +275,13 @@ def evaluate_3d(x_decision: np.ndarray,
     # 5. Outer LTNE coupling with variable density on fluid A.
     rcp_A_field = np.full((Nx, Ny, Nz), rho_A0 * air_cp(T_inA), dtype=np.float64)
     rcp_B_field = np.full((Nx, Ny, Nz), rho_B0 * air_cp(T_inB), dtype=np.float64)
+    # Robustness (2026-06-25): a non-positive max_outer skips the loop below,
+    # leaving Ta/Tb/Ts = None and crashing the post-loop reductions with an
+    # opaque `None - None` TypeError. Fail loud on the invalid input instead.
+    if max_outer < 1:
+        raise ValueError(
+            f"max_outer must be >= 1 (got {max_outer}); the LTNE outer loop "
+            "would not run and the temperature fields would stay None.")
     Ta = Tb = Ts = None
     Ta_prev = None
 
