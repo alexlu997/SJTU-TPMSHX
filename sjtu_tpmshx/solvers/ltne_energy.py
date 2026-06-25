@@ -25,74 +25,60 @@ from ._kernels_2d import minmod
 
 
 @njit(cache=True)
-def _sou_corr_x(T, i, j, Nx, u_loc, Fx):
+def _sou_corr_x(T, i, j, Nx, u_loc, Fx_field):
     """Second-order upwind deferred correction in x-direction.
-    Returns the NET correction = (east face SOU - upwind) - (west face SOU - upwind).
-    This telescopes globally, preserving energy conservation.
+
+    Net correction = (west-face SOU) - (east-face SOU). Each face's limiter is
+    scaled by a FACE-AVERAGED convective flux ``F_face = 0.5*(Fx_P + Fx_nbr)``
+    so the two cells sharing a face apply the IDENTICAL extra flux and the
+    correction telescopes globally even when ``Fx = eps_f*rho_cp*|u|*dy`` varies
+    between neighbours (audit fix: 2d-sou-not-conservative). For a uniform flux
+    field this is bit-identical to the legacy ``0.5*Fx*(phi_w - phi_e)``.
     """
+    Fp = Fx_field[i, j]
+    Fe = 0.5 * (Fp + (Fx_field[i+1, j] if i < Nx - 1 else Fp))   # face i+1/2
+    Fw = 0.5 * ((Fx_field[i-1, j] if i > 0 else Fp) + Fp)        # face i-1/2
     if u_loc >= 0:
-        # West face (i-1/2): extra flux INTO cell
         phi_w = 0.0
         if i > 1:
-            gu = T[i-1,j] - T[i-2,j]
-            gd = T[i,j] - T[i-1,j]
-            phi_w = minmod(gu, gd)
-        # East face (i+1/2): extra flux OUT OF cell
+            phi_w = minmod(T[i-1,j] - T[i-2,j], T[i,j] - T[i-1,j])
         phi_e = 0.0
         if i < Nx - 1 and i > 0:
-            gu = T[i,j] - T[i-1,j]
-            gd = T[i+1,j] - T[i,j]
-            phi_e = minmod(gu, gd)
-        return 0.5 * Fx * (phi_w - phi_e)
+            phi_e = minmod(T[i,j] - T[i-1,j], T[i+1,j] - T[i,j])
+        return 0.5 * (Fw * phi_w - Fe * phi_e)
     else:
-        # East face (i+1/2): extra flux INTO cell (u < 0)
         phi_e = 0.0
         if i < Nx - 2:
-            gu = T[i+1,j] - T[i+2,j]
-            gd = T[i,j] - T[i+1,j]
-            phi_e = minmod(gu, gd)
-        # West face (i-1/2): extra flux OUT OF cell
+            phi_e = minmod(T[i+1,j] - T[i+2,j], T[i,j] - T[i+1,j])
         phi_w = 0.0
         if i > 0 and i < Nx - 1:
-            gu = T[i,j] - T[i+1,j]
-            gd = T[i-1,j] - T[i,j]
-            phi_w = minmod(gu, gd)
-        return 0.5 * Fx * (phi_e - phi_w)
+            phi_w = minmod(T[i,j] - T[i+1,j], T[i-1,j] - T[i,j])
+        return 0.5 * (Fe * phi_e - Fw * phi_w)
 
 
 @njit(cache=True)
-def _sou_corr_y(T, i, j, Ny, v_loc, Fy):
-    """Second-order upwind deferred correction in y-direction.
-    Net correction = (north face SOU - upwind) - (south face SOU - upwind).
-    """
+def _sou_corr_y(T, i, j, Ny, v_loc, Fy_field):
+    """Second-order upwind deferred correction in y-direction. Face-averaged
+    flux (see :func:`_sou_corr_x`) so it telescopes on non-uniform fields."""
+    Fp = Fy_field[i, j]
+    Fn = 0.5 * (Fp + (Fy_field[i, j+1] if j < Ny - 1 else Fp))   # face j+1/2
+    Fs = 0.5 * ((Fy_field[i, j-1] if j > 0 else Fp) + Fp)        # face j-1/2
     if v_loc >= 0:
-        # South face (j-1/2): extra flux INTO cell
         phi_s = 0.0
         if j > 1:
-            gu = T[i,j-1] - T[i,j-2]
-            gd = T[i,j] - T[i,j-1]
-            phi_s = minmod(gu, gd)
-        # North face (j+1/2): extra flux OUT OF cell
+            phi_s = minmod(T[i,j-1] - T[i,j-2], T[i,j] - T[i,j-1])
         phi_n = 0.0
         if j < Ny - 1 and j > 0:
-            gu = T[i,j] - T[i,j-1]
-            gd = T[i,j+1] - T[i,j]
-            phi_n = minmod(gu, gd)
-        return 0.5 * Fy * (phi_s - phi_n)
+            phi_n = minmod(T[i,j] - T[i,j-1], T[i,j+1] - T[i,j])
+        return 0.5 * (Fs * phi_s - Fn * phi_n)
     else:
-        # North face (j+1/2): extra flux INTO cell (v < 0)
         phi_n = 0.0
         if j < Ny - 2:
-            gu = T[i,j+1] - T[i,j+2]
-            gd = T[i,j] - T[i,j+1]
-            phi_n = minmod(gu, gd)
-        # South face (j-1/2): extra flux OUT OF cell
+            phi_n = minmod(T[i,j+1] - T[i,j+2], T[i,j] - T[i,j+1])
         phi_s = 0.0
         if j > 0 and j < Ny - 1:
-            gu = T[i,j] - T[i,j+1]
-            gd = T[i,j-1] - T[i,j]
-            phi_s = minmod(gu, gd)
-        return 0.5 * Fy * (phi_n - phi_s)
+            phi_s = minmod(T[i,j] - T[i,j+1], T[i,j-1] - T[i,j])
+        return 0.5 * (Fn * phi_n - Fs * phi_s)
 
 
 @njit(cache=True)
@@ -120,6 +106,17 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
         j0, j1, dj = Ny - 1, -1, -1
     else:
         j0, j1, dj = 0, Ny, 1
+
+    # Per-cell fluid-A convective flux field for the face-consistent SOU
+    # (velocity / rho_cp / eps_f are frozen across the GS sweep). FxA[i,j] ==
+    # the scalar Fx used below for the convection coefficients — bit-identical.
+    FxA = np.empty((Nx, Ny))
+    FyA = np.empty((Nx, Ny))
+    for _i in range(Nx):
+        for _j in range(Ny):
+            _efr = eps_f_arr[_i, _j] * rho_cp_fA[_i, _j]
+            FxA[_i, _j] = _efr * abs(ucA[_i, _j]) * dy_arr[_j]
+            FyA[_i, _j] = _efr * abs(vcA[_i, _j]) * dx_arr[_i]
 
     for _it in range(n_iters):
         max_chg = 0.0
@@ -188,7 +185,8 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
                     tS = Ta[i,j-1] if j > 0    else Ta[i,j]
 
-                    sou = _sou_corr_x(Ta, i, j, Nx, u_loc, Fx) + _sou_corr_y(Ta, i, j, Ny, v_loc, Fy)
+                    sou = (_sou_corr_x(Ta, i, j, Nx, u_loc, FxA)
+                           + _sou_corr_y(Ta, i, j, Ny, v_loc, FyA))
 
                     aP = aE + aW + aN + aS + hvA
                     new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
@@ -344,6 +342,16 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     """
     max_chg = 0.0
     ncell = Nx * Ny
+    # Per-cell fluid-A convective flux field for the face-consistent SOU
+    # (velocity / rho_cp / eps_f frozen across the sweep; == the scalar Fx
+    # used for the convection coefficients).
+    FxA = np.empty((Nx, Ny))
+    FyA = np.empty((Nx, Ny))
+    for _ii in range(Nx):
+        for _jj in range(Ny):
+            _efr = eps_f_arr[_ii, _jj] * rho_cp_fA[_ii, _jj]
+            FxA[_ii, _jj] = _efr * abs(ucA[_ii, _jj]) * dy_arr[_jj]
+            FyA[_ii, _jj] = _efr * abs(vcA[_ii, _jj]) * dx_arr[_ii]
     for _it in range(n_iters):
         Ta_snap = Ta.copy()
         Tb_snap = Tb.copy()
@@ -400,8 +408,8 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     tW = Ta[i-1,j] if i > 0    else Ta[i,j]
                     tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
                     tS = Ta[i,j-1] if j > 0    else Ta[i,j]
-                    sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, Fx)
-                           + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, Fy))
+                    sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, FxA)
+                           + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, FyA))
                     aP = aE + aW + aN + aS + hvA
                     new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
                     c = abs(new - Ta[i,j])
@@ -520,10 +528,12 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 _CONV_TRACE = None
 
 # Red-black parallel 2D energy kernel selector (mirrors ltne_energy_3d).
-# OPT-IN (default off): unlike the 3D conservative face-shared SOU — whose
-# deferred (snapshot) form matches the serial kernel to ~1e-5 K — the 2D
-# NON-conservative cell-centre SOU (`_sou_corr_x/y`, minmod limiter) is more
-# sensitive to lagging, so the RB converged field can differ from serial by
+# OPT-IN (default off): the 2D cell-centre SOU (`_sou_corr_x/y`, minmod limiter)
+# is now globally conservative (face-consistent flux since 2026-06-25), but the
+# RB kernel still reads the 2-away SOU stencil from a start-of-sweep snapshot,
+# and that lag is more sensitive here than the 3D face-shared deferred form
+# (which matches serial to ~1e-5 K), so the RB converged field can differ from
+# serial by
 # ~0.1 K on strongly-advective cases (still <0.03% of T, Q-negligible). 2D grids
 # are also usually < the gate (so RB rarely fires anyway). Enable explicitly
 # (`_RB_ENERGY_2D = True`) for large 2D runs where the small difference is
