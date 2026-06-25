@@ -150,11 +150,30 @@ WATER_NU_COEFFS = {
     'Gyroid':  {'c': 0.4445, 'a': 0.6361},
 }
 
+# One-shot extrapolation warning per side for the water Nu fit (robustness
+# 2026-06-25): the air path already warns outside its window; the water path
+# previously extrapolated silently.
+_WATER_NU_WARNED: set[str] = set()
+
+
+def _warn_water_nu(Re_min, Re_max):
+    lo, hi = WATER_NU_RE_RANGE
+    for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
+        if oob and side not in _WATER_NU_WARNED:
+            _WATER_NU_WARNED.add(side)
+            warnings.warn(
+                f"[water Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
+                f"water-CFD fit window [{lo:.0f},{hi:.0f}].", stacklevel=3)
+
 
 def nu_water_topo(tpms_type, Re, Pr_water):
     """Topology-specific direct water Nu = c·Re^a·Pr^(1/3) (table above).
     ``np.maximum(Re, 1.0)`` floor (array-safe; identical to the design-tool
     fit's ``max(Re, 1.0)`` for scalar Re, but also works on per-cell arrays
     when the solver routes its vectorised water path through here)."""
+    Re_safe = np.maximum(Re, 1.0)             # original expression (unchanged)
+    _Re_arr = np.asarray(Re_safe, dtype=np.float64)
+    if _Re_arr.size:
+        _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()))
     co = WATER_NU_COEFFS[tpms_type]
-    return co['c'] * np.maximum(Re, 1.0) ** co['a'] * Pr_water ** (1 / 3)
+    return co['c'] * Re_safe ** co['a'] * Pr_water ** (1 / 3)

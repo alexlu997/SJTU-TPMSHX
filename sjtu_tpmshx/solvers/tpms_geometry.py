@@ -220,6 +220,17 @@ def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
     # `reference_dh_convention.md`.)
     D_h = 4.0 * eps_A / A0 if A0 > 0 else 0.0
 
+    # Robustness (2026-06-25): the 2t>=L guard above leaves a near-degenerate
+    # band (t just under L/2) where _compute_raw returns epsilon~0 / A_0~0, so
+    # D_h collapses to 0 and every downstream Re = rho*u*D_h/mu and
+    # H_sf = Nu*k/D_h silently divides by zero. Fail loud instead of emitting a
+    # zero-porosity cell. Valid geometries (epsilon ~ 0.3-0.8) are unaffected.
+    if eps <= 1e-9 or A0 <= 0.0 or D_h <= 0.0:
+        raise ValueError(
+            f"Degenerate TPMS geometry: {tpms_type} L={L_mm}mm t={t_mm}mm "
+            f"yields epsilon={eps:.3e}, A_0={A0:.3e}, D_h={D_h:.3e} m — no "
+            "usable pore space (t too close to L/2). Reduce t or increase L.")
+
     return {
         'epsilon': eps,
         'epsilon_A': eps_A,

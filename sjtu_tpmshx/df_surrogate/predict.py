@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from math import sqrt
 from pathlib import Path
 
@@ -49,6 +50,10 @@ _THIS = Path(__file__).resolve()
 _PROJECT = _THIS.parent.parent.parent
 
 R_AIR = 287.05
+
+# One-shot warning when the 1D compressible dP is infeasible (choked) and the
+# non-strict path rescues to P_in (robustness 2026-06-25).
+_CHOKE_WARNED: set = set()
 
 
 def _residual_correction_enabled() -> bool:
@@ -236,6 +241,17 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
     if P_out_sq <= 0:
         # Codex #6: infeasible (no real P_out). strict → NaN for
         # detect+exclude+count; default → legacy P_in (optimizer untouched).
+        # Robustness (2026-06-25): the non-strict P_in rescue used to be
+        # silent. Warn once so a choked operating point isn't mistaken for a
+        # genuine dP ≈ P_in result.
+        if 'choke' not in _CHOKE_WARNED:
+            _CHOKE_WARNED.add('choke')
+            warnings.warn(
+                f"[D-F choke] 1D compressible dP infeasible "
+                f"(P_out^2={P_out_sq:.3e} <= 0, predicted dP >= P_in): the flow "
+                "is choked at these conditions; returning P_in as the dP "
+                "rescue. Reduce velocity/length or raise inlet pressure.",
+                stacklevel=2)
         return float('nan') if strict else P_in
     dP_baseline = P_in - sqrt(P_out_sq)
 
