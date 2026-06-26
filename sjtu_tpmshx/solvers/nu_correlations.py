@@ -177,3 +177,59 @@ def nu_water_topo(tpms_type, Re, Pr_water):
         _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()))
     co = WATER_NU_COEFFS[tpms_type]
     return co['c'] * Re_safe ** co['a'] * Pr_water ** (1 / 3)
+
+
+# ── Supercritical CO2 DIRECT fit (Phase A, far-from-critical) ────────
+# Source: D-7-6 experiment (Diamond 7mm/0.6mm, sCO2 counterflow, 51 cases),
+# fitted 2026-06-26. See vault report
+# reports/engineering/sco2/2026-06-26-sco2-nu-correlation-construction-CN.md.
+#
+# Form  Nu = c·Re^a·Pr^(1/3)  (no ×1.28 roughness — the SLM roughness is
+# already baked into the experimental data, same convention as water).
+#
+# Reduction caveat: the experiment back-computes Nu from a CONSTRUCTED wall
+# temperature (mean of the two bulk streams), so Nu ∝ 1/ΔT_streams. Small-ΔT
+# cases are artifact-contaminated and were filtered (ΔT_streams>10 °C, hot+cold
+# merged). a≈0.75 is stable across all filter thresholds; c≈0.28 (±~10 %).
+# Validated against GOLD subset; beats the GPT-5.5 baseline (0.708·Re^0.663)
+# on all clean data (RMSRE 8.7 % @ΔT>15 vs 12.6 %).
+#
+# VALIDITY: Diamond only (single geometry — other cells extrapolate); Re∈
+# [9e3, 4.1e4]; Pr≈0.8 (far-from-critical). NOT valid near the pseudocritical
+# line (precooler 307 K/7.7 MPa, cp spike) — that needs a Jackson/Pitla
+# property-ratio correction, out of scope for this fit.
+SCO2_NU_RE_RANGE = (9000.0, 41000.0)
+SCO2_NU_COEFFS = {
+    'Diamond': {'c': 0.28, 'a': 0.75},
+}
+
+_SCO2_NU_WARNED: set[str] = set()
+
+
+def _warn_sco2_nu(Re_min, Re_max):
+    lo, hi = SCO2_NU_RE_RANGE
+    for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
+        if oob and side not in _SCO2_NU_WARNED:
+            _SCO2_NU_WARNED.add(side)
+            warnings.warn(
+                f"[sCO2 Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
+                f"D-7-6 fit window [{lo:.0f},{hi:.0f}].", stacklevel=3)
+
+
+def nu_sco2_topo(tpms_type, Re, Pr_sco2):
+    """Supercritical-CO2 Nu = c·Re^a·Pr^(1/3) (Diamond only; table above).
+    Array-safe ``np.maximum(Re, 1.0)`` floor, mirroring ``nu_water_topo``.
+
+    Raises KeyError for topologies without an sCO2 fit (only Diamond has
+    D-7-6 data; do not silently borrow another topology's coefficients).
+    Far-from-critical only — see SCO2_NU_COEFFS docstring."""
+    if tpms_type not in SCO2_NU_COEFFS:
+        raise NotImplementedError(
+            f"sCO2 Nu fit only available for {sorted(SCO2_NU_COEFFS)} "
+            f"(D-7-6 single-geometry experiment); {tpms_type!r} unsupported.")
+    Re_safe = np.maximum(Re, 1.0)
+    _Re_arr = np.asarray(Re_safe, dtype=np.float64)
+    if _Re_arr.size:
+        _warn_sco2_nu(float(_Re_arr.min()), float(_Re_arr.max()))
+    co = SCO2_NU_COEFFS[tpms_type]
+    return co['c'] * Re_safe ** co['a'] * Pr_sco2 ** (1 / 3)

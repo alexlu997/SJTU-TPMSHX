@@ -47,15 +47,17 @@ def test_validate_water_passes():
     validate_fluid_type('water', 'B')
 
 
-def test_validate_sco2_raises():
-    with pytest.raises(NotImplementedError, match="sCO"):
-        validate_fluid_type('sco2', 'A')
-    with pytest.raises(NotImplementedError, match="sCO"):
-        validate_fluid_type('sco2', 'B')
+def test_validate_sco2_passes():
+    """Phase A (2026-06-26): sCO2 unblocked. Diamond Nu fit from D-7-6
+    experiment (SCO2_NU_COEFFS), CoolProp properties, incompressible flow.
+    Far-from-critical only; near-pseudocritical needs a property-ratio
+    correction (Phase C), not gated here."""
+    validate_fluid_type('sco2', 'A')
+    validate_fluid_type('sco2', 'B')
 
 
-def test_supported_fluids_air_and_water():
-    assert _SUPPORTED_FLUIDS == {'air', 'water'}
+def test_supported_fluids_air_water_sco2():
+    assert _SUPPORTED_FLUIDS == {'air', 'water', 'sco2'}
 
 
 def test_water_compute_returns_water_density():

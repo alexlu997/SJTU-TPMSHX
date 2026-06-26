@@ -46,8 +46,11 @@ def test_water_primitives_exact_and_P_ignored(T, P):
 def test_flow_model_mapping():
     assert fluid_props.flow_model('air') == 'ideal_gas'
     assert fluid_props.flow_model('water') == 'incompressible'
+    # Phase A (2026-06-26): sCO2 added as incompressible (D-7-6 ΔP/P<2%);
+    # compressible ρ(P_local) is Phase B.
+    assert fluid_props.flow_model('sco2') == 'incompressible'
     with pytest.raises(ValueError):
-        fluid_props.flow_model('sco2')
+        fluid_props.flow_model('argon')
 
 
 def test_embeds_roughness_flags():

@@ -25,6 +25,9 @@ PySide6>=6.7
 # --- IO ---
 openpyxl>=3.1               # Excel (Shanghai validation data)
 
+# --- Real-gas properties ---
+CoolProp>=6.4               # Span-Wagner CO2 EOS for the sCO2 fluid (Phase A)
+
 # --- Optional: GPU surrogate inference (commented; only needed for D-F training) ---
 # torch>=2.2
 

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import tpms_calc
+from . import sco2_props
 
 
 def _nu_air(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr=None):
@@ -34,14 +35,37 @@ def _nu_water(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
     return tpms_calc.nu_water_topo(tpms_type, Re, Pr)
 
 
+def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
+    # Direct sCO2 Nu fit (nu_correlations.SCO2_NU_COEFFS; D-7-6 experiment,
+    # no air x1.28 — roughness baked in, like water). Diamond only; raises
+    # for other topologies. eps_f / L_mm / D_h_mm unused (signature contract).
+    del eps_f, L_mm, D_h_mm
+    return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr)
+
+
+def _sco2_prop(fn):
+    """Wrap an sCO2 (T, P) property so a missing P raises a clear error
+    rather than a cryptic CoolProp failure (sCO2 props are P-dependent)."""
+    def _wrapped(T, P=None):
+        if P is None:
+            raise ValueError(
+                "sCO2 properties require pressure P [Pa]; caller passed P=None. "
+                "Fix the call site to forward the inlet/local pressure.")
+        return fn(T, P)
+    return _wrapped
+
+
 @dataclass(frozen=True)
 class FluidModel:
     name: str
     compressible: bool
     rho: Callable    # (T[, P]) -> density [kg/m^3]
-    cp: Callable     # (T) -> specific heat [J/kg/K]
-    mu: Callable     # (T) -> dynamic viscosity [Pa.s]
-    k: Callable      # (T) -> thermal conductivity [W/m/K]
+    cp: Callable     # (T[, P]) -> specific heat [J/kg/K]
+    mu: Callable     # (T[, P]) -> dynamic viscosity [Pa.s]
+    k: Callable      # (T[, P]) -> thermal conductivity [W/m/K]
+    # Signature widened to (T, P) for sCO2 (2026-06-26): air/water ignore P
+    # (lambda T, P=None: f(T)) so existing m.cp(T) calls stay value-identical;
+    # sCO2 cp/mu/k REQUIRE P (real-gas) and callers must forward it.
     nu: Callable     # (tpms, Re, eps_f, L_mm, D_h_mm, Pr) -> Nu (pre-floor)
     # Guard for the (air-calibrated) roughness.py multipliers: when True they
     # must NOT be applied to this fluid. Water's D-F closure is experiment-
@@ -55,20 +79,31 @@ FLUIDS = {
     'air': FluidModel(
         name='air', compressible=True,
         rho=tpms_calc.air_density,        # (T, P=101325) -> rho
-        cp=tpms_calc.air_cp,
-        mu=tpms_calc.air_viscosity,
-        k=tpms_calc.air_conductivity,
+        cp=lambda T, P=None: tpms_calc.air_cp(T),           # T-only; P ignored
+        mu=lambda T, P=None: tpms_calc.air_viscosity(T),
+        k=lambda T, P=None: tpms_calc.air_conductivity(T),
         nu=_nu_air,
         embeds_roughness=False,
     ),
     'water': FluidModel(
         name='water', compressible=False,
         rho=lambda T, P=None: tpms_calc.water_density(T),   # incompressible: P ignored
-        cp=tpms_calc.water_cp,
-        mu=tpms_calc.water_viscosity,
-        k=tpms_calc.water_conductivity,
+        cp=lambda T, P=None: tpms_calc.water_cp(T),
+        mu=lambda T, P=None: tpms_calc.water_viscosity(T),
+        k=lambda T, P=None: tpms_calc.water_conductivity(T),
         nu=_nu_water,
         embeds_roughness=True,
+    ),
+    'sco2': FluidModel(
+        name='sco2', compressible=False,   # Phase A: incompressible (D-7-6 ΔP/P<2%);
+                                           # ρ=ρ(T,P_in) varies with T. Compressible
+                                           # ρ(P_local) is Phase B (high-ΔP cases).
+        rho=_sco2_prop(sco2_props.sco2_density),
+        cp=_sco2_prop(sco2_props.sco2_cp),
+        mu=_sco2_prop(sco2_props.sco2_viscosity),
+        k=_sco2_prop(sco2_props.sco2_conductivity),
+        nu=_nu_sco2,
+        embeds_roughness=True,   # SLM roughness baked into the D-7-6 fit (like water)
     ),
 }
 

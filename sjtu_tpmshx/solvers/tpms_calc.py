@@ -215,7 +215,7 @@ def nu_water_gyroid_yan6(Re, Pr):
 # nu_water_topo (per-topology direct water-CFD fit, WATER_NU_COEFFS, Re
 # 100-50000, smooth-wall, no air ×1.28). Treat water dP as engineering
 # estimate; water Q is publication-grade for Gyroid and engineering for Diamond.
-_SUPPORTED_FLUIDS = {'air', 'water'}
+_SUPPORTED_FLUIDS = {'air', 'water', 'sco2'}
 
 
 def parse_fluid_type(combo):
@@ -267,9 +267,12 @@ from .nu_correlations import (
     nu_vec,
     nu_water_from_Re,
     nu_water_topo,
+    nu_sco2_topo,
     NU_ROUGHNESS_FACTOR as _NU_ROUGHNESS_FACTOR,  # back-compat re-export
     NU_RE_FIT_RANGE,
     NU_COEFFS,
+    SCO2_NU_COEFFS,
+    SCO2_NU_RE_RANGE,
 )
 
 
@@ -414,10 +417,12 @@ def compute(tpms_type: str,
     # Function-level import: fluid_props imports tpms_calc at module level.
     from solvers import fluid_props as _fluids
     _m = _fluids.get(fluid_type)
-    mu = float(_m.mu(T_in_K))
-    k_f = float(_m.k(T_in_K))
+    # Pass P to all primitives: air/water ignore it (T-only), sCO2 needs it
+    # (real-gas cp/mu/k/rho depend on both T and P). Widened 2026-06-26.
+    mu = float(_m.mu(T_in_K, P_in_Pa))
+    k_f = float(_m.k(T_in_K, P_in_Pa))
     rho = float(_m.rho(T_in_K, P_in_Pa))
-    cp_f = float(_m.cp(T_in_K))
+    cp_f = float(_m.cp(T_in_K, P_in_Pa))
 
     # ── Reynolds number ──────────────────────────────────────
     # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
