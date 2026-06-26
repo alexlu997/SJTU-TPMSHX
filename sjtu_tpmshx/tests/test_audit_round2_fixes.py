@@ -59,3 +59,33 @@ def test_sizing_caps_relaxed_via_env():
     out = _caps_in_subprocess({'TPMSHX_BUILD_S_MAX': '2.0',
                                'TPMSHX_BUILD_LX_MAX': '2.0'})
     assert out == ['2.0', '2.0']
+
+
+# ── xmod-eps (deferred): warn that 3D BO uses mean eps for graded designs ───
+def test_evaluate_3d_warns_on_graded_porosity():
+    import warnings as W
+    import core.evaluators as ev
+    from optimization.evaluator_3d import evaluate_design_3d
+    ev._GRADED_EPS_3D_WARNED = False
+    x = np.concatenate([np.array([5., 6., 7., 8., 5.5, 6.5, 7.5, 6.]),
+                        np.array([0.40, 0.45, 0.50, 0.45, 0.42, 0.48, 0.46, 0.44])])
+    cfg = {'Nx_3d': 8, 'Ny_3d': 6, 'Nz_3d': 3, 'max_outer_3d': 1,
+           'max_iter_energy': 400, 'tol_energy': 0.5}
+    with W.catch_warnings(record=True) as rec:
+        W.simplefilter('always')
+        evaluate_design_3d(x, cfg)
+    assert any('graded' in str(w.message).lower() for w in rec)
+
+
+def test_evaluate_3d_uniform_no_graded_warn():
+    import warnings as W
+    import core.evaluators as ev
+    from optimization.evaluator_3d import evaluate_design_3d
+    ev._GRADED_EPS_3D_WARNED = False
+    x = np.concatenate([np.full(8, 6.0), np.full(8, 0.45)])   # uniform L, t
+    cfg = {'Nx_3d': 8, 'Ny_3d': 6, 'Nz_3d': 3, 'max_outer_3d': 1,
+           'max_iter_energy': 400, 'tol_energy': 0.5}
+    with W.catch_warnings(record=True) as rec:
+        W.simplefilter('always')
+        evaluate_design_3d(x, cfg)
+    assert not any('graded' in str(w.message).lower() for w in rec)

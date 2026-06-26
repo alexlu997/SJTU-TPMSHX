@@ -25,8 +25,16 @@ Public API
 from __future__ import annotations
 
 import time
+import warnings
 
 import numpy as np
+
+# One-shot guard for the deferred xmod-eps-field-3d-evaluator finding
+# (audit 2026-06-26): evaluate_3d builds SIMPLE-3D with the MEAN porosity and
+# does not yet install the per-cell eps_field (the production pipeline + the 2D
+# BO evaluator do). For a GRADED design that makes the SIMPLE dP approximate.
+# Warn once per process so a future 3D-BO-on-graded run is not silently misled.
+_GRADED_EPS_3D_WARNED = False
 
 from solvers.tpms_calc import (
     air_density,
@@ -195,6 +203,20 @@ def evaluate_3d(x_decision: np.ndarray,
     rho_A0 = air_density(T_inA, P_inA); mu_A0 = air_viscosity(T_inA)
     rho_B0 = air_density(T_inB, P_inB); mu_B0 = air_viscosity(T_inB)
     eps_mean = float(arrays['eps_arr'].mean())
+    # Graded-design approximation guard (deferred fix xmod-eps-field-3d): a
+    # spatially-varying porosity is reduced to its mean for the 3D SIMPLE solve
+    # below (per-cell eps_field not yet wired with the correct streamwise
+    # projection). Uniform designs are exact; only graded 3D-BO dP is affected.
+    global _GRADED_EPS_3D_WARNED
+    _eps_a = arrays['eps_arr']
+    if (not _GRADED_EPS_3D_WARNED
+            and float(_eps_a.max() - _eps_a.min()) > 1e-6 * max(eps_mean, 1e-12)):
+        _GRADED_EPS_3D_WARNED = True
+        warnings.warn(
+            "evaluate_3d: graded porosity reduced to its mean for the 3D SIMPLE "
+            "solve (per-cell eps_field not yet installed) — dP is APPROXIMATE "
+            "for graded designs. The production 3D pipeline is exact. See audit "
+            "finding xmod-eps-field-3d-evaluator.", stacklevel=2)
 
     # 1D D-F closed-form seed for P_ref_abs (matches retired evaluate_3d)
     K_mean_A = float(np.mean(K_A))
