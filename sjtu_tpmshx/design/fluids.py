@@ -13,7 +13,9 @@ from solvers.nu_correlations import (
     NU_RE_FIT_RANGE,        # air 幂律拟合 Re 窗 (400,16000)
     WATER_NU_RE_RANGE,      # 拓扑专属水侧 Nu 关联式验证 Re 域 (新式)
     WATER_NU_COEFFS,        # 拓扑专属水侧系数 (单源 re-export)
+    SCO2_NU_RE_RANGE,       # sCO2 D-7-6 Nu 拟合 Re 域 (9000,41000), Diamond-only
     nu_water_topo,
+    nu_sco2_topo,
 )
 
 YAN_RE_RANGE = WATER_NU_RE_RANGE        # 向后兼容别名 (旧名, 现已非 Yan)
@@ -21,8 +23,13 @@ YAN_RE_RANGE = WATER_NU_RE_RANGE        # 向后兼容别名 (旧名, 现已非 
 
 def nu_re_window(fluid: str):
     """该流体 Nu 关联式的验证 Re 域 (lo, hi)。域外 = 外推, 低置信。
-    air → 项目幂律拟合窗 (400,16000); water → 拓扑专属新式 (100,50000)。"""
-    return WATER_NU_RE_RANGE if fluid == "water" else NU_RE_FIT_RANGE
+    air → 项目幂律拟合窗 (400,16000); water → 拓扑专属 (100,50000);
+    sco2 → D-7-6 拟合 (9000,41000), 仅 Diamond, 远离临界。"""
+    if fluid == "water":
+        return WATER_NU_RE_RANGE
+    if fluid == "sco2":
+        return SCO2_NU_RE_RANGE
+    return NU_RE_FIT_RANGE
 
 
 @dataclass
@@ -31,18 +38,27 @@ class Props:
 
 
 def fluid_props(fluid: str, T_K: float, P_Pa: float) -> Props:
+    # Always forward P: air/water primitives ignore it (value-identical to the
+    # old T-only calls), sco2 REQUIRES it (real-gas). Fixes sco2 crash here.
     m = _registry.get(fluid)            # raises ValueError on unknown
-    rho = m.rho(T_K, P_Pa) if m.compressible else m.rho(T_K)
-    mu = m.mu(T_K); k = m.k(T_K); cp = m.cp(T_K)
+    rho = m.rho(T_K, P_Pa); mu = m.mu(T_K, P_Pa)
+    k = m.k(T_K, P_Pa); cp = m.cp(T_K, P_Pa)
     return Props(rho, mu, k, cp, mu * cp / k)
 
 
 def fluid_nu(fluid: str, topo: str, Re: float, eps_f: float,
              L_mm: float, D_h_mm: float) -> float:
-    """单股 Nu。air: 项目幂律×f_rough; water: 拓扑专属 c·Re^a·Pr^(1/3) (Re 100–50000)。"""
+    """单股 Nu。air: 项目幂律×f_rough; water: 拓扑专属 c·Re^a·Pr^(1/3);
+    sco2: nu_sco2_topo (D-7-6, 仅 Diamond, 远离临界).
+    ⚠ design 工具是常物性 ε-NTU，对 sco2 变-cp/近临界本就粗糙——sco2 正式定尺
+    用 validation/size_sco2_703.py (焓基)。此处 Pr 取代表性远离临界态。"""
     if fluid == "air":
         return nu_from_Re(topo, Re, eps_f, L_mm, D_h_mm)
     if fluid == "water":
         Pr_w = fluid_props("water", 320.0, 2e5).Pr
         return nu_water_topo(topo, Re, Pr_w)
+    if fluid == "sco2":
+        # representative far-from-critical sCO2 (D-7-6 mid ~480K/9MPa)
+        Pr_s = fluid_props("sco2", 480.0, 9.0e6).Pr
+        return nu_sco2_topo(topo, Re, Pr_s)
     raise ValueError(f"unknown fluid {fluid!r}")

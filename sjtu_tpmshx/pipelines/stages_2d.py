@@ -225,7 +225,8 @@ def _parse_inputs_cfg(compute_cfg):
                         tpms_type, k_s,
                         u_A, u_B, T_inA, T_inB, _lut,
                         P_in=P_in_val,  # FIX (2026-06-24 audit): was defaulting to P_atm
-                        allow_extrap=_allow_extrap)
+                        allow_extrap=_allow_extrap,
+                        fluid_type=fluid_A)  # air-only builder; non-air raises
                     print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
                     from solvers.zone_config import ZoneConfig

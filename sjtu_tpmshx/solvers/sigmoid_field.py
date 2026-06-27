@@ -219,8 +219,14 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
                             sigmoid_width_y=0.02, sigmoid_width_x=0.05,
                             fix_L=False, fix_t=False, opt_axis='y',
                             dx_arr=None, dy_arr=None,
-                            allow_extrap=None):
+                            allow_extrap=None, fluid_type='air'):
     """Build per-cell property arrays from sigmoid-interpolated L(x,y), t(x,y).
+
+    AIR-ONLY: this builder hardcodes air ρ/μ/k/Nu (it predates the fluid
+    registry). Guarded — a non-air fluid_type raises rather than silently
+    using air properties (which would put h_v/K_ff off by 10-100×). Zoned/
+    graded sCO2/water support is a deferred item; use uniform geometry for
+    non-air fluids (the uniform path is per-fluid correct).
 
     Parameters
     ----------
@@ -292,7 +298,14 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
     eps_arr, A0_arr = lut.query(L_field, t_field)
     D_h_arr = 2.0 * eps_arr / (A0_arr + 1e-30)  # [m]
 
-    # 5. Compute fluid properties (vectorized)
+    # 5. Compute fluid properties (vectorized) — AIR ONLY (guarded above-call by
+    # _check_zoned_fluid_support; this is the in-builder backstop so no caller
+    # can silently get air props for a non-air fluid).
+    if fluid_type != 'air':
+        raise NotImplementedError(
+            f"build_continuous_arrays hardcodes air properties; fluid_type="
+            f"{fluid_type!r} would silently use air (h_v/K_ff off 10-100x). "
+            "Zoned/graded non-air support is deferred — use uniform geometry.")
     k_fA = air_conductivity(T_inA)
     mu_A = air_viscosity(T_inA)
     rho_ref_A = air_density(T_inA, P_in)  # FIX (2026-06-24 audit): use actual P_in, not P_atm — Re scales with rho(P), matching tpms_calc.compute

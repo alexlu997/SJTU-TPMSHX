@@ -106,7 +106,7 @@ def build_continuous_arrays_3d(x, L0, t0,
                                 sigmoid_width_z=0.05,
                                 fix_L=False, fix_t=False,
                                 dx_arr=None, dy_arr=None, dz_arr=None,
-                                allow_extrap=None):
+                                allow_extrap=None, fluid_type='air'):
     """Construct per-cell property arrays from 108-d decision vector.
 
     Parameters
@@ -188,6 +188,14 @@ def build_continuous_arrays_3d(x, L0, t0,
     eps_arr, A0_arr = lut.query(L_field, t_field)
     D_h_arr = 2.0 * eps_arr / (A0_arr + 1e-30)  # [m]
 
+    # AIR ONLY (hardcodes air ρ/μ/k/Nu). The 3D pipeline builds zoned h_v via
+    # the fluid-aware _build_hv_field_3d, not this; guard so this builder can
+    # never silently use air for a non-air fluid. Zoned/graded non-air deferred.
+    if fluid_type != 'air':
+        raise NotImplementedError(
+            f"build_continuous_arrays_3d hardcodes air properties; fluid_type="
+            f"{fluid_type!r} would silently use air. Use uniform geometry for "
+            "non-air fluids (the uniform 3D path is per-fluid correct).")
     k_fA = air_conductivity(T_inA); mu_A = air_viscosity(T_inA)
     rho_ref_A = air_density(T_inA, P_in)  # FIX (2026-06-24 audit): use actual P_in, not P_atm (matches tpms_calc.compute + 2D builder)
     k_fB = air_conductivity(T_inB); mu_B = air_viscosity(T_inB)
