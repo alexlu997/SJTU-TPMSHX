@@ -15,13 +15,14 @@ physical value and the A/B imbalance drops out of the bug regime.
 
 skipped if CoolProp is unavailable.
 """
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("TPMSHX_ALLOW_EXTRAP", "1")
+# NOTE: TPMSHX_ALLOW_EXTRAP is set test-locally via monkeypatch inside the test
+# (NOT at module level) — a module-level os.environ.setdefault leaks the env
+# process-wide and breaks later-collected out-of-window surrogate-domain tests.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -40,7 +41,8 @@ def _ff(w, wz):
                 in_z_ctr=wz / 2, in_z_w=wz, out_z_ctr=wz / 2, out_z_w=wz)
 
 
-def test_reverse_dir_sco2_massflow_recovered():
+def test_reverse_dir_sco2_massflow_recovered(monkeypatch):
+    monkeypatch.setenv("TPMSHX_ALLOW_EXTRAP", "1")  # test-local; auto-restored
     # 703 recuperator: sCO2 both sides, counterflow (A dir 0 +x, B dir 1 -x).
     MH = MC = 37.6
     TH, PH = 737.0, 8.017e6          # hot  (A, forward)

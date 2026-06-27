@@ -475,9 +475,16 @@ def compute(tpms_type: str,
     # ── Pressure drop via ConstDF-v1 D-F surrogate ──────────────
     # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
     # convention, see df_surrogate/predict.py).
-    from df_surrogate.predict import predict_K_cF
+    from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
     K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
                                float(eps) / 2.0)
+    # sCO2: predict_K_cF returns the GEOMETRIC (air/water-anchored) cF; the
+    # D-7-6 field-calibrated effective cF is geometric × SCO2_CF_SCALE (3.39),
+    # applied inside the SIMPLE solver for the field path. The lumped compute()
+    # path must apply it too, else the UI/quick-estimate dP for sCO2 reads ~3.4×
+    # too low (audit 2026-06-28). air/water keep the geometric cF (×1.0).
+    if fluid_type == 'sco2':
+        cF_df = cF_df * SCO2_CF_SCALE
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────

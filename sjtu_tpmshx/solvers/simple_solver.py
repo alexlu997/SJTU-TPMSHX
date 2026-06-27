@@ -761,9 +761,18 @@ def _aligned_grid(N, L, breakpoints):
     # Adjust last segment to match total N
     diff = N - sum(n_cells)
     n_cells[-1] += diff
+    # If the last segment fell below the 2-cell minimum, borrow the deficit from
+    # the largest segment so sum(n_cells) stays == N (audit 2026-06-28: the old
+    # `n_cells[-2] -= (2 - n_cells[-1])` ran AFTER clamping n_cells[-1] to 2, so
+    # the deficit was always 0 → no-op → len(dx_arr) could != N → grid mismatch).
     if n_cells[-1] < 2:
+        deficit = 2 - n_cells[-1]
         n_cells[-1] = 2
-        n_cells[-2] -= (2 - n_cells[-1])
+        big = max(range(len(n_cells) - 1), key=lambda k: n_cells[k])
+        n_cells[big] -= deficit
+        if n_cells[big] < 2:
+            # over-constrained (N too small for the segment count) → uniform
+            return np.full(N, L / N, dtype=np.float64)
 
     # Build dx array: uniform within each segment
     dx_list = []

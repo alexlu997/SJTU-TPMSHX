@@ -2440,6 +2440,15 @@ def _run_3d_stack(cfg):
     def _outer_post_3d(outer, _carry):
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
+        # #5 reverse-dir density-frame fix, fluid-A side (audit 2026-06-28). Same
+        # bug class as the Tb_sB flip below: the velocity transforms flip for a
+        # reverse-dir fluid but this T→SIMPLE transform did not, mirroring the
+        # SIMPLE density frame for a reverse-dir A. Gated to sCO2 reverse-dir A
+        # (ρ(T)-sensitive); forward A (all 703/Shanghai configs, dir 0) → no-op,
+        # bit-identical. air/water keep the legacy frame (validation-safe).
+        if fluid_type_A == 'sco2' and axis_map['is_reverse']:
+            _ssax_A = solver_to_real_perm[int(axis_map['stream_real_axis'])]
+            Ta_sA = np.ascontiguousarray(np.flip(Ta_sA, axis=_ssax_A))
         # Critical: propagate Ta to T_field so SIMPLE inner _update_density()
         # uses local cell T, not stale T_in. (Mirror sB.update_T_field below.)
         sA.update_T_field(Ta_sA)
@@ -2623,8 +2632,13 @@ def _run_3d_stack(cfg):
             if _mB.compressible:   # P_ref recompute is compressible-only
                 Tb_avg = float(Tb_sB.mean())
                 mu_avg_B = float(_mB.mu(Tb_avg))
-                C_avg_B = (mu_avg_B * G_B / max(K_pred, 1e-16)
-                           + cF_pred * G_B * G_B)
+                # Use the B-side permeability / Forchheimer coeff (audit
+                # 2026-06-28): the outer-loop reseed previously used fluid A's
+                # K_pred / cF_pred, inconsistent with the initial B seed (L1829,
+                # K_pred_B / cF_pred_B). Identical for same-geometry same-fluid
+                # A/B; differs for asymmetric ε (δ≠0) or differing per-side cF.
+                C_avg_B = (mu_avg_B * G_B / max(K_pred_B, 1e-16)
+                           + cF_pred_B * G_B * G_B)
                 P_out_sq_B_new = (P_inB ** 2
                                   - 2.0 * R_AIR * Tb_avg * C_avg_B * L_stream_B)
                 sB.P_ref_abs = _seed_p_ref(P_out_sq_B_new, P_inB,

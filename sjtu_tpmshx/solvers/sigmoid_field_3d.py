@@ -216,7 +216,10 @@ def build_continuous_arrays_3d(x, L0, t0,
 
     K_ffA_arr = eps_arr * k_fA
     K_ffB_arr = eps_arr * k_fB
-    K_ss_arr = (1.0 - eps_arr) * k_s
+    # CHI_S to match the main field path (stages_3d K_ss = CHI_S*(1-eps)*k_s) +
+    # tpms_calc.compute(); default CHI_S=1.0 → no-op (audit 2026-06-28, latent).
+    from solvers.tpms_calc import CHI_S as _CHI_S
+    K_ss_arr = _CHI_S * (1.0 - eps_arr) * k_s
 
     return {
         'zone_id': np.zeros((Nx, Ny, Nz), dtype=np.int32),
