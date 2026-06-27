@@ -40,7 +40,8 @@ from solvers.tpms_calc import (
     water_density, water_viscosity, water_conductivity, water_cp,
 )
 from solvers import fluid_props
-from df_surrogate.predict import predict_K_cF
+from solvers import sco2_props
+from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
 from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
@@ -1599,11 +1600,19 @@ def _run_3d_stack(cfg):
     # Back-compat: L_cross alias for mass-flow area calc (uses both cross axes)
     L_cross = axis_map['L_cross']
 
-    # Fluid A properties at inlet
-    rho_A = air_density(T_inA, P_inA)
-    mu_A = air_viscosity(T_inA)
-    cp_A = air_cp(T_inA)
-    k_A = air_conductivity(T_inA)
+    # Fluid A properties at inlet — via the registry (parity with side B, B1 1.1).
+    # air: rho=air_density(T,P), cp/mu/k ignore P (value-identical to the old
+    # air_* calls → golden-safe). sco2: real-gas (T,P). water-A stays blocked
+    # (needs validation; 703 never uses water as Fluid A).
+    fluid_type_A = cfg.get('fluid_type_A', 'air')
+    if fluid_type_A == 'water':
+        raise NotImplementedError(
+            "Water Fluid A not yet implemented (needs incompressible SIMPLE A path)")
+    _mA = fluid_props.get(fluid_type_A)
+    rho_A = float(_mA.rho(T_inA, P_inA))
+    mu_A = float(_mA.mu(T_inA, P_inA))
+    cp_A = float(_mA.cp(T_inA, P_inA))
+    k_A = float(_mA.k(T_inA, P_inA))
 
     # D-F surrogate. SIMPLE3D K_arr/cF_arr shape = (Ny_sA, Nz) where Ny_sA
     # is the solver streamwise axis = N_stream in real coords.
@@ -1649,17 +1658,28 @@ def _run_3d_stack(cfg):
     # cF_A. Air side only; water skipped (the per-topology water fit
     # (`nu_water_topo`) embeds AM roughness).
     K_A_arr, cF_A_arr = _apply_roughness_KcF(
-        K_A_arr, cF_A_arr, cfg.get('fluid_type_A', 'air'),
-        rho_A, mu_A, u_A, D_h)
+        K_A_arr, cF_A_arr, fluid_type_A, rho_A, mu_A, u_A, D_h)
+    # sCO2: Forchheimer cF needs the D-7-6 effective scale (×3.39). Roughness is
+    # already skipped for sco2 (embeds_roughness), so this is the sole cF lift.
+    # Diamond-only, like nu_sco2_topo. Scale both the field and the seed scalar.
+    if fluid_type_A == 'sco2':
+        cF_A_arr = cF_A_arr * SCO2_CF_SCALE
+        cF_pred = cF_pred * SCO2_CF_SCALE
 
-    # P_ref_abs 1D closed-form seed (uses streamwise length L_stream)
+    # P_ref_abs 1D closed-form seed (uses streamwise length L_stream).
+    solver_fluid_type_A = fluid_props.flow_model(fluid_type_A)
     G_A = rho_A * u_A
-    # P² compressible seed: C = μG/K + cF·G² where G = ρu (mass flux, constant
-    # along pipe by continuity). NOT the local dp/dx = μu/K + ρcFu².
+    # C = μG/K + cF·G² where G = ρu (mass flux, constant along pipe by continuity).
     C_est = mu_A * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
-    P_out_sq = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_est * L_stream
-    P_ref_A = _seed_p_ref(P_out_sq, P_inA, mode=_env_mode,
-                          warn_list=_env_warnings, context='fluid A inlet seed')
+    if _mA.compressible:
+        # P² compressible (ideal-gas) seed; only air-A can choke.
+        P_out_sq = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_est * L_stream
+        P_ref_A = _seed_p_ref(P_out_sq, P_inA, mode=_env_mode,
+                              warn_list=_env_warnings, context='fluid A inlet seed')
+    else:
+        # sco2 Phase-A is incompressible (ρ frozen) → simple 1D Darcy-Forchheimer
+        # pressure-drop seed sets the gauge level; no choke path.
+        P_ref_A = max(float(P_inA - C_est * L_stream / rho_A), 1.0e4)
 
     # Partial inlet / outlet on the 2-axis inlet face.
     in_mask_2d, out_mask_2d = _build_partial_masks(
@@ -1677,7 +1697,7 @@ def _run_3d_stack(cfg):
         **solver_init,
         rho=rho_A, mu=mu_A, T_in=T_inA, v_inlet=v_inlet_field,
         eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
-        P_ref_abs=P_ref_A, fluid_type='ideal_gas',
+        P_ref_abs=P_ref_A, fluid_type=solver_fluid_type_A,
         dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
     )
     # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
@@ -1700,18 +1720,12 @@ def _run_3d_stack(cfg):
     # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
     # A.solve() deferred — build B first then run both in parallel threads.
 
-    # ── Fluid type validation ──
-    fluid_type_A = cfg.get('fluid_type_A', 'air')
-    if fluid_type_A == 'sco2':
-        raise NotImplementedError("sCO₂ properties not yet implemented for Fluid A")
-    if fluid_type_A == 'water':
-        raise NotImplementedError("Water Fluid A not yet implemented (needs incompressible SIMPLE A path)")
+    # (Fluid A type already resolved + validated near the A-property block;
+    # sCO2-A is now supported, water-A still blocked there.)
 
     # ── Fluid B: cross-flow SIMPLE — BUILD ONLY (solve in parallel with A) ──
     fB = cfg.get('fluid_B_cfg')
     fluid_type_B = cfg.get('fluid_type_B', 'air')
-    if fluid_type_B == 'sco2':
-        raise NotImplementedError("sCO₂ properties not yet implemented for Fluid B")
     is_water_B = fluid_type_B == 'water'
     # B1 1.1: property primitives + flow model for side B via the registry
     # (frozen-B / stiffness semantics keep using is_water_B).
@@ -1720,8 +1734,8 @@ def _run_3d_stack(cfg):
     sB_info = None
     if fB is not None:
         u_B = cfg.get('u_B', u_A)
-        rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P
-        mu_B = float(_mB.mu(T_inB))
+        rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
+        mu_B = float(_mB.mu(T_inB, P_inB))     # air/water ignore P; sco2 needs P
         axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
         is_x_stream_B = axis_map_B['is_x_stream']
         is_y_stream_B = axis_map_B['is_y_stream']
@@ -1740,6 +1754,11 @@ def _run_3d_stack(cfg):
         K_B_arr, cF_B_arr = _apply_roughness_KcF(
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
+        # sCO2 B side: same D-7-6 effective-cF scale as A (×3.39); roughness
+        # already skipped (embeds_roughness). Scale field + seed scalar.
+        if fluid_type_B == 'sco2':
+            cF_B_arr = cF_B_arr * SCO2_CF_SCALE
+            cF_pred_B = cF_pred_B * SCO2_CF_SCALE
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
@@ -1820,10 +1839,11 @@ def _run_3d_stack(cfg):
         wcB = np.zeros((Nx, Ny, Nz))
         Tb_presc = np.full((Nx, Ny, Nz), T_inB, dtype=np.float64)
 
-    # LTNE inputs — Fluid A always air, Fluid B via the registry (B1 1.1).
-    cp_B = _mB.cp(T_inB)
-    k_B = float(_mB.k(T_inB))
-    rho_B_ltne = float(_mB.rho(T_inB, P_inB))   # water rho ignores P
+    # LTNE inputs — Fluid A and B via the registry. air/water ignore P
+    # (value-identical); sco2 needs P (real-gas).
+    cp_B = _mB.cp(T_inB, P_inB)
+    k_B = float(_mB.k(T_inB, P_inB))
+    rho_B_ltne = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
     eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
                else np.full((Nx, Ny, Nz), eps))
     # Per-cell single-channel void fraction (#2/#3). When zoned, eps varies
@@ -1868,11 +1888,13 @@ def _run_3d_stack(cfg):
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
         m = fluid_props.get(fluid_type)
-        rho = float(m.rho(T_side, P_side))   # water.rho ignores P (incompressible)
-        mu = float(m.mu(T_side))
-        k_f = float(m.k(T_side))
-        if not m.compressible:               # water: Pr-substitution (3D: k guard)
-            Pr_f = float(m.cp(T_side)) * mu / max(k_f, 1e-30)
+        # air/water ignore P (value-identical to the old T-only calls → golden-
+        # safe); sco2 is real-gas and REQUIRES P.
+        rho = float(m.rho(T_side, P_side))
+        mu = float(m.mu(T_side, P_side))
+        k_f = float(m.k(T_side, P_side))
+        if not m.compressible:               # water/sco2: Pr-substitution (3D: k guard)
+            Pr_f = float(m.cp(T_side, P_side)) * mu / max(k_f, 1e-30)
             return rho, mu, k_f, Pr_f
         return rho, mu, k_f, None
 
@@ -2421,28 +2443,42 @@ def _run_3d_stack(cfg):
         # uses local cell T, not stale T_in. (Mirror sB.update_T_field below.)
         sA.update_T_field(Ta_sA)
         P_abs = sA.P_ref_abs + sA.P
-        rho_new = P_abs / (R_AIR * Ta_sA)
+        if _mA.compressible:
+            rho_new = P_abs / (R_AIR * Ta_sA)            # ideal gas
+            mu_new_A = air_viscosity(Ta_sA)
+        else:
+            # sco2 Phase A: ρ=ρ(T,P_in), μ=μ(T,P_in) per cell (frozen P; ρ still
+            # tracks T — captures the near-critical ρ swing). Real-gas CoolProp.
+            rho_new = sco2_props.sco2_density_field(Ta_sA, P_inA)
+            mu_new_A = sco2_props.sco2_viscosity_field(Ta_sA, P_inA)
         if outer > 0:
             sA.rho_field = np.ascontiguousarray(
                 _ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field,
                 dtype=np.float64)
             sA.mu_field = np.ascontiguousarray(
-                _ALPHA_T * air_viscosity(Ta_sA)
+                _ALPHA_T * mu_new_A
                 + (1.0 - _ALPHA_T) * sA.mu_field, dtype=np.float64)
         else:
             sA.rho_field = np.ascontiguousarray(rho_new, dtype=np.float64)
-            sA.mu_field = np.ascontiguousarray(air_viscosity(Ta_sA), dtype=np.float64)
+            sA.mu_field = np.ascontiguousarray(mu_new_A, dtype=np.float64)
         eps_eff_A = sA.eps_field if hasattr(sA, 'eps_field') else sA.eps
         sA._mu_eff_field = np.ascontiguousarray(
             sA.mu_field / eps_eff_A, dtype=np.float64)
 
         T_avg = float(Ta_sA.mean())
-        mu_avg = float(air_viscosity(T_avg))
-        C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
-        P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_stream
-        sA.P_ref_abs = _seed_p_ref(P_out_sq_new, P_inA, mode=_env_mode,
-                                   warn_list=_env_warnings,
-                                   context='fluid A reseed (outer iter)')
+        if _mA.compressible:
+            mu_avg = float(air_viscosity(T_avg))
+            C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
+            P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_stream
+            sA.P_ref_abs = _seed_p_ref(P_out_sq_new, P_inA, mode=_env_mode,
+                                       warn_list=_env_warnings,
+                                       context='fluid A reseed (outer iter)')
+        else:
+            # sco2 incompressible reseed: 1D Darcy-Forchheimer dP (cF_pred already
+            # ×SCO2_CF_SCALE); no choke path.
+            mu_avg = float(sco2_props.sco2_viscosity(T_avg, P_inA))
+            C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
+            sA.P_ref_abs = max(float(P_inA - C_avg * L_stream / rho_A), 1.0e4)
 
         # Warm restart: SIMPLE fields nearly converged after outer 0.
         # ρ/μ change is small (α_T=0.6 under-relaxation), so 150 iter is plenty
@@ -2470,7 +2506,12 @@ def _run_3d_stack(cfg):
         # Also re-add the optional thermal-dispersion term that the old in-place
         # refresh silently dropped. δ=0 ⇒ eps_fA_arr IS eps_f_arr (bit-identical);
         # disp_C_A=0 ⇒ no-op.
-        K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
+        if _mA.compressible:
+            K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
+            _cpA_fld = air_cp(Ta)
+        else:
+            K_ffA[:] = eps_fA_arr * sco2_props.sco2_conductivity_field(Ta, P_inA)
+            _cpA_fld = sco2_props.sco2_cp_field(Ta, P_inA)
         if disp_C_A > 0.0:
             K_ffA[:] += K_disp_A
         if _var_rhocp and sA is not None:
@@ -2478,16 +2519,18 @@ def _run_3d_stack(cfg):
             _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
             if axis_map['is_reverse']:
                 _rhoA_real = np.flip(_rhoA_real, axis=axis_map['stream_real_axis'])
-            rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * air_cp(Ta)
+            rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * _cpA_fld
         else:
-            rho_cp_fA[:] = air_density(Ta, P_inA) * air_cp(Ta)
+            _rhoA_fld = (air_density(Ta, P_inA) if _mA.compressible
+                         else sco2_props.sco2_density_field(Ta, P_inA))
+            rho_cp_fA[:] = _rhoA_fld * _cpA_fld
         # h_v rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         if Tb is not None:
             T_avgB = float(Tb.mean())
             # B1 1.1: per-fluid primitives via registry; the local-P
             # rho·cp path is compressible-only physics (water keeps ρ(T)).
-            K_ffB[:] = eps_fB_arr * _mB.k(Tb)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above)
+            K_ffB[:] = eps_fB_arr * _mB.k(Tb, P_inB)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above); P for sco2
             if disp_C_B > 0.0:
                 K_ffB[:] += K_disp_B
             if _mB.compressible and _var_rhocp and sB is not None:
@@ -2495,9 +2538,9 @@ def _run_3d_stack(cfg):
                 if axis_map_B['is_reverse']:
                     _rhoB_real = np.flip(
                         _rhoB_real, axis=axis_map_B['stream_real_axis'])
-                rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb)
+                rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb, P_inB)
             else:
-                rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb)
+                rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb, P_inB)
             # h_vB rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         # Non-iso coupling for fluid B. Water: ρ(T) only, no ideal gas.
@@ -2508,8 +2551,8 @@ def _run_3d_stack(cfg):
                 P_abs_B = sB.P_ref_abs + sB.P
                 rho_new_B = P_abs_B / (R_AIR * Tb_sB)
             else:
-                rho_new_B = _mB.rho(Tb_sB)
-            mu_new_B = _mB.mu(Tb_sB)
+                rho_new_B = _mB.rho(Tb_sB, P_inB)   # water ignores P; sco2 (T,P_in)
+            mu_new_B = _mB.mu(Tb_sB, P_inB)          # air/water ignore P; sco2 needs P
             if outer > 0:
                 sB.rho_field = np.ascontiguousarray(
                     _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
