@@ -2663,7 +2663,14 @@ def _run_3d_stack(cfg):
                                    eps_side_override=_eps_ov_A)
     # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
     #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
-    Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
+    # sCO2: true enthalpy duty ṁ·Δh (cp varies strongly with T,P → cp·ΔT is
+    # wrong); air/water keep cp·ΔT (constant cp ⇒ value-identical, golden-safe).
+    if fluid_type_A == 'sco2':
+        Q_enthalpy_A = abs(m_dot_A_simple * (
+            sco2_props.sco2_enthalpy(float(T_inA), P_inA)
+            - sco2_props.sco2_enthalpy(float(T_A_out), P_inA)))
+    else:
+        Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
 
     # Fluid B
     Q_enthalpy_B = 0.0
@@ -2688,7 +2695,12 @@ def _run_3d_stack(cfg):
         m_dot_B_phys_out = float(np.sum(_face_flux_weights(
             sB, fB['dir'], face='real_outlet', eps_mode='physical',
             chi_face=chi_B_out_face)))
-        Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
+        if fluid_type_B == 'sco2':
+            Q_enthalpy_B = abs(m_dot_B_simple * (
+                sco2_props.sco2_enthalpy(float(T_inB), P_inB)
+                - sco2_props.sco2_enthalpy(float(T_B_out), P_inB)))
+        else:
+            Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
 
     # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
     # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
