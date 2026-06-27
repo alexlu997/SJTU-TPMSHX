@@ -530,11 +530,13 @@ def _parse_inputs_3d_cfg(compute_cfg):
         extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_A, T_inA, P_inA, side='A',
-            allow_extrap=_allow_extrap) or []
+            allow_extrap=_allow_extrap,
+            fluid=compute_cfg.fluid_A.type) or []
         extrap_reasons += check_surrogate_domain_at_point(
             tpms_type, Lcell, t_wall, k_s,
             u_B, T_inB, P_inB, side='B',
-            allow_extrap=_allow_extrap) or []
+            allow_extrap=_allow_extrap,
+            fluid=compute_cfg.fluid_B.type) or []
     except ImportError:
         # surrogate_domain module unavailable → skip the extrap-domain check.
         # A ValueError from the check is a real domain violation and must

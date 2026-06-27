@@ -29,7 +29,8 @@ def check_surrogate_domain_at_point(tpms_type: str,
                                     T: float,
                                     P: float = 101325.0,
                                     side: str = 'A',
-                                    allow_extrap: bool = False) -> List[str]:
+                                    allow_extrap: bool = False,
+                                    fluid: str = 'air') -> List[str]:
     """Point-form surrogate-domain check for the Compute path.
 
     Computes Re from (ρ(T,P), u, D_h(L_mm, t_mm), μ(T)) and verifies
@@ -63,8 +64,19 @@ def check_surrogate_domain_at_point(tpms_type: str,
     if _os.environ.get('TPMSHX_ALLOW_EXTRAP', '').lower() in ('1', 'true', 'yes'):
         allow_extrap = True
 
-    rho = air_density(T, P)
-    mu  = air_viscosity(T)
+    # Re uses the ACTUAL fluid's ρ, μ. air/water keep the air-property path
+    # (byte-identical to the historical guard — water rarely trips the window
+    # and re-deriving its Re would shift the validated boundary), but sCO2 is
+    # real-gas: its ρ swings ×3-4 vs air at the same (T,P), so an air-property
+    # Re would be meaningless in the warning. Forward the sCO2 (T,P) props.
+    if fluid == 'sco2':
+        from solvers.fluid_props import get as _get_fluid
+        _m = _get_fluid('sco2')
+        rho = float(_m.rho(T, P))
+        mu = float(_m.mu(T, P))
+    else:
+        rho = air_density(T, P)
+        mu  = air_viscosity(T)
     D_h = _geom(tpms_type, L_mm, t_mm, k_s)['D_h']
     Re = rho * u * D_h / mu
 

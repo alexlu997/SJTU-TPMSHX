@@ -910,6 +910,7 @@ class SIMPLESolver:
                  wall_refine=True,
                  n_wall_refine=8,
                  wall_first_cell=0.02e-3,
+                 cf_scale=1.0,
                  **_legacy_kw):
         # Historical 'closure' kwarg is accepted but ignored; ConstDF-v1 D-F
         # is the only closure since 2026-04-19 f-Re cleanup.
@@ -1051,6 +1052,13 @@ class SIMPLESolver:
             )
             self._K_arr = np.full(Ny, K_val, dtype=np.float64)
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
+
+        # Fluid-dependent Forchheimer scale (default 1.0 = air/water, untouched).
+        # The geometric cF is air/water-anchored; sCO2 needs cF x SCO2_CF_SCALE_FIELD
+        # to match the measured D-7-6 Δp (df_surrogate/predict.py). Applied here so
+        # the field momentum source uses the right inertial resistance per fluid.
+        if cf_scale != 1.0:
+            self._cF_arr = self._cF_arr * float(cf_scale)
 
         # Inlet — use overlap fraction for exact mass conservation
         # v_inlet is the scalar reference inlet velocity (kept for the

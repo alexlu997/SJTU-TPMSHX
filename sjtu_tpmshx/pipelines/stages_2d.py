@@ -149,10 +149,10 @@ def _parse_inputs_cfg(compute_cfg):
         _uB = compute_cfg.fluid_B.u_mps
         extrap_reasons += check_surrogate_domain_at_point(
             _tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A',
-            allow_extrap=_allow_extrap) or []
+            allow_extrap=_allow_extrap, fluid=fluid_A) or []
         extrap_reasons += check_surrogate_domain_at_point(
             _tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B',
-            allow_extrap=_allow_extrap) or []
+            allow_extrap=_allow_extrap, fluid=fluid_B) or []
     except (AttributeError, ValueError) as _e:
         if isinstance(_e, ValueError):
             raise
@@ -470,7 +470,7 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None, fluid_type='ideal_gas'):
+                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -535,7 +535,8 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
                              wall_refine=False,
                              P_ref_abs=P_in_abs,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type)
+                             fluid_type=fluid_type,
+                             cf_scale=cf_scale)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = energy_dx.copy()
@@ -549,7 +550,8 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
                              wall_refine=False,
                              P_ref_abs=P_in_abs,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type)
+                             fluid_type=fluid_type,
+                             cf_scale=cf_scale)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
@@ -970,10 +972,10 @@ def _compute_Q_richardson(
     ucB2 = _interp2(ucB); vcB2 = _interp2(vcB)
     rcp_A2 = _interp2(rho_cp_A if np.ndim(rho_cp_A) > 0 else
                        np.full((N_x, N_y),
-                               _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)))
+                               _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA, P_inA_val)))
     rcp_B2 = _interp2(rho_cp_B if np.ndim(rho_cp_B) > 0 else
                        np.full((N_x, N_y),
-                               _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)))
+                               _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB, P_inB_val)))
     if za is not None and 'h_vB_arr' in za:
         h_vA2 = _interp2(za['h_vA_arr'])
         h_vB2 = _interp2(za['h_vB_arr'])
@@ -1135,8 +1137,8 @@ def _compute_Q_richardson(
                             if _Tout_B_finite.size else float(T_inB))
             rho_A_in = float(_pA['rho'](T_inA, P_inA_val))
             rho_B_in = float(_pB['rho'](T_inB, P_inB_val))
-            cp_A_in  = float(_pA['cp'](T_inA))
-            cp_B_in  = float(_pB['cp'](T_inB))
+            cp_A_in  = float(_pA['cp'](T_inA, P_inA_val))
+            cp_B_in  = float(_pB['cp'](T_inB, P_inB_val))
             A_in_A = float(cfgA.get('in_w', H))
             A_in_B = float(cfgB.get('in_w', L))
             m_dot_A = rho_A_in * abs(u_A) * A_in_A
@@ -1219,23 +1221,26 @@ def _run_solvers(window, cfg, fields):
     # Hagen-Poiseuille floor (prevents Nu→0 non-physical extrapolation).
     from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
 
-    def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm):
-        """Per-side Nu: water uses Pr-substitution onto air-fit correlation
-        (option B, 2026-05-09). Air uses native Nu correlation."""
+    def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm,
+                     side_P=None):
+        """Per-side Nu: water / sCO2 use Pr-substitution onto a topo-fit
+        correlation; air uses its native Nu. ``side_P`` (Pa) is forwarded to
+        the property primitives — air/water ignore it (value-identical), sCO2
+        requires it (real-gas)."""
         m = fluid_props.get(side_props['name'])
         Pr = None
-        if side_props['name'] == 'water':
+        if side_props['name'] in ('water', 'sco2'):
             # Pr-substitution (2D convention: no k guard) computed here so the
             # registry stays free of the 2D-vs-3D Prandtl differences.
-            mu_w = float(side_props['mu'](side_T_for_Pr))
-            k_w  = float(side_props['k'](side_T_for_Pr))
-            cp_w = float(side_props['cp'](side_T_for_Pr))
+            mu_w = float(side_props['mu'](side_T_for_Pr, side_P))
+            k_w  = float(side_props['k'](side_T_for_Pr, side_P))
+            cp_w = float(side_props['cp'](side_T_for_Pr, side_P))
             Pr = mu_w * cp_w / k_w
         return m.nu(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr)
 
     def _build_hv_local_2d(rho_scalar, mu_scalar, k_f_scalar,
                             u_mag_field, L_mm_field, t_mm_field,
-                            side_props=None, side_T_for_Pr=None):
+                            side_props=None, side_T_for_Pr=None, side_P=None):
         """Per-cell h_v = A_0 · max(Nu(Re_local), Nu_lam) · k_f / D_h.
         L_mm_field, t_mm_field None → uniform Lcell, t_wall.
         side_props (dict) + side_T_for_Pr (K) drive water Nu dispatch
@@ -1252,7 +1257,7 @@ def _run_solvers(window, cfg, fields):
                     if side_props is not None:
                         nu_corr = _nu_dispatch(side_props, side_T_for_Pr,
                                                 Re_ij, eps_g / 2.0, Lcell,
-                                                D_h * 1000.0)
+                                                D_h * 1000.0, side_P)
                     else:
                         nu_corr = _tc.nu_from_Re(tpms_type, Re_ij,
                                                   eps_g / 2.0, Lcell,
@@ -1271,7 +1276,7 @@ def _run_solvers(window, cfg, fields):
                 if side_props is not None:
                     nu_corr = _nu_dispatch(side_props, side_T_for_Pr,
                                             Re_ij, g['epsilon'] / 2.0,
-                                            L_ij, D_h_l * 1000.0)
+                                            L_ij, D_h_l * 1000.0, side_P)
                 else:
                     nu_corr = _tc.nu_from_Re(tpms_type, Re_ij,
                                               g['epsilon'] / 2.0,
@@ -1317,8 +1322,8 @@ def _run_solvers(window, cfg, fields):
     ucA = vcA = ucB = vcB = None
     simpA = simpB = None
 
-    rho_cp_A = _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA)
-    rho_cp_B = _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB)
+    rho_cp_A = _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA, P_inA_val)
+    rho_cp_B = _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB, P_inB_val)
 
     # Variable density: 2D rho fields for SIMPLE (initialized uniform)
     rho_A_field = np.full((N_x, N_y), _pA['rho'](T_inA, P_inA_val))
@@ -1350,14 +1355,19 @@ def _run_solvers(window, cfg, fields):
             # the registry's flow_model() instead of a per-site string check.
             _ftA = fluid_props.flow_model(_pA['name'])
             _ftB = fluid_props.flow_model(_pB['name'])
+            # sCO2 Forchheimer cF needs the D-7-6 effective scale (air/water=1.0,
+            # bit-identical). Diamond-only, like nu_sco2_topo.
+            from df_surrogate.predict import SCO2_CF_SCALE
+            _cfsA = SCO2_CF_SCALE if _pA['name'] == 'sco2' else 1.0
+            _cfsB = SCO2_CF_SCALE if _pB['name'] == 'sco2' else 1.0
             ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A,
                                             'Fluid A', P_inA_val,
                                             T_field_real=_Ta_for_simpA,
-                                            fluid_type=_ftA)
+                                            fluid_type=_ftA, cf_scale=_cfsA)
             ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B,
                                             'Fluid B', P_inB_val,
                                             T_field_real=_Tb_for_simpB,
-                                            fluid_type=_ftB)
+                                            fluid_type=_ftB, cf_scale=_cfsB)
         if _coup_it == 0:
             for w in _caught:
                 warnings_list.append(str(w.message))
@@ -1388,8 +1398,8 @@ def _run_solvers(window, cfg, fields):
         rho_B_scalar = float(rho_B_field.mean())
         mu_A_scalar = float(np.asarray(mu_A).mean()) if np.ndim(mu_A) else float(mu_A)
         mu_B_scalar = float(np.asarray(mu_B).mean()) if np.ndim(mu_B) else float(mu_B)
-        k_fA = float(_pA['k'](T_inA))
-        k_fB = float(_pB['k'](T_inB))
+        k_fA = float(_pA['k'](T_inA, P_inA_val))
+        k_fB = float(_pB['k'](T_inB, P_inB_val))
         # Zoned L/t fields (only if zone_config and grid mode); otherwise None
         L_field_2d = None; t_field_2d = None
         if zone_config is not None and za is not None:
@@ -1397,10 +1407,12 @@ def _run_solvers(window, cfg, fields):
             t_field_2d = za.get('t_arr')
         h_vA_local = _build_hv_local_2d(rho_A_scalar, mu_A_scalar, k_fA,
                                          u_mag_A, L_field_2d, t_field_2d,
-                                         side_props=_pA, side_T_for_Pr=T_inA)
+                                         side_props=_pA, side_T_for_Pr=T_inA,
+                                         side_P=P_inA_val)
         h_vB_local = _build_hv_local_2d(rho_B_scalar, mu_B_scalar, k_fB,
                                          u_mag_B, L_field_2d, t_field_2d,
-                                         side_props=_pB, side_T_for_Pr=T_inB)
+                                         side_props=_pB, side_T_for_Pr=T_inB,
+                                         side_P=P_inB_val)
 
         # 2026-05-09 (option B) — water-side stiffness: ρ·cp_water ~ 4100×
         # ρ·cp_air, h_v_water ~ 2-3× h_v_air (Pr-substitution). solve_full_domain
@@ -1484,8 +1496,8 @@ def _run_solvers(window, cfg, fields):
             return np.ascontiguousarray(P_real)
         P_abs_A = _simp_P_abs_real(simpA, dir_A)
         P_abs_B = _simp_P_abs_real(simpB, dir_B)
-        rho_cp_A_new = _pA['rho'](Ta, P_abs_A) * _pA['cp'](Ta)
-        rho_cp_B_new = _pB['rho'](Tb, P_abs_B) * _pB['cp'](Tb)
+        rho_cp_A_new = _pA['rho'](Ta, P_abs_A) * _pA['cp'](Ta, P_abs_A)
+        rho_cp_B_new = _pB['rho'](Tb, P_abs_B) * _pB['cp'](Tb, P_abs_B)
         rho_A_field_new = _pA['rho'](Ta, P_abs_A)
         rho_B_field_new = _pB['rho'](Tb, P_abs_B)
 
@@ -1493,8 +1505,8 @@ def _run_solvers(window, cfg, fields):
         # Sutherland (air) or Vogel (water). With local-P density now using
         # the full field, local mu keeps the momentum balance consistent
         # cell-by-cell.
-        mu_A = _pA['mu'](Ta)
-        mu_B = _pB['mu'](Tb)
+        mu_A = _pA['mu'](Ta, P_abs_A)
+        mu_B = _pB['mu'](Tb, P_abs_B)
         T_avg_A = float(Ta.mean()); T_avg_B = float(Tb.mean())
 
         # Convergence: mass-flux-weighted relative rho change.
@@ -1743,7 +1755,7 @@ def _finalize_cfg(raw, fields):
         # ρ·cp weighting — registry primitives (water rho ignores P).
         _m = _fluids.get(fluid_type)
         rho = _m.rho(T_face, P_in_Pa)
-        cp = _m.cp(T_face)
+        cp = _m.cp(T_face, P_in_Pa)
         import numpy as _np
         w = _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
         wsum = float(_np.sum(w))

@@ -45,8 +45,9 @@ from solvers import sco2_props as S                           # noqa: E402
 from solvers.simple_solver import SIMPLESolver                # noqa: E402
 from solvers.ltne_energy import solve_full_domain             # noqa: E402
 from solvers.df_projection import (build_master_refined_grid,  # noqa: E402
-                                   extract_dP_from_simple)
-from df_surrogate.predict import predict_K_cF                 # noqa: E402
+                                   extract_dP_from_simple,
+                                   extract_dP_mass_flux_from_simple)
+from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE  # noqa: E402
 from validation._case_sets import d76_spec                    # noqa: E402
 
 XLSX = (_ROOT.parent / "data" / "raw_data" / "D-7-6-sCO2"
@@ -77,7 +78,7 @@ def _col(ws, L):
     return np.array([ws.cell(r, ci(L)).value for r in range(3, 54)], float)
 
 
-def _run_case(m_h, Th, Ph, m_c, Tc_in, Tc_out, Pc, Qexp):
+def _run_case(m_h, Th, Ph, m_c, Tc_in, Tc_out, Pc, Qexp, dP_exp=None):
     rho_A0, mu_A0 = S.sco2_density(Th, Ph), S.sco2_viscosity(Th, Ph)
     cp_A0, k_A0 = S.sco2_cp(Th, Ph), S.sco2_conductivity(Th, Ph)
     u_A = m_h / (rho_A0 * A_FLOW)
@@ -123,7 +124,8 @@ def _run_case(m_h, Th, Ph, m_c, Tc_in, Tc_out, Pc, Qexp):
         s = SIMPLESolver(H_DOM, L_DOM, N_Y, N_X, TPMS, L_CELL, T_WALL,
                          EPS, R_H, rho_s, mu_s, Th, 0.0, H_DOM, u_A,
                          outlet_lo=0.0, outlet_hi=H_DOM, P_ref_abs=P_seed,
-                         rho_inlet_ref=rho_A0, wall_refine=False)
+                         rho_inlet_ref=rho_A0, wall_refine=False,
+                         cf_scale=SCO2_CF_SCALE)   # D-7-6 sCO2 effective cF
         s.fluid_type = 'incompressible'      # Phase A: sCO2 incompressible
         s.dx_arr, s.dy_arr = DY.copy(), DX.copy()
         if T_s is not None:
@@ -160,8 +162,13 @@ def _run_case(m_h, Th, Ph, m_c, Tc_in, Tc_out, Pc, Qexp):
     T_A_out = float((Ta[-1, :] * w).sum() / w.sum())
     Q_sim = m_h * (S.sco2_enthalpy(Th, Ph) - S.sco2_enthalpy(T_A_out, Ph)) / 1e3
     err = (Q_sim - Qexp) / Qexp * 100.0
+    # field Δp on the hot stream (cf_scale=SCO2_CF_SCALE already applied)
+    dP_sim = extract_dP_mass_flux_from_simple(s)          # Pa
+    err_dP = ((dP_sim - dP_exp) / dP_exp * 100.0
+              if dP_exp not in (None, 0.0) else float('nan'))
     return dict(Re_h=rA['Re'], T_out=T_A_out, Q_sim=Q_sim, Qexp=Qexp,
-                err=err, iters=iters, conv=conv)
+                err=err, iters=iters, conv=conv,
+                dP_sim=dP_sim, dP_exp=dP_exp, err_dP=err_dP)
 
 
 def main():
@@ -172,26 +179,35 @@ def main():
     mc, McI, NcI = _col(ws, 'L'), _col(ws, 'M'), _col(ws, 'N')
     TcO, Pc = _col(ws, 'O'), _col(ws, 'P')
     Qexp = _col(ws, 'S')
+    dPhot = _col(ws, 'T')                                  # hot Δp [MPa] (in-out)
     print(f"sCO2 D-7-6 Gate A++ (2D SIMPLE/LTNE field) — Diamond {L_CELL}/{T_WALL}, "
-          f"L={L_DOM*1000:.0f}mm grid {N_X}x{N_Y}")
+          f"L={L_DOM*1000:.0f}mm grid {N_X}x{N_Y}  (cf_scale={SCO2_CF_SCALE})")
     print(f"{'case':>4} {'Re_h':>7} {'T_out':>7} {'Q_exp':>7} {'Q_sim':>7} "
-          f"{'err%':>7} {'it':>3} conv")
+          f"{'errQ%':>6} {'dPexp':>6} {'dPsim':>6} {'edP%':>6} {'it':>3} conv")
     errs = []
+    edPs = []
     for cidx in GOLD:
         i = int(np.where(case == cidx)[0][0])
         r = _run_case(mh[i], ThI[i] + 273.15, PhI[i] * 1e6,
                       mc[i], McI[i] + 273.15, TcO[i] + 273.15, Pc[i] * 1e6,
-                      Qexp[i])
+                      Qexp[i], dP_exp=dPhot[i] * 1e6)
         errs.append(r['err'])
+        edPs.append(r['err_dP'])
         print(f"{cidx:>4} {r['Re_h']:>7.0f} {r['T_out']-273.15:>7.1f} "
-              f"{r['Qexp']:>7.2f} {r['Q_sim']:>7.2f} {r['err']:>+7.1f} "
+              f"{r['Qexp']:>7.2f} {r['Q_sim']:>7.2f} {r['err']:>+6.1f} "
+              f"{r['dP_exp']/1e3:>5.1f}k {r['dP_sim']/1e3:>5.1f}k {r['err_dP']:>+6.1f} "
               f"{r['iters']:>3} {r['conv']}")
     errs = np.array(errs)
+    edPs = np.array(edPs)
     rmsre = float(np.sqrt(np.mean(errs ** 2)))
     mx = float(np.max(np.abs(errs)))
-    print(f"\nRMSRE = {rmsre:.1f}%  max|err| = {mx:.1f}%  bias = {np.mean(errs):+.1f}%")
-    ok = mx < GATE_PCT
-    print(f"GATE A++ ({GATE_PCT:.0f}% max): {'PASS' if ok else 'FAIL'}")
+    rmsre_dP = float(np.sqrt(np.mean(edPs ** 2)))
+    mx_dP = float(np.max(np.abs(edPs)))
+    print(f"\nQ : RMSRE = {rmsre:.1f}%  max|err| = {mx:.1f}%  bias = {np.mean(errs):+.1f}%")
+    print(f"Δp: RMSRE = {rmsre_dP:.1f}%  max|err| = {mx_dP:.1f}%  bias = {np.mean(edPs):+.1f}%"
+          f"   (cf_scale={SCO2_CF_SCALE} = D-7-6 sCO2 effective)")
+    ok = mx < GATE_PCT and mx_dP < GATE_PCT
+    print(f"GATE A++ ({GATE_PCT:.0f}% max, Q & Δp): {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
 

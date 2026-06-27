@@ -38,6 +38,34 @@ def _prop(key: str, T_K: float, P_Pa: float) -> float:
     return float(_PropsSI(key, "T", float(T_K), "P", float(P_Pa), _FLUID))
 
 
+def sco2_prop(key: str, T_K, P_Pa):
+    """Scalar-OR-vectorised CoolProp query of `key` over (T, P).
+
+    The registry primitives (fluid_props) call rho/cp/mu/k both with scalars
+    (inlet references) and with whole 2D/3D FIELDS (the variable-property outer
+    loop passes a T field and the local absolute-P field). Span-Wagner real-gas
+    ρ/cp depend on BOTH, so neither can be frozen. Dispatch:
+
+      * scalar T and scalar P  -> the cached scalar `_prop` (hot path, cached);
+      * any array T or P       -> a single vectorised CoolProp call, T and P
+        broadcast to a common shape (so a scalar P broadcasts across a T field,
+        and a per-cell P field is honoured cell-by-cell).
+
+    Returns a float for the all-scalar case, else an ndarray shaped like the
+    broadcast of T and P.
+    """
+    import numpy as _np
+    T = _np.asarray(T_K, dtype=float)
+    P = _np.asarray(P_Pa, dtype=float)
+    if T.ndim == 0 and P.ndim == 0:
+        return _prop(key, float(T), float(P))
+    shape = _np.broadcast_shapes(T.shape, P.shape)
+    Tf = _np.ascontiguousarray(_np.broadcast_to(T, shape)).ravel()
+    Pf = _np.ascontiguousarray(_np.broadcast_to(P, shape)).ravel()
+    out = _PropsSI(key, "T", Tf, "P", Pf, _FLUID)
+    return _np.asarray(out, dtype=float).reshape(shape)
+
+
 def sco2_density(T_K: float, P_Pa: float) -> float:
     """ρ [kg/m³] = ρ(T, P) — real-gas, NOT ideal."""
     return _prop("D", T_K, P_Pa)
@@ -62,3 +90,54 @@ def sco2_enthalpy(T_K: float, P_Pa: float) -> float:
     """Specific enthalpy h [J/kg] = h(T, P). Used for enthalpy-based duty
     Q = ṁ·Δh (sCO2 cp is not constant across a HX temperature span)."""
     return _prop("H", T_K, P_Pa)
+
+
+@lru_cache(maxsize=4096)
+def sco2_temperature(h_Jkg: float, P_Pa: float) -> float:
+    """Inverse: T [K] = T(h, P). Span-Wagner is monotone in h at fixed P, so
+    the inversion is single-valued. Needed for the Phase C (near-critical)
+    enthalpy formulation — across the pseudocritical line cp spikes ×10-20, so
+    the energy balance is carried in enthalpy and converted back to T here
+    rather than integrating an ill-conditioned cp·dT."""
+    return float(_PropsSI("T", "H", float(h_Jkg), "P", float(P_Pa), _FLUID))
+
+
+# ── Vectorised field queries (Phase C: per-cell property updates) ──────────
+# CoolProp's PropsSI broadcasts over the state arrays, so a whole temperature
+# field at a (near-constant) pressure is one call instead of N cached scalars.
+# Used by the variable-property outer loop where the cp/ρ field is refreshed
+# every iteration as T evolves through the pseudocritical zone.
+
+def sco2_field(key: str, T_K, P_Pa: float):
+    """Vectorised CoolProp query of `key` over a temperature array/field at a
+    single pressure. Returns an array shaped like `T_K`."""
+    import numpy as _np
+    T = _np.ascontiguousarray(T_K, dtype=float)
+    out = _PropsSI(key, "T", T.ravel(), "P", float(P_Pa), _FLUID)
+    return _np.asarray(out, dtype=float).reshape(T.shape)
+
+
+def sco2_density_field(T_K, P_Pa: float):
+    """ρ field [kg/m³] over a T field at fixed P."""
+    return sco2_field("D", T_K, P_Pa)
+
+
+def sco2_cp_field(T_K, P_Pa: float):
+    """cp field [J/(kg·K)] over a T field at fixed P."""
+    return sco2_field("C", T_K, P_Pa)
+
+
+def sco2_rho_cp_field(T_K, P_Pa: float):
+    """ρ·cp field [J/(m³·K)] — the energy-equation convective coefficient that
+    swings ×10-20 through the pseudocritical line (Phase C)."""
+    return sco2_density_field(T_K, P_Pa) * sco2_cp_field(T_K, P_Pa)
+
+
+def sco2_viscosity_field(T_K, P_Pa: float):
+    """μ field [Pa·s] over a T field at fixed P."""
+    return sco2_field("V", T_K, P_Pa)
+
+
+def sco2_conductivity_field(T_K, P_Pa: float):
+    """k field [W/(m·K)] over a T field at fixed P."""
+    return sco2_field("L", T_K, P_Pa)

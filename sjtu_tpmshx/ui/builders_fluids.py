@@ -166,16 +166,22 @@ def build_page_fluids(window):
     window.combo_fluidB.setCurrentIndex(1)  # default Water (Shanghai cold side)
     window.combo_fluidB.setStyleSheet(_COMBO)
     window.combo_fluidB.setToolTip(
-        "Fluid B supports Air and Water.\n"
-        "sCO₂ is reserved (greyed) — solver blocks it.")
+        "Fluid B supports Air, Water and sCO₂ (2D).\n"
+        "sCO₂: Diamond 7/0.6 only + tick 'allow extrapolation'; 3D not yet wired.")
     try:
         _modelB = window.combo_fluidB.model()
-        _it = _modelB.item(2)   # sCO₂
+        _it = _modelB.item(2)   # sCO₂ — enabled for the 2D field path (2026-06-27)
         if _it is not None:
-            _it.setEnabled(False)
+            _it.setEnabled(True)
             _it.setToolTip(
-                "Not yet supported for Fluid B — needs real-gas property "
-                "table. See run_calculation_3d.py:962.")
+                "sCO₂ (2D only). Real-gas CoolProp Span-Wagner properties.\n"
+                "Calibrated geometry = Diamond, L=7 mm, t=0.6 mm (D-7-6 Nu + cF); "
+                "other lattices raise NotImplementedError.\n"
+                "Tick 'allow extrapolation' — the ConstDF-v1 surrogate window is "
+                "t∈[0.3,0.5] mm, so t=0.6 trips the geometric domain guard "
+                "(sCO₂ uses its own D-7-6 closure, not ConstDF, so this is not a "
+                "true extrapolation).\n"
+                "3D Fluid B sCO₂ is not yet wired (raises NotImplementedError).")
     except Exception:
         pass
     add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)

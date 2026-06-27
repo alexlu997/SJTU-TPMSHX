@@ -101,6 +101,33 @@ def _overrides_enabled() -> bool:
     return os.environ.get("TPMSHX_DF_OVERRIDES", "1").strip() != "0"
 
 
+# ==================================================================
+# sCO2 effective-cF calibration (D-7-6, 2026-06-27)
+# ==================================================================
+# The air/water-anchored geometric cF (backends gamma_df / rbf) UNDER-predicts
+# the MEASURED sCO2 Forchheimer dP. Forensic on the D-7-6 specimen (Diamond
+# 7/0.6, 51 sCO2 cases, Re 8.4k-40k): the air-anchored cF reproduces the
+# same-specimen AIR dP to ~14 % but the sCO2 dP only to ~1/3 — a uniform
+# multiplier (CV 8 %, no Re trend) of 3.13 on the 1D Forchheimer dP, i.e. the
+# constant-cF closure does NOT transfer air -> sCO2. See vault
+# reports/.../sco2 + [[project_sco2_pche_feasibility]].
+#
+# SCO2_CF_SCALE is the multiplier applied to the geometric cF inside the SIMPLE
+# field momentum source so the SOLVER's sCO2 Δp matches the D-7-6 experiment.
+# Forensic (inlet-property 1D) gives a cF ratio of ~3.13; but the field solver
+# cools the stream (ρ rises, the Forchheimer dP = cF·G²/ρ·L drops along the
+# channel), so matching the MEASURED (property-integrated) Δp needs a slightly
+# larger scale. Calibrated directly against the full coupled GOLD-6 field driver
+# (validate_sco2_d76_2d.py): 3.39 centres the Δp bias to ~0 (RMSRE ~6 %,
+# max ~10 %); 3.13 left a −7.6 % bias because the inlet-property forensic
+# under-weights the cold (dense) end.
+#
+# ⚠ SINGLE-GEOMETRY (Diamond 7/0.6) calibration. The ratio's transfer to other
+# (L, t) is UNVERIFIED — there is no other sCO2 dP dataset. For 703 (all Diamond
+# 7/0.6) this is exact; elsewhere it is an explicit assumption, not a fit.
+SCO2_CF_SCALE = 3.39             # sCO2 effective-cF multiplier (D-7-6 field-calibrated)
+
+
 def _apply_override(tpms: str, L_mm: float, t_mm: float,
                     cF_rbf: float) -> float:
     """Blend end-to-end calibrated cF over a local region; RBF elsewhere."""

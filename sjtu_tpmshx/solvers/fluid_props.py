@@ -43,15 +43,19 @@ def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
     return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr)
 
 
-def _sco2_prop(fn):
-    """Wrap an sCO2 (T, P) property so a missing P raises a clear error
-    rather than a cryptic CoolProp failure (sCO2 props are P-dependent)."""
+def _sco2_prop(key):
+    """Wrap an sCO2 property (by CoolProp key) so a missing P raises a clear
+    error rather than a cryptic CoolProp failure (sCO2 props are P-dependent),
+    and so a SCALAR or a whole FIELD of T/P both work. The 2D/3D variable-
+    property loop calls these primitives with arrays (T field + local-P field);
+    air/water are numpy-elementwise, sCO2 must vectorise its CoolProp call.
+    sco2_props.sco2_prop dispatches scalar->cached / array->vectorised."""
     def _wrapped(T, P=None):
         if P is None:
             raise ValueError(
                 "sCO2 properties require pressure P [Pa]; caller passed P=None. "
                 "Fix the call site to forward the inlet/local pressure.")
-        return fn(T, P)
+        return sco2_props.sco2_prop(key, T, P)
     return _wrapped
 
 
@@ -98,10 +102,10 @@ FLUIDS = {
         name='sco2', compressible=False,   # Phase A: incompressible (D-7-6 ΔP/P<2%);
                                            # ρ=ρ(T,P_in) varies with T. Compressible
                                            # ρ(P_local) is Phase B (high-ΔP cases).
-        rho=_sco2_prop(sco2_props.sco2_density),
-        cp=_sco2_prop(sco2_props.sco2_cp),
-        mu=_sco2_prop(sco2_props.sco2_viscosity),
-        k=_sco2_prop(sco2_props.sco2_conductivity),
+        rho=_sco2_prop("D"),
+        cp=_sco2_prop("C"),
+        mu=_sco2_prop("V"),
+        k=_sco2_prop("L"),
         nu=_nu_sco2,
         embeds_roughness=True,   # SLM roughness baked into the D-7-6 fit (like water)
     ),
