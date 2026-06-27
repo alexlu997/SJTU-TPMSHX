@@ -2446,9 +2446,17 @@ def _run_3d_stack(cfg):
         if _mA.compressible:
             rho_new = P_abs / (R_AIR * Ta_sA)            # ideal gas
             mu_new_A = air_viscosity(Ta_sA)
+        elif os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower() in ('1', 'true', 'yes'):
+            # #4 Phase-B (opt-in, EXPERIMENTAL): sco2 ρ/μ at the LOCAL absolute-P
+            # field (ρ tracks local P, not frozen inlet P). ⚠ PROPERTY SIDE ONLY —
+            # the full compressible continuity (∂ρ/∂P in the pressure correction,
+            # Karki-Patankar ψ) is NOT implemented, so high-dP convergence is
+            # unverified. 703 dP<2% ⇒ default Phase A (below) is sufficient.
+            rho_new = sco2_props.sco2_prop("D", Ta_sA, P_abs)
+            mu_new_A = sco2_props.sco2_prop("V", Ta_sA, P_abs)
         else:
-            # sco2 Phase A: ρ=ρ(T,P_in), μ=μ(T,P_in) per cell (frozen P; ρ still
-            # tracks T — captures the near-critical ρ swing). Real-gas CoolProp.
+            # sco2 Phase A (default): ρ=ρ(T,P_in), μ=μ(T,P_in) per cell (frozen P;
+            # ρ still tracks T — captures the near-critical ρ swing). CoolProp.
             rho_new = sco2_props.sco2_density_field(Ta_sA, P_inA)
             mu_new_A = sco2_props.sco2_viscosity_field(Ta_sA, P_inA)
         if outer > 0:
@@ -2701,6 +2709,25 @@ def _run_3d_stack(cfg):
                 - sco2_props.sco2_enthalpy(float(T_B_out), P_inB)))
         else:
             Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
+
+    # #5 guard (2026-06-28 audit): the 3D conservative LTNE kernel conserves the
+    # ε·ρcp·u·A energy mass-flux, which is inconsistent with true enthalpy ṁ·Δh
+    # for a STRONGLY VARYING-cp fluid (sCO2) — the two streams' enthalpy duties
+    # can diverge ~30 %+. Flag it so the 3D coupled-Q / cold-outlet are not
+    # trusted for sCO2 (proper fix = enthalpy-form LTNE; use the 2D double-live
+    # solve for the coupled duty). Air/water (near-constant cp) are unaffected.
+    if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
+            and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
+        _ab_imbal = abs(Q_enthalpy_A - Q_enthalpy_B) / max(Q_enthalpy_A, Q_enthalpy_B)
+        if _ab_imbal > 0.10:
+            import warnings as _w5
+            _w5.warn(
+                f"[sCO2 3D energy] A/B enthalpy duties differ by {_ab_imbal*100:.0f}% "
+                f"(Q_A={Q_enthalpy_A/1e6:.2f} MW, Q_B={Q_enthalpy_B/1e6:.2f} MW): the "
+                "conservative LTNE kernel conserves ρcp·u·A·T, not true enthalpy, for "
+                "varying-cp sCO2. The 3D coupled Q / cold-outlet are NOT trustworthy — "
+                "use the 2D double-live solve for the coupled duty. dP + hot-side duty "
+                "are still reliable.", stacklevel=2)
 
     # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
     # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
