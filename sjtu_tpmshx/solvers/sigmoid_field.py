@@ -113,8 +113,14 @@ class GeometryLUT:
 
         if cache_dir is None:
             cache_dir = os.path.dirname(os.path.abspath(__file__))
+        # N (voxel resolution) MUST be in the cache key + load-validation: the
+        # eps_table / A0_table are computed at resolution N (_phi_grid(...,N),
+        # _A0_from_C(...,N)), so a different N produces a different table. The
+        # old key omitted N → requesting N≠cached silently loaded the stale-
+        # resolution geometry (audit 2026-06-28). Latent while N is the default
+        # 256 everywhere, but a real silent-wrong-geometry bug if N varies.
         self._cache_path = os.path.join(
-            cache_dir, f'lut_{tpms_type}_{n_L}x{n_t}.npz')
+            cache_dir, f'lut_{tpms_type}_{n_L}x{n_t}_N{N}.npz')
 
         if not self._load():
             self._precompute()
@@ -151,7 +157,8 @@ class GeometryLUT:
         np.savez_compressed(self._cache_path,
                             L_vals=self.L_vals, t_vals=self.t_vals,
                             eps_table=self.eps_table, A0_table=self.A0_table,
-                            tpms_type=np.array([self.tpms_type]))
+                            tpms_type=np.array([self.tpms_type]),
+                            N=np.array([self.N]))
 
     def _load(self):
         if not os.path.exists(self._cache_path):
@@ -160,6 +167,8 @@ class GeometryLUT:
             data = np.load(self._cache_path, allow_pickle=True)
             if str(data['tpms_type'][0]) != self.tpms_type:
                 return False
+            if 'N' not in data or int(data['N'][0]) != int(self.N):
+                return False   # resolution mismatch → recompute (audit 2026-06-28)
             if not np.array_equal(data['L_vals'], self.L_vals):
                 return False
             if not np.array_equal(data['t_vals'], self.t_vals):
