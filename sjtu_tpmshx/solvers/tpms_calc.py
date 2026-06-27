@@ -234,8 +234,10 @@ def parse_fluid_type(combo):
 def validate_fluid_type(fluid_type: str, side: str) -> None:
     """Raise NotImplementedError for fluid types without fitted correlations.
 
-    Air + water are supported (option B, 2026-05-09). sCO2 still blocks
-    pending a fitted Nu / f-Re / D-F surrogate.
+    Air + water + sCO2 are supported. sCO2 (2026-06): Diamond-only Nu
+    (nu_sco2_topo, D-7-6) + cF×SCO2_CF_SCALE + CoolProp real-gas props; wired in
+    the 2D and 3D pipelines (Phase A = incompressible). sCO2 on a non-Diamond
+    lattice still raises (nu_sco2_topo Diamond-only).
 
     For water:
       * Properties: NIST-grade rho/mu/k (Vogel viscosity, < 2 % vs NIST 0–90 °C).
