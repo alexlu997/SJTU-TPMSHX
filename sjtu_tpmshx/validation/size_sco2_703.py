@@ -6,6 +6,10 @@ TPMS Diamond 7/0.6 cores. Counterflow. Variable properties carried in ENTHALPY
 (CoolProp Span-Wagner), so the recuperator's mild cp drift and the precooler's
 ×50 pseudocritical cp spike are both handled without an ill-conditioned cp·dT.
 
+Naming: ``A_front`` = frontal area (= L×W, the inlet face ⟂ flow); the streamwise
+length is ``L`` here = the report/xlsx "depth H" (convention: 迎风面 L×W, 深度 H).
+The solver's streamwise axis is fed this length regardless of the letter.
+
 For each device and a swept frontal area A_front:
   * interstitial u = ṁ/(ρ·ε_A·A_front), mass flux G = ṁ/(ε_A·A_front);
   * local Re = G·D_h/μ → Nu (nu_sco2_topo / nu_water_topo) → h = Nu·k/D_h →
