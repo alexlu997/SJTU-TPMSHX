@@ -46,7 +46,8 @@ from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 from solvers.envelope import (check_compressible_envelope, gate_solution,
-                               mach_field_max, ChokedFlowError)
+                               mach_field_max, ChokedFlowError,
+                               PRESSURE_FLOOR_PA)
 
 
 def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
@@ -2482,11 +2483,39 @@ def _run_3d_stack(cfg):
                                        warn_list=_env_warnings,
                                        context='fluid A reseed (outer iter)')
         else:
-            # sco2 incompressible reseed: 1D Darcy-Forchheimer dP (cF_pred already
-            # ×SCO2_CF_SCALE); no choke path.
+            # sco2-A reseed: 1D Darcy-Forchheimer dP (cF_pred already ×SCO2_CF_SCALE).
             mu_avg = float(sco2_props.sco2_viscosity(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
-            sA.P_ref_abs = max(float(P_inA - C_avg * L_stream / rho_A), 1.0e4)
+            _sco2_compress = (os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '')
+                              .lower() in ('1', 'true', 'yes'))
+            if _sco2_compress:
+                # #4 (2026-06-28): the opt-in compressible sCO2 path is now
+                # ENVELOPE-GUARDED (repo hard invariant: a compressible path must
+                # not silently floor into a vacuum/garbage state). sCO2 is
+                # real-gas, so the ideal-gas P² choke relation does not apply —
+                # use the linear DF outlet pressure with the mean LOCAL density
+                # (ρ tracks P on this path, unlike Phase A's frozen ρ). If the
+                # drop would push the outlet to/below the floor, route through
+                # envelope_mode (raise/warn) instead of the silent clip.
+                _rho_mean = max(float(np.mean(sA.rho_field)), 1.0e-9)
+                _dP_1d = C_avg * L_stream / _rho_mean
+                _P_out_1d = float(P_inA - _dP_1d)
+                if _P_out_1d <= PRESSURE_FLOOR_PA:
+                    _ck = (f"Off-envelope sCO2 (compressible path): 1D "
+                           f"Darcy-Forchheimer drop {_dP_1d:.3e} Pa >= inlet "
+                           f"absolute P {float(P_inA):.0f} Pa → outlet <= floor. "
+                           f"No steady solution; lower the velocity, shorten the "
+                           f"streamwise domain, or raise the inlet pressure. "
+                           f"[fluid A sCO2 compressible reseed]")
+                    if _env_mode == 'raise':
+                        raise ChokedFlowError(_ck)
+                    if _env_mode == 'warn':
+                        _env_warnings.append(_ck)
+                sA.P_ref_abs = max(_P_out_1d, PRESSURE_FLOOR_PA)
+            else:
+                # Phase A (default): frozen-ρ 1D DF seed. ρ at the inlet
+                # reference ⇒ no compressible positive feedback ⇒ no choke path.
+                sA.P_ref_abs = max(float(P_inA - C_avg * L_stream / rho_A), 1.0e4)
 
         # Warm restart: SIMPLE fields nearly converged after outer 0.
         # ρ/μ change is small (α_T=0.6 under-relaxation), so 150 iter is plenty
@@ -2555,6 +2584,22 @@ def _run_3d_stack(cfg):
         # Air: ρ(P,T) via ideal gas law (mirror of A).
         if sB is not None and Tb is not None:
             Tb_sB = np.ascontiguousarray(Tb.transpose(perm_B))
+            # #5 reverse-dir density-frame fix (2026-06-28). The velocity
+            # transforms (_solver_*_to_real) and rho_cp_fB apply the reverse-dir
+            # np.flip, but this real→solver T transpose does NOT — so for a
+            # reverse-dir B the SIMPLE density frame is MIRRORED relative to the
+            # velocity frame: the hot real-OUTLET T lands on the solver
+            # injection face (j=0), so ρ_in = ρ(T_out) not ρ(T_in). For
+            # ρ(T)-sensitive sCO2 this under-reads ṁ_B ~2.4× (e.g. 703
+            # recuperator: 15.5 vs 37.6 kg/s) and corrupts dP_B + the cold-side
+            # duty. The fix flips T to match the velocity frame. GATED to sCO2:
+            # air/water (weak ρ(T); error within the accepted air-air B-side
+            # imbalance) keep the legacy frame so the Shanghai/golden 3D
+            # baselines stay bit-identical — the general reverse-dir fix needs a
+            # full re-validation (documented follow-up).
+            if fluid_type_B == 'sco2' and axis_map_B['is_reverse']:
+                _ssax_B = perm_B[int(axis_map_B['stream_real_axis'])]
+                Tb_sB = np.ascontiguousarray(np.flip(Tb_sB, axis=_ssax_B))
             if _mB.compressible:
                 P_abs_B = sB.P_ref_abs + sB.P
                 rho_new_B = P_abs_B / (R_AIR * Tb_sB)
@@ -2712,22 +2757,29 @@ def _run_3d_stack(cfg):
 
     # #5 guard (2026-06-28 audit): the 3D conservative LTNE kernel conserves the
     # ε·ρcp·u·A energy mass-flux, which is inconsistent with true enthalpy ṁ·Δh
-    # for a STRONGLY VARYING-cp fluid (sCO2) — the two streams' enthalpy duties
-    # can diverge ~30 %+. Flag it so the 3D coupled-Q / cold-outlet are not
-    # trusted for sCO2 (proper fix = enthalpy-form LTNE; use the 2D double-live
-    # solve for the coupled duty). Air/water (near-constant cp) are unaffected.
+    # for a STRONGLY VARYING-cp fluid (sCO2). The reverse-dir density-frame fix
+    # above removed the dominant ~2× ṁ_B under-read (75 %→41 % on the 703
+    # recuperator), but a residual enthalpy-vs-(cp·T) gap remains (the kernel
+    # transports cp·T, not ∫cp dT) → the cold-side duty still under-reads. Flag
+    # it so the 3D coupled-Q / cold-outlet are not trusted for sCO2 (full fix =
+    # enthalpy-form LTNE kernel; use the 2D double-live solve for the coupled
+    # duty). Air/water (near-constant cp) are unaffected. The imbalance is also
+    # surfaced as the `Q_AB_imbalance_rel` result field for downstream callers.
+    Q_AB_imbalance_rel = float('nan')
     if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
             and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
-        _ab_imbal = abs(Q_enthalpy_A - Q_enthalpy_B) / max(Q_enthalpy_A, Q_enthalpy_B)
-        if _ab_imbal > 0.10:
+        Q_AB_imbalance_rel = (abs(Q_enthalpy_A - Q_enthalpy_B)
+                              / max(Q_enthalpy_A, Q_enthalpy_B))
+        if Q_AB_imbalance_rel > 0.10:
             import warnings as _w5
             _w5.warn(
-                f"[sCO2 3D energy] A/B enthalpy duties differ by {_ab_imbal*100:.0f}% "
-                f"(Q_A={Q_enthalpy_A/1e6:.2f} MW, Q_B={Q_enthalpy_B/1e6:.2f} MW): the "
-                "conservative LTNE kernel conserves ρcp·u·A·T, not true enthalpy, for "
-                "varying-cp sCO2. The 3D coupled Q / cold-outlet are NOT trustworthy — "
-                "use the 2D double-live solve for the coupled duty. dP + hot-side duty "
-                "are still reliable.", stacklevel=2)
+                f"[sCO2 3D energy] A/B enthalpy duties differ by "
+                f"{Q_AB_imbalance_rel*100:.0f}% (Q_A={Q_enthalpy_A/1e6:.2f} MW, "
+                f"Q_B={Q_enthalpy_B/1e6:.2f} MW): the conservative LTNE kernel "
+                "transports ρcp·u·A·T, not true enthalpy, for varying-cp sCO2. "
+                "The 3D coupled Q / cold-outlet are NOT trustworthy — use the 2D "
+                "double-live solve for the coupled duty. dP + hot-side duty are "
+                "still reliable.", stacklevel=2)
 
     # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
     # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
@@ -2935,6 +2987,9 @@ def _run_3d_stack(cfg):
         energy_imbalance_rel=energy_rel,
         mass_imbalance_rel_A=mass_rel_A,
         mass_imbalance_rel_B=mass_rel_B,
+        # #5: sCO2 A/B enthalpy-duty imbalance (nan for air/water) — the residual
+        # after the reverse-dir mass-flow fix; >10% ⇒ trust 2D coupled duty.
+        Q_AB_imbalance_rel=Q_AB_imbalance_rel,
         # h_v fields for BC-layer split diagnostic (path 0' v3)
         h_vA_field=h_vA_field, h_vB_field=h_vB_field,
         # Path 0' interior-corrected metrics (BC layer excluded)
