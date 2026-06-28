@@ -43,11 +43,23 @@ from .tpms_calc import (air_density, air_viscosity, P_atm)
 # ===================================================================
 
 # ── SOU deferred correction for momentum (minmod limiter) ──────────
+# N2 (audit 2026-06-28): the momentum SOU deferred correction must scale the
+# west/south-face limiter by the WEST/SOUTH-face flux (Fw/Fs) and the
+# east/north-face limiter by the EAST/NORTH-face flux (Fe/Fn) — the SAME face
+# fluxes the first-order aE/aW/aN/aS coefficients already use. The legacy form
+# scaled BOTH faces by the single cell-east (or north) flux, so at a shared face
+# cell i applied Fe(i)·φ_e while cell i+1 applied Fe(i+1)·φ_w ≠ Fw(i+1)=Fe(i):
+# the deferred correction did not telescope and injected a spurious momentum
+# source wherever ρ·u varied between neighbours (the exact defect already fixed
+# in ltne_energy._sou_corr_x/_y). For a uniform flux field (Fe==Fw) this reduces
+# to the legacy `0.5*F*(phi_w - phi_e)`, but on a developing / variable-ρ flow it
+# differs at truncation level — an intentional 2D-golden re-baseline.
 @njit(cache=True)
-def _sou_corr_u_x(u, i, j, Nx, Fe):
+def _sou_corr_u_x(u, i, j, Nx, Fe, Fw):
     """SOU deferred correction for u-momentum in x-direction.
     u is on x-faces: u[i,j] at face between cells i-1 and i.
-    Fe = rho*ue*dy is the east-face convective flux for this u-cell.
+    Fe/Fw = rho*u_face*dy are the east/west-face convective fluxes for this
+    u-cell (the same fluxes that build aE/aW).
     """
     ue_loc = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
     if ue_loc >= 0:
@@ -61,7 +73,7 @@ def _sou_corr_u_x(u, i, j, Nx, Fe):
             gu = u[i, j] - u[i - 1, j]
             gd = u[i + 1, j] - u[i, j]
             phi_e = minmod(gu, gd)
-        return 0.5 * Fe * (phi_w - phi_e)
+        return 0.5 * (Fw * phi_w - Fe * phi_e)
     else:
         phi_e = 0.0
         if i + 2 <= Nx:
@@ -73,11 +85,11 @@ def _sou_corr_u_x(u, i, j, Nx, Fe):
             gu = u[i, j] - u[i + 1, j]
             gd = u[i - 1, j] - u[i, j]
             phi_w = minmod(gu, gd)
-        return 0.5 * Fe * (phi_e - phi_w)
+        return 0.5 * (Fe * phi_e - Fw * phi_w)
 
 
 @njit(cache=True)
-def _sou_corr_u_y(u, i, j, Ny, Fn):
+def _sou_corr_u_y(u, i, j, Ny, Fn, Fs):
     """SOU deferred correction for u-momentum in y-direction."""
     if Fn >= 0:
         phi_s = 0.0
@@ -90,7 +102,7 @@ def _sou_corr_u_y(u, i, j, Ny, Fn):
             gu = u[i, j] - u[i, j - 1]
             gd = u[i, j + 1] - u[i, j]
             phi_n = minmod(gu, gd)
-        return 0.5 * Fn * (phi_s - phi_n)
+        return 0.5 * (Fs * phi_s - Fn * phi_n)
     else:
         phi_n = 0.0
         if j < Ny - 2:
@@ -102,11 +114,11 @@ def _sou_corr_u_y(u, i, j, Ny, Fn):
             gu = u[i, j] - u[i, j + 1]
             gd = u[i, j - 1] - u[i, j]
             phi_s = minmod(gu, gd)
-        return 0.5 * Fn * (phi_n - phi_s)
+        return 0.5 * (Fn * phi_n - Fs * phi_s)
 
 
 @njit(cache=True)
-def _sou_corr_v_x(v, i, j, Nx, Fe):
+def _sou_corr_v_x(v, i, j, Nx, Fe, Fw):
     """SOU deferred correction for v-momentum in x-direction."""
     if Fe >= 0:
         phi_w = 0.0
@@ -119,7 +131,7 @@ def _sou_corr_v_x(v, i, j, Nx, Fe):
             gu = v[i, j] - v[i - 1, j]
             gd = v[i + 1, j] - v[i, j]
             phi_e = minmod(gu, gd)
-        return 0.5 * Fe * (phi_w - phi_e)
+        return 0.5 * (Fw * phi_w - Fe * phi_e)
     else:
         phi_e = 0.0
         if i < Nx - 2:
@@ -131,11 +143,11 @@ def _sou_corr_v_x(v, i, j, Nx, Fe):
             gu = v[i, j] - v[i + 1, j]
             gd = v[i - 1, j] - v[i, j]
             phi_w = minmod(gu, gd)
-        return 0.5 * Fe * (phi_e - phi_w)
+        return 0.5 * (Fe * phi_e - Fw * phi_w)
 
 
 @njit(cache=True)
-def _sou_corr_v_y(v, i, j, Ny, Fn):
+def _sou_corr_v_y(v, i, j, Ny, Fn, Fs):
     """SOU deferred correction for v-momentum in y-direction.
     v is on y-faces: v[i,j] at face between cells j-1 and j.
     """
@@ -151,7 +163,7 @@ def _sou_corr_v_y(v, i, j, Ny, Fn):
             gu = v[i, j] - v[i, j - 1]
             gd = v[i, min(j + 1, Ny)] - v[i, j]
             phi_n = minmod(gu, gd)
-        return 0.5 * Fn * (phi_s - phi_n)
+        return 0.5 * (Fs * phi_s - Fn * phi_n)
     else:
         phi_n = 0.0
         if j + 2 <= Ny:
@@ -163,7 +175,7 @@ def _sou_corr_v_y(v, i, j, Ny, Fn):
             gu = v[i, j] - v[i, j + 1]
             gd = v[i, j - 1] - v[i, j]
             phi_s = minmod(gu, gd)
-        return 0.5 * Fn * (phi_n - phi_s)
+        return 0.5 * (Fn * phi_n - Fs * phi_s)
 
 
 # Brinkman wall-penalty coefficients (P1b-c, B6 naming). Within 8 cells of a
@@ -277,8 +289,8 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                         -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i - 1, j] - P[i, j]) * dyj
-                sou = (_sou_corr_u_x(u, i, j, Nx, Fe)
-                     + _sou_corr_u_y(u, i, j, Ny, Fn))
+                sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
+                     + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
                 aP0 = aE + aW + aN + aS + Sp
                 rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src + sou
                 aP = aP0 / alpha_u
@@ -365,8 +377,8 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                         -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
                 p_src = (P[i, j - 1] - P[i, j]) * dxi
-                sou = (_sou_corr_v_x(v, i, j, Nx, Fe)
-                     + _sou_corr_v_y(v, i, j, Ny, Fn))
+                sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
+                     + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
                 aP0 = aE + aW + aN + aS + Sp
                 rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src + sou
                 aP = aP0 / alpha_u
