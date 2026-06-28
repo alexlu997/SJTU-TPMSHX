@@ -1474,7 +1474,17 @@ class SIMPLESolver3D:
                       self.outlet_frac, self.inlet_frac,
                       self.alpha_u, n_inner)
 
-            rebuild = (it == 1) or (it % self.pyamg_rebuild_every == 0)
+            # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
+            # when the hierarchy cache is COLD. On a warm restart (the 3D outer
+            # SIMPLE-LTNE loop re-calls solve() up to _MAX_OUTER times keeping
+            # self._ml_cache) the matrix only drifted by the alpha_T under-
+            # relaxed rho/mu change, so let the drift check (drift_thresh) decide
+            # instead of discarding a still-valid hierarchy every solve(). A cold
+            # cache still builds via this it==1 force (and via 'ml' not in cache
+            # inside _solve_pp_amg). Numerically identical at convergence — the
+            # AMG hierarchy is only a preconditioner.
+            rebuild = (it == 1 and 'ml' not in self._ml_cache) \
+                or (it % self.pyamg_rebuild_every == 0)
             # Phase A — adaptive AMG inner tolerance. First iter (no residual
             # history) uses loose 1e-3; thereafter follows outer mass residual.
             if getattr(self, 'use_adaptive_amg_tol', True):
