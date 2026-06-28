@@ -1171,10 +1171,12 @@ class SIMPLESolver:
         the (under-relaxed) inlet density — see _apply_massflux_inlet. No-op for
         incompressible.
 
-        Clipping policy (2026-05-06 fix #1):
+        Clipping policy (2026-05-06 fix #1; envelope widened 2026-05-07):
             Clip the *physical inputs* (P_abs) to the HX operating envelope
-            [10 kPa, 1 MPa], then derive ρ from ρ = P/(R·T). Do NOT clip ρ
-            directly — that would silently break the ideal-gas relation.
+            [1 kPa, 10 MPa] (originally [10 kPa, 1 MPa]; widened so high-u
+            Forchheimer transients don't trip the clip — see below), then derive
+            ρ from ρ = P/(R·T). Do NOT clip ρ directly — that would silently
+            break the ideal-gas relation.
             Previous code clipped ρ ∈ [0.01, 100] kg/m³ which corresponds to
             P~770 Pa or P~78×STP, far outside any real HX state, and could
             decouple ρ from (P,T) during transient iterations.
@@ -1514,7 +1516,7 @@ class SIMPLESolver:
         References:
           - Mueller & Chiou (1988): 5% CV = significant maldistribution
           - Lalot et al. (1999): relative std dev for HX flow distribution
-          - Default threshold 5% is standard for heat exchanger applications
+          - ~5% is the standard HX threshold; the code default is 0.045 (4.5%)
         """
         Nx, Ny = self.Nx, self.Ny
         v_row = self.v[:, j]
@@ -1544,7 +1546,7 @@ class SIMPLESolver:
 
         Parameters
         ----------
-        threshold : float, default 0.05 (5%, standard for HX applications)
+        threshold : float, default 0.045 (4.5%; ~5% is the textbook HX standard)
 
         Returns
         -------
