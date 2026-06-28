@@ -157,7 +157,15 @@ def run_quick_design(window) -> None:
     """点「运行设计」入口: 后台 worker 跑后端, 完成回填表。"""
     if getattr(window, "_qd_worker", None) is not None and window._qd_worker.isRunning():
         _set_status(window, "设计运行中…"); return
-    params = _gather_inputs(window)
+    # U3 (audit 2026-06-28): _gather_inputs parses free-text numeric fields
+    # (node lists via _flist, the fixed-cell tuple — built even in auto mode).
+    # A non-numeric token raises ValueError; left uncaught it escaped this
+    # clicked slot, Qt swallowed it to stderr, and the Run button silently did
+    # nothing with no _qd_status. Catch it and give feedback instead.
+    try:
+        params = _gather_inputs(window)
+    except (ValueError, TypeError) as e:
+        _set_status(window, f"输入解析失败: {e}"); return
     if not params["file"]:
         _set_status(window, "请先选工况文件"); return
     Worker = _make_worker_class()
