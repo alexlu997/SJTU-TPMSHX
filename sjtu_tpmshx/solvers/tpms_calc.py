@@ -272,10 +272,21 @@ from .nu_correlations import (
     nu_sco2_topo,
     NU_ROUGHNESS_FACTOR as _NU_ROUGHNESS_FACTOR,  # back-compat re-export
     NU_RE_FIT_RANGE,
+    WATER_NU_RE_RANGE,
     NU_COEFFS,
     SCO2_NU_COEFFS,
     SCO2_NU_RE_RANGE,
 )
+
+# Per-fluid Re fit windows for the compute()-level out-of-range warning. The
+# Nu correlations have DIFFERENT validated Re ranges per fluid; warning every
+# fluid against the air window (400,16000) mis-flagged in-range water/sCO2 and
+# silently passed out-of-range sCO2 below 9000 (audit 2026-06-28 N5).
+_RE_FIT_RANGE_BY_FLUID = {
+    'air': NU_RE_FIT_RANGE,
+    'water': WATER_NU_RE_RANGE,
+    'sco2': SCO2_NU_RE_RANGE,
+}
 
 
 # ── Geometry-only interface (no fluid needed) ─────────────────
@@ -438,11 +449,11 @@ def compute(tpms_type: str,
     # Nu correlations fitted on D_h-convention Re.
     Re = rho * u * D_h_m / mu
 
-    # Warn if outside correlation valid range. Single-sourced to
-    # NU_RE_FIT_RANGE (was a duplicate hard-coded [600, 30000] that disagreed
-    # with the nu_correlations fit window [400, 16000]); robustness unify
-    # 2026-06-25.
-    _nu_lo, _nu_hi = NU_RE_FIT_RANGE
+    # Warn if outside correlation valid range. Single-sourced to the per-fluid
+    # fit windows in nu_correlations (was a duplicate hard-coded [600, 30000];
+    # unified 2026-06-25). Fluid-aware since 2026-06-28 (N5): water/sCO2 have
+    # their own windows, so warning them against the air window mis-flagged.
+    _nu_lo, _nu_hi = _RE_FIT_RANGE_BY_FLUID.get(fluid_type, NU_RE_FIT_RANGE)
     if not (_nu_lo <= Re <= _nu_hi):
         warnings.warn(
             f"{tpms_type}: Re = {Re:.1f} is outside the validated range "

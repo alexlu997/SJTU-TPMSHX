@@ -12,6 +12,8 @@ Covers:
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -183,6 +185,30 @@ def test_compute_caches_repeated_call():
     a = compute('Diamond', 6.0, 0.4, 5.0, 350.0, 101325.0, 16.0)
     b = compute('Diamond', 6.0, 0.4, 5.0, 350.0, 101325.0, 16.0)
     assert a is b
+
+
+# ─── N5: compute() Re-range warning must be fluid-aware (audit 2026-06-28) ──
+def test_compute_water_in_range_no_air_window_warning():
+    """Water at Re=20551 (u=5) is INSIDE the water window (100,50000) but
+    OUTSIDE the air window (400,16000). The compute()-level Re warning must use
+    the water window, so no spurious 'outside the validated range [400, 16000]'.
+    """
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        compute('Diamond', 6.0, 0.4, 5.0, 320.0, 300000.0, 16.0,
+                fluid_type='water')
+    assert not any('[400, 16000]' in str(x.message) for x in w), \
+        'water case mis-warned against the AIR Re window'
+
+
+def test_compute_air_out_of_range_still_warns():
+    """Regression: air at Re=57 (u=0.5) is below the air window (400,16000) and
+    must still warn — the fluid-aware fix keeps air behaviour identical."""
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        compute('Diamond', 6.0, 0.4, 0.5, 355.0, 101325.0, 16.0,
+                fluid_type='air')
+    assert any('outside the validated range' in str(x.message) for x in w)
 
 
 # ─── Fluid type parsing ────────────────────────────────────────────
