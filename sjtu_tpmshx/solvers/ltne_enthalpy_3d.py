@@ -34,8 +34,8 @@ _T_LO, _T_HI = 240.0, 420.0
 def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                            dhA, dhB, cpA, cpB,
                            TA_star, TB_star, hA_star, hB_star,
-                           epsA, epsB, FmA, FmB,
-                           hvA, hvB, ks, dx, dy, dz,
+                           epsA, epsB, FmA_col, FmB_col,
+                           hvA_fld, hvB_fld, ks, dx, dy, dz,
                            h_in_A, h_in_B, dir_A, dir_B,
                            n_sweep, omega, h_lo_A, h_hi_A, h_lo_B, h_hi_B):
     """In-place Gauss-Seidel sweeps for the enthalpy-form LTNE system.
@@ -62,6 +62,8 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
             for j in range(Ny):
                 for k in range(Nz):
                     cpi = cpA[i, j, k] if cpA[i, j, k] > 1e-30 else 1e-30
+                    FmA = FmA_col[j, k]
+                    hvA = hvA_fld[i, j, k]
                     # x diffusion faces (h-space)
                     dW = 0.5 * (dhA[i, j, k] + (dhA[i - 1, j, k] if i > 0 else dhA[i, j, k]))
                     dE = 0.5 * (dhA[i, j, k] + (dhA[i + 1, j, k] if i < Nx - 1 else dhA[i, j, k]))
@@ -124,6 +126,8 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
             for j in range(Ny):
                 for k in range(Nz):
                     cpi = cpB[i, j, k] if cpB[i, j, k] > 1e-30 else 1e-30
+                    FmB = FmB_col[j, k]
+                    hvB = hvB_fld[i, j, k]
                     dW = 0.5 * (dhB[i, j, k] + (dhB[i - 1, j, k] if i > 0 else dhB[i, j, k]))
                     dE = 0.5 * (dhB[i, j, k] + (dhB[i + 1, j, k] if i < Nx - 1 else dhB[i, j, k]))
                     DxW = dW * Ax / dx
@@ -186,7 +190,10 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         cpA[i, j, k] if cpA[i, j, k] > 1e-30 else 1e-30)
                     TBl = TB_star[i, j, k] + (hB[i, j, k] - hB_star[i, j, k]) / (
                         cpB[i, j, k] if cpB[i, j, k] > 1e-30 else 1e-30)
-                    epsS_e = 1.0 - 0.5 * (epsA[i, j, k] + epsB[i, j, k])
+                    # solid volume fraction = 1 − ε_full = 1 − (ε_A + ε_B)
+                    epsS_e = 1.0 - (epsA[i, j, k] + epsB[i, j, k])
+                    hvA = hvA_fld[i, j, k]
+                    hvB = hvB_fld[i, j, k]
                     DxW = epsS_e * ks * Ax / dx if i > 0 else 0.0
                     DxE = epsS_e * ks * Ax / dx if i < Nx - 1 else 0.0
                     DyS = epsS_e * ks * Ay / dy if j > 0 else 0.0
@@ -229,8 +236,10 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     epsA = np.full(shape, 0.5 * eps)
     epsB = np.full(shape, 0.5 * eps)
     # per-column signed x mass flux (total split over the Ny·Nz cross-section)
-    FmA = float(m_dot_A) / (Ny * Nz)
-    FmB = float(m_dot_B) / (Ny * Nz)
+    FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
+    FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
+    hvA_fld = np.full(shape, float(h_vA))
+    hvB_fld = np.full(shape, float(h_vB))
 
     h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P_A))
     h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P_B))
@@ -260,7 +269,7 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
         _gs_enthalpy_sweeps_3d(
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
-            epsA, epsB, FmA, FmB, float(h_vA), float(h_vB), float(k_s),
+            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, float(k_s),
             dx, dy, dz, h_in_A, h_in_B, int(dir_A), int(dir_B),
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
@@ -273,6 +282,82 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     return dict(Ta=sco2_props.sco2_temperature_field(hA, P_A),
                 Tb=sco2_props.sco2_temperature_field(hB, P_B),
                 Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B)
+
+
+def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
+                                    h_vA_field, h_vB_field, m_dot_A, m_dot_B,
+                                    T_inA, T_inB, P_A, P_B, dir_A, dir_B,
+                                    Ta_init=None, Tb_init=None, Ts_init=None,
+                                    n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
+    """Pipeline-facing enthalpy-form LTNE energy solve (sCO2, SIMPLE-coupled).
+
+    Drives the njit enthalpy kernel from the production pipeline's fielded data
+    (h_v fields, full porosity field, per-side ṁ from the SIMPLE mass flow, per-
+    side pressure, warm-start T fields). Returns ``(Ta, Tb, Ts, info)`` matching
+    the ``solve_full_domain_3d(..., return_info=True)`` contract so it can drop
+    into the stages_3d energy-solve call site behind an ``enthalpy_mode`` gate.
+
+    Scope: counterflow along x (dir 0/1), uniform grid — the 703 recuperator
+    envelope. The caller must gate on these (air/water and other directions stay
+    on the conservative ρcp·u·T kernel)."""
+    shape = (Nx, Ny, Nz)
+    dxs = float(np.mean(dx)); dys = float(np.mean(dy)); dzs = float(np.mean(dz))
+    epsA = 0.5 * np.ascontiguousarray(eps_arr, dtype=np.float64)
+    epsB = epsA.copy()
+    hvA_fld = np.ascontiguousarray(h_vA_field, dtype=np.float64)
+    hvB_fld = np.ascontiguousarray(h_vB_field, dtype=np.float64)
+    FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
+    FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
+
+    h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P_A))
+    h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P_B))
+    T_lo = max(min(T_inA, T_inB) - 60.0, 230.0)
+    T_hi = max(T_inA, T_inB) + 60.0
+    h_lo_A = float(sco2_props.sco2_enthalpy(T_lo, P_A))
+    h_hi_A = float(sco2_props.sco2_enthalpy(T_hi, P_A))
+    h_lo_B = float(sco2_props.sco2_enthalpy(T_lo, P_B))
+    h_hi_B = float(sco2_props.sco2_enthalpy(T_hi, P_B))
+
+    hA = (sco2_props.sco2_enthalpy_field(np.asarray(Ta_init, dtype=np.float64), P_A)
+          if Ta_init is not None else np.full(shape, h_in_A))
+    hB = (sco2_props.sco2_enthalpy_field(np.asarray(Tb_init, dtype=np.float64), P_B)
+          if Tb_init is not None else np.full(shape, h_in_B))
+    Ts = (np.ascontiguousarray(Ts_init, dtype=np.float64).copy()
+          if Ts_init is not None else np.full(shape, 0.5 * (T_inA + T_inB)))
+    hA = np.ascontiguousarray(hA, dtype=np.float64)
+    hB = np.ascontiguousarray(hB, dtype=np.float64)
+
+    n_done = 0
+    resid = 0.0
+    for outer in range(n_outer):
+        T_A = sco2_props.sco2_temperature_field(hA, P_A)
+        T_B = sco2_props.sco2_temperature_field(hB, P_B)
+        cpA = sco2_props.sco2_cp_field(T_A, P_A)
+        cpB = sco2_props.sco2_cp_field(T_B, P_B)
+        kA = sco2_props.sco2_conductivity_field(T_A, P_A)
+        kB = sco2_props.sco2_conductivity_field(T_B, P_B)
+        dhA = epsA * kA / np.maximum(cpA, 1e-30)
+        dhB = epsB * kB / np.maximum(cpB, 1e-30)
+        hA_star = hA.copy(); hB_star = hB.copy()
+
+        _gs_enthalpy_sweeps_3d(
+            hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
+            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, float(k_s),
+            dxs, dys, dzs, h_in_A, h_in_B, int(dir_A), int(dir_B),
+            int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
+
+        n_done = outer + 1
+        denom = max(abs(h_in_A - h_in_B), 1.0)
+        resid = max(np.max(np.abs(hA - hA_star)),
+                    np.max(np.abs(hB - hB_star))) / denom
+        if resid < tol:
+            break
+
+    Ta = sco2_props.sco2_temperature_field(hA, P_A)
+    Tb = sco2_props.sco2_temperature_field(hB, P_B)
+    info = dict(iterations=n_done, converged=bool(resid < tol),
+                residual=float(resid), enthalpy_mode=True)
+    return Ta, Tb, Ts, info
 
 
 def enthalpy_metrics_3d(res, case):

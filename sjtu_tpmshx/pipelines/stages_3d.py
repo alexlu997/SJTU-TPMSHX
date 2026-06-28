@@ -2485,6 +2485,36 @@ def _run_3d_stack(cfg):
             cancel_check=_cancel_check,
             return_info=True)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
+
+        # ── Option B: enthalpy-conservative LTNE for variable-cp sCO2 ──
+        # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
+        # for sCO2 (cp spikes near the pseudocritical line) is NOT the true
+        # enthalpy ṁ·h → the 703 recuperator ~41% A/B imbalance / wrong cold
+        # outlet. When opted in (`ltne_enthalpy_mode`, default OFF) for an
+        # sCO2-both-sides counterflow-x case, replace the result with the
+        # enthalpy-form solve (true ṁ·h transport). Default-off + the strict
+        # gate keep air/water and every other config bit-identical.
+        # (Plan: vault reports/method/3d/2026-06-28-3d-ltne-enthalpy-*.)
+        if (bool(cfg.get('ltne_enthalpy_mode', False))
+                and fluid_type_A == 'sco2' and fluid_type_B == 'sco2'
+                and sB is not None
+                and fA['dir'] in (0, 1) and fB['dir'] in (0, 1)):
+            from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
+            _epsps = 0.5 * float(eps)
+            _mdA = (1.0 if fA['dir'] == 0 else -1.0) * abs(
+                _simple_mass_flow(sA, fA['dir'], eps_f_per_side=_epsps))
+            _mdB = (1.0 if fB['dir'] == 0 else -1.0) * abs(
+                _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps))
+            Ta, Tb, Ts, _ltne_info_d = solve_ltne_enthalpy_3d_pipeline(
+                Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
+                h_vA_field, h_vB_field, _mdA, _mdB,
+                T_inA, T_inB, P_inA, P_inB, fA['dir'], fB['dir'],
+                Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+                n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 5)),
+                omega=float(cfg.get('ltne_enthalpy_omega', 0.6)),
+                n_outer=int(cfg.get('ltne_enthalpy_outer', 3000)),
+                tol=float(cfg.get('ltne_enthalpy_tol', 2e-5)))
+
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')
         _eps_B_strict = _ltne_info_d.get('eps_B_strict')
