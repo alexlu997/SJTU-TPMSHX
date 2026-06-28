@@ -387,7 +387,7 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
 
 
 @njit(cache=True, fastmath=True, inline='always')
-def _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz):
+def _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz):
     """Inlet + outlet BC tail shared by the serial and parallel v-sweeps."""
     for i in range(Nx):
         for k in range(Nz):
@@ -396,10 +396,28 @@ def _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz):
             # with _correct_jit_3d).
             if outlet_frac[i, k] > 0.5:
                 if Ny >= 2:
-                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
-                                            + rho_field[i, Ny - 1, k])
-                    rho_outer_face = rho_field[i, Ny - 1, k]
-                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
+                    # N1 (2026-06-28): the continuity operator is ∇·(ε·ρ·u)=0
+                    # (PPE/residual receive ε·ρ, and the residual's outlet face
+                    # uses the cell ε·ρ), so the outlet extrapolation must
+                    # conserve ε·ρ·v — else a y-zoned ε leaves a persistent
+                    # outlet-cell divergence 0.5·v·ρ·(ε_{Ny-1}−ε_{Ny-2}). For a
+                    # uniform-ε column ε cancels analytically; branch on it so
+                    # the original ρ-ratio expression is kept bit-for-bit
+                    # (golden-identical), and only the zoned column pays the ε·ρ
+                    # form (whose FP rounding differs at the last bit).
+                    if eps_field[i, Ny - 2, k] == eps_field[i, Ny - 1, k]:
+                        rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
+                                                + rho_field[i, Ny - 1, k])
+                        rho_outer_face = rho_field[i, Ny - 1, k]
+                        v[i, Ny, k] = (v[i, Ny - 1, k]
+                                       * rho_inner_face / rho_outer_face)
+                    else:
+                        er_inner = 0.5 * (
+                            eps_field[i, Ny - 2, k] * rho_field[i, Ny - 2, k]
+                            + eps_field[i, Ny - 1, k] * rho_field[i, Ny - 1, k])
+                        er_outer = (eps_field[i, Ny - 1, k]
+                                    * rho_field[i, Ny - 1, k])
+                        v[i, Ny, k] = v[i, Ny - 1, k] * er_inner / er_outer
                 else:
                     v[i, Ny, k] = v[i, Ny - 1, k]
             else:
@@ -411,7 +429,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         v_inlet_field,
                         Nx, Ny, Nz,
                         dx, dy, dz,
-                        rho_field, mu_eff_field, mu_field,
+                        rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
                         alpha_u, n_sweeps):
@@ -433,7 +451,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                                   alpha_u)
 
     # Apply BCs
-    _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz)
+    _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
 
 
 # Parallel red-black Gauss-Seidel variant of `_sweep_v_jit_df_3d`.
@@ -442,7 +460,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  v_inlet_field,
                                  Nx, Ny, Nz,
                                  dx, dy, dz,
-                                 rho_field, mu_eff_field, mu_field,
+                                 rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
                                  alpha_u, n_sweeps):
@@ -458,7 +476,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                       rho_field, mu_eff_field, mu_field,
                                       K_arr, cF_arr, outlet_frac,
                                       inlet_frac, alpha_u)
-    _v_bc_3d(v, v_inlet_field, rho_field, outlet_frac, Nx, Ny, Nz)
+    _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
 
 
 # ── SIMPLE Step 3: w-momentum (z-direction) — new in 3D ────────────
@@ -865,7 +883,7 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
 @njit(cache=True, fastmath=True)
 def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
                      v_inlet_field,
-                     Nx, Ny, Nz, alpha_p, rho_field,
+                     Nx, Ny, Nz, alpha_p, rho_field, eps_field,
                      outlet_mask_ij):
     """Apply pressure + face-velocity correction and re-enforce BCs."""
     # Pressure correction (skip pinned outlet cells)
@@ -906,10 +924,23 @@ def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
             # rho*v mass flux across the outlet for compressible runs.
             if outlet_mask_ij[i, k]:
                 if Ny >= 2:
-                    rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
-                                            + rho_field[i, Ny - 1, k])
-                    rho_outer_face = rho_field[i, Ny - 1, k]
-                    v[i, Ny, k] = v[i, Ny - 1, k] * rho_inner_face / rho_outer_face
+                    # N1 (2026-06-28): conserve ε·ρ·v (continuity operator), not
+                    # ρ·v — matches _v_bc_3d. Uniform-ε column keeps the original
+                    # ρ-ratio expression bit-for-bit (golden-identical); zoned ε
+                    # uses the ε·ρ form so the outlet cell telescopes.
+                    if eps_field[i, Ny - 2, k] == eps_field[i, Ny - 1, k]:
+                        rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
+                                                + rho_field[i, Ny - 1, k])
+                        rho_outer_face = rho_field[i, Ny - 1, k]
+                        v[i, Ny, k] = (v[i, Ny - 1, k]
+                                       * rho_inner_face / rho_outer_face)
+                    else:
+                        er_inner = 0.5 * (
+                            eps_field[i, Ny - 2, k] * rho_field[i, Ny - 2, k]
+                            + eps_field[i, Ny - 1, k] * rho_field[i, Ny - 1, k])
+                        er_outer = (eps_field[i, Ny - 1, k]
+                                    * rho_field[i, Ny - 1, k])
+                        v[i, Ny, k] = v[i, Ny - 1, k] * er_inner / er_outer
                 else:
                     v[i, Ny, k] = v[i, Ny - 1, k]
             else:
@@ -1463,7 +1494,8 @@ class SIMPLESolver3D:
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
                       Nx, Ny, Nz, dx, dy, dz,
-                      self.rho_field, self._mu_eff_field, self.mu_field,
+                      self.rho_field, self.eps_field,
+                      self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
                       self.alpha_u, n_inner)
@@ -1502,7 +1534,7 @@ class SIMPLESolver3D:
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                              self.d_u, self.d_v, self.d_w,
                              self.v_inlet_field, Nx, Ny, Nz, self.alpha_p,
-                             self.rho_field, self.outlet_mask_ij)
+                             self.rho_field, self.eps_field, self.outlet_mask_ij)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
 
             res = _mass_res_jit_3d(self.u, self.v, self.w,
@@ -1541,7 +1573,7 @@ class SIMPLESolver3D:
                                          self.d_u, self.d_v, self.d_w,
                                          self.v_inlet_field, Nx, Ny, Nz,
                                          self.alpha_p, self.rho_field,
-                                         self.outlet_mask_ij)
+                                         self.eps_field, self.outlet_mask_ij)
                         self._update_density()
                         res_anderson = _mass_res_jit_3d(
                             self.u, self.v, self.w, Nx, Ny, Nz, dx, dy, dz,
@@ -1632,6 +1664,7 @@ def _warmup_simple_3d():
         d_w = zeros3((Nx, Ny, Nz + 1))
         dx = ones3(Nx); dy = ones3(Ny); dz = ones3(Nz)
         rho = ones3((Nx, Ny, Nz))
+        eps = ones3((Nx, Ny, Nz)) * 0.5
         mu = ones3((Nx, Ny, Nz))
         mu_eff = ones3((Nx, Ny, Nz))
         K_arr = ones3((Ny, Nz)) * 1e-7
@@ -1645,10 +1678,11 @@ def _warmup_simple_3d():
         for ku in (_sweep_u_jit_df_3d, _sweep_u_jit_df_3d_parallel):
             ku(u, v, w, P, d_u, Nx, Ny, Nz, dx, dy, dz,
                rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
-        # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz.
+        # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz; eps after rho.
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+               rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
+               alpha_u, n)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
                rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
