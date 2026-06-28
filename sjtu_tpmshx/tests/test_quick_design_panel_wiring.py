@@ -2,9 +2,12 @@ from __future__ import annotations
 import types
 from unittest.mock import patch
 import numpy as np
-from PySide6.QtWidgets import QLineEdit, QComboBox, QCheckBox
+import pytest
+from PySide6.QtWidgets import QLineEdit, QComboBox, QCheckBox, QLabel
 
-from ui.quick_design_panel import _gather_inputs, _make_worker_class
+from ui.quick_design_panel import (
+    _gather_inputs, _make_worker_class, run_quick_design,
+)
 
 def _le(t): le=QLineEdit(); le.setText(t); return le
 def _combo(items,i=0): c=QComboBox(); c.addItems(items); c.setCurrentIndex(i); return c
@@ -83,3 +86,29 @@ def test_worker_emits_error_on_exception():
     with patch("design.cases.load_cases", _boom):
         worker.run()
     assert len(errs)==1 and "RuntimeError" in errs[0]
+
+
+def test_run_quick_design_malformed_node_list_gives_feedback_not_crash():
+    """U3 (audit 2026-06-28): a non-numeric node list (le_qd_l) must NOT let
+    ValueError escape the Run slot — Qt swallows it to stderr, leaving a dead
+    '运行设计' button with no _qd_status. The handler must catch the parse error
+    and surface it, and must not launch a worker."""
+    w = _make_window("auto")
+    w.le_qd_l = _le("4,5,oops,7")     # malformed token in the node list
+    w._qd_status = QLabel()
+    w._qd_worker = None
+    run_quick_design(w)               # must NOT raise
+    assert ("解析" in w._qd_status.text() or "失败" in w._qd_status.text()), \
+        f"no parse-failure feedback; status was {w._qd_status.text()!r}"
+    assert getattr(w, "_qd_worker", None) is None, "worker launched on bad input"
+
+
+def test_run_quick_design_malformed_fixed_cell_gives_feedback():
+    """U3: the fixed-cell tuple is parsed unconditionally (even in auto mode),
+    so bad le_qd_cell_l text must also be caught, not crash the slot."""
+    w = _make_window("auto")
+    w.le_qd_cell_l = _le("7mm")        # malformed fixed-cell length
+    w._qd_status = QLabel()
+    w._qd_worker = None
+    run_quick_design(w)               # must NOT raise
+    assert ("解析" in w._qd_status.text() or "失败" in w._qd_status.text())

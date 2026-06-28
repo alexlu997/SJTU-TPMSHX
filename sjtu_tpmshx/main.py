@@ -1447,6 +1447,10 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         self.T_fA = self.T_fB = self.T_s = None
         # 3D-mode result flags + cached fields.
         self._has_results_3d = False
+        # U1 (2026-06-28): 3D View tab readiness (PyVista panel populated) is a
+        # SEPARATE flag from result-presence (_has_results_3d). A soft viz-fail
+        # keeps the result (exportable) but leaves this False (tab disabled).
+        self._3d_view_ready = False
         self._result_3d = None
         self._tout_K_cache = None
         # Aggregate flag + draw tracker — keep in lock-step with the two

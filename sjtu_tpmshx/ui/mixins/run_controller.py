@@ -57,28 +57,7 @@ class RunControllerMixin:
         # Richardson budget. Errors block, warnings prompt continue?.
         if not self._preflight_grid():
             return
-        # 2026-05-07: high-velocity notice (UI report 2). V&V Standard
-        # Tier domain sweep validated u ≤ 10 m/s; above that, SIMPLE
-        # outer iterations need ~5-10× the converge time on the
-        # Forchheimer branch. Demoted from blocking dialog to non-modal
-        # status-bar message on 2026-05-14 — user complained the modal
-        # interrupts every run when exploring off-domain configurations.
-        # The information remains transparent (paper V&V scope unchanged)
-        # but no longer steals focus.
-        try:
-            uA = float(self.le_uA.text())
-            uB = float(self.le_uB.text())
-        except (ValueError, AttributeError):
-            uA = uB = 0.0
-        if uA > VV_VELOCITY_LIMIT_MS or uB > VV_VELOCITY_LIMIT_MS:
-            slow = max(uA, uB)
-            lo = int(5 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
-            hi = int(10 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
-            self.statusBar().showMessage(
-                f"u_A={uA:.1f}, u_B={uB:.1f} m/s outside V&V domain "
-                f"(u≤{VV_VELOCITY_LIMIT_MS:.0f} m/s validated). "
-                f"Forchheimer-dominated; expect {lo}–{hi}× runtime.",
-                15000)
+        self._maybe_highvel_notice()
         # Mark compute start so `_end_compute_ui` records elapsed for the
         # status bar clock. 3D branch overwrites with its own clock.
         self._compute_t0 = _time.time()
@@ -150,6 +129,38 @@ class RunControllerMixin:
         # threading.Thread + QTimer poll block is gone (~100 lines deleted).
         return
 
+    def _maybe_highvel_notice(self):
+        """Non-modal V&V off-domain velocity notice (UI report 2, 2026-05-07).
+
+        The V&V Standard Tier domain sweep validated u ≤ 10 m/s; above that the
+        SIMPLE outer loop needs ~5-10× the converge time on the Forchheimer
+        branch. Demoted from a blocking dialog to a status-bar message on
+        2026-05-14 (the modal interrupted every off-domain run).
+
+        U5 (2026-06-28): parse each velocity independently and let a blank u_B
+        inherit u_A — the solver contract (ComputeConfig defaults fluid_B.u_mps
+        to fluid_A.u_mps). The old single try-block zeroed BOTH on the blank-u_B
+        ValueError, so a high-throughput run (u_A=20, u_B blank) silently lost
+        this notice.
+        """
+        def _vel(attr, dflt):
+            le = getattr(self, attr, None)
+            try:
+                return float(le.text())
+            except (ValueError, AttributeError):
+                return dflt
+        uA = _vel('le_uA', 0.0)
+        uB = _vel('le_uB', uA)          # blank u_B inherits u_A
+        if uA > VV_VELOCITY_LIMIT_MS or uB > VV_VELOCITY_LIMIT_MS:
+            slow = max(uA, uB)
+            lo = int(5 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
+            hi = int(10 * (slow / VV_VELOCITY_LIMIT_MS) ** 2)
+            self.statusBar().showMessage(
+                f"u_A={uA:.1f}, u_B={uB:.1f} m/s outside V&V domain "
+                f"(u≤{VV_VELOCITY_LIMIT_MS:.0f} m/s validated). "
+                f"Forchheimer-dominated; expect {lo}–{hi}× runtime.",
+                15000)
+
     def _preflight_3d(self):
         """3D-only input guards (B1 1.4 — extracted from
         _run_calculation_3d so future preflights have ONE home).
@@ -159,11 +170,19 @@ class RunControllerMixin:
         # BEFORE the try. Previously a parse failure (empty field, stray
         # unit text) left `Nz_u` undefined and the guard below raised
         # NameError — turning a bad-input case into a hard crash.
+        # U4 (2026-06-28): the cell estimate must honour the ACTUAL wall-refine
+        # setting. wall-refine adds 16 cells/axis; with it OFF (the default) the
+        # unconditional +16 inflated a 40^3=64000 grid to 56^3=175616 and popped
+        # a spurious 'Large 3D Grid' confirm whose message described an expansion
+        # that won't happen (the displayed label below was already refine-aware).
+        _refine_on = bool(getattr(self, 'chk_wall_refine_3d', None)
+                          and self.chk_wall_refine_3d.isChecked())
+        _pad = 16 if _refine_on else 0
         Nx_u = Ny_u = Nz_u = 0
         try:
             Nx_u = int(self.le_Nx.text()); Ny_u = int(self.le_Ny.text())
             Nz_u = int(self.le_Nz.text())
-            est_cells = (Nx_u + 16) * (Ny_u + 16) * (Nz_u + 16)
+            est_cells = (Nx_u + _pad) * (Ny_u + _pad) * (Nz_u + _pad)
         except Exception:
             est_cells = 0
 
@@ -181,13 +200,18 @@ class RunControllerMixin:
                 "  • Increase Nz to 5 or more for a real 3D run (recommended).\n"
                 "  • Switch Dimensionality to 2D for single-layer homogeneous cases.")
             return False, 0, ''
-        # Large-grid warning (wall-refine expands cells ~6-9x)
+        # Large-grid warning. est_cells already reflects the actual refine
+        # setting (U4); the message only mentions the wall-refine expansion when
+        # it is actually on.
         if est_cells > 100_000:
+            _expand = (f"With user grid {Nx_u}x{Ny_u}x{Nz_u}, wall-refine "
+                       f"expands to ~{Nx_u+16}x{Ny_u+16}x{Nz_u+16}. "
+                       if _refine_on
+                       else f"User grid {Nx_u}x{Ny_u}x{Nz_u}. ")
             reply = QMessageBox.question(
                 self, "Large 3D Grid",
-                f"Estimated refined cells: ~{est_cells:,}\n\n"
-                f"With user grid {Nx_u}x{Ny_u}x{Nz_u}, wall-refine expands to "
-                f"~{Nx_u+16}x{Ny_u+16}x{Nz_u+16}. This can take many minutes.\n\n"
+                f"Estimated cells: ~{est_cells:,}\n\n"
+                f"{_expand}This can take many minutes.\n\n"
                 "Suggested 3D defaults: Nx=30, Ny=20, Nz=5 (~30 s).\n\n"
                 "Proceed anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -195,17 +219,10 @@ class RunControllerMixin:
             if reply == QMessageBox.StandardButton.No:
                 return False, 0, ''
 
-        # Cell count must reflect the actual refine setting — adding +16 per
-        # axis unconditionally inflated the displayed grid by ~5x when refine
-        # was OFF and made the ETA estimate way too generous.
-        _refine_on = bool(getattr(self, 'chk_wall_refine_3d', None)
-                          and self.chk_wall_refine_3d.isChecked())
-        if _refine_on:
-            Nx_r, Ny_r, Nz_r = Nx_u + 16, Ny_u + 16, Nz_u + 16
-            _cell_label = f"refined {Nx_r}×{Ny_r}×{Nz_r}"
-        else:
-            Nx_r, Ny_r, Nz_r = Nx_u, Ny_u, Nz_u
-            _cell_label = f"{Nx_r}×{Ny_r}×{Nz_r}"
+        # Displayed cell count / label reuse the refine-aware _pad from above.
+        Nx_r, Ny_r, Nz_r = Nx_u + _pad, Ny_u + _pad, Nz_u + _pad
+        _cell_label = (f"refined {Nx_r}×{Ny_r}×{Nz_r}" if _refine_on
+                       else f"{Nx_r}×{Ny_r}×{Nz_r}")
         return True, Nx_r * Ny_r * Nz_r, _cell_label
 
     def _run_calculation_3d(self):
@@ -546,12 +563,14 @@ class RunControllerMixin:
                 # console clue — matches the 2D path's diagnostics now).
                 import traceback
                 traceback.print_exc()
-                # H5 invariant: a finalize crash must not leave a stale
-                # ``_has_results_3d == True`` (which would auto-switch the next
-                # run to a blank 3D tab). Clear it here — in the live window
-                # this also drops the now-unrenderable result via the bridge,
-                # which is correct since the panel never populated.
-                self._has_results_3d = False
+                # H5 invariant: a finalize crash must not leave the 3D View tab
+                # enabled (which would auto-switch the next run to a blank tab).
+                # U1 (2026-06-28): gate the tab off via the dedicated readiness
+                # flag — do NOT null _has_results_3d, whose bridge setter would
+                # DESTROY the valid solver result. The ComputeResult was written
+                # by the worker before finalize and stays exportable even though
+                # the PyVista panel never populated.
+                self._3d_view_ready = False
                 self._end_compute_ui(success=False)
                 self.statusBar().showMessage(
                     f"3D visualisation failed: {_fe3d!r} — solver finished, "
@@ -560,10 +579,14 @@ class RunControllerMixin:
                 return
             self._has_results = True
             # Only mark the 3D View tab as ready if the PyVistaQt panel
-            # actually populated. Otherwise leave the flag False so the
-            # tab stays disabled and the user is not silently switched
-            # to a blank canvas.
-            self._has_results_3d = _3d_vis_ok
+            # actually populated; otherwise the tab stays disabled and the user
+            # is not silently switched to a blank canvas.
+            # U1 (2026-06-28): tab-readiness is its OWN flag — do NOT route it
+            # through the result-nulling _has_results_3d bridge setter, which on
+            # a soft viz failure (headless/offscreen/GL/TPMSHX_DISABLE_3D_PANEL)
+            # destroyed the valid solve's result, defeating the status branch
+            # below and the Export data-presence gate. The result stays cached.
+            self._3d_view_ready = bool(_3d_vis_ok)
             for _bname in ('btn_export',):
                 if hasattr(self, _bname):
                     getattr(self, _bname).setEnabled(True)
@@ -669,6 +692,7 @@ class RunControllerMixin:
         if mode == '3d':
             self._result_3d = None
             self._has_results_3d = False
+            self._3d_view_ready = False
             if not getattr(self, '_has_results_2d', False):
                 self._has_results = False
             for _bname in ('btn_export',):
@@ -722,6 +746,7 @@ class RunControllerMixin:
             # 3D-specific: drop result + status message
             self._result_3d = None
             self._has_results_3d = False
+            self._3d_view_ready = False
             self._update_tab_visibility()
             self._end_compute_ui(success=False)
             self.statusBar().showMessage(

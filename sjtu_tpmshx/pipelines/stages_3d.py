@@ -796,7 +796,11 @@ def _finalize_3d_cfg(raw, fields):
                 raw.get('mass_imbalance_rel_B')),
         },
         zones=None,  # 3D zones land in fields['chi_B'] / fields['*'] directly
-        warnings=[],
+        # U2 (audit 2026-06-28): _run_3d_stack collects the envelope/choke
+        # messages AND the explicit SIMPLE non-convergence warning on the raw
+        # dict; forward them so the UI sees them (was hard-coded [], silently
+        # dropping a 3D under-resolved/off-envelope flag the 2D path surfaces).
+        warnings=list(raw.get('envelope_warnings', [])),
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
@@ -804,6 +808,10 @@ def _finalize_3d_cfg(raw, fields):
             # Dimension marker for write_result dispatch (C4); '3d' here,
             # '2d' in stages_2d._finalize_cfg.
             'mode': '3d',
+            # Compressible-envelope post-solve verdict (U2): carried so the UI
+            # can flag a result the warn-mode gate marked non-physical.
+            'envelope_valid': raw.get('envelope_valid', True),
+            'envelope_reasons': list(raw.get('envelope_reasons', [])),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
@@ -1557,6 +1565,22 @@ def _asym_split_A(cfg, tpms_type, Lcell, t_wall):
     C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
     eA, eB, _etot = _ag.eps_sides(phi, C, delta)
     return eA / (eA + eB)
+
+
+def _per_side_eps_override(cfg, tpms_type, Lcell, t_wall, eps):
+    """Per-side single-channel void overrides for the LTNE m_dot / Q weighting
+    under an offset-isosurface δ.
+
+    Returns ``(None, None)`` at δ=0 → the symmetric 0.5·ε path (bit-identical);
+    δ≠0 → ``(ε·split_A, ε·(1−split_A))`` so ṁ_A/ṁ_B weight by the actual channel
+    void fraction, not 0.5·ε. ONE definition shared by the main duty extraction
+    and the enthalpy-mode ṁ build, so both stay consistent (N4 audit 2026-06-28
+    — the enthalpy block previously omitted the override and mis-scaled ṁ by
+    split/0.5 on the asymmetric geometry)."""
+    if float(cfg.get('delta_levelset', 0.0)) == 0.0:
+        return None, None
+    split_A = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
+    return float(eps) * split_A, float(eps) * (1.0 - split_A)
 
 
 def _eps_sides_for_run(cfg, tpms_type, Lcell, t_wall, eps_arr, eps_f_arr):
@@ -2511,10 +2535,18 @@ def _run_3d_stack(cfg):
         if _enth_gate:
             from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
             _epsps = 0.5 * float(eps)
+            # N4 (2026-06-28): under δ≠0 the per-side ṁ must weight by the actual
+            # channel void (ε·split), matching the duty-extraction path and the
+            # asymmetric eps_A/eps_B fields handed to the kernel. None at δ=0 →
+            # symmetric 0.5·ε (every 703/production config; bit-identical).
+            _ov_A_e, _ov_B_e = _per_side_eps_override(
+                cfg, tpms_type, Lcell, t_wall, eps)
             _mdA = (1.0 if fA['dir'] == 0 else -1.0) * abs(
-                _simple_mass_flow(sA, fA['dir'], eps_f_per_side=_epsps))
+                _simple_mass_flow(sA, fA['dir'], eps_f_per_side=_epsps,
+                                  eps_side_override=_ov_A_e))
             _mdB = (1.0 if fB['dir'] == 0 else -1.0) * abs(
-                _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps))
+                _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps,
+                                  eps_side_override=_ov_B_e))
             Ta, Tb, Ts, _ltne_info_d = solve_ltne_enthalpy_3d_pipeline(
                 Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
                 h_vA_field, h_vB_field, _mdA, _mdB,
@@ -2829,10 +2861,8 @@ def _run_3d_stack(cfg):
     # None at δ=0 → symmetric 0.5·ε path (bit-identical). δ≠0 → per-side ε_side
     # so m_dot/Q weight by the actual channel void fraction, not 0.5·ε
     # (else ṁ_A/ṁ_B mis-scale by split/0.5 on the asymmetric geometry).
-    _split_A_ex = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
-    _delta_ex = float(cfg.get('delta_levelset', 0.0))
-    _eps_ov_A = (float(eps) * _split_A_ex) if _delta_ex != 0.0 else None
-    _eps_ov_B = (float(eps) * (1.0 - _split_A_ex)) if _delta_ex != 0.0 else None
+    _eps_ov_A, _eps_ov_B = _per_side_eps_override(
+        cfg, tpms_type, Lcell, t_wall, eps)
 
     # Fluid A — unified face-flux weights for T_out and m_dot consistency
     m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side,

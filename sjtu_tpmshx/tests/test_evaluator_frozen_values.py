@@ -68,16 +68,26 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # (inlet density near-uniform on a full-face inlet). Old: (-8536.46.., 11140.60..)
 # / (-7992.76.., 8246.63..).
 #
-# 2D Q re-baselined 2026-06-25 (#2): the SOU deferred correction is now
+# 2D Q re-baselined 2026-06-25 (#2): the ENERGY SOU deferred correction is now
 # face-consistent — each shared face uses F_face=0.5*(Fx_P+Fx_nbr) so the
 # correction telescopes globally instead of injecting spurious energy on the
 # compressible (non-uniform-velocity) fluid-A field (audit: 2d-sou-not-
 # conservative). ONLY Q[0] moves (the energy field): +0.035% uniform / +0.022%
 # nonuniform; dP[1] (SIMPLE pressure) and mass[2] (geometry) are bit-identical.
 # Old Q: -8168.931136825195 / -7734.528734545178.
-_FROZEN_2D_UNIFORM = (-8171.756522905283, 10057.99677021549,
+#
+# 2D re-baselined 2026-06-28 (N2): the MOMENTUM SOU deferred correction is now
+# face-consistent too — each face's minmod limiter is scaled by THAT face's flux
+# (Fw west, Fe east; Fs/Fn) so it telescopes instead of using one cell-flux for
+# both faces (audit N2, the momentum analog of the 2026-06-25 energy fix). Now
+# BOTH Q[0] (energy depends on velocity) AND dP[1] (SIMPLE pressure) move at
+# TRUNCATION level (~6e-7 / 2.3e-5 uniform; mass[2] geometry bit-identical). The
+# SOU is a minmod-limited high-order correction sub-dominant to the Forchheimer
+# drag, so Shanghai 2D validation is UNCHANGED (RMSRE_dP 8.35% / Q 2.51%).
+# Old: (-8171.756522905283, 10057.99677021549) / (-7736.238110417324, 7584.5716386808235).
+_FROZEN_2D_UNIFORM = (-8171.761439013648, 10057.767149944635,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7736.238110417324, 7584.5716386808235,
+_FROZEN_2D_NONUNIF = (-7736.237732737889, 7584.598536742669,
                       3.6729327392578126)
 _FROZEN_3D_UNIFORM = (-8030.108755476857, 16636.495632326456,
                       6.323593139648438)

@@ -148,6 +148,27 @@ def test_instrumentation_keys_populated():
     assert c['bcg_calls'] >= 1
 
 
+@pytest.mark.slow
+def test_warm_restart_reuses_cached_hierarchy():
+    """E2 (audit 2026-06-28): solve() is warm-restarted up to _MAX_OUTER times in
+    the 3D outer SIMPLE-LTNE loop, keeping self._ml_cache across calls. The
+    unconditional rebuild=(it==1) force discarded the still-valid hierarchy on
+    the first inner iter of EVERY solve() — even though the matrix only drifted
+    by the alpha_T under-relaxed rho/mu change (sub-threshold). With the it==1
+    force gated to a cold cache, a warm restart whose drift is below the 5 %
+    threshold must NOT rebuild."""
+    s = _make_solver(drift_thresh=0.05)        # static K -> sub-threshold drift
+    s.solve(max_iter=5, tol=1e-6)
+    first = s._ml_cache.get('rebuild_count', 0)
+    assert 'ml' in s._ml_cache and first >= 1   # cold build happened
+    s.solve(max_iter=5, tol=1e-6)              # WARM restart (cache persists)
+    second = s._ml_cache.get('rebuild_count', 0)
+    assert second == first, (
+        f"warm restart force-rebuilt the still-valid AMG hierarchy "
+        f"({first} -> {second}); the it==1 force should be gated to a cold cache "
+        f"so the drift check (sub-threshold here) decides")
+
+
 def test_constructor_accepts_drift_kwarg():
     """Smoke: new kwarg accepted + persisted as float on the instance."""
     s = SIMPLESolver3D(

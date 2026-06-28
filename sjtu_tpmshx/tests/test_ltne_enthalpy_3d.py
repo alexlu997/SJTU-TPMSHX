@@ -30,6 +30,27 @@ def _case():
     )
 
 
+def test_enthalpy_3d_uniform_field_preserved_no_phantom_boundary_diffusion():
+    """N3 (audit 2026-06-28): the inlet/outlet x-boundary cells carried an
+    unpaired interior diffusion conductance (DxW/DxE) in aP — a spurious enthalpy
+    sink ∝ ABSOLUTE h (reference-dependent), so a uniform field was NOT a
+    solution of the homogeneous (source-free) boundary equation. With h_v=0
+    (inter-phase decoupled) and BOTH inlets at the same T, h ≡ h_in is the exact
+    solution; one full-update sweep from the uniform start must leave it uniform.
+    Before the fix the boundary cells dipped; after, the field stays uniform."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d
+    res = solve_ltne_enthalpy_3d(
+        Nx=6, Ny=3, Nz=3, Lx=0.08, Ly=0.04, Lz=0.04, eps=0.6, k_s=16.0,
+        m_dot_A=0.02, m_dot_B=-0.02, h_vA=0.0, h_vB=0.0,  # dir_B=1 -> ṁ_B < 0
+        T_inA=330.0, T_inB=330.0, P=8.0e6, dir_A=0, dir_B=1,
+        fluid_A='sco2', fluid_B='sco2', n_outer=1, n_sweep=1, omega=1.0)
+    Ta = res['Ta']; Tb = res['Tb']
+    assert np.max(np.abs(Ta - 330.0)) < 1e-3, \
+        f"fluid A boundary phantom diffusion: max dev {np.max(np.abs(Ta-330.0)):.4g} K"
+    assert np.max(np.abs(Tb - 330.0)) < 1e-3, \
+        f"fluid B boundary phantom diffusion: max dev {np.max(np.abs(Tb-330.0)):.4g} K"
+
+
 def test_enthalpy_3d_conserves_on_variable_cp_counterflow():
     from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
     res = solve_ltne_enthalpy_3d(**_case())

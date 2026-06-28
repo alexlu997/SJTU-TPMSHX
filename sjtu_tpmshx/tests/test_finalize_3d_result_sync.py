@@ -127,3 +127,28 @@ def test_finalize_3d_result_matches_raw():
     for attr in ('Q_W', 'dP_A_Pa', 'dP_B_Pa', 'T_out_A_K', 'T_out_B_K'):
         assert hasattr(result, attr), f"ComputeResult missing {attr}"
     assert 'u_A_in_mps' in result.props and 'T_in_A_K' in result.props
+
+
+def test_finalize_3d_forwards_envelope_and_simple_warnings():
+    """U2 (audit 2026-06-28): _run_3d_stack collects envelope/choke messages AND
+    the explicit SIMPLE non-convergence warning on the raw dict, but the finalize
+    stage hard-coded warnings=[] and dropped them — so a 3D run with an
+    under-resolved SIMPLE solve or an envelope_mode='warn' flag reached the UI
+    with no indication (the 2D pipeline DOES surface these). Finalize must
+    forward raw['envelope_warnings'] to ComputeResult.warnings and carry
+    envelope_valid/reasons into diagnostics."""
+    raw = {
+        'envelope_warnings': [
+            'SIMPLE momentum solve did not converge to tol at: A',
+            'Choked/supersonic flow: predicted outlet vacuum.',
+        ],
+        'envelope_valid': False,
+        'envelope_reasons': ['[A] supersonic: Ma_max = 1.20 >= 1'],
+    }
+    result = R._finalize_3d_cfg(raw, {'extrap_reasons': []})
+    assert any('did not converge' in w for w in result.warnings), \
+        'SIMPLE non-convergence warning dropped at finalize'
+    assert any('Choked' in w for w in result.warnings), \
+        'envelope/choke warning dropped at finalize'
+    assert result.diagnostics.get('envelope_valid') is False
+    assert result.diagnostics.get('envelope_reasons')

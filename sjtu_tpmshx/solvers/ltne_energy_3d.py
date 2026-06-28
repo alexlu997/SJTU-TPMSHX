@@ -2061,7 +2061,16 @@ def mass_balance_3d(u, v, w, rho_field, dy_arr, dx_arr, dz_arr, dir_code):
 # ---------------------------------------------------------------------------
 
 def _warmup_jit():
-    """Pre-compile _gs_full_chunk_3d on import. Best-effort, never raises."""
+    """Pre-compile the LTNE GS kernels on import so the user's first 3D Run does
+    not pay the multi-second numba compile. Best-effort, never raises.
+
+    E1 (audit 2026-06-28): must warm the DEFAULT-path STAGGERED kernels
+    (_gs_full_chunk_3d_stag + the >30k-cell red-black _stag_rb), not just the
+    legacy cell-centered kernel — conservative_ltne defaults True, so the stag
+    kernel is what production dispatches (the cc kernel is in fact unreachable
+    with conservative_ltne=True). The prior warmup also passed one too few `eps`
+    args (34 vs 35), so its TypeError was swallowed and it compiled NOTHING.
+    """
     try:
         Nx = Ny = Nz = 4
         Ta = np.full((Nx, Ny, Nz), 300.0)
@@ -2070,16 +2079,29 @@ def _warmup_jit():
         dx = np.full(Nx, 0.01); dy = np.full(Ny, 0.01); dz = np.full(Nz, 0.01)
         K = np.full((Nx, Ny, Nz), 0.1); hv = np.full((Nx, Ny, Nz), 100.0)
         ef = np.full((Nx, Ny, Nz), 0.5); rcp = np.full((Nx, Ny, Nz), 1000.0)
-        u = np.full((Nx, Ny, Nz), 0.5); v0 = np.zeros((Nx, Ny, Nz))
+        uc = np.full((Nx, Ny, Nz), 0.5); v0 = np.zeros((Nx, Ny, Nz))
         TinA = np.full((Ny, Nz), 300.0); TinB = np.full((Nx, Nz), 290.0)
         fA = np.ones((Ny, Nz)); fB = np.ones((Nx, Nz))
-        for fz in (0, 1):
-            _gs_full_chunk_3d(Ta.copy(), Tb.copy(), Ts.copy(), Nx, Ny, Nz,
-                              dx, dy, dz,
-                              K, K, K, hv, hv, ef, rcp, rcp,
-                              u, v0, v0, u, v0, v0,
-                              0, 3, TinA, TinB, fA, fB,
-                              1, fz, 0.7, 0.7, 0.7)
+        chi = np.ones((Nx, Ny, Nz)); mms = np.zeros((Nx, Ny, Nz))
+        # staggered face velocities for the conservative default path
+        ufA = np.full((Nx + 1, Ny, Nz), 0.5)
+        vfA = np.zeros((Nx, Ny + 1, Nz)); wfA = np.zeros((Nx, Ny, Nz + 1))
+        ufB = np.full((Nx + 1, Ny, Nz), 0.5)
+        vfB = np.zeros((Nx, Ny + 1, Nz)); wfB = np.zeros((Nx, Ny, Nz + 1))
+        # legacy cell-centered kernel (force_cc_ltne fallback path)
+        _gs_full_chunk_3d(
+            Ta.copy(), Tb.copy(), Ts.copy(), Nx, Ny, Nz, dx, dy, dz,
+            K, K, K, hv, hv, ef, ef, rcp, rcp,
+            uc, v0, v0, uc, v0, v0,
+            0, 3, TinA, TinB, fA, fB, 1, 0, 0.7, 0.7, 0.7)
+        # default-path staggered kernels (serial + red-black), conservative form
+        for _stag in (_gs_full_chunk_3d_stag, _gs_full_chunk_3d_stag_rb):
+            _stag(
+                Ta.copy(), Tb.copy(), Ts.copy(), Nx, Ny, Nz, dx, dy, dz,
+                K, K, K, hv, hv, ef, ef, rcp, rcp,
+                ufA, vfA, wfA, ufB, vfB, wfB,
+                0, 3, TinA, TinB, fA, fB, 1, 0, 0.7, 0.7, 0.7,
+                chi, 0.5, mms, mms, mms, 1)
     except Exception:
         pass
 
