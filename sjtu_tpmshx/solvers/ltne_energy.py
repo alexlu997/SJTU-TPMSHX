@@ -684,8 +684,20 @@ def solve_full_domain(L, H, Nx, Ny,
         Tb = np.ascontiguousarray(Tb_init.copy(), dtype=np.float64)
         Ts = np.ascontiguousarray(Ts_init.copy(), dtype=np.float64)
     else:
-        Ta = np.full((Nx, Ny), 0.5 * (T_inA + T_inB))
-        Tb = Ta.copy();  Ts = Ta.copy()
+        # Per-fluid cold-start seed (Ta=T_inA, Tb=T_inB), matching the 3D kernel
+        # and the stages_2d caller's documented intent (stages_2d.py:1309-1314).
+        # The old 0.5*(T_inA+T_inB) seed for ALL THREE left partial-inlet
+        # off-pipe cells (inlet frac<=0.01, never updated by a governing
+        # equation — see the inlet branch above) FROZEN at the mid-T, which
+        # diffuses back through the solid h_v coupling as a virtual heat source
+        # (~12-18% Q_A / ~14K T_out_B on partial-B cross-flow geometries; audit
+        # 2026-06-28, found by the ultracode workflow). Full-face / prescribed-Tb
+        # paths are seed-independent at convergence (no frozen cells) → unchanged.
+        # Ts keeps the 0.5-mean (solid sits between the streams); its energy
+        # equation updates it every sweep regardless.
+        Ta = np.full((Nx, Ny), float(T_inA))
+        Tb = np.full((Nx, Ny), float(T_inB))
+        Ts = np.full((Nx, Ny), 0.5 * (T_inA + T_inB))
 
     # C-1: if a prescribed Tb field is provided, pin Tb to it
     freeze_Tb = 0

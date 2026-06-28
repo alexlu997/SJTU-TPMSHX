@@ -29,7 +29,8 @@ from solvers.envelope import gate_solution, mach_field_max
 
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
-                          dx_arr, dy_arr, inlet_mask=None, outlet_mask=None):
+                          dx_arr, dy_arr, inlet_mask=None, outlet_mask=None,
+                          enthalpy_fn=None, rho_fn=None, P_ref=None):
     """Mass-conserving enthalpy balance Q = ṁ_in · (T_in_avg − T_out_avg).
 
     Uses the inlet plane ρ·|u|·A·mask as ṁ·cp reference so the returned Q
@@ -40,6 +41,15 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
     Positive = fluid gives up heat (T_in > T_out).
     Optional 1D masks (length = cross-axis) gate the integral to partial
     inlet / outlet pipes; missing masks default to full face.
+
+    True-enthalpy mode (sCO2, audit 2026-06-28 D1): when ``enthalpy_fn`` /
+    ``rho_fn`` / ``P_ref`` are supplied the duty is the physically correct
+    Q = ṁ·(⟨h_in⟩ − ⟨h_out⟩) with mass-flux-weighted mean enthalpy ⟨h(T)⟩ on
+    each face (not ρcp(T_in)·ΔT, and not h(⟨T⟩) — both bias Q by tens-to-
+    hundreds of percent for sCO2 across the pseudocritical cp spike). The mass
+    flux weight is ρ·|u|·A (true mass flow), NOT ρcp. Air/water pass these as
+    None and keep the legacy ρcp·ΔT arithmetic exactly (constant cp ⇒ value-
+    identical, golden-safe).
     """
     if dir_code in (0, 1):
         i_in, i_out = (0, -1) if dir_code == 0 else (-1, 0)
@@ -49,8 +59,8 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
                      if inlet_mask  is not None else np.ones(n_cross))
         m_out_arr = (np.asarray(outlet_mask, dtype=np.float64)
                      if outlet_mask is not None else np.ones(n_cross))
-        m_in_w  = rho_cp_field[i_in,  :] * np.abs(uc[i_in,  :]) * A_cell * m_in_arr
-        m_out_w = rho_cp_field[i_out, :] * np.abs(uc[i_out, :]) * A_cell * m_out_arr
+        u_in_face, u_out_face = np.abs(uc[i_in, :]), np.abs(uc[i_out, :])
+        rho_cp_in, rho_cp_out = rho_cp_field[i_in, :], rho_cp_field[i_out, :]
         T_in_face, T_out_face = T_field[i_in, :], T_field[i_out, :]
     else:
         j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
@@ -60,9 +70,29 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
                      if inlet_mask  is not None else np.ones(n_cross))
         m_out_arr = (np.asarray(outlet_mask, dtype=np.float64)
                      if outlet_mask is not None else np.ones(n_cross))
-        m_in_w  = rho_cp_field[:, j_in]  * np.abs(vc[:, j_in])  * A_cell * m_in_arr
-        m_out_w = rho_cp_field[:, j_out] * np.abs(vc[:, j_out]) * A_cell * m_out_arr
+        u_in_face, u_out_face = np.abs(vc[:, j_in]), np.abs(vc[:, j_out])
+        rho_cp_in, rho_cp_out = rho_cp_field[:, j_in], rho_cp_field[:, j_out]
         T_in_face, T_out_face = T_field[:, j_in], T_field[:, j_out]
+
+    if enthalpy_fn is not None and rho_fn is not None and P_ref is not None:
+        # True-enthalpy duty for strongly variable-cp fluids (sCO2).
+        rho_in  = np.asarray(rho_fn(T_in_face,  P_ref), dtype=np.float64)
+        rho_out = np.asarray(rho_fn(T_out_face, P_ref), dtype=np.float64)
+        w_in  = rho_in  * u_in_face  * A_cell * m_in_arr
+        w_out = rho_out * u_out_face * A_cell * m_out_arr
+        m_dot = float(np.sum(w_in))
+        if m_dot < 1e-30:
+            return 0.0
+        h_in  = np.asarray(enthalpy_fn(T_in_face,  P_ref), dtype=np.float64)
+        h_out = np.asarray(enthalpy_fn(T_out_face, P_ref), dtype=np.float64)
+        h_in_avg = float(np.sum(w_in * h_in)) / m_dot
+        m_out_tot = float(np.sum(w_out))
+        h_out_avg = (float(np.sum(w_out * h_out)) / m_out_tot
+                     if m_out_tot > 1e-30 else float(np.mean(h_out)))
+        return m_dot * (h_in_avg - h_out_avg)
+
+    m_in_w  = rho_cp_in  * u_in_face  * A_cell * m_in_arr
+    m_out_w = rho_cp_out * u_out_face * A_cell * m_out_arr
     m_dot_cp = float(np.sum(m_in_w))
     if m_dot_cp < 1e-30:
         return 0.0
@@ -1039,19 +1069,29 @@ def _compute_Q_richardson(
     rho_cp_B_fld = (rho_cp_B if np.ndim(rho_cp_B) > 0
                     else np.full((N_x, N_y), rho_cp_B))
 
+    # sCO2 (audit 2026-06-28 D1): true mass-weighted enthalpy duty ṁ·(⟨h_in⟩−
+    # ⟨h_out⟩); cp(T_in)·ΔT is −40 %…+224 % wrong across the pseudocritical cp
+    # spike. air/water pass None → byte-identical legacy ρcp·ΔT (golden-safe).
+    _enth_A = _pA.get('enthalpy') if _pA.get('name') == 'sco2' else None
+    _enth_B = _pB.get('enthalpy') if _pB.get('name') == 'sco2' else None
+
     try:
         Q_A_fine = _enthalpy_balance_2d(
             Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
-            inlet_mask=mA_in, outlet_mask=mA_out)
+            inlet_mask=mA_in, outlet_mask=mA_out,
+            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val)
         Q_B_fine = _enthalpy_balance_2d(
             Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
-            inlet_mask=mB_in, outlet_mask=mB_out)
+            inlet_mask=mB_in, outlet_mask=mB_out,
+            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val)
         Q_A_coarse = _enthalpy_balance_2d(
             Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
-            inlet_mask=mA_in2, outlet_mask=mA_out2)
+            inlet_mask=mA_in2, outlet_mask=mA_out2,
+            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val)
         Q_B_coarse = _enthalpy_balance_2d(
             Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
-            inlet_mask=mB_in2, outlet_mask=mB_out2)
+            inlet_mask=mB_in2, outlet_mask=mB_out2,
+            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val)
         # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
         # separately, THEN take max. Each Richardson acts on a smooth
         # (single-sign) function across refinement, so the formal
@@ -1144,8 +1184,18 @@ def _compute_Q_richardson(
             A_in_B = float(cfgB.get('in_w', L))
             m_dot_A = rho_A_in * abs(u_A) * A_in_A
             m_dot_B = rho_B_in * abs(u_B) * A_in_B
-            Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
-            Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
+            # sCO2 (D1): ṁ·Δh even in the last-resort fallback (cp_in·ΔT is
+            # badly wrong near the pseudocritical line). air/water keep cp·ΔT.
+            if _pA.get('name') == 'sco2':
+                Q_A_simple = m_dot_A * abs(float(_pA['enthalpy'](T_inA, P_inA_val))
+                                           - float(_pA['enthalpy'](T_out_A_mean, P_inA_val)))
+            else:
+                Q_A_simple = m_dot_A * cp_A_in * abs(T_inA - T_out_A_mean)
+            if _pB.get('name') == 'sco2':
+                Q_B_simple = m_dot_B * abs(float(_pB['enthalpy'](T_inB, P_inB_val))
+                                           - float(_pB['enthalpy'](T_out_B_mean, P_inB_val)))
+            else:
+                Q_B_simple = m_dot_B * cp_B_in * abs(T_inB - T_out_B_mean)
             Q_total = max(Q_A_simple, Q_B_simple)
             if np.isfinite(Q_total):
                 warnings_list.append(
@@ -1202,7 +1252,8 @@ def _run_solvers(window, cfg, fields):
         # Primitives from the single fluid registry; dict shape kept for the
         # downstream ['name']/['rho']/... consumers (behavior-identical).
         m = fluid_props.get(fluid)
-        return dict(rho=m.rho, cp=m.cp, mu=m.mu, k=m.k, name=m.name)
+        return dict(rho=m.rho, cp=m.cp, mu=m.mu, k=m.k, name=m.name,
+                    enthalpy=m.enthalpy)
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
 

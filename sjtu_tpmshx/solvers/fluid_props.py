@@ -77,6 +77,11 @@ class FluidModel:
     # per-topology fit (nu_water_topo) — the air roughness modes don't apply
     # either way. Air takes the env-gated roughness modes.
     embeds_roughness: bool = False
+    # Specific enthalpy h(T[, P]) [J/kg], for the true-enthalpy duty Q = ṁ·Δh.
+    # Only set for strongly-variable-cp fluids (sCO2) where cp·ΔT ≠ Δh across a
+    # HX temperature span; None for air/water (near-constant cp ⇒ the duty
+    # extraction keeps the value-identical cp·ΔT form, golden-safe).
+    enthalpy: Callable | None = None
 
 
 FLUIDS = {
@@ -108,6 +113,7 @@ FLUIDS = {
         k=_sco2_prop("L"),
         nu=_nu_sco2,
         embeds_roughness=True,   # SLM roughness baked into the D-7-6 fit (like water)
+        enthalpy=_sco2_prop("H"),  # true-enthalpy duty ṁ·Δh (cp·ΔT wrong for sCO2)
     ),
 }
 
