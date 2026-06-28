@@ -171,6 +171,61 @@ def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
         return float(np.mean(T_face))
 
 
+def _mass_weighted_h_out(T_face, P_ref, enthalpy_fn, solver, dir_code,
+                          eps_f_scalar, chi_face=None, eps_side_override=None):
+    """Mass-flux-weighted mean ENTHALPY at the real outlet face: ⟨h(T)⟩_w.
+
+    For a strongly nonlinear h(T) (sCO2 across the pseudocritical cp spike)
+    ⟨h(T)⟩ ≠ h(⟨T⟩) (Jensen). The 3D sCO2 duty must use the mass-flux-weighted
+    mean of the per-cell enthalpy, NOT the enthalpy of the mean outlet
+    temperature — otherwise the reported Q (and Q_AB_imbalance_rel built from
+    it) is biased by several percent exactly where the enthalpy form was meant
+    to be exact (audit 2026-06-28 D2). Weights mirror ``_mass_weighted_T_out``
+    so ṁ and ⟨h⟩ stay consistent.
+    """
+    h_face = np.asarray(enthalpy_fn(np.asarray(T_face, dtype=np.float64), P_ref),
+                        dtype=np.float64)
+    try:
+        w = _face_flux_weights(solver, dir_code, face='real_outlet',
+                               eps_mode='ltne', chi_face=chi_face,
+                               eps_f_per_side=eps_f_scalar,
+                               eps_side_override=eps_side_override)
+        tot = float(np.sum(w))
+        if tot < 1e-30:
+            return float(np.mean(h_face))
+        return float(np.sum(h_face * w) / tot)
+    except Exception:
+        return float(np.mean(h_face))
+
+
+def _sco2_hv_local_field(T_field, P_Pa, u_abs, A_0, D_h_m, tpms_type):
+    """sCO2 per-cell volumetric h_v = A_0·Nu·k(T)/D_h with LOCAL-temperature
+    transport properties (audit 2026-06-28 D3).
+
+    ρ, μ, k, cp — hence Re and Pr — are evaluated per cell at the local
+    temperature field (fixed P), not frozen at the scalar inlet T. sCO2
+    transport props swing 2-8× across the pseudocritical line, so freezing
+    them at inlet biased the dominant fluid↔solid coupling by a large factor
+    wherever local T departed from inlet (while the neighbouring K_ff / ρcp
+    already used the local Ta field). Air/water are never routed here — they
+    keep the scalar-inlet path so the golden 2D/3D and Shanghai-3D baselines
+    stay bit-identical.
+    """
+    from solvers import sco2_props as _s2
+    from solvers.tpms_calc import nu_sco2_topo as _nu_s2
+    from solvers.nu_correlations import NU_LAM_FLOOR as _floor
+    T = np.asarray(T_field, dtype=np.float64)
+    rho = _s2.sco2_density_field(T, P_Pa)
+    mu = _s2.sco2_viscosity_field(T, P_Pa)
+    k_f = _s2.sco2_conductivity_field(T, P_Pa)
+    Pr = _s2.sco2_cp_field(T, P_Pa) * mu / np.maximum(k_f, 1e-30)
+    Re_loc = rho * np.abs(u_abs) * D_h_m / np.maximum(mu, 1e-30)
+    Nu_loc = np.maximum(
+        np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr),
+                   dtype=np.float64), _floor)
+    return A_0 * Nu_loc * k_f / D_h_m
+
+
 # ── Direction → axis single source ──────────────────────────────────────────
 # dir_code: 0=+x 1=-x 2=+y 3=-y 4=+z 5=-z (matches the 2D _dir_int convention).
 # These helpers are the ONE place the dir→axis/index mapping is encoded; every
@@ -1957,6 +2012,16 @@ def _run_3d_stack(cfg):
     ):
         """Per-cell h_v using LOCAL |u_cc|·D_h·ρ/μ Reynolds + Nu floor."""
         u_abs = np.abs(u_field_3d) + 1e-12
+        # D3 fix (audit 2026-06-28): uniform-geometry sCO2 with a LOCAL T FIELD
+        # evaluates ρ,μ,k,Pr per cell instead of freezing them at the scalar
+        # inlet T. air/water and the zoned (L_fld not None) path fall through to
+        # the scalar-inlet branch below → golden + Shanghai-3D bit-identical.
+        # (Iter-0 Ta is None → caller passes scalar T_inA → scalar path, so the
+        # first sweep is value-identical; local props kick in from iter 1.)
+        if fluid_type == 'sco2' and L_fld is None and np.ndim(T_side) > 0:
+            g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
+            return _sco2_hv_local_field(T_side, P_side, u_abs,
+                                        g['A_0'], g['D_h'], tpms_type)
         rho, mu, k_f, Pr_f = _fluid_transport_props(fluid_type, T_side, P_side)
         if L_fld is None:
             g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
@@ -2157,8 +2222,11 @@ def _run_3d_stack(cfg):
         # Wall cells with |u_local|→0 → Nu_lam floor (4.36) → h_local much
         # smaller than bulk h. Removes wall-BL stagnation over-count.
         u_stream_A = _stream_component(ucA, vcA, wcA, fA['dir'])
+        # D3: sCO2 uses the LOCAL temperature field (lagged Ta) for h_v props;
+        # iter-0 Ta is None → scalar T_inA (frozen, = old behaviour).
+        _T_hvA = Ta if (fluid_type_A == 'sco2' and Ta is not None) else T_inA
         h_vA_field = _build_hv_local_3d(
-            L_mm_field, t_field_3d, u_stream_A, T_inA, P_inA, fluid_type_A)
+            L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
         h_vA_field = h_vA_field * _hv_ratio_A   # per-side asym geom (1.0 at δ=0)
@@ -2173,8 +2241,9 @@ def _run_3d_stack(cfg):
 
         if sB is not None:
             u_stream_B = _stream_component(ucB, vcB, wcB, fB['dir'])
+            _T_hvB = Tb if (fluid_type_B == 'sco2' and Tb is not None) else T_inB
             h_vB_field = _build_hv_local_3d(
-                L_mm_field, t_field_3d, u_stream_B, T_inB, P_inB, fluid_type_B)
+                L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B)
             h_vB_field = _apply_roughness_h_v(
                 h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
             h_vB_field = h_vB_field * _hv_ratio_B   # per-side asym geom (1.0 at δ=0)
@@ -2733,9 +2802,14 @@ def _run_3d_stack(cfg):
     # sCO2: true enthalpy duty ṁ·Δh (cp varies strongly with T,P → cp·ΔT is
     # wrong); air/water keep cp·ΔT (constant cp ⇒ value-identical, golden-safe).
     if fluid_type_A == 'sco2':
+        # D2 (audit 2026-06-28): mass-weighted mean OUTLET enthalpy ⟨h(T)⟩,
+        # NOT h(⟨T⟩_out) — h(T) is strongly nonlinear across the pseudocritical
+        # spike (Jensen). Inlet is a uniform Dirichlet T so h(T_inA) is exact.
+        h_A_out = _mass_weighted_h_out(
+            T_A_out_face, P_inA, sco2_props.sco2_enthalpy_field, sA, fA['dir'],
+            eps_f_per_side, eps_side_override=_eps_ov_A)
         Q_enthalpy_A = abs(m_dot_A_simple * (
-            sco2_props.sco2_enthalpy(float(T_inA), P_inA)
-            - sco2_props.sco2_enthalpy(float(T_A_out), P_inA)))
+            sco2_props.sco2_enthalpy(float(T_inA), P_inA) - h_A_out))
     else:
         Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
 
@@ -2763,9 +2837,14 @@ def _run_3d_stack(cfg):
             sB, fB['dir'], face='real_outlet', eps_mode='physical',
             chi_face=chi_B_out_face)))
         if fluid_type_B == 'sco2':
+            # D2: mass-weighted mean outlet enthalpy ⟨h(T)⟩ (with χ_B ghost
+            # suppression), not h(⟨T⟩_out). Inlet uniform Dirichlet → exact.
+            h_B_out = _mass_weighted_h_out(
+                T_B_out_face, P_inB, sco2_props.sco2_enthalpy_field, sB, fB['dir'],
+                eps_f_per_side, chi_face=chi_B_out_face,
+                eps_side_override=_eps_ov_B)
             Q_enthalpy_B = abs(m_dot_B_simple * (
-                sco2_props.sco2_enthalpy(float(T_inB), P_inB)
-                - sco2_props.sco2_enthalpy(float(T_B_out), P_inB)))
+                sco2_props.sco2_enthalpy(float(T_inB), P_inB) - h_B_out))
         else:
             Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
 

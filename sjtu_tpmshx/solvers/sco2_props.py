@@ -133,6 +133,13 @@ def sco2_rho_cp_field(T_K, P_Pa: float):
     return sco2_density_field(T_K, P_Pa) * sco2_cp_field(T_K, P_Pa)
 
 
+def sco2_enthalpy_field(T_K, P_Pa: float):
+    """h field [J/kg] over a T field at fixed P. Vectorised counterpart of
+    ``sco2_enthalpy`` for the mass-weighted mean outlet enthalpy ⟨h(T)⟩ in the
+    duty extraction (the scalar lru_cache form can't take an array face)."""
+    return sco2_field("H", T_K, P_Pa)
+
+
 def sco2_viscosity_field(T_K, P_Pa: float):
     """μ field [Pa·s] over a T field at fixed P."""
     return sco2_field("V", T_K, P_Pa)
