@@ -147,3 +147,19 @@ def test_enthalpy_3d_mixed_sco2_water_precooler():
     assert m["AB_imbal"] < 0.05, (
         f"sCO2/water duty imbalance {m['AB_imbal']*100:.2f}%")
     assert m["e_imb_LTNE"] < 0.02
+
+
+def test_enthalpy_3d_offset_porosity_conserves():
+    """#3: offset-isosurface (δ≠0) per-side void fractions ε_A≠ε_B. The kernel
+    consumes per-side ε fields; conservation holds with an asymmetric split."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
+    c = _case()
+    c.pop("eps")  # provide per-side ε directly instead
+    Nx, Ny, Nz = c["Nx"], c["Ny"], c["Nz"]
+    epsA = np.full((Nx, Ny, Nz), 0.40)   # ε_A ≠ ε_B (sum 0.68 = ε_full)
+    epsB = np.full((Nx, Ny, Nz), 0.28)
+    res = solve_ltne_enthalpy_3d(eps=0.68, eps_A_field=epsA, eps_B_field=epsB, **c)
+    m = enthalpy_metrics_3d(res, dict(eps=0.68, **c))
+    assert np.all(np.isfinite(res["Ta"])) and np.all(np.isfinite(res["Tb"]))
+    assert m["AB_imbal"] < 0.05, f"offset-ε A/B imbalance {m['AB_imbal']*100:.2f}%"
+    assert m["e_imb_LTNE"] < 0.02

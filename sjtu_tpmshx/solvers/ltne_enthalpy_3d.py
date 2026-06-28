@@ -252,6 +252,7 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                            m_dot_A, m_dot_B, h_vA, h_vB,
                            T_inA, T_inB, P, P_B=None, dir_A=0, dir_B=1,
                            fluid_A='sco2', fluid_B='sco2',
+                           eps_A_field=None, eps_B_field=None,
                            n_outer=3000, n_sweep=3, omega=0.6, tol=2e-5):
     """Python Picard driver around the njit enthalpy sweeps. CoolProp T(h,P)
     inverse + cp/k property fields refreshed once per outer iteration.
@@ -264,8 +265,12 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     P_B = float(P_B) if P_B is not None else P_A
     dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
     shape = (Nx, Ny, Nz)
-    epsA = np.full(shape, 0.5 * eps)
-    epsB = np.full(shape, 0.5 * eps)
+    # per-side single-channel void fraction. Default symmetric ε_A=ε_B=ε/2; an
+    # offset-isosurface (δ≠0) design passes per-side fields (already split).
+    epsA = (np.ascontiguousarray(eps_A_field, dtype=np.float64)
+            if eps_A_field is not None else np.full(shape, 0.5 * eps))
+    epsB = (np.ascontiguousarray(eps_B_field, dtype=np.float64)
+            if eps_B_field is not None else np.full(shape, 0.5 * eps))
     # per-column signed x mass flux (total split over the Ny·Nz cross-section)
     FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
     FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
@@ -321,6 +326,7 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
                                     h_vA_field, h_vB_field, m_dot_A, m_dot_B,
                                     T_inA, T_inB, P_A, P_B, dir_A, dir_B,
                                     fluid_A='sco2', fluid_B='sco2',
+                                    eps_A_field=None, eps_B_field=None,
                                     Ta_init=None, Tb_init=None, Ts_init=None,
                                     n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
     """Pipeline-facing enthalpy-form LTNE energy solve (sCO2, SIMPLE-coupled).
@@ -336,8 +342,12 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
     on the conservative ρcp·u·T kernel)."""
     shape = (Nx, Ny, Nz)
     dxs = float(np.mean(dx)); dys = float(np.mean(dy)); dzs = float(np.mean(dz))
-    epsA = 0.5 * np.ascontiguousarray(eps_arr, dtype=np.float64)
-    epsB = epsA.copy()
+    # symmetric ε/2 by default; offset-isosurface (δ≠0) passes per-side fields.
+    epsA = (np.ascontiguousarray(eps_A_field, dtype=np.float64)
+            if eps_A_field is not None
+            else 0.5 * np.ascontiguousarray(eps_arr, dtype=np.float64))
+    epsB = (np.ascontiguousarray(eps_B_field, dtype=np.float64)
+            if eps_B_field is not None else epsA.copy())
     hvA_fld = np.ascontiguousarray(h_vA_field, dtype=np.float64)
     hvB_fld = np.ascontiguousarray(h_vB_field, dtype=np.float64)
     FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))

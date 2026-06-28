@@ -2520,6 +2520,8 @@ def _run_3d_stack(cfg):
                 h_vA_field, h_vB_field, _mdA, _mdB,
                 T_inA, T_inB, P_inA, P_inB, fA['dir'], fB['dir'],
                 fluid_A=fluid_type_A, fluid_B=fluid_type_B,
+                eps_A_field=(eps_fA_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
+                eps_B_field=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 25)),
                 omega=float(cfg.get('ltne_enthalpy_omega', 0.6)),
