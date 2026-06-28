@@ -2443,8 +2443,12 @@ def _run_3d_stack(cfg):
         # epsilon arg must be FULL ε.
         _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
         # Option B gate: sCO2-both-sides counterflow-x with ltne_enthalpy_mode on.
+        # sCO2-both (recuperator) OR sCO2 + water (precooler); ≥1 variable-cp
+        # sCO2 side. air/water-only stays on the legacy ρcp·u·T path.
         _enth_gate = (bool(cfg.get('ltne_enthalpy_mode', False))
-                      and fluid_type_A == 'sco2' and fluid_type_B == 'sco2'
+                      and fluid_type_A in ('sco2', 'water')
+                      and fluid_type_B in ('sco2', 'water')
+                      and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
                       and sB is not None
                       and fA['dir'] in (0, 1) and fB['dir'] in (0, 1))
         # When the enthalpy solve will overwrite the result below, run the legacy
@@ -2515,6 +2519,7 @@ def _run_3d_stack(cfg):
                 Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
                 h_vA_field, h_vB_field, _mdA, _mdB,
                 T_inA, T_inB, P_inA, P_inB, fA['dir'], fB['dir'],
+                fluid_A=fluid_type_A, fluid_B=fluid_type_B,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 25)),
                 omega=float(cfg.get('ltne_enthalpy_omega', 0.6)),

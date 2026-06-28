@@ -29,6 +29,31 @@ from . import sco2_props
 
 _T_LO, _T_HI = 240.0, 420.0
 
+# ── Per-fluid property accessors (#1 mixed kernel) ──────────────────────────
+# The njit kernel is fluid-agnostic (it consumes cp / h / T* arrays). Only this
+# driver layer needs to know the fluid, so the energy solve can mix a variable-cp
+# sCO2 stream with a water (or air) stream — the real 703 precooler. Each fluid's
+# h/T(h)/cp/k come from CoolProp at the side's pressure. For 'sco2' these are the
+# SAME CO2 calls sco2_props makes → byte-identical to the sCO2-only path.
+from CoolProp.CoolProp import PropsSI as _PropsSI  # noqa: E402
+_CP_NAME = {'sco2': 'CO2', 'water': 'Water', 'air': 'Air'}
+
+
+def _prop_field(key, T, P, fluid):
+    T = np.ascontiguousarray(T, dtype=np.float64)
+    out = _PropsSI(key, "T", T.ravel(), "P", float(P), _CP_NAME.get(fluid, fluid))
+    return np.asarray(out, dtype=np.float64).reshape(T.shape)
+
+
+def _T_of_h_field(h, P, fluid):
+    h = np.ascontiguousarray(h, dtype=np.float64)
+    out = _PropsSI("T", "H", h.ravel(), "P", float(P), _CP_NAME.get(fluid, fluid))
+    return np.asarray(out, dtype=np.float64).reshape(h.shape)
+
+
+def _h_scalar(T, P, fluid):
+    return float(_PropsSI("H", "T", float(T), "P", float(P), _CP_NAME.get(fluid, fluid)))
+
 
 @njit(cache=True, fastmath=True)
 def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
@@ -220,15 +245,21 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                     Ts[i, j, k] = (1.0 - omega) * Ts[i, j, k] + omega * new
 
 
+_FL_TLO = {'sco2': 230.0, 'water': 274.0, 'air': 200.0}
+
+
 def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                            m_dot_A, m_dot_B, h_vA, h_vB,
                            T_inA, T_inB, P, P_B=None, dir_A=0, dir_B=1,
+                           fluid_A='sco2', fluid_B='sco2',
                            n_outer=3000, n_sweep=3, omega=0.6, tol=2e-5):
     """Python Picard driver around the njit enthalpy sweeps. CoolProp T(h,P)
     inverse + cp/k property fields refreshed once per outer iteration.
 
     Per-side pressure: ``P`` is fluid A's pressure, ``P_B`` fluid B's (defaults
-    to ``P``). The 703 recuperator runs hot ≈8 MPa / cold ≈18.5 MPa."""
+    to ``P``). Per-side fluid (``fluid_A``/``fluid_B`` in {sco2,water,air}) lets
+    the solve MIX a variable-cp sCO2 stream with water — the 703 precooler.
+    The 703 recuperator runs sco2/sco2, hot ≈8 MPa / cold ≈18.5 MPa."""
     P_A = float(P)
     P_B = float(P_B) if P_B is not None else P_A
     dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
@@ -241,15 +272,16 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     hvA_fld = np.full(shape, float(h_vA))
     hvB_fld = np.full(shape, float(h_vB))
 
-    h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P_A))
-    h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P_B))
-    # clamp the iterate to a generous window around the two inlet temperatures
-    T_lo = max(min(T_inA, T_inB) - 40.0, 230.0)
-    T_hi = max(T_inA, T_inB) + 40.0
-    h_lo_A = float(sco2_props.sco2_enthalpy(T_lo, P_A))
-    h_hi_A = float(sco2_props.sco2_enthalpy(T_hi, P_A))
-    h_lo_B = float(sco2_props.sco2_enthalpy(T_lo, P_B))
-    h_hi_B = float(sco2_props.sco2_enthalpy(T_hi, P_B))
+    h_in_A = _h_scalar(T_inA, P_A, fluid_A)
+    h_in_B = _h_scalar(T_inB, P_B, fluid_B)
+    # clamp the iterate to a window around the inlets, floored per fluid (e.g.
+    # water can't go sub-freezing for the CoolProp enthalpy call)
+    T_span_lo = min(T_inA, T_inB) - 40.0
+    T_span_hi = max(T_inA, T_inB) + 40.0
+    h_lo_A = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_A, 230.0)), P_A, fluid_A)
+    h_hi_A = _h_scalar(T_span_hi, P_A, fluid_A)
+    h_lo_B = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_B, 230.0)), P_B, fluid_B)
+    h_hi_B = _h_scalar(T_span_hi, P_B, fluid_B)
 
     hA = np.full(shape, h_in_A)
     hB = np.full(shape, h_in_B)
@@ -257,12 +289,12 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
     n_done = 0
     for outer in range(n_outer):
-        T_A = sco2_props.sco2_temperature_field(hA, P_A)
-        T_B = sco2_props.sco2_temperature_field(hB, P_B)
-        cpA = sco2_props.sco2_cp_field(T_A, P_A)
-        cpB = sco2_props.sco2_cp_field(T_B, P_B)
-        kA = sco2_props.sco2_conductivity_field(T_A, P_A)
-        kB = sco2_props.sco2_conductivity_field(T_B, P_B)
+        T_A = _T_of_h_field(hA, P_A, fluid_A)
+        T_B = _T_of_h_field(hB, P_B, fluid_B)
+        cpA = _prop_field("C", T_A, P_A, fluid_A)
+        cpB = _prop_field("C", T_B, P_B, fluid_B)
+        kA = _prop_field("L", T_A, P_A, fluid_A)
+        kB = _prop_field("L", T_B, P_B, fluid_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)   # h-space diffusivity
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()
@@ -279,14 +311,16 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 np.max(np.abs(hB - hB_star))) / denom) < tol:
             break
 
-    return dict(Ta=sco2_props.sco2_temperature_field(hA, P_A),
-                Tb=sco2_props.sco2_temperature_field(hB, P_B),
-                Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B)
+    return dict(Ta=_T_of_h_field(hA, P_A, fluid_A),
+                Tb=_T_of_h_field(hB, P_B, fluid_B),
+                Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B,
+                fluid_A=fluid_A, fluid_B=fluid_B)
 
 
 def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
                                     h_vA_field, h_vB_field, m_dot_A, m_dot_B,
                                     T_inA, T_inB, P_A, P_B, dir_A, dir_B,
+                                    fluid_A='sco2', fluid_B='sco2',
                                     Ta_init=None, Tb_init=None, Ts_init=None,
                                     n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
     """Pipeline-facing enthalpy-form LTNE energy solve (sCO2, SIMPLE-coupled).
@@ -309,18 +343,18 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
     FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
     FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
 
-    h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P_A))
-    h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P_B))
-    T_lo = max(min(T_inA, T_inB) - 60.0, 230.0)
-    T_hi = max(T_inA, T_inB) + 60.0
-    h_lo_A = float(sco2_props.sco2_enthalpy(T_lo, P_A))
-    h_hi_A = float(sco2_props.sco2_enthalpy(T_hi, P_A))
-    h_lo_B = float(sco2_props.sco2_enthalpy(T_lo, P_B))
-    h_hi_B = float(sco2_props.sco2_enthalpy(T_hi, P_B))
+    h_in_A = _h_scalar(T_inA, P_A, fluid_A)
+    h_in_B = _h_scalar(T_inB, P_B, fluid_B)
+    T_span_lo = min(T_inA, T_inB) - 60.0
+    T_span_hi = max(T_inA, T_inB) + 60.0
+    h_lo_A = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_A, 230.0)), P_A, fluid_A)
+    h_hi_A = _h_scalar(T_span_hi, P_A, fluid_A)
+    h_lo_B = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_B, 230.0)), P_B, fluid_B)
+    h_hi_B = _h_scalar(T_span_hi, P_B, fluid_B)
 
-    hA = (sco2_props.sco2_enthalpy_field(np.asarray(Ta_init, dtype=np.float64), P_A)
+    hA = (_prop_field("H", np.asarray(Ta_init, dtype=np.float64), P_A, fluid_A)
           if Ta_init is not None else np.full(shape, h_in_A))
-    hB = (sco2_props.sco2_enthalpy_field(np.asarray(Tb_init, dtype=np.float64), P_B)
+    hB = (_prop_field("H", np.asarray(Tb_init, dtype=np.float64), P_B, fluid_B)
           if Tb_init is not None else np.full(shape, h_in_B))
     Ts = (np.ascontiguousarray(Ts_init, dtype=np.float64).copy()
           if Ts_init is not None else np.full(shape, 0.5 * (T_inA + T_inB)))
@@ -330,12 +364,12 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
     n_done = 0
     resid = 0.0
     for outer in range(n_outer):
-        T_A = sco2_props.sco2_temperature_field(hA, P_A)
-        T_B = sco2_props.sco2_temperature_field(hB, P_B)
-        cpA = sco2_props.sco2_cp_field(T_A, P_A)
-        cpB = sco2_props.sco2_cp_field(T_B, P_B)
-        kA = sco2_props.sco2_conductivity_field(T_A, P_A)
-        kB = sco2_props.sco2_conductivity_field(T_B, P_B)
+        T_A = _T_of_h_field(hA, P_A, fluid_A)
+        T_B = _T_of_h_field(hB, P_B, fluid_B)
+        cpA = _prop_field("C", T_A, P_A, fluid_A)
+        cpB = _prop_field("C", T_B, P_B, fluid_B)
+        kA = _prop_field("L", T_A, P_A, fluid_A)
+        kB = _prop_field("L", T_B, P_B, fluid_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()
@@ -353,8 +387,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
         if resid < tol:
             break
 
-    Ta = sco2_props.sco2_temperature_field(hA, P_A)
-    Tb = sco2_props.sco2_temperature_field(hB, P_B)
+    Ta = _T_of_h_field(hA, P_A, fluid_A)
+    Tb = _T_of_h_field(hB, P_B, fluid_B)
     info = dict(iterations=n_done, converged=bool(resid < tol),
                 residual=float(resid), enthalpy_mode=True)
     return Ta, Tb, Ts, info
@@ -367,6 +401,8 @@ def enthalpy_metrics_3d(res, case):
     Nx, Ny, Nz = Ta.shape
     P_A = res.get("P_A", case["P"])
     P_B = res.get("P_B", case.get("P_B", P_A))
+    fl_A = res.get("fluid_A", case.get("fluid_A", "sco2"))
+    fl_B = res.get("fluid_B", case.get("fluid_B", "sco2"))
     Vc = (case["Lx"] / Nx) * (case["Ly"] / Ny) * (case["Lz"] / Nz)
     mA = abs(case["m_dot_A"]); mB = abs(case["m_dot_B"])
     hvA, hvB = case["h_vA"], case["h_vB"]
@@ -374,10 +410,10 @@ def enthalpy_metrics_3d(res, case):
 
     outA = -1 if dir_A == 0 else 0
     outB = -1 if dir_B == 0 else 0
-    hA_out = float(np.mean(sco2_props.sco2_enthalpy_field(Ta[outA, :, :], P_A)))
-    hB_out = float(np.mean(sco2_props.sco2_enthalpy_field(Tb[outB, :, :], P_B)))
-    h_in_A = float(sco2_props.sco2_enthalpy(case["T_inA"], P_A))
-    h_in_B = float(sco2_props.sco2_enthalpy(case["T_inB"], P_B))
+    hA_out = float(np.mean(_prop_field("H", Ta[outA, :, :], P_A, fl_A)))
+    hB_out = float(np.mean(_prop_field("H", Tb[outB, :, :], P_B, fl_B)))
+    h_in_A = _h_scalar(case["T_inA"], P_A, fl_A)
+    h_in_B = _h_scalar(case["T_inB"], P_B, fl_B)
 
     Q_enth_A = mA * abs(hA_out - h_in_A)
     Q_enth_B = mB * abs(hB_out - h_in_B)

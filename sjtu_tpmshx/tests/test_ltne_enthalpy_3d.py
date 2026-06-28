@@ -121,3 +121,29 @@ def test_enthalpy_3d_near_critical_cp_spike_robust():
     assert m["AB_imbal"] < 0.03, (
         f"A/B imbalance {m['AB_imbal']*100:.2f}% through the cp×56 spike")
     assert m["e_imb_LTNE"] < 0.02
+
+
+def test_enthalpy_3d_mixed_sco2_water_precooler():
+    """#1: the real 703 precooler is sCO2 (hot, crossing the cp spike) + water
+    (cold). The mixed kernel runs the sCO2 side in enthalpy form and the water
+    side via its own (near-constant-cp) enthalpy — both duties must balance and
+    the solve stays robust through the sCO2-side spike."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
+    c = dict(Nx=24, Ny=3, Nz=3, Lx=0.127, Ly=0.5, Lz=0.5, eps=0.675, k_s=16.0,
+             m_dot_A=+10.0, m_dot_B=-30.0,        # sCO2 hot / water cold
+             h_vA=8e5, h_vB=8e5,
+             T_inA=371.0, T_inB=297.0, P=7.7e6, P_B=0.5e6,
+             dir_A=0, dir_B=1, fluid_A='sco2', fluid_B='water',
+             n_sweep=25, omega=0.6, tol=1e-3, n_outer=2000)
+    res = solve_ltne_enthalpy_3d(**c)
+    m = enthalpy_metrics_3d(res, c)
+
+    assert np.all(np.isfinite(res["Ta"])) and np.all(np.isfinite(res["Tb"])), \
+        "NaN in the mixed sCO2/water solve"
+    # sCO2 hot (dir 0) cools; water cold (dir 1) warms
+    assert res["Ta"][-1, :, :].mean() < c["T_inA"]
+    assert res["Tb"][0, :, :].mean() > c["T_inB"]
+    # the two stream duties balance, and the solid LTNE flux closes
+    assert m["AB_imbal"] < 0.05, (
+        f"sCO2/water duty imbalance {m['AB_imbal']*100:.2f}%")
+    assert m["e_imb_LTNE"] < 0.02
