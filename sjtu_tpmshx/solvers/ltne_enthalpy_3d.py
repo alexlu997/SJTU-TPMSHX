@@ -115,15 +115,26 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         D_bc = 2.0 * dhA[i, j, k] * Ax / dx
                         a_in = D_bc + (abs(FmA))
                         S += a_in * h_in_A
+                        # N3 (2026-06-28): the inlet x-face is Dirichlet, not an
+                        # interior face — replace its interior diffusion estimate
+                        # (DxW/DxE) with the half-cell BC conductance D_bc.
+                        # Leaving the interior estimate in aP left it unpaired
+                        # (no neighbour, no source) → a spurious enthalpy sink
+                        # ∝ absolute h (CoolProp-reference-dependent).
                         if dir_A == 0:
+                            aP += D_bc - DxW
                             aW = 0.0
                         else:
+                            aP += D_bc - DxE
                             aE = 0.0
-                        aP += D_bc  # add the half-cell conductance to the diagonal
                     if i == outA_i:
+                        # N3: zero-gradient outlet — no diffusive flux through the
+                        # outlet face; drop its interior conductance from aP too.
                         if dir_A == 0:
+                            aP -= DxE
                             aE = 0.0
                         else:
+                            aP -= DxW
                             aW = 0.0
                     nb = 0.0
                     if i > 0:
@@ -175,15 +186,22 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         D_bc = 2.0 * dhB[i, j, k] * Ax / dx
                         a_in = D_bc + (abs(FmB))
                         S += a_in * h_in_B
+                        # N3 (2026-06-28): mirror fluid A — drop the interior
+                        # diffusion estimate at the Dirichlet inlet x-face.
                         if dir_B == 0:
+                            aP += D_bc - DxW
                             aW = 0.0
                         else:
+                            aP += D_bc - DxE
                             aE = 0.0
-                        aP += D_bc
                     if i == outB_i:
+                        # N3: zero-gradient outlet — drop the outlet-face
+                        # interior conductance from aP.
                         if dir_B == 0:
+                            aP -= DxE
                             aE = 0.0
                         else:
+                            aP -= DxW
                             aW = 0.0
                     nb = 0.0
                     if i > 0:
