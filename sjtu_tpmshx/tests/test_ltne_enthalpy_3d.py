@@ -1,0 +1,55 @@
+"""Phase 2.2 — njit enthalpy-form 3D LTNE kernel conservation gate.
+
+solve_ltne_enthalpy_3d keeps h as the primary fluid unknown and telescopes the
+mass flux ṁ on h (true enthalpy flux), so for a strongly variable-cp sCO2 stream
+the two fluids' duties balance — unlike the legacy ρcp·u·T conservative kernel,
+which on the same case leaves a large A/B imbalance (the 703 ~41% defect).
+
+This is the 3D (njit) counterpart of the validated 1D PoC
+(poc/poc_1d_ltne_enthalpy_optionB.py). Counterflow along x, variable-cp CO2
+straddling the pseudocritical line.
+"""
+import numpy as np
+import pytest
+
+from solvers import sco2_props
+
+pytestmark = pytest.mark.skipif(
+    not sco2_props._HAVE_COOLPROP, reason="CoolProp required for sCO2 tests")
+
+
+def _case():
+    return dict(
+        Nx=16, Ny=3, Nz=3, Lx=0.20, Ly=0.02, Lz=0.02,
+        eps=0.68, k_s=14.0,
+        m_dot_A=+1.6e-4, m_dot_B=-1.0e-4,
+        h_vA=2.5e5, h_vB=2.5e5,
+        T_inA=360.0, T_inB=298.0, P=8.0e6,
+        dir_A=0, dir_B=1,
+        n_sweep=5, omega=0.7, tol=1e-3, n_outer=2000,
+    )
+
+
+def test_enthalpy_3d_conserves_on_variable_cp_counterflow():
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
+    res = solve_ltne_enthalpy_3d(**_case())
+    m = enthalpy_metrics_3d(res, _case())
+
+    assert m["AB_imbal"] < 0.03, (
+        f"3D enthalpy kernel A/B imbalance {m['AB_imbal']*100:.2f}% — not "
+        f"conserving true enthalpy")
+    assert m["e_imb_LTNE"] < 0.01, (
+        f"solid balance Q_sA+Q_sB {m['e_imb_LTNE']*100:.3f}% not closing")
+
+
+def test_enthalpy_3d_temperatures_physical():
+    """Counterflow: hot A cools, cold B warms; both stay in a sane range."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d
+    c = _case()
+    res = solve_ltne_enthalpy_3d(**c)
+    Ta, Tb = res["Ta"], res["Tb"]
+    # hot inlet at x=0 (dir_A=0): A outlet (x=-1) cooler than inlet
+    assert Ta[-1, :, :].mean() < c["T_inA"]
+    # cold inlet at x=-1 (dir_B=1): B outlet (x=0) warmer than inlet
+    assert Tb[0, :, :].mean() > c["T_inB"]
+    assert Ta.min() > 240.0 and Ta.max() < 420.0
