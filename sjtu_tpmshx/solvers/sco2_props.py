@@ -108,13 +108,45 @@ def sco2_temperature(h_Jkg: float, P_Pa: float) -> float:
 # Used by the variable-property outer loop where the cp/ρ field is refreshed
 # every iteration as T evolves through the pseudocritical zone.
 
+# Content-keyed memo for vectorised field queries (audit 2026-06-28 E3). The
+# variable-property 3D outer loop evaluates k(Ta,P) and cp(Ta,P) in BOTH
+# _outer_post_3d (K_ff / ρcp build) and the next _outer_step_3d (h_v build) at
+# the IDENTICAL (Ta, P) — Ta is unchanged between the two. These vectorised
+# PropsSI calls bypass the scalar `_prop` lru_cache, so they were genuinely
+# re-evaluated over the whole grid. Cache the last few (key, P, T-content)
+# results; the key is the full array content (T.tobytes) so a hit is always
+# bit-identical, and hashing N float64s is far cheaper than a Span-Wagner
+# PropsSI sweep. Cached arrays are returned READ-ONLY so an accidental in-place
+# mutation by a downstream caller fails loud instead of corrupting a shared view.
+from collections import OrderedDict as _OrderedDict
+_FIELD_CACHE: "_OrderedDict" = _OrderedDict()
+_FIELD_CACHE_MAX = 16
+
+
+def clear_field_cache() -> None:
+    """Drop the sco2_field content cache (test isolation / memory release)."""
+    _FIELD_CACHE.clear()
+
+
 def sco2_field(key: str, T_K, P_Pa: float):
     """Vectorised CoolProp query of `key` over a temperature array/field at a
-    single pressure. Returns an array shaped like `T_K`."""
+    single pressure. Returns a (read-only) array shaped like `T_K`. Identical
+    (key, T-content, P) queries are served from a small content-keyed cache
+    (E3) — bit-identical, skips the redundant PropsSI sweep."""
     import numpy as _np
     T = _np.ascontiguousarray(T_K, dtype=float)
+    ck = (key, float(P_Pa), T.shape, T.tobytes())
+    hit = _FIELD_CACHE.get(ck)
+    if hit is not None:
+        _FIELD_CACHE.move_to_end(ck)
+        return hit
     out = _PropsSI(key, "T", T.ravel(), "P", float(P_Pa), _FLUID)
-    return _np.asarray(out, dtype=float).reshape(T.shape)
+    arr = _np.asarray(out, dtype=float).reshape(T.shape)
+    arr.flags.writeable = False           # fail-loud on accidental mutation
+    _FIELD_CACHE[ck] = arr
+    if len(_FIELD_CACHE) > _FIELD_CACHE_MAX:
+        _FIELD_CACHE.popitem(last=False)
+    return arr
 
 
 def sco2_density_field(T_K, P_Pa: float):
