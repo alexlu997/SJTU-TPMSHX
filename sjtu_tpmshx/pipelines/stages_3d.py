@@ -796,7 +796,11 @@ def _finalize_3d_cfg(raw, fields):
                 raw.get('mass_imbalance_rel_B')),
         },
         zones=None,  # 3D zones land in fields['chi_B'] / fields['*'] directly
-        warnings=[],
+        # U2 (audit 2026-06-28): _run_3d_stack collects the envelope/choke
+        # messages AND the explicit SIMPLE non-convergence warning on the raw
+        # dict; forward them so the UI sees them (was hard-coded [], silently
+        # dropping a 3D under-resolved/off-envelope flag the 2D path surfaces).
+        warnings=list(raw.get('envelope_warnings', [])),
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
@@ -804,6 +808,10 @@ def _finalize_3d_cfg(raw, fields):
             # Dimension marker for write_result dispatch (C4); '3d' here,
             # '2d' in stages_2d._finalize_cfg.
             'mode': '3d',
+            # Compressible-envelope post-solve verdict (U2): carried so the UI
+            # can flag a result the warn-mode gate marked non-physical.
+            'envelope_valid': raw.get('envelope_valid', True),
+            'envelope_reasons': list(raw.get('envelope_reasons', [])),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
