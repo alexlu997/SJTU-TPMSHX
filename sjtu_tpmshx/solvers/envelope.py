@@ -124,14 +124,27 @@ def assess_solution_validity(P_abs_min, vmax, T_ref, *, mach_limit=1.0,
     ``T_ref`` Mach is computed (back-compat / scalar callers).
     """
     reasons = []
-    if P_abs_min <= PRESSURE_FLOOR_PA * (1.0 + 1.0e-6):
+    # A diverged solve can leave NaN/inf in the pressure/velocity field. Every
+    # float comparison against NaN is False, so the floor/Mach branches below
+    # would silently skip and report a NaN field as valid — the same silent
+    # garbage this gate exists to catch, just via NaN instead of finite |v|.
+    # Treat non-finite inputs as off-envelope explicitly (audit 2026-06-28).
+    if not np.isfinite(P_abs_min):
+        reasons.append(
+            f"non-finite absolute pressure (min P = {P_abs_min}) — the solver "
+            "diverged (NaN/inf field)")
+    elif P_abs_min <= PRESSURE_FLOOR_PA * (1.0 + 1.0e-6):
         reasons.append(
             f"pressure clipped to the {PRESSURE_FLOOR_PA:.0f} Pa floor "
             f"(min absolute P = {float(P_abs_min):.1f} Pa) — the solve left "
             "the compressible envelope")
     Ma = float(ma_max) if ma_max is not None else mach(vmax, T_ref, R=R,
                                                        gamma=gamma)
-    if Ma >= mach_limit:
+    if not np.isfinite(Ma):
+        reasons.append(
+            f"non-finite Mach (Ma = {Ma}) — the solver diverged "
+            "(NaN/inf velocity or temperature field)")
+    elif Ma >= mach_limit:
         reasons.append(
             f"supersonic: Ma_max = {Ma:.2f} >= {float(mach_limit):g}")
     return (len(reasons) == 0, reasons)
@@ -145,7 +158,15 @@ def gate_solution(P_abs_min, vmax, T_ref, *, mode='raise', dims='3D',
     :class:`ChokedFlowError` (labelled by ``dims``) when the converged field is
     non-physical, otherwise just return ``(valid, reasons)``. ``'warn'`` /
     ``'off'`` never raise.
+
+    ``mode`` is validated against :data:`ENVELOPE_MODES` (like the pre-solve
+    :func:`check_compressible_envelope`), so a typo'd / mis-configured mode fails
+    loudly instead of silently degrading a ``'raise'`` intent into ``'off'``
+    (audit 2026-06-28).
     """
+    if mode not in ENVELOPE_MODES:
+        raise ValueError(f"unknown envelope mode {mode!r}; "
+                         f"expected one of {ENVELOPE_MODES}")
     valid, reasons = assess_solution_validity(
         P_abs_min, vmax, T_ref, mach_limit=mach_limit, R=R, gamma=gamma,
         ma_max=ma_max)

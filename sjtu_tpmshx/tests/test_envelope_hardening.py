@@ -90,3 +90,57 @@ def test_envelope_mode_propagates_into_3d_cfg():
                  envelope_mode='warn')
     cfg = _parse_inputs_3d_cfg(cc)
     assert cfg['envelope_mode'] == 'warn'
+
+
+# ── A1: NaN/inf fields must FAIL the validity gate (audit 2026-06-28) ───────
+# A diverged solve can leave NaN in the pressure/velocity field. Every float
+# comparison against NaN is False, so the floor/Mach branches silently skip and
+# the gate used to report a NaN field as valid=True (the exact silent-garbage
+# failure this guard exists to prevent, via NaN instead of finite |v|~2000).
+def test_assess_flags_nan_pressure_invalid():
+    valid, reasons = assess_solution_validity(np.nan, 5.0, 800.0, ma_max=0.02)
+    assert valid is False
+    assert any('non-finite' in r.lower() or 'diverg' in r.lower() for r in reasons)
+
+
+def test_assess_flags_inf_pressure_invalid():
+    valid, reasons = assess_solution_validity(np.inf, 5.0, 800.0, ma_max=0.02)
+    assert valid is False
+
+
+def test_assess_flags_nan_mach_invalid():
+    # NaN velocity field -> mach_field_max returns NaN -> ma_max=nan.
+    valid, reasons = assess_solution_validity(150e3, 5.0, 800.0, ma_max=np.nan)
+    assert valid is False
+    assert any('non-finite' in r.lower() or 'diverg' in r.lower() for r in reasons)
+
+
+def test_gate_solution_raises_on_nan_field():
+    with pytest.raises(ChokedFlowError):
+        gate_solution(np.nan, 5.0, 800.0, mode='raise', dims='3D')
+
+
+def test_assess_finite_clean_still_valid():
+    # Guard must not regress the clean case.
+    valid, reasons = assess_solution_validity(150e3, 8.5, 800.0, ma_max=0.02)
+    assert valid is True and reasons == []
+
+
+# ── A2: gate_solution must validate envelope_mode (audit 2026-06-28) ────────
+# check_compressible_envelope rejects an unknown mode; gate_solution did not, so
+# a typo'd mode ('raises'/'Raise') silently degraded a 'raise' intent into 'off'.
+def test_gate_solution_rejects_unknown_mode():
+    with pytest.raises(ValueError):
+        gate_solution(150e3, 5.0, 800.0, mode='raises')  # typo of 'raise'
+
+
+def test_gate_solution_rejects_wrong_case_mode():
+    with pytest.raises(ValueError):
+        gate_solution(150e3, 5.0, 800.0, mode='Raise')
+
+
+def test_gate_solution_accepts_valid_modes():
+    # The three canonical modes must not raise ValueError on a clean field.
+    for m in ('raise', 'warn', 'off'):
+        valid, _ = gate_solution(150e3, 8.5, 800.0, mode=m, ma_max=0.02)
+        assert valid is True
