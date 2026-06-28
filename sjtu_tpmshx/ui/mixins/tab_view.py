@@ -38,7 +38,9 @@ class TabViewMixin:
         Rules (finalized 2026-04-21):
           - Layout : always
           - Temp/Pres/Vel : 2D mode AND _has_results_2d
-          - 3D View : 3D mode AND _has_results_3d
+          - 3D View : 3D mode AND _3d_view_ready (panel populated; U1 2026-06-28
+            — was _has_results_3d, but that is now result-presence and stays
+            True after a soft viz-fail to keep the result exportable)
           - Pareto  : _has_pareto (independent of mode)
 
         If the currently active tab disappears, fall back to Layout.
@@ -53,7 +55,7 @@ class TabViewMixin:
             'temp':    (not is_3d) and getattr(self, '_has_results_2d', False),
             'pres':    (not is_3d) and getattr(self, '_has_results_2d', False),
             'vel':     (not is_3d) and getattr(self, '_has_results_2d', False),
-            '3d':      is_3d and getattr(self, '_has_results_3d', False),
+            '3d':      is_3d and getattr(self, '_3d_view_ready', False),
             # D-plan: Optimize tab is the entry point for NSGA-II — must be
             # reachable before any compute so the user can click Launch.
             # The Pareto plot stays empty until a run completes; the

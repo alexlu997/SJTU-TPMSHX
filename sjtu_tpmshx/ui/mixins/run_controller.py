@@ -546,12 +546,14 @@ class RunControllerMixin:
                 # console clue — matches the 2D path's diagnostics now).
                 import traceback
                 traceback.print_exc()
-                # H5 invariant: a finalize crash must not leave a stale
-                # ``_has_results_3d == True`` (which would auto-switch the next
-                # run to a blank 3D tab). Clear it here — in the live window
-                # this also drops the now-unrenderable result via the bridge,
-                # which is correct since the panel never populated.
-                self._has_results_3d = False
+                # H5 invariant: a finalize crash must not leave the 3D View tab
+                # enabled (which would auto-switch the next run to a blank tab).
+                # U1 (2026-06-28): gate the tab off via the dedicated readiness
+                # flag — do NOT null _has_results_3d, whose bridge setter would
+                # DESTROY the valid solver result. The ComputeResult was written
+                # by the worker before finalize and stays exportable even though
+                # the PyVista panel never populated.
+                self._3d_view_ready = False
                 self._end_compute_ui(success=False)
                 self.statusBar().showMessage(
                     f"3D visualisation failed: {_fe3d!r} — solver finished, "
@@ -560,10 +562,14 @@ class RunControllerMixin:
                 return
             self._has_results = True
             # Only mark the 3D View tab as ready if the PyVistaQt panel
-            # actually populated. Otherwise leave the flag False so the
-            # tab stays disabled and the user is not silently switched
-            # to a blank canvas.
-            self._has_results_3d = _3d_vis_ok
+            # actually populated; otherwise the tab stays disabled and the user
+            # is not silently switched to a blank canvas.
+            # U1 (2026-06-28): tab-readiness is its OWN flag — do NOT route it
+            # through the result-nulling _has_results_3d bridge setter, which on
+            # a soft viz failure (headless/offscreen/GL/TPMSHX_DISABLE_3D_PANEL)
+            # destroyed the valid solve's result, defeating the status branch
+            # below and the Export data-presence gate. The result stays cached.
+            self._3d_view_ready = bool(_3d_vis_ok)
             for _bname in ('btn_export',):
                 if hasattr(self, _bname):
                     getattr(self, _bname).setEnabled(True)
@@ -669,6 +675,7 @@ class RunControllerMixin:
         if mode == '3d':
             self._result_3d = None
             self._has_results_3d = False
+            self._3d_view_ready = False
             if not getattr(self, '_has_results_2d', False):
                 self._has_results = False
             for _bname in ('btn_export',):
@@ -722,6 +729,7 @@ class RunControllerMixin:
             # 3D-specific: drop result + status message
             self._result_3d = None
             self._has_results_3d = False
+            self._3d_view_ready = False
             self._update_tab_visibility()
             self._end_compute_ui(success=False)
             self.statusBar().showMessage(

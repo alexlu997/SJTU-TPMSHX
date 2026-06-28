@@ -78,77 +78,94 @@ class _DummyWindow:
         return _StatusBarStub()
 
 
+class _CacheBridgeWindow(_DummyWindow):
+    """Models the REAL ``main.Main_Menu`` ResultCache bridge instead of plain
+    attrs: ``_result_3d`` is property-backed, and the ``_has_results_3d`` setter
+    NULLS ``_result_3d`` when set False (getter = result-present). The plain-attr
+    ``_DummyWindow`` decoupled the flag from the result, which HID the U1 bug
+    where a soft viz-fail destroyed a valid solve's result (audit 2026-06-28)."""
+
+    def __init__(self):
+        self._cache_3d = None          # backing store, must exist before setters
+        super().__init__()
+
+    @property
+    def _result_3d(self):
+        return self._cache_3d
+
+    @_result_3d.setter
+    def _result_3d(self, v):
+        self._cache_3d = v
+
+    @property
+    def _has_results_3d(self):
+        return self._cache_3d is not None
+
+    @_has_results_3d.setter
+    def _has_results_3d(self, v):
+        if not v:                       # the result-nulling coupling (real bridge)
+            self._cache_3d = None
+
+
 # ── tests ───────────────────────────────────────────────────────────
 
 
-def test_3d_finalize_crash_resets_has_results_3d():
-    """When ``finalize_plots_3d`` raises, the H5 fix must leave
-    ``_has_results_3d`` at ``False`` even though it was ``True`` from
-    a prior successful 3D run."""
+def _run_finished(win, finalize_behavior):
+    """Drive Main_Menu._on_orch_finished with finalize_plots_3d patched."""
     import main
-
-    win = _DummyWindow()
-    assert win._has_results_3d is True  # stale prior state
-
-    # Patch finalize_plots_3d to crash.
-    def _boom(_w):
-        raise RuntimeError("PyVista context lost")
-
-    # Patch QApplication.processEvents (called inside the slot) so the
-    # absent QApplication doesn't blow up.
-    with patch('ui.plot_3d_results.finalize_plots_3d', _boom), \
-         patch('PySide6.QtWidgets.QApplication') as qapp_mock:
-        qapp_mock.processEvents = MagicMock()
-        try:
-            main.Main_Menu._on_orch_finished(win, {})
-        except Exception:
-            # The slot itself does not raise — but if some patched
-            # path leaks an exception, we still want the H5 invariant
-            # checked below.
-            pass
-
-    # H5 invariant: stale True must not survive a finalize crash.
-    assert win._has_results_3d is False, (
-        f"H5 leak: _has_results_3d stayed {win._has_results_3d!r} "
-        f"after finalize_plots_3d crash")
-
-
-def test_3d_finalize_success_sets_has_results_3d_true():
-    """Happy path: finalize returns True → ``_has_results_3d`` ends
-    ``True``."""
-    import main
-
-    win = _DummyWindow()
-    win._has_results_3d = False  # clean prior state
-
-    with patch('ui.plot_3d_results.finalize_plots_3d',
-                return_value=True), \
-         patch('PySide6.QtWidgets.QApplication') as qapp_mock:
+    if isinstance(finalize_behavior, BaseException):
+        def _fb(_w):
+            raise finalize_behavior
+        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d', _fb)
+    else:
+        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d',
+                          return_value=finalize_behavior)
+    with patch_fin, patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()
         try:
             main.Main_Menu._on_orch_finished(win, {})
         except Exception:
             pass
 
-    assert win._has_results_3d is True
+
+def test_3d_finalize_crash_gates_tab_off_but_keeps_result():
+    """When ``finalize_plots_3d`` raises, the 3D View tab must be gated off
+    (``_3d_view_ready`` False) — but the valid solver result must SURVIVE so it
+    stays exportable (U1: was destroyed via the result-nulling bridge)."""
+    win = _CacheBridgeWindow()
+    assert win._result_3d is not None and win._has_results_3d is True
+
+    _run_finished(win, RuntimeError("PyVista context lost"))
+
+    # Tab gated off (panel never populated) — the H5 invariant, now carried by
+    # the dedicated flag instead of the result-nulling _has_results_3d.
+    assert getattr(win, '_3d_view_ready', False) is False
+    # U1: result preserved — Export / status read _result_3d.
+    assert win._result_3d is not None, "finalize crash destroyed the 3D result"
 
 
-def test_3d_finalize_returns_false_keeps_has_results_3d_false():
-    """When ``finalize_plots_3d`` returns falsy (viz panel did not
-    populate), ``_has_results_3d`` must stay ``False`` regardless of
-    prior value."""
-    import main
+def test_3d_finalize_success_marks_view_ready_and_keeps_result():
+    """Happy path: finalize returns True → tab ready + result present."""
+    win = _CacheBridgeWindow()
 
-    win = _DummyWindow()
-    win._has_results_3d = True  # stale True
+    _run_finished(win, True)
 
-    with patch('ui.plot_3d_results.finalize_plots_3d',
-                return_value=False), \
-         patch('PySide6.QtWidgets.QApplication') as qapp_mock:
-        qapp_mock.processEvents = MagicMock()
-        try:
-            main.Main_Menu._on_orch_finished(win, {})
-        except Exception:
-            pass
+    assert getattr(win, '_3d_view_ready', False) is True
+    assert win._result_3d is not None
 
-    assert win._has_results_3d is False
+
+def test_3d_soft_vis_fail_preserves_result_for_export():
+    """U1 (audit 2026-06-28): on the REAL ResultCache bridge a soft viz failure
+    (finalize returns False — offscreen/headless/GL/TPMSHX_DISABLE_3D_PANEL)
+    must NOT destroy the freshly-computed 3D result. The valid Q/dP must survive
+    so the 'visualisation failed' status branch + Export work; tab-readiness is
+    carried by ``_3d_view_ready`` instead of the result-nulling flag."""
+    win = _CacheBridgeWindow()
+    assert win._result_3d is not None
+
+    _run_finished(win, False)
+
+    # The bug: line 566 wrote _has_results_3d=False -> bridge nulled _result_3d.
+    assert win._result_3d is not None, "soft viz-fail destroyed the 3D result"
+    # Tab gated off so the user is not routed to a blank canvas.
+    assert getattr(win, '_3d_view_ready', False) is False
