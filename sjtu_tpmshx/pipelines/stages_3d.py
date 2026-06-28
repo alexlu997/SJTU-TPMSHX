@@ -2442,6 +2442,15 @@ def _run_3d_stack(cfg):
         # eps_f_arr (= ε_A, correct for diffusion); only the convective
         # epsilon arg must be FULL ε.
         _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
+        # Option B gate: sCO2-both-sides counterflow-x with ltne_enthalpy_mode on.
+        _enth_gate = (bool(cfg.get('ltne_enthalpy_mode', False))
+                      and fluid_type_A == 'sco2' and fluid_type_B == 'sco2'
+                      and sB is not None
+                      and fA['dir'] in (0, 1) and fB['dir'] in (0, 1))
+        # When the enthalpy solve will overwrite the result below, run the legacy
+        # ρcp·u·T solve for only a couple of sweeps (a cheap warm-start) rather
+        # than to full convergence — its Ta/Tb/Ts are discarded.
+        _eff_ltne_max_iter = 2 if _enth_gate else _ltne_max_iter
         _ltne_result = solve_full_domain_3d(
             L, H, Lz, Nx, Ny, Nz, T_inA, T_inB,
             K_ffA, K_ffB, K_ss, h_vA_field, h_vB_field,
@@ -2452,7 +2461,7 @@ def _run_3d_stack(cfg):
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             inlet_mask_A=_ltne_mask_A,
             inlet_mask_B=_ltne_mask_B,
-            Tb_prescribed=Tb_presc, max_iter=_ltne_max_iter, tol=1e-5,
+            Tb_prescribed=Tb_presc, max_iter=_eff_ltne_max_iter, tol=1e-5,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             alpha_T=float(cfg.get('ltne_alpha_T', 0.7)),
             # force_cc_ltne: drop face velocities so the LTNE uses the cc
@@ -2495,10 +2504,7 @@ def _run_3d_stack(cfg):
         # enthalpy-form solve (true ṁ·h transport). Default-off + the strict
         # gate keep air/water and every other config bit-identical.
         # (Plan: vault reports/method/3d/2026-06-28-3d-ltne-enthalpy-*.)
-        if (bool(cfg.get('ltne_enthalpy_mode', False))
-                and fluid_type_A == 'sco2' and fluid_type_B == 'sco2'
-                and sB is not None
-                and fA['dir'] in (0, 1) and fB['dir'] in (0, 1)):
+        if _enth_gate:
             from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
             _epsps = 0.5 * float(eps)
             _mdA = (1.0 if fA['dir'] == 0 else -1.0) * abs(
@@ -2510,10 +2516,10 @@ def _run_3d_stack(cfg):
                 h_vA_field, h_vB_field, _mdA, _mdB,
                 T_inA, T_inB, P_inA, P_inB, fA['dir'], fB['dir'],
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-                n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 5)),
+                n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 25)),
                 omega=float(cfg.get('ltne_enthalpy_omega', 0.6)),
-                n_outer=int(cfg.get('ltne_enthalpy_outer', 3000)),
-                tol=float(cfg.get('ltne_enthalpy_tol', 2e-5)))
+                n_outer=int(cfg.get('ltne_enthalpy_outer', 1500)),
+                tol=float(cfg.get('ltne_enthalpy_tol', 1e-3)))
 
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')

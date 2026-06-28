@@ -26,7 +26,7 @@ def _case():
         h_vA=2.5e5, h_vB=2.5e5,
         T_inA=360.0, T_inB=298.0, P=8.0e6,
         dir_A=0, dir_B=1,
-        n_sweep=5, omega=0.7, tol=1e-3, n_outer=2000,
+        n_sweep=20, omega=0.7, tol=1e-3, n_outer=2000,
     )
 
 
@@ -70,7 +70,7 @@ def _recuperator_case():
         h_vA=4.19e6, h_vB=4.32e6,
         T_inA=737.0, T_inB=361.0, P=8.017e6, P_B=18.48e6,
         dir_A=0, dir_B=1,
-        n_sweep=5, omega=0.6, tol=1e-3, n_outer=4000,
+        n_sweep=25, omega=0.6, tol=1e-3, n_outer=1500,
     )
 
 
