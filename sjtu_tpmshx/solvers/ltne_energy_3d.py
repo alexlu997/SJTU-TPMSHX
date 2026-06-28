@@ -2066,9 +2066,11 @@ def _warmup_jit():
 
     E1 (audit 2026-06-28): must warm the DEFAULT-path STAGGERED kernels
     (_gs_full_chunk_3d_stag + the >30k-cell red-black _stag_rb), not just the
-    legacy cell-centered kernel — conservative_ltne defaults True, so the stag
-    kernel is what production dispatches (the cc kernel is in fact unreachable
-    with conservative_ltne=True). The prior warmup also passed one too few `eps`
+    legacy cell-centered kernel. PRODUCTION runs conservative_ltne=True (injected
+    by the pipeline cfg.get('conservative_ltne', True) and core.evaluators —
+    solve_full_domain_3d's OWN signature default is False), so the stag kernel is
+    what production dispatches (the cc kernel is unreachable once
+    conservative_ltne=True). The prior warmup also passed one too few `eps`
     args (34 vs 35), so its TypeError was swallowed and it compiled NOTHING.
     """
     try:
