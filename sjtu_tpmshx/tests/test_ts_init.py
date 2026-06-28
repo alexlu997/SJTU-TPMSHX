@@ -57,24 +57,32 @@ def test_ts_init_changes_first_sweep():
     print(f"test_ts_init_changes_first_sweep PASS (|ΔTs|={diff:.2f} K)")
 
 
-def test_ts_init_none_matches_legacy():
-    """Ts_init=None keeps the legacy 0.5*(T_inA+T_inB) seed."""
+def test_ts_init_none_matches_per_fluid_seed():
+    """Ts_init=None auto-seeds Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB).
+
+    Updated for the 2026-06-28 audit HIGH-1 fix: the 2D kernel's no-warm-start
+    cold-start now seeds the FLUIDS per-inlet (Ta=T_inA, Tb=T_inB), matching
+    the 3D kernel (ltne_energy_3d.py) — the old all-three-at-0.5-mean seed froze
+    partial-inlet off-pipe cells at the mid-T and leaked ~12-18% Q via the solid
+    coupling. The solid still cold-starts at 0.5-mean. Passing those exact seeds
+    explicitly must reproduce the None default.
+    """
     args = _common_args()
     Nx, Ny = args['Nx'], args['Ny']
-    T_init = 0.5 * (args['T_inA'] + args['T_inB'])
+    T_mid = 0.5 * (args['T_inA'] + args['T_inB'])
 
-    _, _, Ts_legacy = solve_full_domain(**args)
+    _, _, Ts_default = solve_full_domain(**args)
 
-    Ta_seed = np.full((Nx, Ny), T_init, dtype=np.float64)
-    Tb_seed = np.full((Nx, Ny), T_init, dtype=np.float64)
-    Ts_seed = np.full((Nx, Ny), T_init, dtype=np.float64)
+    Ta_seed = np.full((Nx, Ny), args['T_inA'], dtype=np.float64)
+    Tb_seed = np.full((Nx, Ny), args['T_inB'], dtype=np.float64)
+    Ts_seed = np.full((Nx, Ny), T_mid, dtype=np.float64)
     _, _, Ts_explicit = solve_full_domain(
         **args, Ta_init=Ta_seed, Tb_init=Tb_seed, Ts_init=Ts_seed)
 
-    diff = float(np.max(np.abs(Ts_legacy - Ts_explicit)))
+    diff = float(np.max(np.abs(Ts_default - Ts_explicit)))
     assert diff < 1e-9, (
-        f"Explicit legacy seed drifted from None default: |ΔTs|={diff:.3e}")
-    print(f"test_ts_init_none_matches_legacy PASS (|ΔTs|={diff:.2e} K)")
+        f"None default drifted from the per-fluid seed: |ΔTs|={diff:.3e}")
+    print(f"test_ts_init_none_matches_per_fluid_seed PASS (|ΔTs|={diff:.2e} K)")
 
 
 class _FakeLineEdit:
@@ -249,7 +257,7 @@ def test_ts_init_3d_user_value_lands_in_initial_field():
 
 if __name__ == '__main__':
     test_ts_init_changes_first_sweep()
-    test_ts_init_none_matches_legacy()
+    test_ts_init_none_matches_per_fluid_seed()
     test_parse_empty_returns_none()
     test_parse_kelvin_numeric()
     test_parse_celsius_converts_to_kelvin()
