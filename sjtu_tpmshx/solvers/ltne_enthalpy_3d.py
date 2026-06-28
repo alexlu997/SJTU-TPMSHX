@@ -37,7 +37,7 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                            epsA, epsB, FmA, FmB,
                            hvA, hvB, ks, dx, dy, dz,
                            h_in_A, h_in_B, dir_A, dir_B,
-                           n_sweep, omega, h_lo, h_hi):
+                           n_sweep, omega, h_lo_A, h_hi_A, h_lo_B, h_hi_B):
     """In-place Gauss-Seidel sweeps for the enthalpy-form LTNE system.
 
     hA/hB: fluid enthalpy fields (primary unknowns). Ts: solid temperature.
@@ -113,10 +113,10 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         nb += aT * hA[i, j, k + 1]
                     new = (nb + S) / (aP if aP > 1e-30 else 1e-30)
                     upd = (1.0 - omega) * hA[i, j, k] + omega * new
-                    if upd < h_lo:
-                        upd = h_lo
-                    elif upd > h_hi:
-                        upd = h_hi
+                    if upd < h_lo_A:
+                        upd = h_lo_A
+                    elif upd > h_hi_A:
+                        upd = h_hi_A
                     hA[i, j, k] = upd
 
         # ── Fluid B (enthalpy) ──
@@ -171,10 +171,10 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         nb += aT * hB[i, j, k + 1]
                     new = (nb + S) / (aP if aP > 1e-30 else 1e-30)
                     upd = (1.0 - omega) * hB[i, j, k] + omega * new
-                    if upd < h_lo:
-                        upd = h_lo
-                    elif upd > h_hi:
-                        upd = h_hi
+                    if upd < h_lo_B:
+                        upd = h_lo_B
+                    elif upd > h_hi_B:
+                        upd = h_hi_B
                     hB[i, j, k] = upd
 
         # ── Solid (T_s) — diffusion + LTNE source, adiabatic ends ──
@@ -215,10 +215,15 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
 
 def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                            m_dot_A, m_dot_B, h_vA, h_vB,
-                           T_inA, T_inB, P, dir_A=0, dir_B=1,
+                           T_inA, T_inB, P, P_B=None, dir_A=0, dir_B=1,
                            n_outer=3000, n_sweep=3, omega=0.6, tol=2e-5):
     """Python Picard driver around the njit enthalpy sweeps. CoolProp T(h,P)
-    inverse + cp/k property fields refreshed once per outer iteration."""
+    inverse + cp/k property fields refreshed once per outer iteration.
+
+    Per-side pressure: ``P`` is fluid A's pressure, ``P_B`` fluid B's (defaults
+    to ``P``). The 703 recuperator runs hot ≈8 MPa / cold ≈18.5 MPa."""
+    P_A = float(P)
+    P_B = float(P_B) if P_B is not None else P_A
     dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
     shape = (Nx, Ny, Nz)
     epsA = np.full(shape, 0.5 * eps)
@@ -227,10 +232,15 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     FmA = float(m_dot_A) / (Ny * Nz)
     FmB = float(m_dot_B) / (Ny * Nz)
 
-    h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P))
-    h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P))
-    h_lo = float(sco2_props.sco2_enthalpy(_T_LO, P))
-    h_hi = float(sco2_props.sco2_enthalpy(_T_HI, P))
+    h_in_A = float(sco2_props.sco2_enthalpy(T_inA, P_A))
+    h_in_B = float(sco2_props.sco2_enthalpy(T_inB, P_B))
+    # clamp the iterate to a generous window around the two inlet temperatures
+    T_lo = max(min(T_inA, T_inB) - 40.0, 230.0)
+    T_hi = max(T_inA, T_inB) + 40.0
+    h_lo_A = float(sco2_props.sco2_enthalpy(T_lo, P_A))
+    h_hi_A = float(sco2_props.sco2_enthalpy(T_hi, P_A))
+    h_lo_B = float(sco2_props.sco2_enthalpy(T_lo, P_B))
+    h_hi_B = float(sco2_props.sco2_enthalpy(T_hi, P_B))
 
     hA = np.full(shape, h_in_A)
     hB = np.full(shape, h_in_B)
@@ -238,12 +248,12 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
     n_done = 0
     for outer in range(n_outer):
-        T_A = sco2_props.sco2_temperature_field(hA, P)
-        T_B = sco2_props.sco2_temperature_field(hB, P)
-        cpA = sco2_props.sco2_cp_field(T_A, P)
-        cpB = sco2_props.sco2_cp_field(T_B, P)
-        kA = sco2_props.sco2_conductivity_field(T_A, P)
-        kB = sco2_props.sco2_conductivity_field(T_B, P)
+        T_A = sco2_props.sco2_temperature_field(hA, P_A)
+        T_B = sco2_props.sco2_temperature_field(hB, P_B)
+        cpA = sco2_props.sco2_cp_field(T_A, P_A)
+        cpB = sco2_props.sco2_cp_field(T_B, P_B)
+        kA = sco2_props.sco2_conductivity_field(T_A, P_A)
+        kB = sco2_props.sco2_conductivity_field(T_B, P_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)   # h-space diffusivity
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()
@@ -252,7 +262,7 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
             epsA, epsB, FmA, FmB, float(h_vA), float(h_vB), float(k_s),
             dx, dy, dz, h_in_A, h_in_B, int(dir_A), int(dir_B),
-            int(n_sweep), float(omega), h_lo, h_hi)
+            int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
         n_done = outer + 1
         denom = max(abs(h_in_A - h_in_B), 1.0)
@@ -260,9 +270,9 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 np.max(np.abs(hB - hB_star))) / denom) < tol:
             break
 
-    return dict(Ta=sco2_props.sco2_temperature_field(hA, P),
-                Tb=sco2_props.sco2_temperature_field(hB, P),
-                Ts=Ts, hA=hA, hB=hB, n_outer=n_done)
+    return dict(Ta=sco2_props.sco2_temperature_field(hA, P_A),
+                Tb=sco2_props.sco2_temperature_field(hB, P_B),
+                Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B)
 
 
 def enthalpy_metrics_3d(res, case):
@@ -270,7 +280,8 @@ def enthalpy_metrics_3d(res, case):
     Q_solid via the volumetric LTNE exchange."""
     Ta, Tb, Ts = res["Ta"], res["Tb"], res["Ts"]
     Nx, Ny, Nz = Ta.shape
-    P = case["P"]
+    P_A = res.get("P_A", case["P"])
+    P_B = res.get("P_B", case.get("P_B", P_A))
     Vc = (case["Lx"] / Nx) * (case["Ly"] / Ny) * (case["Lz"] / Nz)
     mA = abs(case["m_dot_A"]); mB = abs(case["m_dot_B"])
     hvA, hvB = case["h_vA"], case["h_vB"]
@@ -278,10 +289,10 @@ def enthalpy_metrics_3d(res, case):
 
     outA = -1 if dir_A == 0 else 0
     outB = -1 if dir_B == 0 else 0
-    hA_out = float(np.mean(sco2_props.sco2_enthalpy_field(Ta[outA, :, :], P)))
-    hB_out = float(np.mean(sco2_props.sco2_enthalpy_field(Tb[outB, :, :], P)))
-    h_in_A = float(sco2_props.sco2_enthalpy(case["T_inA"], P))
-    h_in_B = float(sco2_props.sco2_enthalpy(case["T_inB"], P))
+    hA_out = float(np.mean(sco2_props.sco2_enthalpy_field(Ta[outA, :, :], P_A)))
+    hB_out = float(np.mean(sco2_props.sco2_enthalpy_field(Tb[outB, :, :], P_B)))
+    h_in_A = float(sco2_props.sco2_enthalpy(case["T_inA"], P_A))
+    h_in_B = float(sco2_props.sco2_enthalpy(case["T_inB"], P_B))
 
     Q_enth_A = mA * abs(hA_out - h_in_A)
     Q_enth_B = mB * abs(hB_out - h_in_B)

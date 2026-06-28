@@ -53,3 +53,41 @@ def test_enthalpy_3d_temperatures_physical():
     # cold inlet at x=-1 (dir_B=1): B outlet (x=0) warmer than inlet
     assert Tb[0, :, :].mean() > c["T_inB"]
     assert Ta.min() > 240.0 and Ta.max() < 420.0
+
+
+def _recuperator_case():
+    """703 recuperator: hot 737 K @ 8.017 MPa, cold 361 K @ 18.48 MPa,
+    counterflow, per-side pressure, high-NTU (h_v ~ 4e6 from the sCO2 Nu).
+    The legacy ρcp·u·T 3D kernel leaves ~41% A/B imbalance here and under-reads
+    the cold outlet to ~515 K; the enthalpy form must recover the energy-balance
+    outlet (~655 K) and close the imbalance."""
+    return dict(
+        Nx=16, Ny=3, Nz=3, Lx=0.344, Ly=0.860, Lz=0.860,
+        eps=0.675, k_s=16.0,
+        m_dot_A=+37.6, m_dot_B=-37.6,
+        h_vA=4.19e6, h_vB=4.32e6,
+        T_inA=737.0, T_inB=361.0, P=8.017e6, P_B=18.48e6,
+        dir_A=0, dir_B=1,
+        n_sweep=5, omega=0.6, tol=1e-3, n_outer=4000,
+    )
+
+
+def test_enthalpy_3d_703_recuperator_conserves():
+    """End-to-end value gate: Option B on the real 703 recuperator envelope
+    closes the A/B imbalance (was ~41% with ρcp·u·T) and recovers the cold
+    outlet (was wrongly ~515 K, energy balance wants ~655 K)."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
+    c = _recuperator_case()
+    res = solve_ltne_enthalpy_3d(**c)
+    m = enthalpy_metrics_3d(res, c)
+
+    assert m["AB_imbal"] < 0.05, (
+        f"703 recuperator A/B imbalance {m['AB_imbal']*100:.2f}% — Option B "
+        f"should be far below the legacy ~41%")
+    assert m["e_imb_LTNE"] < 0.02
+    # cold outlet (dir_B=1 → x=0) must land near the energy-balance value,
+    # decisively above the legacy ρcp·u·T under-read of ~515 K.
+    cold_out = float(res["Tb"][0, :, :].mean())
+    assert cold_out > 600.0, (
+        f"cold outlet {cold_out:.0f} K still under-read (legacy gave ~515 K; "
+        f"energy balance wants ~655 K)")
