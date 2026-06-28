@@ -93,3 +93,31 @@ def test_enthalpy_3d_703_recuperator_conserves():
     assert cold_out > 600.0, (
         f"cold outlet {cold_out:.0f} K still under-read (legacy gave ~515 K; "
         f"energy balance wants ~655 K)")
+
+
+def test_enthalpy_3d_near_critical_cp_spike_robust():
+    """Precooler regime: a stream traversing the pseudocritical cp×56 spike
+    (Tpc≈306 K @ 7.7 MPa) must stay robust and conservative. Option B has cp
+    only in the denominator of the inter-phase linearisation and none in the
+    convection, so the ×56 jump cannot destabilise it — the reason it was
+    chosen over the in-T deferred-correction form (Option A)."""
+    from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d, enthalpy_metrics_3d
+    # hot A = large reservoir at ~322 K, cold B small → dragged up across Tpc.
+    c = dict(Nx=40, Ny=3, Nz=3, Lx=0.20, Ly=0.5, Lz=0.5, eps=0.675, k_s=16.0,
+             m_dot_A=+250.0, m_dot_B=-7.0, h_vA=2.5e6, h_vB=2.5e6,
+             T_inA=322.0, T_inB=290.0, P=7.7e6, P_B=7.7e6, dir_A=0, dir_B=1,
+             n_sweep=30, omega=0.5, tol=5e-4, n_outer=4000)
+    res = solve_ltne_enthalpy_3d(**c)
+    m = enthalpy_metrics_3d(res, c)
+
+    assert np.all(np.isfinite(res["Ta"])) and np.all(np.isfinite(res["Tb"])), \
+        "NaN through the cp×56 spike"
+    Tb = res["Tb"][:, 1, 1]
+    # the cold stream must actually traverse the spike, with cells in the peak
+    assert Tb.min() < 306.0 < Tb.max(), "cold stream did not cross Tpc"
+    assert int(np.sum((Tb > 303.0) & (Tb < 309.0))) >= 5, \
+        "no cells resolved inside the sharp spike band"
+    # and conservation must hold THROUGH the spike
+    assert m["AB_imbal"] < 0.03, (
+        f"A/B imbalance {m['AB_imbal']*100:.2f}% through the cp×56 spike")
+    assert m["e_imb_LTNE"] < 0.02
