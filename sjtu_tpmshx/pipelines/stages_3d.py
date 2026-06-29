@@ -41,6 +41,9 @@ from solvers.tpms_calc import (
 )
 from solvers import fluid_props
 from solvers import sco2_props
+from solvers.asym_split import (
+    _asym_split_A, _per_side_eps_override, _eps_sides_for_run,
+)
 from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
 from df_surrogate.kappa_asym import kappa_KcF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
@@ -1545,57 +1548,6 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
         mass_rel_A=mass_rel_A, mass_rel_B=mass_rel_B,
         Q_sA_interior=Q_sA_interior, Q_sB_interior=Q_sB_interior,
         Q_interior_primary=Q_interior_primary, AB_interior=AB_interior)
-
-
-def _asym_split_A(cfg, tpms_type, Lcell, t_wall):
-    """Fraction of total ε assigned to side A under offset-isosurface δ.
-
-    Returns 0.5 at δ=0 (symmetric). δ≠0 → the geometry split ratio
-    εA/(εA+εB) from ``asym_geometry.eps_sides`` at C = C(t/L).
-    δ = ``cfg['delta_levelset']`` (φ-units). Shared by ``_eps_sides_for_run``
-    (per-cell void arrays) and the per-side D-F κ closure so both consume one
-    split definition.
-    """
-    delta = float(cfg.get('delta_levelset', 0.0))
-    if delta == 0.0:
-        return 0.5
-    from solvers.tpms_geometry import _phi_grid, _C_from_tL
-    from solvers import asym_geometry as _ag
-    phi = _phi_grid(tpms_type, 128)
-    C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
-    eA, eB, _etot = _ag.eps_sides(phi, C, delta)
-    return eA / (eA + eB)
-
-
-def _per_side_eps_override(cfg, tpms_type, Lcell, t_wall, eps):
-    """Per-side single-channel void overrides for the LTNE m_dot / Q weighting
-    under an offset-isosurface δ.
-
-    Returns ``(None, None)`` at δ=0 → the symmetric 0.5·ε path (bit-identical);
-    δ≠0 → ``(ε·split_A, ε·(1−split_A))`` so ṁ_A/ṁ_B weight by the actual channel
-    void fraction, not 0.5·ε. ONE definition shared by the main duty extraction
-    and the enthalpy-mode ṁ build, so both stay consistent (N4 audit 2026-06-28
-    — the enthalpy block previously omitted the override and mis-scaled ṁ by
-    split/0.5 on the asymmetric geometry)."""
-    if float(cfg.get('delta_levelset', 0.0)) == 0.0:
-        return None, None
-    split_A = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
-    return float(eps) * split_A, float(eps) * (1.0 - split_A)
-
-
-def _eps_sides_for_run(cfg, tpms_type, Lcell, t_wall, eps_arr, eps_f_arr):
-    """Per-side single-channel void fractions for asymmetric offset-isosurface δ.
-
-    δ=0 → returns the symmetric ``eps_f_arr`` (= eps_arr/2) object for BOTH
-    sides → bit-identical to the legacy path. δ≠0 → split the run's total
-    ``eps_arr`` by the geometry ratio (``_asym_split_A``), PRESERVING the total
-    (so cfg['eps'] is honoured, not the calibration ε from C(t/L); the split
-    *ratio* is the geometry signal). Returns ``(eps_fA_arr, eps_fB_arr)``.
-    """
-    if float(cfg.get('delta_levelset', 0.0)) == 0.0:
-        return eps_f_arr, eps_f_arr
-    s = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
-    return eps_arr * s, eps_arr * (1.0 - s)
 
 
 def _run_3d_stack(cfg):
