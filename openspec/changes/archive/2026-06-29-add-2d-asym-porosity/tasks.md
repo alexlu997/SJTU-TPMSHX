@@ -32,4 +32,4 @@
 
 - [x] 4.1 Update the solver `CLAUDE.md` ε-invariant note: 2D now supports asymmetric ε_A ≠ ε_B via the `eps_A` / `eps_B` hooks (remove the "2D raises NotImplementedError" caveat)
 - [x] 4.2 `openspec validate add-2d-asym-porosity --strict`
-- [ ] 4.3 Commit to the solver repo; archive the change with `openspec archive add-2d-asym-porosity`
+- [x] 4.3 Commit to the solver repo; archive the change with `openspec archive add-2d-asym-porosity`
