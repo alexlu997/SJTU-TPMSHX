@@ -2,11 +2,11 @@
 
 ### Requirement: 2D LTNE kernel accepts distinct per-side void fractions
 
-The 2D LTNE solver `solve_full` SHALL accept distinct per-side single-channel void fractions ε_A and ε_B and route them through both Gauss-Seidel kernel variants (the lexicographic `_gs_full_chunk` and the red-black `_gs_full_chunk_rb`), weighting each fluid's convective transport by its own channel void fraction. It SHALL NOT raise `NotImplementedError` when ε_A ≠ ε_B.
+The 2D LTNE solver `solve_full_domain` SHALL accept distinct per-side single-channel void fractions ε_A and ε_B and route them through both Gauss-Seidel kernel variants (the lexicographic `_gs_full_chunk` and the red-black `_gs_full_chunk_rb`), weighting each fluid's convective transport by its own channel void fraction. It SHALL NOT raise `NotImplementedError` when ε_A ≠ ε_B.
 
 #### Scenario: Asymmetric split solves without error
 
-- **WHEN** `solve_full` is called with ε_A ≠ ε_B that satisfy ε_A + ε_B ≤ ε at every cell
+- **WHEN** `solve_full_domain` is called with ε_A ≠ ε_B that satisfy ε_A + ε_B ≤ ε at every cell
 - **THEN** the solver runs to convergence and returns fluid-A, fluid-B, and solid temperature fields without raising
 
 #### Scenario: Per-side weighting is applied in the kernel
@@ -17,7 +17,7 @@ The 2D LTNE solver `solve_full` SHALL accept distinct per-side single-channel vo
 #### Scenario: Over-allocation is still rejected
 
 - **WHEN** ε_A + ε_B exceeds ε at any cell
-- **THEN** `solve_full` raises `ValueError` (the existing total-void guard is preserved)
+- **THEN** `solve_full_domain` raises `ValueError` (the existing total-void guard is preserved)
 
 ### Requirement: Symmetric input is bit-identical to the legacy path
 
@@ -39,7 +39,7 @@ The per-side void fractions derived from the offset δ SHALL sum to the configur
 
 ### Requirement: 2D pipeline derives per-side porosity from the offset δ
 
-The 2D pipeline SHALL derive ε_A and ε_B from the offset-isosurface δ (`cfg['delta_levelset']`) using the same geometry split ratio as the 3D pipeline, and pass them to `solve_full`. When δ=0 it SHALL pass the symmetric ε/2 to both sides.
+The 2D pipeline SHALL derive ε_A and ε_B from the offset-isosurface δ (`cfg['delta_levelset']`) using the same geometry split ratio as the 3D pipeline, and pass them to `solve_full_domain`. When δ=0 it SHALL pass the symmetric ε/2 to both sides.
 
 #### Scenario: Nonzero offset drives an asymmetric run
 

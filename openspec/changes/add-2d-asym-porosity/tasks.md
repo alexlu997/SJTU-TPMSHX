@@ -5,11 +5,11 @@
 
 ## 2. Phase 1 — kernel parity (TDD)
 
-- [ ] 2.1 Write failing unit test: `solve_full` with ε_A ≠ ε_B (ε_A + ε_B ≤ ε) runs without `NotImplementedError` and conserves energy
-- [ ] 2.2 Write failing unit test: `solve_full` with ε_A = ε_B = ε/2 reproduces the symmetric single-`eps_f_arr` result bit-identically
+- [ ] 2.1 Write failing unit test: `solve_full_domain` with ε_A ≠ ε_B (ε_A + ε_B ≤ ε) runs without `NotImplementedError` and conserves energy
+- [ ] 2.2 Write failing unit test: `solve_full_domain` with ε_A = ε_B = ε/2 reproduces the symmetric single-`eps_f_arr` result bit-identically
 - [ ] 2.3 Split `_gs_full_chunk` `eps_f_arr` → `eps_fA_arr` / `eps_fB_arr` (FxA pre-compute + fluid-A convection use fA; fluid-B convection uses fB)
 - [ ] 2.4 Mirror the same split in `_gs_full_chunk_rb`
-- [ ] 2.5 Replace the `NotImplementedError` branch in `solve_full`: build `eps_fA` / `eps_fB`, pass both; symmetric passes the same array to both sides; keep the `eps_A + eps_B ≤ ε` guard
+- [ ] 2.5 Replace the `NotImplementedError` branch in `solve_full_domain`: build `eps_fA` / `eps_fB`, pass both; symmetric passes the same array to both sides; keep the `eps_A + eps_B ≤ ε` guard
 - [ ] 2.6 Run the two unit tests → green
 - [ ] 2.7 Verify golden 2D bit-identical at δ=0: `python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d_pre.json`
 - [ ] 2.8 Full pytest (`/check`) green

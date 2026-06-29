@@ -2,14 +2,14 @@
 
 The 3D path already implements asymmetric per-side porosity end-to-end (`pipelines/stages_3d.py`): `_asym_split_A` derives the geometry split ratio from the offset δ, `_eps_sides_for_run` splits total ε into (ε·s, ε·(1−s)), the kernel receives `eps_A` / `eps_B` and consumes them without re-halving, and `_per_side_eps_override` / `eps_side_override` weight the dP/Q duty extraction by the per-side void.
 
-The 2D path lags: the kernel (`solvers/ltne_energy.py`) takes a single `eps_f_arr` (= ε/2 symmetric) used in the convective terms of both fluids; `solve_full` raises `NotImplementedError` for ε_A ≠ ε_B (`:645`); and `pipelines/stages_2d.py` has no δ plumbing at all. This change ports the settled 3D pattern down to 2D, where parameter sweeps over δ are affordable.
+The 2D path lags: the kernel (`solvers/ltne_energy.py`) takes a single `eps_f_arr` (= ε/2 symmetric) used in the convective terms of both fluids; `solve_full_domain` raises `NotImplementedError` for ε_A ≠ ε_B (`:645`); and `pipelines/stages_2d.py` has no δ plumbing at all. This change ports the settled 3D pattern down to 2D, where parameter sweeps over δ are affordable.
 
 The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA pre-compute (`_gs_full_chunk:117`) and fluid-A convection (`:159,:175-176`) for side A; fluid-B convection (`:253,:266-267`) for side B; the same pattern in `_gs_full_chunk_rb`. Diffusion uses `K_ffA_arr` / `K_ffB_arr`, which already bake in per-side ε upstream, so the diffusion stencil needs no change.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- 2D `solve_full` accepts ε_A ≠ ε_B and weights each fluid's convection by its own void fraction.
+- 2D `solve_full_domain` accepts ε_A ≠ ε_B and weights each fluid's convection by its own void fraction.
 - The 2D pipeline derives (ε_A, ε_B) from δ and weights dP/Q duty per-side.
 - δ=0 stays bit-identical (golden 2D + Shanghai 2D unchanged).
 - Reuse the 3D geometry-split source of truth rather than re-deriving it.
@@ -30,7 +30,7 @@ The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA 
   - The solid `K_ss = (1−ε)·k_s` is **untouched**: the split only redistributes fluid ε between A and B, so total fluid ε — and thus the solid fraction 1−ε — is invariant.
   - *Alternative:* re-derive ε inside the kernel diffusion stencil → rejected (double-counts the ε already in K_ff).
 - **D3 — Bit-identical δ=0 by passing the same array to both sides.** When symmetric, pass the one `eps_f_arr` object as both `eps_fA_arr` and `eps_fB_arr`, so the arithmetic is unchanged. Mirrors 3D's `eps_fA_arr = eps_fB_arr = eps_f_arr` at δ=0. This is what keeps the golden gate green.
-- **D4 — Keep the `eps_A` / `eps_B` private-hook signature.** Replace the `NotImplementedError` branch in `solve_full` with: build `eps_fA` / `eps_fB`, pass both to the kernel; keep the `eps_A + eps_B ≤ ε` guard. The full-ε contract for the default (symmetric) path is unchanged.
+- **D4 — Keep the `eps_A` / `eps_B` private-hook signature.** Replace the `NotImplementedError` branch in `solve_full_domain` with: build `eps_fA` / `eps_fB`, pass both to the kernel; keep the `eps_A + eps_B ≤ ε` guard. The full-ε contract for the default (symmetric) path is unchanged.
 
 ## Risks / Trade-offs
 
@@ -43,7 +43,7 @@ The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA 
 
 ## Migration Plan
 
-- **Phase 1 (kernel parity):** kernel pair + `solve_full` dispatch + unit tests; gate on golden 2D bit-identical at δ=0.
+- **Phase 1 (kernel parity):** kernel pair + `solve_full_domain` dispatch + unit tests; gate on golden 2D bit-identical at δ=0.
 - **Phase 2 (pipeline drive):** `stages_2d` δ split plumbing + per-side dP/Q weighting; gate on Shanghai 2D regression.
 - **Rollback:** the δ=0 path is unchanged, so reverting is removing the new branches — no data or config migration.
 
