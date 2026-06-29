@@ -84,7 +84,7 @@ def _sou_corr_y(T, i, j, Ny, v_loc, Fy_field):
 @njit(cache=True)
 def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                    K_ffA_arr, K_ffB_arr, K_ss_arr,
-                   h_vA_arr, h_vB_arr, eps_f_arr,
+                   h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                    rho_cp_fA, rho_cp_fB,
                    ucA, vcA, ucB, vcB,
                    bc_A, bc_B, T_inA_arr, T_inB_arr,
@@ -114,7 +114,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     FyA = np.empty((Nx, Ny))
     for _i in range(Nx):
         for _j in range(Ny):
-            _efr = eps_f_arr[_i, _j] * rho_cp_fA[_i, _j]
+            _efr = eps_fA_arr[_i, _j] * rho_cp_fA[_i, _j]
             FxA[_i, _j] = _efr * abs(ucA[_i, _j]) * dy_arr[_j]
             FyA[_i, _j] = _efr * abs(vcA[_i, _j]) * dx_arr[_i]
 
@@ -156,7 +156,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     vol = dxi * dyj
                     K = K_ffA_arr[i, j]
                     hvA = h_vA_arr[i, j] * vol
-                    ef = eps_f_arr[i, j]
+                    ef = eps_fA_arr[i, j]
 
                     # Face spacing δx_e = 0.5·(dx_P + dx_E) ensures conservative
                     # diffusion stencil — same value used by cell P (as east-flux)
@@ -250,7 +250,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         vol_b = dxi * dyj
                         K = K_ffB_arr[i, j]
                         hvB = h_vB_arr[i, j] * vol_b
-                        ef = eps_f_arr[i, j]
+                        ef = eps_fB_arr[i, j]
 
                         # Face spacing for B diffusion stencil (conservative)
                         dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
@@ -326,7 +326,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 @njit(cache=True, parallel=True)
 def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                       K_ffA_arr, K_ffB_arr, K_ss_arr,
-                      h_vA_arr, h_vB_arr, eps_f_arr,
+                      h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
                       rho_cp_fA, rho_cp_fB,
                       ucA, vcA, ucB, vcB,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
@@ -349,7 +349,7 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     FyA = np.empty((Nx, Ny))
     for _ii in range(Nx):
         for _jj in range(Ny):
-            _efr = eps_f_arr[_ii, _jj] * rho_cp_fA[_ii, _jj]
+            _efr = eps_fA_arr[_ii, _jj] * rho_cp_fA[_ii, _jj]
             FxA[_ii, _jj] = _efr * abs(ucA[_ii, _jj]) * dy_arr[_jj]
             FyA[_ii, _jj] = _efr * abs(vcA[_ii, _jj]) * dx_arr[_ii]
     for _it in range(n_iters):
@@ -388,7 +388,7 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     vol = dxi * dyj
                     K = K_ffA_arr[i, j]
                     hvA = h_vA_arr[i, j] * vol
-                    ef = eps_f_arr[i, j]
+                    ef = eps_fA_arr[i, j]
                     dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
                     dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
                     dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
@@ -464,7 +464,7 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         vol_b = dxi * dyj
                         K = K_ffB_arr[i, j]
                         hvB = h_vB_arr[i, j] * vol_b
-                        ef = eps_f_arr[i, j]
+                        ef = eps_fB_arr[i, j]
                         dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
                         dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
                         dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
@@ -621,16 +621,20 @@ def solve_full_domain(L, H, Nx, Ny,
     # (ε_A = ε_B = ε/2) — matches symmetric bicontinuous sheet TPMS.
     #
     # **eps_A / eps_B kwargs are private hooks, NOT a public API** — they
-    # exist only so a future kernel upgrade can pass distinct ε_A / ε_B
-    # arrays without changing the signature. Today the kernel takes a
-    # single eps_f_arr, so any caller that supplies asymmetric values gets
-    # NotImplementedError. UI / optimizer never pass them (#13).
+    # carry distinct per-side void fractions ε_A, ε_B (offset-isosurface δ)
+    # already split UPSTREAM in the pipeline so they sum to ε; the kernel
+    # consumes them without re-halving (mirrors the 3D asym path). The UI /
+    # optimizer never pass them and get the symmetric ε/2 split below.
+    # The kernel takes eps_fA_arr / eps_fB_arr; the symmetric path passes the
+    # SAME array object to both sides so δ=0 is bit-identical (golden gate).
     if eps_A is None and eps_B is None:
         if np.ndim(epsilon) == 0:
             eps_f_arr = np.full((Nx, Ny), 0.5 * float(epsilon), dtype=np.float64)
         else:
             eps_f_arr = np.ascontiguousarray(
                 0.5 * np.asarray(epsilon, dtype=np.float64))
+        eps_fA_arr = eps_f_arr
+        eps_fB_arr = eps_f_arr   # same object → bit-identical to legacy
     else:
         if eps_A is None or eps_B is None:
             raise ValueError("eps_A and eps_B must be provided together.")
@@ -642,13 +646,12 @@ def solve_full_domain(L, H, Nx, Ny,
                 "eps_A + eps_B exceeds epsilon at some cells — the two fluid "
                 "channels cannot together occupy more than the total void "
                 "fraction.")
-        if not np.allclose(eps_A_arr, eps_B_arr):
-            raise NotImplementedError(
-                "Asymmetric ε_A / ε_B is not yet routed through the LTNE "
-                "kernel (solve_full currently assumes symmetric ε_A = ε_B = "
-                "ε/2). Extend _gs_full_chunk to accept eps_fA_arr and "
-                "eps_fB_arr before enabling asymmetric splits.")
-        eps_f_arr = eps_A_arr  # equals eps_B_arr by the check above
+        # Asymmetric ε_A ≠ ε_B is now routed per-side through the kernel: fluid
+        # A's convection is weighted by ε_A, fluid B's by ε_B. A symmetric
+        # explicit input (ε_A = ε_B = ε/2) reproduces the default path because
+        # the two arrays carry the same values.
+        eps_fA_arr = eps_A_arr
+        eps_fB_arr = eps_B_arr
 
     # Inlet boundary codes
     bc_A = dir_A
@@ -764,7 +767,7 @@ def solve_full_domain(L, H, Nx, Ny,
         chg = _gs_fn(
             Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
             K_ffA_arr, K_ffB_arr, K_ss_arr,
-            h_vA_arr, h_vB_arr, eps_f_arr,
+            h_vA_arr, h_vB_arr, eps_fA_arr, eps_fB_arr,
             rho_cp_fA_arr, rho_cp_fB_arr,
             ucA, vcA, ucB, vcB,
             bc_A, bc_B, T_inA_arr, T_inB_arr,
@@ -834,14 +837,14 @@ def _warmup_jit():
         # Compile path 1: freeze_Tb=0 (normal coupled solve)
         _gs_full_chunk(_Ta.copy(), _Tb.copy(), _Ts.copy(),
                        _Nx, _Ny, _dx, _dy,
-                       _K, _K, _K, _hv, _hv, _ef, _rcp, _rcp,
+                       _K, _K, _K, _hv, _hv, _ef, _ef, _rcp, _rcp,
                        _u, _v, _u, _v,
                        0, 3, _TinA, _TinB, _fracA, _fracB,
                        1, 0)
         # Compile path 2: freeze_Tb=1 (C-1 prescribed-Tb path)
         _gs_full_chunk(_Ta.copy(), _Tb.copy(), _Ts.copy(),
                        _Nx, _Ny, _dx, _dy,
-                       _K, _K, _K, _hv, _hv, _ef, _rcp, _rcp,
+                       _K, _K, _K, _hv, _hv, _ef, _ef, _rcp, _rcp,
                        _u, _v, _u, _v,
                        0, 3, _TinA, _TinB, _fracA, _fracB,
                        1, 1)

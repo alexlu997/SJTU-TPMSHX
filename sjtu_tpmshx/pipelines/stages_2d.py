@@ -951,7 +951,8 @@ def _compute_Q_richardson(
         simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
         energy_dx, energy_dy, _x_breaks, _y_breaks,
         T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
-        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list):
+        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list, split_A=0.5,
+        hv_ratio_A=1.0, hv_ratio_B=1.0):
     """Heat duty Q via Richardson extrapolation on the enthalpy balance.
 
     Re-solves the coupled energy field on a 2x-refined grid, applies
@@ -960,9 +961,21 @@ def _compute_Q_richardson(
     verbatim from ``_run_solvers`` (#9-2D god-function split);
     ``warnings_list`` is appended in place on fallback paths.
 
+    ``split_A`` (offset-isosurface δ): fraction of total ε on side A. 0.5 →
+    symmetric (bit-identical). δ≠0 → the refined solve uses the per-side
+    porosity (eps_A/eps_B + K_ff scaled by 2s / 2(1−s), mirroring the main
+    solve) and each side's duty mass flux is weighted by the same per-side
+    factor so ṁ_A / ṁ_B reflect ε_A / ε_B (not a shared ε/2).
+
     Returns ``(Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
     richardson_warn)``.
     """
+    # Per-side duty weighting relative to the symmetric ε/2 baseline (= 1.0 at
+    # δ=0 ⇒ bit-identical). Matches the K_ff / convective scaling in the main
+    # solve so the extracted A / B duties stay balanced on the split geometry.
+    _asymQ = (float(split_A) != 0.5)
+    _fAQ = 2.0 * float(split_A)
+    _fBQ = 2.0 * (1.0 - float(split_A))
     from solvers.simple_solver import _aligned_grid
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
@@ -1018,13 +1031,28 @@ def _compute_Q_richardson(
         h_vA2 = window._h_vA; h_vB2 = window._h_vB
         K_ffA2 = window._K_ffA; K_ffB2 = window._K_ffB
         K_ss2 = window._K_ss; eps2 = eps
+    # Per-side porosity on the refined grid (mirror the main solve) so the
+    # Richardson pair is solved with the SAME physics. δ=0 → unchanged.
+    if _asymQ:
+        K_ffA2_use = K_ffA2 * _fAQ
+        K_ffB2_use = K_ffB2 * _fBQ
+        h_vA2 = h_vA2 * hv_ratio_A
+        h_vB2 = h_vB2 * hv_ratio_B
+        epsA2_use = (eps2 * float(split_A) if np.ndim(eps2) > 0
+                     else float(eps2) * float(split_A))
+        epsB2_use = (eps2 * (1.0 - float(split_A)) if np.ndim(eps2) > 0
+                     else float(eps2) * (1.0 - float(split_A)))
+    else:
+        K_ffA2_use = K_ffA2; K_ffB2_use = K_ffB2
+        epsA2_use = None; epsB2_use = None
     Ta2, Tb2, Ts2 = solve_full_domain(
         L, H, Nx2, Ny2, T_inA, T_inB,
-        K_ffA2, K_ffB2, K_ss2, h_vA2, h_vB2,
+        K_ffA2_use, K_ffB2_use, K_ss2, h_vA2, h_vB2,
         rcp_A2, rcp_B2, eps2,
         ucA2, vcA2, ucB2, vcB2,
         dir_A, dir_B, tol=0.5, max_iter=5000,
-        dx_arr=energy_dx2, dy_arr=energy_dy2)
+        dx_arr=energy_dx2, dy_arr=energy_dy2,
+        eps_A=epsA2_use, eps_B=epsB2_use)
     _area2 = energy_dx2[:, None] * energy_dy2[None, :]
     if za is not None and 'h_vB_arr' in za:
         Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
@@ -1092,6 +1120,14 @@ def _compute_Q_richardson(
             Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
             inlet_mask=mB_in2, outlet_mask=mB_out2,
             enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val)
+        # Per-side duty weighting (offset-isosurface δ): weight each side's mass
+        # flux by its void fraction relative to the symmetric ε/2 (factor 1.0 at
+        # δ=0 → bit-identical). A signed scale preserves the gives-up/absorbs
+        # sign; the |·| below takes magnitude. Keeps ṁ_A/ṁ_B physical and the
+        # AB balance closed on the split geometry (kernel already uses ε_A/ε_B).
+        if _asymQ:
+            Q_A_fine *= _fAQ; Q_A_coarse *= _fAQ
+            Q_B_fine *= _fBQ; Q_B_coarse *= _fBQ
         # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
         # separately, THEN take max. Each Richardson acts on a smooth
         # (single-sign) function across refinement, so the formal
@@ -1184,6 +1220,10 @@ def _compute_Q_richardson(
             A_in_B = float(cfgB.get('in_w', L))
             m_dot_A = rho_A_in * abs(u_A) * A_in_A
             m_dot_B = rho_B_in * abs(u_B) * A_in_B
+            # Per-side void weighting (offset-isosurface δ; 1.0 at δ=0).
+            if _asymQ:
+                m_dot_A *= _fAQ
+                m_dot_B *= _fBQ
             # sCO2 (D1): ṁ·Δh even in the last-resort fallback (cp_in·ΔT is
             # badly wrong near the pseudocritical line). air/water keep cp·ΔT.
             if _pA.get('name') == 'sco2':
@@ -1345,6 +1385,70 @@ def _run_solvers(window, cfg, fields):
     P_inA_val = cfg['compute_cfg'].fluid_A.P_in_Pa
     P_inB_val = cfg['compute_cfg'].fluid_B.P_in_Pa
 
+    # ── Asymmetric per-side porosity (offset-isosurface δ) — mirror 3D ──
+    # δ=0 → symmetric (split=0.5, factors=1, no per-side override) → bit-
+    # identical legacy path. δ≠0 → redistribute the total void between channels
+    # A / B by the geometry split ratio s = split_A (shared with 3D via
+    # solvers.asym_split). 2D's symmetric K_ff uses the FULL ε (tpms_calc:506)
+    # while the convective term uses ε/2, so EVERY per-side void-weighted term
+    # scales by the SAME factor relative to the symmetric ε/2 baseline —
+    # 2s for A, 2(1−s) for B — which is bit-identical at δ=0 (factor=1 at s=0.5)
+    # and keeps diffusion / convection / duty per-side consistent. The kernel
+    # itself receives the absolute eps_A = ε·s / eps_B = ε·(1−s) (Phase 1 hook).
+    # See design add-2d-asym-porosity D2(b).
+    from solvers.asym_split import _asym_split_A as _asym_split_A_2d
+    _delta_2d = float(cfg['compute_cfg'].geometry.delta_levelset)
+    _asym_2d = (_delta_2d != 0.0)
+    _split_A_2d = _asym_split_A_2d({'delta_levelset': _delta_2d},
+                                   tpms_type, Lcell, t_wall)
+    _epsfac_A = 2.0 * _split_A_2d            # ε_A / (ε/2)
+    _epsfac_B = 2.0 * (1.0 - _split_A_2d)    # ε_B / (ε/2)
+
+    # Per-side interfacial coupling h_v geometry ratio under δ (mirror 3D
+    # stages_3d._hv_side_geom_ratio). Each side's (A_0, D_h) shift with the
+    # offset; the ratio vs the δ=0 reference is EXACTLY 1.0 at δ=0 (bit-
+    # identical ×1.0) and u-independent (Re_side/Re_ref = D_h_side/D_h_ref), so
+    # the scalar applies to both the bulk and local-Re h_v. k_f cancels. Captures
+    # the geometric Nu/area effect; the residual κ_Nu is CFD calibration (P1-CFD,
+    # out of scope). Per-side dP (Darcy-Forchheimer κ) is likewise the opt-in
+    # CFD κ layer — 3D's default kappa_KcF returns (1,1) with no table, so the
+    # symmetric K_df/cF here matches the 3D default. See design D2(b) / Risks.
+    def _hv_side_geom_ratio_2d(side_props, u_side, T_side, P_side):
+        if not _asym_2d:
+            return 1.0
+        from solvers.tpms_geometry import _phi_grid, _C_from_tL
+        from solvers import asym_geometry as _ag
+        _N = 128
+        _phi = _phi_grid(tpms_type, _N)
+        _C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
+        _Lm = float(Lcell) / 1000.0
+        A0A, A0B = _ag.a0_sides(_phi, _C, _delta_2d, _Lm, _N)
+        DhA, DhB = _ag.dh_sides(_phi, _C, _delta_2d, _Lm, _N, mc=True)
+        A0A0, A0B0 = _ag.a0_sides(_phi, _C, 0.0, _Lm, _N)
+        DhA0, DhB0 = _ag.dh_sides(_phi, _C, 0.0, _Lm, _N, mc=True)
+        _is_A = (side_props is _pA)
+        A0_s, Dh_s, A0_r, Dh_r = ((A0A, DhA, A0A0, DhA0) if _is_A
+                                  else (A0B, DhB, A0B0, DhB0))
+        _rho = float(side_props['rho'](T_side, P_side))
+        _mu = float(side_props['mu'](T_side, P_side))
+
+        def _hv(A0, Dh):
+            Dh_m = max(float(Dh), 1e-12)
+            Re = max(_rho * abs(float(u_side)) * Dh_m / max(_mu, 1e-30), 1.0)
+            if side_props['name'] in ('water', 'sco2'):
+                nu = _nu_dispatch(side_props, T_side, Re, 0.5 * float(eps),
+                                  Lcell, Dh_m * 1000.0, P_side)
+            else:
+                nu = _tc.nu_from_Re(tpms_type, Re, 0.5 * float(eps),
+                                    Lcell, Dh_m * 1000.0)
+            nu = max(nu, _NU_LAM_FLOOR_2D)
+            return A0 * nu / Dh_m
+        _ref = _hv(A0_r, Dh_r)
+        return (_hv(A0_s, Dh_s) / _ref) if _ref > 0 else 1.0
+
+    _hv_ratio_A_2d = _hv_side_geom_ratio_2d(_pA, u_A, T_inA, P_inA_val)
+    _hv_ratio_B_2d = _hv_side_geom_ratio_2d(_pB, u_B, T_inB, P_inB_val)
+
     def _on_progress(step, total):
         pass  # progress handled by main thread timer
 
@@ -1465,6 +1569,10 @@ def _run_solvers(window, cfg, fields):
                                          u_mag_B, L_field_2d, t_field_2d,
                                          side_props=_pB, side_T_for_Pr=T_inB,
                                          side_P=P_inB_val)
+        # Per-side interfacial geometry under δ (1.0 at δ=0 → bit-identical).
+        if _asym_2d:
+            h_vA_local = h_vA_local * _hv_ratio_A_2d
+            h_vB_local = h_vB_local * _hv_ratio_B_2d
 
         # 2026-05-09 (option B) — water-side stiffness: ρ·cp_water ~ 4100×
         # ρ·cp_air, h_v_water ~ 2-3× h_v_air (Pr-substitution). solve_full_domain
@@ -1476,32 +1584,37 @@ def _run_solvers(window, cfg, fields):
         _e_tol      = 1.0   if _has_water else 0.5
 
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
+        # Per-side porosity for the offset-isosurface δ. δ=0 → eps_A/eps_B None
+        # and the K_ff sources are passed through unscaled → bit-identical to the
+        # legacy symmetric path (zoned and non-zoned branches only ever differed
+        # in the K_ff / ε *source* and the kwarg order, both equivalent here).
         if zone_config is not None:
-            Ta, Tb, Ts, e_info = solve_full_domain(
-                L, H, N_x, N_y, T_inA, T_inB,
-                za['K_ffA_arr'], za['K_ffB_arr'], za['K_ss_arr'],
-                h_vA_local, h_vB_local,
-                rho_cp_A, rho_cp_B,
-                za['eps_arr'], ucA, vcA, ucB, vcB,
-                dir_A, dir_B,
-                max_iter=_e_max_iter, tol=_e_tol,
-                progress_cb=_on_progress, return_info=True,
-                Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-                dx_arr=energy_dx, dy_arr=energy_dy,
-                inlet_mask_A=_imA, inlet_mask_B=_imB)
+            _Kffa_src = za['K_ffA_arr']; _Kffb_src = za['K_ffB_arr']
+            _Kss_src = za['K_ss_arr']; _eps_src = za['eps_arr']
         else:
-            Ta, Tb, Ts, e_info = solve_full_domain(
-                L, H, N_x, N_y, T_inA, T_inB,
-                window._K_ffA, window._K_ffB, window._K_ss,
-                h_vA_local, h_vB_local,
-                rho_cp_A, rho_cp_B,
-                eps, ucA, vcA, ucB, vcB,
-                dir_A, dir_B,
-                max_iter=_e_max_iter, tol=_e_tol,
-                progress_cb=_on_progress, return_info=True,
-                Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-                inlet_mask_A=_imA, inlet_mask_B=_imB,
-                dx_arr=energy_dx, dy_arr=energy_dy)
+            _Kffa_src = window._K_ffA; _Kffb_src = window._K_ffB
+            _Kss_src = window._K_ss; _eps_src = eps
+        if _asym_2d:
+            _Kffa_use = _Kffa_src * _epsfac_A
+            _Kffb_use = _Kffb_src * _epsfac_B
+            _epsA_use = _eps_src * _split_A_2d
+            _epsB_use = _eps_src * (1.0 - _split_A_2d)
+        else:
+            _Kffa_use = _Kffa_src; _Kffb_use = _Kffb_src
+            _epsA_use = None; _epsB_use = None
+        Ta, Tb, Ts, e_info = solve_full_domain(
+            L, H, N_x, N_y, T_inA, T_inB,
+            _Kffa_use, _Kffb_use, _Kss_src,
+            h_vA_local, h_vB_local,
+            rho_cp_A, rho_cp_B,
+            _eps_src, ucA, vcA, ucB, vcB,
+            dir_A, dir_B,
+            max_iter=_e_max_iter, tol=_e_tol,
+            progress_cb=_on_progress, return_info=True,
+            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+            dx_arr=energy_dx, dy_arr=energy_dy,
+            inlet_mask_A=_imA, inlet_mask_B=_imB,
+            eps_A=_epsA_use, eps_B=_epsB_use)
 
         # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side
         # stiffness (rho·cp 4100× + h_v 2-3× vs air). Replace nan with the
@@ -1687,7 +1800,9 @@ def _run_solvers(window, cfg, fields):
         simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
         energy_dx, energy_dy, _x_breaks, _y_breaks,
         T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
-        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list)
+        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
+        split_A=_split_A_2d,
+        hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d)
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
