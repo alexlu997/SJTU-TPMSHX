@@ -18,12 +18,17 @@ The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA 
 - Changing the 3D path (it is the reference, untouched).
 - Defining a new δ / offset-isosurface geometry (reuse `_asym_split_A`).
 - CFD validation of the asymmetric closure (P1-CFD, separate change).
-- Optimizer objective / UI changes beyond passing δ through to the 2D solve.
+- **The optimizer 2D path (`optimization/evaluator.py` `evaluate_design`) — OUT OF SCOPE.** It is a *separate* `solve_full_domain` caller that does not read `delta_levelset`. A manual δ sweep is served by looping Pipeline2D over δ values (which this change enables). Driving δ as an *optimization variable* would need the same per-side plumbing in `evaluate_design`, but optimization is gated (Q/dP-stability-first workflow), so it is a documented follow-up, not part of this change.
+- UI changes — δ has no GUI knob; it stays programmatic (see Resolved Decisions).
 
 ## Decisions
 
 - **D1 — Single source for the split ratio (RESOLVED: hoist).** Hoist `_asym_split_A`, `_per_side_eps_override`, and `_eps_sides_for_run` out of `stages_3d` into a neutral `solvers/asym_split.py`; both `stages_2d` and `stages_3d` import from there. *Why not "2D imports stages_3d":* `stages_3d` imports the heavy `SIMPLESolver3D` (numba 3D kernels), so a 2D→3D import would drag the entire 3D solver into every 2D run. The split ratio is geometry-derived and dimension-agnostic, so a shared `solvers/` home is the correct one. *Alternative:* a 2D-only split function → rejected (drift risk between 2D and 3D split definitions).
-- **D2 — Per-side ε only in the convective term.** Split `eps_f_arr` → `eps_fA_arr` / `eps_fB_arr` for the convection coefficients (Fx/Fy) and the FxA SOU pre-compute. Diffusion stays via `K_ffA_arr` / `K_ffB_arr`. *Alternative:* re-derive ε inside the diffusion stencil → rejected (K_ff already carries it; would double-count).
+- **D2 — Per-side ε lives in TWO spots: the kernel's convective term + the pipeline's K_ff build.**
+  - *(a) Kernel:* split `eps_f_arr` → `eps_fA_arr` / `eps_fB_arr` for the convection coefficients (Fx/Fy) and the FxA SOU pre-compute. The kernel's **diffusion stencil is unchanged** — it consumes `K_ffA_arr` / `K_ffB_arr` as given.
+  - *(b) Pipeline:* because `K_ff = ε·k_f` (`tpms_calc.py:506`), the 2D pipeline MUST build `K_ffA` with ε_A and `K_ffB` with ε_B (mirror 3D `K_ffA = eps_fA_arr * k_A`, `stages_3d:1938`). Today both use the symmetric ε, so this is a required Phase-2 change, not a no-op.
+  - The solid `K_ss = (1−ε)·k_s` is **untouched**: the split only redistributes fluid ε between A and B, so total fluid ε — and thus the solid fraction 1−ε — is invariant.
+  - *Alternative:* re-derive ε inside the kernel diffusion stencil → rejected (double-counts the ε already in K_ff).
 - **D3 — Bit-identical δ=0 by passing the same array to both sides.** When symmetric, pass the one `eps_f_arr` object as both `eps_fA_arr` and `eps_fB_arr`, so the arithmetic is unchanged. Mirrors 3D's `eps_fA_arr = eps_fB_arr = eps_f_arr` at δ=0. This is what keeps the golden gate green.
 - **D4 — Keep the `eps_A` / `eps_B` private-hook signature.** Replace the `NotImplementedError` branch in `solve_full` with: build `eps_fA` / `eps_fB`, pass both to the kernel; keep the `eps_A + eps_B ≤ ε` guard. The full-ε contract for the default (symmetric) path is unchanged.
 
@@ -33,6 +38,7 @@ The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA 
 - **δ=0 bit-identical regression** → Mitigation: capture the 2D golden baseline BEFORE the change and gate on `--check` bit-identical before merge.
 - **Shanghai 2D RMSRE drift** → Mitigation: run the Shanghai 2D validation, confirm dP 8.35% / Q 2.51% unchanged.
 - **FxA SOU pre-compute uses eps_f** → must be split to use `eps_fA` (side A keeps SOU); side B uses 1st-order convection (no SOU), so only its convection coefficient needs `eps_fB`.
+- **Per-side interfacial coupling h_vA / h_vB and interface area under δ** → Mirror the 3D asym path's fidelity EXACTLY: split total ε between A/B and (per D2) build K_ffA/K_ffB per-side. If 3D does NOT separately adjust h_v / interfacial area per side under δ, 2D does not either — a known modeling approximation shared with 3D, not a 2D-specific gap. Verify against `stages_3d` before implementing the duty path.
 - **No 2D CFD reference for the asymmetric closure** → out of scope; this change delivers solver capability + conservation, not closure validation.
 
 ## Migration Plan

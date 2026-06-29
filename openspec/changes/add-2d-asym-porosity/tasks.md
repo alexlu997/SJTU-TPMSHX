@@ -20,12 +20,13 @@
 - [ ] 3.2 Verify 3D golden bit-identical after the hoist (pure relocation, no behavior change)
 - [ ] 3.3 Write failing test: a δ≠0 2D config runs end-to-end through Pipeline2D and conserves (AB energy balance within tolerance)
 - [ ] 3.4 Add the 2D δ split plumbing in `stages_2d` using the hoisted helpers (δ≠0 → ε·split; δ=0 → ε/2 symmetric)
-- [ ] 3.5 Thread `eps_A` / `eps_B` into the `solve_full` call from `stages_2d` (δ≠0 → per-side; δ=0 → None / symmetric)
-- [ ] 3.6 Add per-side ε weighting to the 2D dP/Q extraction (mirror `eps_side_override`)
-- [ ] 3.7 Run the δ≠0 pipeline test → green
-- [ ] 3.8 Verify golden 2D bit-identical at δ=0 through the pipeline path
-- [ ] 3.9 Shanghai 2D regression: confirm RMSRE dP / Q unchanged
-- [ ] 3.10 Full pytest (`/check`) green
+- [ ] 3.5 Build `K_ffA` with ε_A and `K_ffB` with ε_B in `stages_2d` when δ≠0 (K_ff = ε·k_f, `tpms_calc:506`; mirror 3D `K_ffA = eps_fA_arr * k_A`). δ=0 → unchanged symmetric K_ff. `K_ss` is left untouched (1−ε invariant)
+- [ ] 3.6 Thread `eps_A` / `eps_B` into the `solve_full_domain` call from `stages_2d` (δ≠0 → per-side; δ=0 → None / symmetric)
+- [ ] 3.7 Add per-side ε weighting to the 2D dP/Q extraction (mirror `eps_side_override`); confirm h_v / interface-area handling matches the 3D asym path exactly (design risk)
+- [ ] 3.8 Run the δ≠0 pipeline test → green
+- [ ] 3.9 Verify golden 2D bit-identical at δ=0 through the pipeline path
+- [ ] 3.10 Shanghai 2D regression: confirm RMSRE dP / Q unchanged
+- [ ] 3.11 Full pytest (`/check`) green
 
 ## 4. Close-out
 
