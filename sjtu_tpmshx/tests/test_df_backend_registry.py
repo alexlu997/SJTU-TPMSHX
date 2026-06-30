@@ -72,7 +72,9 @@ def test_rbf_clamp_engages_internally():
 
 
 def test_registry_surface():
-    assert set(available_methods()) == {'gamma_df', 'rbf'}
+    # cfd_refit added 2026-06-30 (clean raw-CFD K surface + gamma_df c_F);
+    # non-default, see df_surrogate/cfd_refit.py.
+    assert set(available_methods()) == {'gamma_df', 'rbf', 'cfd_refit'}
     with pytest.raises(ValueError, match='unknown DF method'):
         P.predict_K_cF('Gyroid', 7.0, 0.6, 0.36, method='plhub_gp_typo')
     b = get_backend('Gyroid', 'gamma_df')
