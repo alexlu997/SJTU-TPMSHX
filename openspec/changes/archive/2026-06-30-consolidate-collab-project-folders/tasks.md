@@ -44,4 +44,4 @@
 ## 7. Close-out
 
 - [x] 7.1 `openspec validate consolidate-collab-project-folders --strict`
-- [ ] 7.2 Commit (single reorg commit; `git mv` keeps history). Archive with `openspec archive consolidate-collab-project-folders` once merged. **Deferred — awaiting user OK to commit (repo rule: commit only when asked).**
+- [x] 7.2 Committed `c3635cd` (13 renames, history preserved) and pushed to origin/master. Archiving now.
