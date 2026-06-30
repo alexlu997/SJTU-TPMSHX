@@ -35,7 +35,16 @@
 > changed; the physics solve (`Ta`/`Tb`/`Ts`/`vmag`/`Q`/`T_out`) is **bit-identical**. The dP
 > reduction works for **any** flow direction (±x/±y/±z): `_resolve_axis_map` permutes streamwise
 > onto solver axis 1 for all six dirs, and both reducers read that axis.
-- **Production default (gamma_df, 2nd-order face Δp): Nz=3 dP 5.05% / Q 3.20% · Nz=10 dP 7.03% / Q 3.30%**
+> **2026-06-30 — grid-converged headline.** An all-axis (r=2: 16/8/4 → 32/16/8 → 64/32/16)
+> full-refinement Richardson pins the **grid-converged** gamma_df Δp RMSRE at **≈ 12 %**
+> (finest 64-grid measured 9.70%, Richardson limit 12.1%, p_obs≈0.76) and Q at **≈ 3 %**
+> (3.43→3.16→3.03%, clean 2nd-order). KEY: the production-grid Δp (Nz=10 face 7.03%) is
+> **under-resolved** — both the cell-centre and the face reducers converge to the SAME continuous
+> Δp as h→0 (cell-centre grid-converged ~12.8%, face ~12.1%); face-extrap only *accelerates*
+> convergence, the floor is the geometry/closure model error (~12%). The README headline now
+> quotes the grid-converged ≈12% / ≈3%; the shanghai regression test still pins the production
+> Nz=3 value (5.05%) as a config-specific guard.
+- **Production default (gamma_df, 2nd-order face Δp): Nz=3 dP 5.05% / Q 3.20% · Nz=10 dP 7.03% / Q 3.30% · grid-converged ≈12% / ≈3%**
   (README headline ≈7%). Cell-centre (legacy) was 9.82% / 12.06%.
   DF surrogate default = GammaDF multi-fidelity (`df_surrogate/gamma_df.py`) since 2026-06-12.
 - **rbf backend reference (`TPMSHX_DF_METHOD=rbf`): Nz=3 dP 7.19% / Q 3.22%,
