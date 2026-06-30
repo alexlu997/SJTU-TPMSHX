@@ -77,6 +77,7 @@ def build_ui(window):
     from PySide6.QtGui import QPixmap
     _banner_path = _os_hdr.path.join(
         _os_hdr.path.dirname(_os_hdr.path.dirname(_os_hdr.path.abspath(__file__))),
+        'assets', 'logos',
         'sjtubannersilver.png' if get_theme_name() == 'dark' else 'sjtubannerred.png')
     banner_present = False
     if _os_hdr.path.exists(_banner_path):
