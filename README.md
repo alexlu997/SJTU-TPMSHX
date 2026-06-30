@@ -92,7 +92,7 @@
 <td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu correlation fit vs CFD — parity for Diamond (orange, n=940, RMSRE 12.5%) and Gyroid (blue, n=939, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), Re 100-50k, Pr 2.3-5.9."></td>
 </tr></table>
 
-<sub>Per-topology Nusselt power-laws fit to CFD (**Diamond** orange · **Gyroid** blue), parity vs the full fit set. **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall, RMSRE ≈ 10 % (the ×1.28 SLM-roughness factor is applied separately in production). **Water** `Nu = c·Re^a·Pr^⅓` — direct fit, RMSRE ≈ 12 %. Coefficients are single-sourced in `solvers/nu_correlations.py` (`NU_COEFFS` / `WATER_NU_COEFFS`).</sub>
+<sub>Per-topology Nusselt power-laws (the solver's own coefficients, `solvers/nu_correlations.py`), parity vs the full fit set (**Diamond** orange · **Gyroid** blue). **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall fit RMSRE ≈ 10 %; production multiplies by **×1.28** (experiment-derived SLM-roughness φ_rough, dashed line; Nu range D [12,199] · G [14,265]). **Water** `Nu = c·Re^a·Pr^⅓` — fit to **water-CFD only** (RMSRE ≈ 12 %); Gyroid cross-checks the **Yan 2024 experiment within ±1 %**, Diamond is CFD-only (no water experiment).</sub>
 
 </div>
 
