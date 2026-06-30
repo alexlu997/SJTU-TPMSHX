@@ -1106,6 +1106,35 @@ class SIMPLESolver3D:
                      - np.average(s.P[:, -1, :][mO], weights=wO[mO]))
 
     @staticmethod
+    def extract_dP_face_extrap(s):
+        """2nd-order inlet/outlet dP — pressure extrapolated to the FACES.
+
+        ``extract_dP_weighted`` differences the first/last **cell-centre**
+        pressures (``P[:, 0, :]`` / ``P[:, -1, :]``), which sit ~h/2 inside the
+        physical inlet/outlet faces. That half-cell offset is an O(h) term, so
+        the boundary pressure-drop functional is only ~1st-order grid-convergent
+        even though the field itself is 2nd-order (and on uniform refinement the
+        cell-centre dP is erratic / non-monotone).
+
+        Extrapolating P to the faces with a one-sided 2nd-order stencil
+        ``P_face = 1.5·P₀ − 0.5·P₁`` removes that O(h) term and restores
+        ~2nd-order (verified: a uniform-refinement study took the cell-centre dP
+        from non-monotone to clean ≥2nd-order convergence). Same streamwise axis
+        (1) and open-area weights as ``extract_dP_weighted``; falls back to the
+        cell-centre value when the streamwise direction has < 2 cells.
+        """
+        wI = s.inlet_frac; wO = s.outlet_frac
+        mI = wI > 0.01; mO = wO > 0.5
+        if not (mI.any() and mO.any()):
+            return 0.0
+        if s.P.shape[1] < 2:          # need 2 cells to extrapolate
+            return SIMPLESolver3D.extract_dP_weighted(s)
+        P_in_face = 1.5 * s.P[:, 0, :] - 0.5 * s.P[:, 1, :]
+        P_out_face = 1.5 * s.P[:, -1, :] - 0.5 * s.P[:, -2, :]
+        return float(np.average(P_in_face[mI], weights=wI[mI])
+                     - np.average(P_out_face[mO], weights=wO[mO]))
+
+    @staticmethod
     def extract_dP_mass_flux_weighted(s):
         """Pipe-weighted inlet-outlet dP using ρ·|v| mass-flux weights.
 
