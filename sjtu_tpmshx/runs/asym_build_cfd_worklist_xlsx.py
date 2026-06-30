@@ -17,14 +17,15 @@ proven domain + post-processing:
 cancels every recipe artifact (entrance/exit/mesh/turbulence). One offset cell
 gives both channels (kr_A>1 large, kr_B<1 small).
 
-Output: runs/_out/asym_cfd/asym_cfd_worklist.xlsx
+Output: D:/Postgraduate/asym-porosity-data/asym_cfd_worklist.xlsx
+        (workspace-level dedicated folder, gitignored — porosity-offset generated data)
 Usage:  python -u runs/asym_build_cfd_worklist_xlsx.py
 """
 import sys
 from pathlib import Path
 
 import numpy as np
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side as XLSide
 from openpyxl.utils import get_column_letter
 
@@ -60,8 +61,20 @@ AIR = dict(name="air", Tref=300.0, P_MPa=0.101325, rho=1.1774, mu=1.846e-5,
 WATER = dict(name="water", Tref=325.0, P_MPa=0.101325, rho=987.11, mu=5.33e-4,
              cp=4180.9, k=0.643, Pr=3.4657, Twall=375.0)
 
-OUT = Path(__file__).resolve().parents[1] / "runs" / "_out" / "asym_cfd"
+# Output → workspace-level dedicated folder for porosity-offset generated DATA.
+# parents[4] = D:\Postgraduate (workspace root); folder is gitignored (not committed).
+# Derived (not hardcoded absolute) so it self-locates as long as the solver repo
+# stays nested under the workspace.
+OUT = Path(__file__).resolve().parents[4] / "asym-porosity-data"
 XLSX = OUT / "asym_cfd_worklist.xlsx"
+
+# water-cfd-raw.xlsx (prior water-side smooth-wall CFD) = the symmetric r=1 anchor
+# for the B (water) side. D-5 / G-5 sheets, wall_thickness_mm==4 (= t0.4 mm) cover
+# the locked L5/t0.4 geometry. We pre-fit (K, c_F) here so it doubles as a recipe-
+# match validation anchor: a freshly-meshed r=1 water run (same recipe as the asym
+# r>1 runs) should reproduce these K/c_F before its κ denominator is trusted.
+WATER_RAW = Path(__file__).resolve().parents[2] / "data" / "raw_data" / "water-cfd-raw.xlsx"
+R1_RE_MAX = 3000   # fit Re window = the B-side operating range in this worklist
 
 # ── styles ───────────────────────────────────────────────────────
 HDR_FILL = PatternFill("solid", fgColor="1F4E79")
@@ -84,6 +97,54 @@ def _delta_for_split(phi, C, target, n=6000):
         if eA / eB >= target:
             return float(d)
     return None
+
+
+def _water_r1_ref():
+    """Read water-cfd-raw.xlsx D-5/G-5 @t0.4 and relative-weighted DF-fit (K, c_F).
+
+    |ΔP|/L = (μ/K)·Um + c_F·ρ·Um²  fit as a·Um + b·Um² with w=1/(ΔP/L)
+    (relative weighting — absolute lstsq over a 5-decade ΔP range biases K ~10×).
+    Returns {lattice: dict(K, cF, rmsre, rho, mu, n, re_min, re_max, pts=[(Re,Um,dpL)])}
+    or {} if the file is absent (generator still builds the rest).
+    """
+    if not WATER_RAW.exists():
+        return {}
+    wb = load_workbook(WATER_RAW, data_only=True)
+    out = {}
+    for sn, tpms in (("D-5", "Diamond"), ("G-5", "Gyroid")):
+        if sn not in wb.sheetnames:
+            continue
+        ws = wb[sn]
+        hdr = [c.value for c in ws[1]]
+        I = {h: k for k, h in enumerate(hdr)}
+        from collections import defaultdict
+        grp = defaultdict(list)
+        for r in ws.iter_rows(min_row=2, values_only=True):
+            if r[I["wall_thickness_mm"]] == 4:        # wt=4 → t0.4 mm
+                grp[r[I["Re"]]].append(r)
+        Re, Um, dpL, pts = [], [], [], []
+        rho = mu = None
+        for re in sorted(grp):
+            if re > R1_RE_MAX:
+                continue
+            rs = grp[re]
+            um = float(np.mean([x[I["Um_m_s"]] for x in rs]))
+            dp = float(np.mean([x[I["dp_core_Pa"]] for x in rs]))
+            cl = float(np.mean([x[I["core_length_m"]] for x in rs]))
+            rho = float(np.mean([x[I["rho_kg_m3"]] for x in rs]))
+            mu = float(np.mean([x[I["mu_Pa_s"]] for x in rs]))
+            Re.append(int(re)); Um.append(um); dpL.append(dp / cl)
+            pts.append((int(re), um, dp, cl, dp / cl))
+        Re = np.array(Re); Um = np.array(Um); y = np.array(dpL)
+        A = np.vstack([Um, Um ** 2]).T
+        w = 1.0 / y
+        coef, *_ = np.linalg.lstsq(A * w[:, None], y * w, rcond=None)
+        a, b = coef
+        K, cF = mu / a, b / rho
+        rmsre = float(np.sqrt(np.mean(((A @ coef - y) / y) ** 2)) * 100)
+        out[tpms] = dict(K=K, cF=cF, rmsre=rmsre, rho=rho, mu=mu,
+                         n=len(Re), re_min=int(Re.min()), re_max=int(Re.max()), pts=pts)
+    return out
 
 
 def _geom():
@@ -150,7 +211,13 @@ def build():
         ("【offset-TPMS 核心方程（per-case 换）】 φ_族 见 lattice 列；固体壁 phi_lo≤φ≤phi_hi（worklist 列）；void_A={φ<phi_lo}(大/气) / void_B={φ>phi_hi}(小/液)。", None),
         ("  ⚠ nTop 建好先验体积分数 = eps_side（worklist 列）再 mesh。per-side: void_A 跑 A 行、void_B 跑 B 行，各一套（直通道相同，只核心换 void）。", None),
         ("", None),
-        ("【物性】 A 侧 = air 可压 ideal-gas ρ(P,T) @Tref=350K；B 侧 = water @Tref=325K（复用水物性表）。κ 与流体无关，物性只定 Um/ṁ。", None),
+        ("【物性】 A 侧 = air 可压 ideal-gas ρ(P,T) @Tref=300K；B 侧 = water @Tref=325K（复用水物性表）。κ 与流体无关，物性只定 Um/ṁ。", None),
+        ("", None),
+        ("【r=1 对称锚状态】", Font(bold=True, size=12)),
+        ("  水侧 r=1 = water-cfd-raw.xlsx D-5/G-5 (wall_thickness_mm=4 = t0.4) 已有数据 → 预拟 (K, c_F) 见 r1_water_ref sheet。", None),
+        ("  空气侧 r=1 = 无旧数据（water-cfd-raw 是纯水），必须新跑。", None),
+        ("  ⚠ κ(r)=X(r)/X(1) 抵消 entrance/mesh/turbulence 只在分子(r>1)与分母(r=1)同 recipe 时成立。", None),
+        ("  旧 water-cfd-raw 是旧 CFD recipe → 新 r=1 应在同一 nTop+Fluent recipe 下重跑，旧数据仅作 validation 对账（新 r=1 应复现 r1_water_ref 的 K/c_F 再信其 κ 分母）。", None),
         ("", None),
         ("【流程】 nTop 建 24 域(12 case×2 side) → Fluent 跑 worklist(Um/ṁ 已给) → 填黄列 p0..p3 → dp_core=p0−p3 → 每 (case,side) 4-6 Re 拟", None),
         ("  |ΔP|_core/L_core = (μ/K)·Um + c_F·ρ·Um²  → (K,c_F) → results sheet → python -m df_surrogate.ingest_cfd_kappa（先改成 κ(r)=X(r)/X(1)）。", None),
@@ -205,6 +272,12 @@ def build():
                 mdot = fl["rho"] * Um * (eps_side * L_m ** 2)
                 is_main = idx >= N_LOW
                 anchor = (g["split_r"] == 1.0)
+                if anchor:
+                    note = "anchor r=1 · 水有(water-cfd-raw)" if side == "B" else "anchor r=1 · 空气须新跑"
+                elif not is_main:
+                    note = "Darcy-pin"
+                else:
+                    note = ""
                 cid = f"asym{g['tpms'][0]}_r{g['split_r']:g}_{side}_Re{re}"
                 vals = [cid, is_main, g["tpms"], g["split_r"], side, L_mm,
                         g["delta"], g["phi_lo"], g["phi_hi"], eps_side, g["eps_sym"], kr,
@@ -212,8 +285,7 @@ def build():
                         fl["rho"], fl["mu"], fl["cp"], fl["k"], fl["Pr"], round(fl["Pr"] ** (1 / 3), 4),
                         round(Um, 5), float("%.4g" % mdot), fl["Twall"],
                         PERIOD_MM, CORE_LEN_MM, N_CORE, INLET_LEN_MM, OUTLET_LEN_MM, LATERAL_BC,
-                        None, None, None, None, None, None,
-                        ("anchor r=1" if anchor else ("Darcy-pin" if not is_main else ""))]
+                        None, None, None, None, None, None, note]
                 for j, v in enumerate(vals, 1):
                     c = ws.cell(row=rr, column=j, value=v); c.border = BORDER; c.alignment = CTR
                     if 34 <= j <= 39:                      # p0..p3, dp_core, Darcy_f
@@ -247,11 +319,59 @@ def build():
     _widths(ws, [9, 7, 6, 9, 9, 13, 13])
     ws.freeze_panes = "A3"
 
+    # ── r1_water_ref (water-side r=1 anchor pre-fit from water-cfd-raw) ──
+    ref = _water_r1_ref()
+    ws = wb.create_sheet("r1_water_ref")
+    note = ws.cell(row=1, column=1, value=(
+        "水侧 r=1 对称锚 — 预拟自 water-cfd-raw.xlsx (D-5/G-5, wall_thickness_mm=4=t0.4, "
+        f"Re≤{R1_RE_MAX}, w=1/(ΔP/L) 相对加权)。|ΔP|/L=(μ/K)·Um+c_F·ρ·Um²。"))
+    note.font = Font(bold=True, color="1F4E79")
+    ws.cell(row=2, column=1, value=(
+        "⚠ 旧 recipe。新 r=1 (同 nTop+Fluent recipe) 应复现下方 K/c_F 才信其 κ 分母；空气侧 r=1 无旧数据须新跑。")
+    ).font = Font(italic=True, color="C00000")
+    if not ref:
+        ws.cell(row=4, column=1, value="(water-cfd-raw.xlsx 未找到，跳过)").font = Font(color="C00000")
+    else:
+        # summary block
+        scols = ["lattice", "fluid", "t_mm", "n_pts", "Re_min", "Re_max",
+                 "K_m2", "c_F", "RMSRE_%", "rho", "mu"]
+        _hdr(ws, scols, row=4)
+        ri = 5
+        for tpms, d in ref.items():
+            vals = [tpms, "water", t_mm, d["n"], d["re_min"], d["re_max"],
+                    float("%.4e" % d["K"]), round(d["cF"], 2), round(d["rmsre"], 2),
+                    round(d["rho"], 1), float("%.3e" % d["mu"])]
+            for j, v in enumerate(vals, 1):
+                c = ws.cell(row=ri, column=j, value=v); c.border = BORDER; c.alignment = CTR
+                c.fill = ANCHOR_FILL
+            ri += 1
+        # raw points block
+        ri += 1
+        ws.cell(row=ri, column=1, value="原始点 (对账用)").font = Font(bold=True)
+        ri += 1
+        pcols = ["lattice", "Re", "Um_m_s", "dp_core_Pa", "core_len_m", "dpL_Pa_per_m"]
+        _hdr(ws, pcols, row=ri)
+        ri += 1
+        for tpms, d in ref.items():
+            for (re, um, dp, cl, dpl) in d["pts"]:
+                vals = [tpms, re, round(um, 6), round(dp, 3), round(cl, 4), round(dpl, 2)]
+                for j, v in enumerate(vals, 1):
+                    c = ws.cell(row=ri, column=j, value=v); c.border = BORDER; c.alignment = CTR
+                ri += 1
+    ws.column_dimensions["A"].width = 90
+    for col in "BCDEFGHIJK":
+        ws.column_dimensions[col].width = 12
+
     wb.save(XLSX)
     print(f"[xlsx] {XLSX}")
     print(f"  geom_cases : {len(geom)} 几何")
     print(f"  cfd_worklist : {n_runs} 行 ({len(geom)} 几何 × ({len(RE_A)}A+{len(RE_B)}B Re))")
     print(f"  results : {len(geom)*2} per-side κ 点")
+    if ref:
+        for tpms, d in ref.items():
+            print(f"  r1_water_ref {tpms}: K={d['K']:.3e} c_F={d['cF']:.1f} RMSRE={d['rmsre']:.1f}%")
+    else:
+        print("  r1_water_ref : water-cfd-raw.xlsx 未找到 (跳过)")
 
 
 if __name__ == "__main__":
