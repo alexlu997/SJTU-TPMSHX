@@ -17,16 +17,10 @@ import pytest
 
 
 def _shanghai_df():
-    import validation.cases.validate_shanghai_3d_real as V
-    p = V._ROOT.parent / "data" / "raw_data" / \
-        "20260401-上海电气天然气加热器实验工况.xlsx" \
-        if hasattr(V, "_ROOT") else None
-    # validate module uses ROOT (parents[1]); data at ROOT.parent/data
-    import pathlib
-    root = pathlib.Path(V.__file__).resolve().parents[1]
-    xlsx = root.parent / "data" / "raw_data" / \
-        "20260401-上海电气天然气加热器实验工况.xlsx"
-    return pd.read_excel(str(xlsx), engine="openpyxl",
+    # Use the canonical data anchor (resilient to where the runner module lives)
+    # instead of recomputing the path from V.__file__ depth.
+    from validation.harness._case_sets import SHANGHAI_XLSX
+    return pd.read_excel(str(SHANGHAI_XLSX), engine="openpyxl",
                          sheet_name="Sheet1", header=None, skiprows=2)
 
 
