@@ -2411,8 +2411,9 @@ def _run_3d_stack(cfg):
     # the 2D-native path (run_calculation.py:821, P_fA = P_inA + (P_g - P_ref
     # _inlet)). SIMPLE's self.P is the gauge field (outlet pinned ~0, inlet ≈
     # dP); abs = (P_in - dP) + gauge ⇒ inlet=P_in, outlet=P_in-dP. Pure baseline
-    # shift, physics-free — dP itself is reported via extract_dP_weighted, and
-    # this anchor does NOT depend on the P_ref_abs reconstruction (which for
+    # shift, physics-free — dP itself is reported via extract_dP_face_extrap
+    # (line above), and this anchor does NOT depend on the P_ref_abs
+    # reconstruction (which for
     # water is a fixed 1D seed, not loop-converged → would over-shoot the inlet).
     P_disp_A = (P_inA - dP) + sA.P
     P_real = np.ascontiguousarray(P_disp_A.transpose(solver_to_real_perm))

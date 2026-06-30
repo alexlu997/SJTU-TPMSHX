@@ -1117,11 +1117,18 @@ class SIMPLESolver3D:
         cell-centre dP is erratic / non-monotone).
 
         Extrapolating P to the faces with a one-sided 2nd-order stencil
-        ``P_face = 1.5·P₀ − 0.5·P₁`` removes that O(h) term and restores
-        ~2nd-order (verified: a uniform-refinement study took the cell-centre dP
-        from non-monotone to clean ≥2nd-order convergence). Same streamwise axis
-        (1) and open-area weights as ``extract_dP_weighted``; falls back to the
-        cell-centre value when the streamwise direction has < 2 cells.
+        ``P_face = 1.5·P₀ − 0.5·P₁`` removes that O(h) EXTRACTION term: as an
+        operator on a smooth field the functional is 2nd-order (manufactured-field
+        order 1.91, ``tests/test_dp_face_extrap_order.py``) and the cell-centre dP
+        goes from non-monotone to monotone. NOTE the REAL-field dP convergence
+        order is then capped by the 1st-order-upwind interior scheme, NOT by this
+        reduction: an all-axis Shanghai refinement (16/32/64) observed p≈0.76, the
+        dP RMSRE rising 5.2→8.0→9.7% toward a ~12% geometry/closure floor (both
+        the cell-centre and face reducers converge to the SAME continuous-PDE dP
+        as h→0 — face-extrap only accelerates it, the floor is the model error vs
+        experiment). Same streamwise axis (1) and open-area weights as
+        ``extract_dP_weighted``; falls back to the cell-centre value when the
+        streamwise direction has < 2 cells.
         """
         wI = s.inlet_frac; wO = s.outlet_frac
         mI = wI > 0.01; mO = wO > 0.5
