@@ -58,12 +58,6 @@
 
 <sub>All-axis (r=2) refinement. **Δp** RMSRE climbs to a **≈ 12 % geometry / closure floor** (Richardson, p<sub>obs</sub> ≈ 0.76) — the production `Nz=10` grid (★, ≈ 7 %) is under-resolved. **Q** is a duty integral: clean 2nd-order, grid-converged at **≈ 3 %**.</sub>
 
-<br><br>
-
-<img src="assets/gammadf-error.png" width="93%" alt="gamma_df closure error analysis — per-case parity of model vs experimental Δp (orange, log-log, RMSRE 9.7%) and Q (blue, RMSRE 2.9%) across the Shanghai 16 cases at the finest 64x32x16 grid.">
-
-<sub>**gamma_df** closure per-case parity at the finest computed grid (64×32×16). **Δp** (orange) tracks experiment across two decades — the high-Δp cases sit ≈ 10 % low, the systematic under-prediction that is the ≈ 12 % grid-converged floor. **Q** (blue) lies within ±5 % (RMSRE ≈ 3 %).</sub>
-
 </div>
 
 ---
@@ -83,16 +77,22 @@
 
 ---
 
-## 📐 Nu closure correlations
+## 📐 Closure correlations
 
 <div align="center">
 
+<img src="assets/gammadf-error.png" width="92%" alt="gamma_df Forchheimer cF interpolation error — cF vs cell size L for Diamond and Gyroid, model curves at t=0.3/0.4/0.5mm with rough-experiment anchors at L6/L8 and leave-one-out blind predictions; LOO RMSRE 2.5% Diamond, 2.6% Gyroid.">
+
+<sub>**Darcy–Forchheimer** roughness closure (`gamma_df`): `cF = cF_smooth(CFD) × γ(L,t)`, the roughness factor **γ interpolated from the trusted L6/L8 SLM-rough experimental anchors** (+ Gyroid L7 Shanghai gate). **Leave-one-out** interpolation error: **Diamond 2.5 %** (max 2.9 %) · **Gyroid 2.6 %** (max 4.0 %). `K` is a smooth `D_h²` trend (deliberately not roughness-fit — Forchheimer-dominated window, Darcy share 1–6 %).</sub>
+
+<br><br>
+
 <table><tr>
-<td><img src="assets/nu-air-error.png" width="100%" alt="Air-side Nu correlation fit vs CFD — parity for Diamond (orange, n=163, RMSRE 10.1%) and Gyroid (blue, n=201, RMSRE 9.9%), Nu = c·Pr^(1/3)·Re^a·(Dh/L)^d, Re 400-16k."></td>
-<td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu correlation fit vs CFD — parity for Diamond (orange, n=940, RMSRE 12.5%) and Gyroid (blue, n=939, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), Re 100-50k, Pr 2.3-5.9."></td>
+<td><img src="assets/nu-air-error.png" width="100%" alt="Air-side Nu vs Re — CFD scatter and solver correlation curves for Diamond (orange, RMSRE 10.1%) and Gyroid (blue, RMSRE 9.9%), Nu = c·Pr^(1/3)·Re^a·(Dh/L)^d, smooth-wall, Re 400-16k, dashed = x1.28 production roughness."></td>
+<td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu vs Re — CFD scatter and solver correlation curves for Diamond (orange, RMSRE 12.5%) and Gyroid (blue, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), Re 100-50k, Pr 2.3-5.9."></td>
 </tr></table>
 
-<sub>Per-topology Nusselt power-laws (the solver's own coefficients, `solvers/nu_correlations.py`), parity vs the full fit set (**Diamond** orange · **Gyroid** blue). **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall fit RMSRE ≈ 10 %; production multiplies by **×1.28** (experiment-derived SLM-roughness φ_rough, dashed line; Nu range D [12,199] · G [14,265]). **Water** `Nu = c·Re^a·Pr^⅓` — fit to **water-CFD only** (RMSRE ≈ 12 %); Gyroid cross-checks the **Yan 2024 experiment within ±1 %**, Diamond is CFD-only (no water experiment).</sub>
+<sub>Per-topology **Nusselt** power-laws (the solver's own coefficients, `solvers/nu_correlations.py`) — Nu vs Re over the full CFD fit set (**Diamond** orange · **Gyroid** blue). **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall fit RMSRE ≈ 10 %; production multiplies by **×1.28** experiment-derived SLM roughness (dashed). **Water** `Nu = c·Re^a·Pr^⅓` — fit to **water-CFD only** (RMSRE ≈ 12 %); Gyroid cross-checks the **Yan 2024 experiment within ±1 %**, Diamond is CFD-only (no Diamond water experiment).</sub>
 
 </div>
 
