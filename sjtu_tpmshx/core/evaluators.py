@@ -1,9 +1,9 @@
 """core/evaluators.py — neutral-layer 3D design evaluator.
 
 Physical definitions of the 3D evaluator live here (moved from
-``validation/verify_pareto_3d`` as part of audit M4 deep refactor,
+``validation/cases/verify_pareto_3d`` as part of audit M4 deep refactor,
 2026-05-28). Both ``optimization/evaluator_3d`` (BO worker) and
-``validation/verify_pareto_3d`` (CLI verification) import from this
+``validation/cases/verify_pareto_3d`` (CLI verification) import from this
 neutral layer, so the import direction is no longer
 ``optimization -> validation`` (which violated layering rules and
 forced the BO worker to drag a CLI script into its dependency graph).

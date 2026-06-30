@@ -17,7 +17,7 @@ import pytest
 
 
 def _shanghai_df():
-    import validation.validate_shanghai_3d_real as V
+    import validation.cases.validate_shanghai_3d_real as V
     p = V._ROOT.parent / "data" / "raw_data" / \
         "20260401-上海电气天然气加热器实验工况.xlsx" \
         if hasattr(V, "_ROOT") else None
@@ -32,7 +32,7 @@ def _shanghai_df():
 
 def test_validate_shanghai_passes_full_epsilon(monkeypatch):
     """validate_shanghai_3d_real must hand the kernel FULL ε, not ε_A."""
-    import validation.validate_shanghai_3d_real as V
+    import validation.cases.validate_shanghai_3d_real as V
 
     captured = {}
 

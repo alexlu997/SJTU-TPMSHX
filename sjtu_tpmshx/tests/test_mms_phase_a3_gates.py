@@ -6,7 +6,7 @@ stencil that drops the observed order below 2nd-order will fail CI.
 
 The expensive 5-grid sweep itself (~5 hr wall on a laptop) is **not**
 re-run here. This test reads the persisted CSV produced by
-``validation/mms_phase_a3_h_refine.py`` and asserts the same hard gates
+``validation/cases/mms_phase_a3_h_refine.py`` and asserts the same hard gates
 that the script's own console output checks.
 
 Hard gates (per plan #4 §3.5 V&V scope):
@@ -17,7 +17,7 @@ Hard gates (per plan #4 §3.5 V&V scope):
     R^2 >= 0.999               # log-log fit must be clean
 
 If gates ever loosen, regenerate the CSV via:
-    python -m validation.mms_phase_a3_h_refine
+    python -m validation.cases.mms_phase_a3_h_refine
 and update the gate constants below to reflect the new ground truth.
 """
 from __future__ import annotations

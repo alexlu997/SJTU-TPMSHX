@@ -7,9 +7,9 @@ since its target `validation.legacy.validate_shanghai` was retired
 
   test_shanghai_2d_legacy    — `validation.legacy.validate_shanghai`
                                (legacy 2D, baseline 2026-04-17 refined grid)
-  test_shanghai_3d_baseline  — `validation.validate_shanghai_3d_real`
+  test_shanghai_3d_baseline  — `validation.cases.validate_shanghai_3d_real`
                                (production 3D Nz=3 default)
-  test_shanghai_lumped_paper — `validation.validate_shanghai_lumped_dual_nu`
+  test_shanghai_lumped_paper — `validation.cases.validate_shanghai_lumped_dual_nu`
                                (paper baseline ε-NTU cross-flow)
 
 These tests are SLOW (~6 min each) and OPT-IN. Default pytest run skips
@@ -132,7 +132,7 @@ def test_shanghai_3d_baseline():
     """
     import pandas as pd
     rc, stdout, stderr = _run_subprocess(
-        'validation.validate_shanghai_3d_real',
+        'validation.cases.validate_shanghai_3d_real',
         '--suffix', '_pytest_h3',
         timeout=1500)
     assert rc == 0, (
@@ -193,7 +193,7 @@ def test_shanghai_lumped_paper():
     """
     import pandas as pd
     rc, stdout, stderr = _run_subprocess(
-        'validation.validate_shanghai_lumped_dual_nu', timeout=600)
+        'validation.cases.validate_shanghai_lumped_dual_nu', timeout=600)
     assert rc == 0, (
         f"validate_shanghai_lumped_dual_nu failed (rc={rc}):\n"
         f"STDERR:\n{stderr[-2000:]}")

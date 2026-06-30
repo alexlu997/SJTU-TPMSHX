@@ -5,7 +5,7 @@ Mirrors `pipelines.stages_2d` (2D) but dispatches the 3D stack:
     LTNE 3-temp coupling + solve_full_domain_3d (3D LTNE) + outer non-iso.
 
 MVP (2026-04-20): uniform geometry only (no zoning from UI). Mirrors
-`validation/validate_shanghai_3d_real.py::_run_one_case` but with UI-sourced
+`validation/cases/validate_shanghai_3d_real.py::_run_one_case` but with UI-sourced
 parameters instead of Shanghai Excel.
 
 Entry: the cfg stage functions consumed by
@@ -2405,7 +2405,7 @@ def _run_3d_stack(cfg):
 
         # MMS source fields (Air-Air V&V Phase A.1). Default None → no-op.
         # Solver accepts (Nx, Ny, Nz) arrays; volume-integrated source per
-        # cell injected into FVM equation RHS. Used by validation/mms_3d_*.py.
+        # cell injected into FVM equation RHS. Used by validation/cases/mms_3d_*.py.
         _mms_S_A = cfg.get('mms_S_A_field', None)
         _mms_S_B = cfg.get('mms_S_B_field', None)
         _mms_S_s = cfg.get('mms_S_s_field', None)
@@ -3170,7 +3170,7 @@ def _run_3d_stack(cfg):
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
-    # LTNE conservation audit (validation/audit_partial_b_ltne.py).
+    # LTNE conservation audit (validation/cases/audit_partial_b_ltne.py).
     # 2026-06-09 perf C1: gated behind cfg['_emit_audit'] (default False) —
     # these deep-copy both solvers' full u/v/w/ρ fields + K/eps/rho_cp/χ arrays,
     # a large memory + wall-time cost paid on EVERY run. Only the audit scripts

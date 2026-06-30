@@ -66,7 +66,7 @@ edit; produce findings the main thread can act on.
   must stay bit-identical unless an **intentional** re-baseline (a FAIL must be
   classified as real-regression vs deliberate-re-baseline, never silently accepted).
 - A surrogate-backend change must reproduce the Shanghai 3D baseline
-  (`validation/validate_shanghai_3d_real.py`) before becoming default.
+  (`validation/cases/validate_shanghai_3d_real.py`) before becoming default.
 
 ## Method
 

@@ -166,12 +166,18 @@ SJTU-TPMSHX/                       ← 仓库根
 │   ├── configs/                   ← 基准配置 JSON（上海 16 工况规格）
 │   │
 │   ├── controllers/               ← 界面与求解器之间的“契约层”：配置、流水线、线程、缓存、主题
-│   ├── runs/                      ← 编排脚本：把输入接到求解器；批跑、生产优化、诊断、演示
+│   ├── runs/                      ← 编排脚本（生产入口 + 助手 + golden gate 在根）
+│   │   ├── demos/                 ← 演示脚本（3D 空气-空气、立方体、交互式可视化）
+│   │   ├── diagnostics/           ← 诊断/探针（asym 几何扫描、收敛检查）
+│   │   ├── smokes/                ← 冒烟测试（UI 离屏、3D eval 计时）
+│   │   └── tools/                 ← 构建/导出工具（CFD xlsx、HTML 渲染、3D 出图）
 │   ├── domain/                    ← 输入合法性校验（纯函数，无界面）
 │   │
 │   ├── optimization/              ← 多目标贝叶斯优化（qNEHVI，搜帕累托前沿）
 │   ├── design/                    ← 快速定尺工具（给需求反推尺寸，出 Excel）
 │   ├── validation/                ← 验证与校核（实验对比 + MMS/GCI + 守恒审计）
+│   │   ├── harness/               ← 复用测试基础设施（_harness/_metrics/_case_sets/…）
+│   │   └── cases/                 ← 验证 runner（shanghai/MMS/GCI/守恒审计），结果 CSV 留 validation/ 根
 │   │
 │   ├── ui/                        ← 图形界面组件（主题、画布、3D 面板、优化面板等）
 │   │   └── mixins/                ← 主窗口类按职责拆分出的若干“混入”模块
@@ -661,7 +667,7 @@ SJTU-TPMSHX/                       ← 仓库根
 
 3. **多目标优化**：`python -m optimization.parallel_runner --seeds 3 --n_init 32 --n_iter 24` → 得帕累托前沿 CSV → 可用 `optimization/export_ntop_csv.py` 导成 nTop 标量场建模。
 
-4. **验证可信度**：`python validation/validate_shanghai_lumped_dual_nu.py`（论文基准 Q 1.71%）或 `validation/validate_shanghai_3d_real.py`（3D 生产验证）。引用任何数字前先读 `validation/_CSV_STATUS.md`。
+4. **验证可信度**：`python validation/cases/validate_shanghai_lumped_dual_nu.py`（论文基准 Q 1.71%）或 `validation/cases/validate_shanghai_3d_real.py`（3D 生产验证）。引用任何数字前先读 `validation/_CSV_STATUS.md`。
 
 ---
 

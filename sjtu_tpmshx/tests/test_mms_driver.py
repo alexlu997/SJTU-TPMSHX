@@ -3,7 +3,7 @@ import importlib
 
 
 def test_run_grid_sequence_order_and_rows():
-    from validation._mms_driver import run_grid_sequence
+    from validation.harness._mms_driver import run_grid_sequence
     calls = []
     rows = run_grid_sequence(
         [4, 8],
@@ -17,7 +17,7 @@ def test_run_grid_sequence_order_and_rows():
 
 
 def test_sweep_scripts_import():
-    for mod in ('validation.mms_phase_a3_h_refine',
-                'validation.mms_phase_a4_boundary',
-                'validation.mms_phase_b4_order'):
+    for mod in ('validation.cases.mms_phase_a3_h_refine',
+                'validation.cases.mms_phase_a4_boundary',
+                'validation.cases.mms_phase_b4_order'):
         importlib.import_module(mod)
