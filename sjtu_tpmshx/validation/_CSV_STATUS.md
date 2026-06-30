@@ -43,9 +43,15 @@
 > Δp as h→0 (cell-centre grid-converged ~12.8%, face ~12.1%); face-extrap only *accelerates*
 > convergence, the floor is the geometry/closure model error (~12%). The README headline now
 > quotes the grid-converged ≈12% / ≈3%; the shanghai regression test still pins the production
-> Nz=3 value (5.05%) as a config-specific guard.
-- **Production default (gamma_df, 2nd-order face Δp): Nz=3 dP 5.05% / Q 3.20% · Nz=10 dP 7.03% / Q 3.30% · grid-converged ≈12% / ≈3%**
-  (README headline ≈7%). Cell-centre (legacy) was 9.82% / 12.06%.
+> Nz=3 value (now 5.28% — see K re-baseline below) as a config-specific guard.
+> **2026-06-30 (#2) — gamma_df K re-baselined.** K moved from the SmoothDF D_h² trend (53% RMSRE,
+> the +2.6pp vs rbf below) to a CFD-refit per-geometry surface (raw water CFD, 2-stage extraction,
+> log-space TPS; `_prebuilt/df_cfd_coeffs.csv`). c_F UNCHANGED. Nz=3 dP **5.05%→5.28%**, Q 3.20→3.21%;
+> water-side Δp (7-6 exp) Diamond 0.33→0.40 / Gyroid 0.62→0.68. Grid-converged ≈12% and the README
+> headline are c_F-dominated → unchanged (K is a 1–6% Darcy correction in the air window). See
+> `df_surrogate/gamma_df.py` K UPDATE + openspec/changes/df-coeffs-cfd-refit.
+- **Production default (gamma_df, 2nd-order face Δp + CFD-refit K): Nz=3 dP 5.28% / Q 3.21% · Nz=10 dP ~7.2% / Q 3.30% · grid-converged ≈12% / ≈3%**
+  (README headline grid-converged ≈12%). Cell-centre+Dh²-K (legacy) was 9.82% / 12.06%.
   DF surrogate default = GammaDF multi-fidelity (`df_surrogate/gamma_df.py`) since 2026-06-12.
 - **rbf backend reference (`TPMSHX_DF_METHOD=rbf`): Nz=3 dP 7.19% / Q 3.22%,
   Nz=10 dP 8.69% / Q 3.33%** — post 2026-06-04 mass-flux-inlet fix (which cut

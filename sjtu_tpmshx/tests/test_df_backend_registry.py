@@ -17,10 +17,12 @@ _EF = {tp: _geom(tp, 7.0, 0.6, 16.0)['epsilon'] / 2
        for tp in ('Gyroid', 'Diamond')}
 
 # (tpms, method) -> (K, cF) at L=7.0, t=0.6, eps_f=_EF — exact values.
+# gamma_df K re-baselined 2026-06-30: SmoothDF Dh² trend -> CFD-refit surface
+# (c_F unchanged). See gamma_df.py K UPDATE note + openspec/df-coeffs-cfd-refit.
 _GOLDEN = {
-    ('Gyroid', 'gamma_df'): (1.327229597172973e-07, 534.800000000008),
+    ('Gyroid', 'gamma_df'): (5.221645176691857e-08, 534.800000000008),
     ('Gyroid', 'rbf'):      (3.218806963975885e-08, 534.7664446055616),
-    ('Diamond', 'gamma_df'): (1.6221761754170678e-07, 454.19001394852256),
+    ('Diamond', 'gamma_df'): (5.1135209299724466e-08, 454.19001394852256),
     ('Diamond', 'rbf'):      (2.4688411110399566e-08, 745.0133131278383),
 }
 
@@ -72,9 +74,9 @@ def test_rbf_clamp_engages_internally():
 
 
 def test_registry_surface():
-    # cfd_refit added 2026-06-30 (clean raw-CFD K surface + gamma_df c_F);
-    # non-default, see df_surrogate/cfd_refit.py.
-    assert set(available_methods()) == {'gamma_df', 'rbf', 'cfd_refit'}
+    # 2026-06-30: the CFD-refit K surface was folded INTO gamma_df (it now is
+    # the default K source); the transient 'cfd_refit' backend was removed.
+    assert set(available_methods()) == {'gamma_df', 'rbf'}
     with pytest.raises(ValueError, match='unknown DF method'):
         P.predict_K_cF('Gyroid', 7.0, 0.6, 0.36, method='plhub_gp_typo')
     b = get_backend('Gyroid', 'gamma_df')

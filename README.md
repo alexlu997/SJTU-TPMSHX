@@ -67,7 +67,7 @@
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: smooth-CFD × experimental roughness γ) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct |
+| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
@@ -83,7 +83,7 @@
 
 <img src="assets/gammadf-error.png" width="92%" alt="gamma_df Forchheimer cF interpolation error — cF vs cell size L for Diamond and Gyroid, model curves at t=0.3/0.4/0.5mm with rough-experiment anchors at L6/L8 and leave-one-out blind predictions; LOO RMSRE 2.5% Diamond, 2.6% Gyroid.">
 
-<sub>**Darcy–Forchheimer** roughness closure (`gamma_df`): `cF = cF_smooth(CFD) × γ(L,t)`, the roughness factor **γ interpolated from the trusted L6/L8 SLM-rough experimental anchors** (+ Gyroid L7 Shanghai gate). **Leave-one-out** interpolation error: **Diamond 2.5 %** (max 2.9 %) · **Gyroid 2.6 %** (max 4.0 %). `K` is a smooth `D_h²` trend (deliberately not roughness-fit — Forchheimer-dominated window, Darcy share 1–6 %).</sub>
+<sub>**Darcy–Forchheimer** roughness closure (`gamma_df`): `cF = cF_smooth(CFD) × γ(L,t)`, the roughness factor **γ interpolated from the trusted L6/L8 SLM-rough experimental anchors** (+ Gyroid L7 Shanghai gate). **Leave-one-out** interpolation error: **Diamond 2.5 %** (max 2.9 %) · **Gyroid 2.6 %** (max 4.0 %). `K` is a **CFD-refit per-geometry surface** (raw water CFD, 2-stage extraction, log-space TPS — replaced the old `D_h²` trend 2026-06-30; improves low-Re water-side Δp, c_F unchanged).</sub>
 
 <br><br>
 

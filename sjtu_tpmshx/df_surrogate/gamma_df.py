@@ -1,11 +1,22 @@
-"""GammaDF — multi-fidelity rough-wall D-F surrogate (opt-in, 2026-06-12).
+"""GammaDF — multi-fidelity rough-wall D-F surrogate (production default).
 
     c_F,rough(tp, L, t) = c_F,smooth(tp, L, t) * gamma(tp, L, t)
-    K               (tp, L, t) = SmoothDF pure D_h^2 trend  (SMOOTH-wall)
+    K               (tp, L, t) = CFD-refit permeability surface (2026-06-30)
 
 Multi-fidelity split: the smooth CFD surface (SmoothDF, 40 geometries,
-water+air) supplies the geometric SHAPE; the experimental anchors (col47
+water+air) supplies the c_F geometric SHAPE; the experimental anchors (col47
 convention, SLM-rough specimens) supply the roughness AMPLITUDE gamma.
+
+K UPDATE (2026-06-30): K was the SmoothDF single-parameter D_h² trend
+(`logK = 2·logDh + b0K`, ~53 % RMSRE vs per-geometry CFD) — invisible in the air
+window (Re 400–16k, Darcy share 1–6 %) but under-predicting the low-Re water-side
+Δp. K now comes from a fresh 2-STAGE re-extraction of the raw water CFD
+(`_prebuilt/df_cfd_coeffs.csv`, 40 geometries): c_F from the high-Re Forchheimer
+plateau, then K from the low-Re Darcy region holding c_F fixed (collapses the
+K/Dh² scatter 24.7×→1.3–1.6×), interpolated by a log-space thin-plate spline over
+(log L, log t). c_F is UNCHANGED (the Shanghai-3D-calibrated value). Net gate
+effect: Shanghai 3D dP 5.05%→5.28% (re-baselined), water Δp Diamond 0.33→0.40 /
+Gyroid 0.62→0.68. See openspec/changes/df-coeffs-cfd-refit + [[df-coeffs-cfd-refit]].
 
 gamma model (v4, see desktop doc 2026-06-12-gamma-multifidelity-df-CN.html
 and research scripts temp_df_gamma_mf*.py):
@@ -38,13 +49,13 @@ Scoreboard (2026-06-12, temp_df_gamma_mf3.py):
 SEMANTICS / LIMITS
   c_F : ROUGH (col47 core-only convention, THIS SLM batch's roughness —
         re-calibrate gamma if the print process changes).
-  K   : SMOOTH trend, no roughness correction (deliberate: K weakly
-        identified + Forchheimer dominates the production window Re
-        400-16k; Darcy-share cost ~1-6% there, grows below Re~400).
-  Differs from the production RBF K everywhere (incl. the gate point) —
-  only c_F is gate-identical.  Geometry domain: gamma evaluated with L
-  clamped to [4, 8]; t handled by linear continuation outside [0.3, 0.5].
-  Diamond / Gyroid only (no experimental anchors for other lattices).
+  K   : CFD-refit per-geometry permeability (smooth-wall water CFD, 2-stage
+        extraction), log-space TPS over (log L, log t). No roughness on K (K
+        weakly identified; Forchheimer dominates the air window Re 400-16k,
+        Darcy-share ~1-6%, growing below Re~400 — where the cleaner K matters).
+  Geometry domain: gamma evaluated with L clamped to [4, 8]; t handled by
+  linear continuation outside [0.3, 0.5]. The K surface interpolates the 5×4
+  (L, t) CFD grid; outside it the TPS extrapolates. Diamond / Gyroid only.
 
 PRODUCTION DEFAULT since 2026-06-12 (user decision, taken with the
 measured trade-off on the table): full-chain Shanghai 3D Nz=3 gate with
@@ -52,11 +63,16 @@ this backend = dP RMSRE 9.82% / Q 3.20% vs the RBF's 7.19% / 3.22% —
 the +2.6pp is entirely the smooth-trend K (cF is gate-identical), in
 exchange for sane extrapolation everywhere outside the gate geometry
 (D7: 454 vs RBF 745).  Restore the old default per call
-(method="rbf") or globally via env TPMSHX_DF_METHOD=rbf.  Open items:
-L4/L5 arbitration (rough-wall CFD or boundary-coefficient
-re-derivation) and a rough-K upgrade.
+(method="rbf") or globally via env TPMSHX_DF_METHOD=rbf.
+
+2026-06-30: the K source moved from the SmoothDF D_h² trend to the CFD-refit
+surface (see the K UPDATE note at the top) — Shanghai 3D dP re-baselined
+9.82%(orig)→5.05%(2nd-order-face)→5.28%(CFD-K). Open item: L4/L5 gamma
+arbitration (rough-wall CFD); the rough-K upgrade is now done.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 
@@ -67,6 +83,28 @@ GATE_CF_G7 = 534.8       # production / Shanghai-3D-validated cF, Gyroid L7/t0.6
 _TRUSTED_L = (6, 8)
 _T_CENTER = 0.4
 _T_HALF = 0.1            # curvature active for |t - 0.4| <= 0.1
+
+# CFD-refit permeability surface (2026-06-30): per-geometry K from the raw water
+# CFD (2-stage extraction), log-space thin-plate spline over (log L, log t).
+# Replaces the SmoothDF D_h² K trend — see module docstring.
+_CFD_K_TABLE = Path(__file__).resolve().parent / "_prebuilt" / "df_cfd_coeffs.csv"
+_K_SURFACE_CACHE: dict = {}
+
+
+def _cfd_K_surface(tpms: str):
+    """Cached log-space TPS K(L, t) surface for ``tpms`` from df_cfd_coeffs.csv."""
+    if tpms not in _K_SURFACE_CACHE:
+        from scipy.interpolate import RBFInterpolator
+        pts, logK = [], []
+        for line in _CFD_K_TABLE.read_text().strip().splitlines()[1:]:
+            tp, L, t, K, cF, eps, Dh = line.split(",")
+            if tp != tpms:
+                continue
+            pts.append([np.log(float(L)), np.log(float(t))])
+            logK.append(np.log(float(K)))
+        _K_SURFACE_CACHE[tpms] = RBFInterpolator(
+            np.array(pts), np.array(logK), kernel="thin_plate_spline")
+    return _K_SURFACE_CACHE[tpms]
 
 
 class GammaDF:
@@ -99,6 +137,9 @@ class GammaDF:
         # Gyroid L7 Shanghai calibration (gate-point identity)
         self.gamma_g7 = (GATE_CF_G7 / self.cf_smooth(7.0, 0.6)
                          if tpms == "Gyroid" else None)
+
+        # CFD-refit K surface (replaces the SmoothDF D_h² trend; see docstring)
+        self._K_surf = _cfd_K_surface(tpms)
 
     # ---------------- smooth base ----------------
     def cf_smooth(self, L_mm: float, t_mm: float) -> float:
@@ -202,8 +243,12 @@ class GammaDF:
     def predict(self, L_mm: float, t_mm: float,
                 eps_f: float | None = None) -> tuple[float, float]:
         """(K [m^2], c_F [1/m]).  eps_f accepted for interface
-        compatibility; geometry is derived internally from (L, t)."""
-        K, _ = self.sm.predict_K_B(self.tpms, float(L_mm), float(t_mm))
+        compatibility; geometry is derived internally from (L, t).
+
+        K from the CFD-refit log-space TPS surface (2026-06-30); c_F is the
+        unchanged smooth×gamma rough value."""
+        x = np.array([[np.log(float(L_mm)), np.log(float(t_mm))]])
+        K = float(np.exp(self._K_surf(x)[0]))
         cF = self.cf_smooth(L_mm, t_mm) * self.gamma(L_mm, t_mm)
         return float(K), float(cF)
 

@@ -131,8 +131,3 @@ class RBFBackend(DFBackend):
         K = np.maximum(10.0 ** log_K, self._model.K_min)
         cF = 10.0 ** log_cF
         return K, cF
-
-
-# Opt-in CFD-refit backend (K from clean raw-CFD surface, c_F from gamma_df).
-# Imported last so its @register sees the populated registry; never default.
-from . import cfd_refit  # noqa: E402,F401  (registers 'cfd_refit')

@@ -174,8 +174,12 @@ def test_shanghai_3d_baseline():
     # to experiment: Nz=3 RMSRE_dP 9.82% → 5.05% (Q unchanged — Q is a duty
     # integral, independent of the dP reduction). Verified 2nd-order in the
     # streamwise direction (tests/test_dp_face_extrap_order.py).
-    BASELINE_DP = 5.05
-    BASELINE_Q = 3.20
+    # 2026-06-30 (#2) — gamma_df K re-baselined: SmoothDF Dh² trend → CFD-refit
+    # surface (per-geometry water-CFD K, 2-stage extraction). c_F unchanged; the
+    # cleaner/smaller K lifts the Darcy term, so Nz=3 RMSRE_dP 5.05% → 5.28%
+    # (Q 3.20% → 3.21%). See gamma_df.py K UPDATE + openspec/df-coeffs-cfd-refit.
+    BASELINE_DP = 5.28
+    BASELINE_Q = 3.21
     tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (

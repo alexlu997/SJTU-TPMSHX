@@ -2,7 +2,7 @@
 
 **Phase 1–2 + a gate-safe backend DELIVERED.** Raw water CFD (40 geom) re-extracted via 2-stage decoupled fit → K/Dh² scatter 24.7×→1.3–1.6×; log-space TPS/GP surfaces interpolate at **cF LOO 5.1 %(G)/14.5 %(D), K LOO 6.2 %(G)/19.7 %(D), end-to-end Δp LOO 13.0 %(G)/20.3 %(D)** — **~6× better than gamma_df** (87/122 %). Figure: `assets/df-refit-loo.png`. Root cause confirmed: col47 anchors anomalous (L4 t-trend reversed, L6 3–4× spike).
 
-Shipped the **`cfd_refit`** backend = clean CFD **K**-surface + gamma_df **c_F** (gate-safe): **Shanghai 3D dP 5.28 % / Q 3.21 %** (gamma_df 5.05/3.20 — preserved) and water-Δp improved (Diamond 0.33→0.40, Gyroid 0.62→0.68). Non-default; full pytest green (+`test_cfd_refit_backend.py`).
+**DEPLOYED into the production default `gamma_df`** (2026-06-30 #2, user-directed): the clean CFD **K**-surface replaced the SmoothDF D_h² K trend inside `GammaDF` (c_F unchanged). The transient `cfd_refit` backend was folded in and removed. **Shanghai 3D dP 5.05→5.28 % / Q 3.20→3.21 %** (re-baselined: golden-point K values, projector baseline JSON, evaluator frozen tuples, shanghai regression pin), water-Δp Diamond 0.33→0.40 / Gyroid 0.62→0.68. Full pytest green.
 
 **Deferred:** full **c_F** surface deployment (needs roughness γ — blocked on experiment convention, [[d76-cannot-calibrate-nu]]); air-CFD cross-check (water alone sufficed); production default switch (user decision). The full smooth-cF surface is validated but Shanghai needs the gate-calibrated c_F (registration contract — see plhub_gp precedent).
 

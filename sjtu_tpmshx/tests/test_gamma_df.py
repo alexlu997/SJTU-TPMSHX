@@ -98,11 +98,19 @@ def test_lowL_band(gyroid, diamond):
 
 # ---------------- semantics ----------------
 
-def test_K_is_smooth_trend(diamond):
-    """GammaDF K must be the SmoothDF smooth-wall trend (documented)."""
+def test_K_is_cfd_surface(diamond):
+    """GammaDF K is the CFD-refit surface (2026-06-30), NOT the SmoothDF Dh²
+    trend. At a grid geometry the log-space TPS returns ~the tabulated CFD K."""
+    import csv
+    from pathlib import Path
     K, _ = diamond.predict(6.0, 0.4)
     K_sm, _ = diamond.sm.predict_K_B("Diamond", 6.0, 0.4)
-    assert K == pytest.approx(K_sm, rel=1e-12)
+    assert K != pytest.approx(K_sm, rel=1e-3), "K should be the CFD surface, not SmoothDF"
+    tbl = (Path(__file__).resolve().parents[1] / "df_surrogate"
+           / "_prebuilt" / "df_cfd_coeffs.csv")
+    ktab = {f"{r['tp']} {r['L']} {r['t']}": float(r['K'])
+            for r in csv.DictReader(tbl.open())}
+    assert K == pytest.approx(ktab["Diamond 6.0 0.4"], rel=0.02)
 
 
 def test_unsupported_lattice_raises():

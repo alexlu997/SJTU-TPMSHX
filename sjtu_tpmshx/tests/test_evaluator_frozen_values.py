@@ -85,13 +85,17 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # SOU is a minmod-limited high-order correction sub-dominant to the Forchheimer
 # drag, so Shanghai 2D validation is UNCHANGED (RMSRE_dP 8.35% / Q 2.51%).
 # Old: (-8171.756522905283, 10057.99677021549) / (-7736.238110417324, 7584.5716386808235).
-_FROZEN_2D_UNIFORM = (-8171.761439013648, 10057.767149944635,
+# re-baselined 2026-06-30: gamma_df K moved from the SmoothDF Dh² trend to the
+# CFD-refit surface (c_F unchanged). dP[0] and Q[1] move (K shifts the Darcy term
+# and, via the velocity field, the h_v coupling); mass[2] (geometry) is unchanged.
+# See gamma_df.py K UPDATE note + openspec/changes/df-coeffs-cfd-refit.
+_FROZEN_2D_UNIFORM = (-8155.898092263062, 10661.113158337937,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7736.237732737889, 7584.598536742669,
+_FROZEN_2D_NONUNIF = (-7724.45529028308, 8027.234654920353,
                       3.6729327392578126)
-_FROZEN_3D_UNIFORM = (-8030.108755476857, 16636.495632326456,
+_FROZEN_3D_UNIFORM = (-7847.064062565555, 18179.20973508683,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10109.32410315642, 5629.39740745782,
+_FROZEN_3D_NONUNIF = (-10066.289384156315, 5968.569070037876,
                       3.675970458984375)
 
 
