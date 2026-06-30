@@ -131,7 +131,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         # App icon
         import os
         from PySide6.QtGui import QIcon
-        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sjtulogosilver.png')
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'logos', 'sjtulogosilver.png')
         if os.path.exists(_icon_path):
             self.setWindowIcon(QIcon(_icon_path))
 

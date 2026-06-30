@@ -158,6 +158,7 @@
 SJTU-TPMSHX/                       ← 仓库根
 ├── sjtu_tpmshx/                   ← Python 代码包（下面全部在这里）
 │   ├── main.py                    ← 图形界面主程序入口（主窗口类 Main_Menu）
+│   ├── assets/logos/              ← 品牌图（logo/banner PNG；由 main.py + ui_builders 加载，*.png 不入库）
 │   │
 │   ├── solvers/                   ← 【物理内核】几何、物性、流动、传热求解器
 │   ├── df_surrogate/                    ← 【压降代理】根据几何快速预测 K、c_F 的拟合模型
