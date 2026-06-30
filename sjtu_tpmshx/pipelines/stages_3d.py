@@ -2401,7 +2401,7 @@ def _run_3d_stack(cfg):
     # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
     Q = Q_enthalpy_A
 
-    dP = float(SIMPLESolver3D.extract_dP_weighted(sA))
+    dP = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
 
     uc_real, vc_real, wc_real = _assemble_real_velocity()
     vmag = np.sqrt(uc_real ** 2 + vc_real ** 2 + wc_real ** 2)
@@ -2424,7 +2424,7 @@ def _run_3d_stack(cfg):
     if sB is not None:
         axis_map_B = sB_info['axis_map']
         perm_B = axis_map_B['solver_to_real_perm']
-        dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
+        dP_B = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
         # ABSOLUTE pressure anchored so inlet == input P_inB (same convention as
         # fluid A and the 2D path). Works for both water (incompressible) and
         # air B without depending on the P_ref_abs reconstruction.

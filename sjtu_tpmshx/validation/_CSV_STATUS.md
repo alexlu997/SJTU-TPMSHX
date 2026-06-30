@@ -29,9 +29,12 @@
 > and *under-predicted* Δp. With the 2nd-order face reduction the **gamma_df** RMSRE_dP is
 > **Nz=3 5.05% / Nz=10 7.03%** (was 9.82% / 12.06% cell-centre); Q unchanged (3.20% / 3.30%).
 > The `shanghai_3d_baseline*.csv` rows above were generated with the cell-centre reducer
-> (historical provenance); regenerate for the face-extrap numbers. NOTE: the **pipeline**
-> path (`stages_3d`, GUI) still uses the cell-centre reducer — switching it re-baselines the
-> golden gate (golden captures `dP`), so it's left as a separate decision.
+> (historical provenance); regenerate for the face-extrap numbers. The **pipeline** path
+> (`stages_3d`, GUI) was ALSO switched to face-extrap — the **golden 3D gate was re-baselined**:
+> only the `dP`/`dP_B` scalars and the `P_kPa`/`P_Pa_B` display fields (which are anchored on dP)
+> changed; the physics solve (`Ta`/`Tb`/`Ts`/`vmag`/`Q`/`T_out`) is **bit-identical**. The dP
+> reduction works for **any** flow direction (±x/±y/±z): `_resolve_axis_map` permutes streamwise
+> onto solver axis 1 for all six dirs, and both reducers read that axis.
 - **Production default (gamma_df, 2nd-order face Δp): Nz=3 dP 5.05% / Q 3.20% · Nz=10 dP 7.03% / Q 3.30%**
   (README headline ≈7%). Cell-centre (legacy) was 9.82% / 12.06%.
   DF surrogate default = GammaDF multi-fidelity (`df_surrogate/gamma_df.py`) since 2026-06-12.
