@@ -52,6 +52,14 @@
 > order is verified in `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z
 > flow axis) in `tests/test_dp_direction_invariance.py`.
 
+<div align="center">
+
+<img src="assets/grid-convergence.png" width="84%" alt="3D grid convergence, Shanghai 16-case: under all-axis refinement the Δp RMSRE climbs from ~5% to a ~12% geometry/closure floor while the production Nz=10 grid (~7%) is under-resolved; Q clean-converges to ~3%.">
+
+<sub>All-axis (r=2) refinement. **Δp** RMSRE climbs to a **≈ 12 % geometry / closure floor** (Richardson, p<sub>obs</sub> ≈ 0.76) — the production `Nz=10` grid (★, ≈ 7 %) is under-resolved. **Q** is a duty integral: clean 2nd-order, grid-converged at **≈ 3 %**.</sub>
+
+</div>
+
 ---
 
 ## 🧩 What it does
