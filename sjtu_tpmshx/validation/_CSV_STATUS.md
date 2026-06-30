@@ -12,10 +12,14 @@
 | `shanghai_3d_baseline_gammadf_routing_check.csv` (6/12) | **7.19%** | **3.22%** | rbf backend + mass-flux inlet, Nz=3 | **rbf reference** (pre-v1.4.0 default; also the bit-identical routing regression check). Reproduce: `TPMSHX_DF_METHOD=rbf`. |
 | `shanghai_3d_baseline_nz10_massflux.csv` (6/09) | **8.69%** | **3.33%** | rbf backend + mass-flux inlet, **Nz=10** | **rbf Nz=10 reference** — gamma_df Nz=10 has NOT been measured yet. |
 | `shanghai_3d_baseline_pytest_h3.csv` (regenerated per run) | — | — | whatever HEAD defaults are | scratch output of `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` (opt-in); pinned values live in the test (9.82/3.20 since v1.4.0, tol ±5%/±10%). |
-| `shanghai_3d_baseline_nz10_postGfix.csv` (6/02) | 21.49% | 3.88% | post G-fix + RBF cubic s=0.1, Nz=10, **velocity-inlet era** | SUPERSEDED by the 2026-06-04 mass-flux inlet fix (dP 21.49→8.69 at Nz=10); trajectory only. |
-| `shanghai_3d_baseline_post-fix-mass-cons-Nz10.csv` (5/15) | 47.02% | 2.22% | **ε double-halved (ε_full/4) bug** | OBSOLETE — superseded numbers, see `vault/.../regression_report.md` header |
-| `shanghai_3d_baselineNz10_norris_1a.csv` (5/13) | 24.15% | 3.61% | **old f-multiplier era** (norris_1a still applied f≈1.46 friction) | OBSOLETE — `norris_1a` is now a baseline no-op alias (`solvers/roughness.py`); 24.15% is double-counted-friction, do NOT cite |
-| other `shanghai_3d_baseline*Nz10*`, `*post-fix-norris1a*`, `*bhatti_shah*`, `*z20*`, `*fine_Nx40*` | — | — | mixed pre-ε-fix / experiment branches | OBSOLETE for headline; trajectory only |
+| `shanghai_3d_baselineplhub_switch.csv` (gitignored) | 7.19% | — | rbf era snapshot | referenced in `df_surrogate/surrogate_v3.py` docstring (smooth-trend K comparison); kept for that citation. |
+
+> **2026-06-30 cleanup:** the obsolete / trajectory-only snapshots were removed
+> (25 files: 14 gitignored scratch + 11 git-tracked). The tracked ones —
+> `*Nz10_postGfix*`, `*post-fix-mass-cons*`, `*Nz10_norris_1a*`, `*Nz10_baseline*`,
+> `*bhatti_shah*`, `*_Nz10*`, `*phase7_h8_nz10*`, `*z20*`, `*fine_Nx40*` — are
+> recoverable from git history before commit `<this cleanup>` if a trajectory
+> number is ever needed. Only the 4 live rows above + the plhub snapshot remain.
 
 ## Current authoritative numbers (v1.4.0, 2026-06-12)
 - **Production default (gamma_df backend), Nz=3: dP 9.82% / Q 3.20%** —
