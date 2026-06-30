@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
-  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE 8.69%, 3D heat-duty Q RMSRE 3.33%, MMS observed order 1.975." width="100%">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE 12.06%, 3D heat-duty Q RMSRE 3.30%, MMS observed order 1.975." width="100%">
 </picture>
 
 <br><br>
@@ -32,16 +32,18 @@
 | Metric | Value | Where |
 |:------:|:-----:|:------|
 | **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
-| **3D pressure drop** RMSRE | **8.69 %** | full SIMPLE 3D, `Nz = 10`, mass-flux inlet |
-| **3D heat duty Q** RMSRE | **3.33 %** | full SIMPLE 3D, `Nz = 10` |
+| **3D pressure drop** RMSRE | **12.06 %** | full SIMPLE 3D, gamma_df default, `Nz = 10`, mass-flux inlet |
+| **3D heat duty Q** RMSRE | **3.30 %** | full SIMPLE 3D, gamma_df default, `Nz = 10` |
 | **MMS** observed order `p_obs` | **1.975** | code verification, SOU 2nd-order |
 
 </div>
 
 > [!NOTE]
-> The 3D Δp gap was cut from the earlier ~24–45 % down to **≈ 7–9 %** by switching the
-> air inlet to a **mass-flux** boundary condition (removing a compressible velocity-inlet
-> artifact). The residual is a **geometry / closure floor** — SLM surface roughness is already
+> Switching the air inlet to a **mass-flux** boundary condition (removing a compressible
+> velocity-inlet artifact) cut the 3D Δp gap from the earlier ~24–45 % to **≈ 12 %** on the
+> production-default **gamma_df** closure (**≈ 7–9 %** on the opt-in **rbf** backend — the
+> +~3 pp is the gamma_df smooth-trend K; `cF` is gate-identical, so Q is essentially unchanged
+> either way). The residual is a **geometry / closure floor** — SLM surface roughness is already
 > embedded in the experiment-trained Darcy–Forchheimer closure, so no extra friction multiplier
 > is applied (doing so would double-count).
 
@@ -56,7 +58,7 @@
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **8.69 %** / Q **3.33 %** (`Nz=10`) · 2D Δp **≈ 28 %** |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **12.06 %** / Q **3.30 %** (gamma_df, `Nz=10`) · 2D Δp **≈ 28 %** |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
