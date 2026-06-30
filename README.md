@@ -67,7 +67,7 @@
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: smooth-CFD × experimental roughness γ) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct (cross-checks Yan 2024) |
+| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: smooth-CFD × experimental roughness γ) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
@@ -89,10 +89,10 @@
 
 <table><tr>
 <td><img src="assets/nu-air-error.png" width="100%" alt="Air-side Nu vs Re — CFD scatter and solver correlation curves for Diamond (orange, RMSRE 10.1%) and Gyroid (blue, RMSRE 9.9%), Nu = c·Pr^(1/3)·Re^a·(Dh/L)^d, smooth-wall, Re 400-16k, dashed = x1.28 production roughness."></td>
-<td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu vs Re — CFD scatter and solver correlation curves for Diamond (orange, RMSRE 12.5%) and Gyroid (blue, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), Re 100-50k, Pr 2.3-5.9."></td>
+<td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu vs Re — CFD scatter and solver correlation curves for Diamond (orange, RMSRE 12.5%) and Gyroid (blue, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), direct water-CFD fit, Re 100-50k, Pr 2.3-5.9."></td>
 </tr></table>
 
-<sub>Per-topology **Nusselt** power-laws (the solver's own coefficients, `solvers/nu_correlations.py`) — Nu vs Re over the full CFD fit set (**Diamond** orange · **Gyroid** blue). **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall fit RMSRE ≈ 10 %; production multiplies by **×1.28** experiment-derived SLM roughness (dashed). **Water** `Nu = c·Re^a·Pr^⅓` — fit to **water-CFD only** (RMSRE ≈ 12 %); Gyroid cross-checks the **Yan 2024 experiment within ±1 %**, Diamond is CFD-only (no Diamond water experiment).</sub>
+<sub>Per-topology **Nusselt** power-laws (the solver's own coefficients, `solvers/nu_correlations.py`) — Nu vs Re over the full CFD fit set (**Diamond** orange · **Gyroid** blue). **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall fit RMSRE ≈ 10 %; production multiplies by **×1.28** experiment-derived SLM roughness (dashed). **Water** `Nu = c·Re^a·Pr^⅓` — direct fit to **water-CFD** (RMSRE ≈ 12 %).</sub>
 
 </div>
 
