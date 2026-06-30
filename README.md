@@ -102,9 +102,6 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py
 
 # 3D real solver (SIMPLE, Nz=10, mass-flux inlet)
 python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
-
-# 3-path 3D comparison: SIMPLE vs SF-axial vs SF-Poisson
-python sjtu_tpmshx/validation/validate_shanghai_3d_pp_compare.py
 ```
 
 #### ✔️ Tests
@@ -118,20 +115,28 @@ pytest sjtu_tpmshx/tests/ -v        # 67 test files
 ## 🗂️ Repo layout
 
 ```text
-sjtu_tpmshx/
-├── solvers/        # SIMPLE 2D/3D, streamfunction-pressure, PPE, tpms_calc, roughness
-├── controllers/    # Qt: ComputeOrchestrator, ResultCache, SessionManager, pipelines
-├── core/           # Qt-free evaluators + shared numerics
-├── ui/             # PySide6 widgets, themes, ui_builders
-├── df_surrogate/   # Darcy–Forchheimer RBF surrogate fitting
-├── design/         # quick multi-case TPMS sizing tool
-├── optimization/   # NSGA-II Pareto (2D)
-├── domain/         # domain / unit validators
-├── validation/     # Shanghai-case scripts (+ legacy archive)
-├── configs/        # canonical case JSON (shanghai_baseline.json)
-├── tests/          # pytest suite (67 files)
-├── examples/, benchmarks/, poc/, runs/   # exploratory + batch runs
-└── main.py         # GUI entrypoint
+SJTU-TPMSHX/                   # repo root
+├── sjtu_tpmshx/               # Python package
+│   ├── solvers/               # SIMPLE 2D/3D, LTNE, tpms_calc, roughness, envelope
+│   ├── pipelines/             # stages_2d / stages_3d (+ stages_3d_helpers)
+│   ├── df_surrogate/          # Darcy–Forchheimer surrogate (gamma_df / rbf)
+│   ├── controllers/           # Qt: ComputeOrchestrator, ResultCache, pipelines
+│   ├── core/ domain/ configs/ # Qt-free evaluators / validators / canonical case JSON
+│   ├── optimization/          # qNEHVI multi-objective Pareto
+│   ├── design/                # quick multi-case TPMS sizing tool
+│   ├── ui/                    # PySide6 widgets, themes, ui_builders
+│   ├── assets/logos/          # branding images (gitignored png)
+│   ├── runs/                  # orchestration: production entry-points + helpers + golden gate
+│   │   ├── demos/ diagnostics/ smokes/ tools/   # scripts grouped by role
+│   │   └── archive/ cfd_asym/ _out/
+│   ├── validation/            # V&V — result CSVs + status docs at this root
+│   │   ├── harness/           # reusable test infra (_harness, _metrics, _case_sets, …)
+│   │   └── cases/             # runners (Shanghai, MMS, GCI, conservation audits)
+│   ├── tests/                 # pytest suite
+│   └── main.py                # GUI entrypoint
+├── projects/                  # collaboration deliverables (624-Retrodict / 703-sCO2-D76 / 704-Aircooler-10kW)
+├── openspec/                  # spec-driven change proposals + capability specs
+└── reports/ opt_runs/ poc/ benchmarks/   # computed outputs / PoC / perf benchmarks
 ```
 
 Research notes & experiment reports live in **[`vault/`](vault/)** — organised into
