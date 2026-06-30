@@ -1,7 +1,7 @@
 """
 optimization/evaluator_3d.py — 3D BO-compatible single-design evaluator.
 
-Wraps ``validation.verify_pareto_3d.evaluate_3d`` (which already extrudes a
+Wraps ``validation.cases.verify_pareto_3d.evaluate_3d`` (which already extrudes a
 2D L(x,y), t(x,y) field along z, runs SIMPLE 3D × 2 + LTNE solve_full_domain_3d
 with outer ρ(T) coupling) into the same (Q_neg, dP, mass) return contract as
 ``optimization.evaluator.evaluate_design`` so ``optimizer_qnehvi.run_qnehvi``
@@ -30,7 +30,7 @@ import numpy as np
 
 from optimization.evaluator import DEFAULT_CONFIG as _EVAL_DEFAULT_CONFIG
 # M4 (2026-05-28 audit): import via core.evaluators neutral layer instead of
-# directly from validation.verify_pareto_3d, breaking the
+# directly from validation.cases.verify_pareto_3d, breaking the
 # optimization→validation direction anomaly. core.evaluators currently
 # re-exports the function; physical move pending future cleanup.
 from core.evaluators import evaluate_3d as _evaluate_3d_dict

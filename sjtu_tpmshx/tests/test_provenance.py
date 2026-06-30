@@ -1,4 +1,4 @@
-"""Unit tests for validation._provenance.
+"""Unit tests for validation.harness._provenance.
 
 C.4 of the 2026-05-06 audit fix campaign — every validation CSV now
 carries a comment-prefixed provenance header (script + commit + date)
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from validation._provenance import (
+from validation.harness._provenance import (
     write_csv_with_provenance,
     backfill_provenance,
     read_csv_with_provenance,

@@ -12,7 +12,7 @@ number-preserving without re-running the (hours-long) MMS sweeps:
 import numpy as np
 import pytest
 
-from validation._order_fit import OrderFitResult, fit_order_loglog
+from validation.harness._order_fit import OrderFitResult, fit_order_loglog
 
 
 # ── retired implementations, verbatim ───────────────────────────────
@@ -106,8 +106,8 @@ def test_underdetermined_returns_nan():
 def test_migrated_modules_import():
     """The four caller modules still import (call sites rewired)."""
     import importlib
-    for mod in ('validation.mms_phase_a3_h_refine',
-                'validation.mms_phase_a4_boundary',
-                'validation.mms_phase_b4_order',
-                'validation.phase_c_gci'):
+    for mod in ('validation.cases.mms_phase_a3_h_refine',
+                'validation.cases.mms_phase_a4_boundary',
+                'validation.cases.mms_phase_b4_order',
+                'validation.cases.phase_c_gci'):
         importlib.import_module(mod)

@@ -16,7 +16,7 @@ dP-only gate: the water side of this specimen is plumbed straight-through
 (水直), which differs from the Shanghai cross-flow architecture this
 pipeline models — Q numbers are reported but NOT scored.
 
-Usage:  python -m validation.validate_d76_3d [--nx 20 --ny 10 --nz 3]
+Usage:  python -m validation.cases.validate_d76_3d [--nx 20 --ny 10 --nz 3]
 """
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ _THIS = Path(__file__).resolve()
 ROOT = _THIS.parent.parent
 sys.path.insert(0, str(ROOT))
 
-import validation.validate_shanghai_3d_real as V          # noqa: E402
-from validation._metrics import rmsre_from_pct             # noqa: E402
-from validation._harness import load_cases_df               # noqa: E402
-from validation._case_sets import (D76_XLSX, D76_N_CASES,   # noqa: E402
+import validation.cases.validate_shanghai_3d_real as V          # noqa: E402
+from validation.harness._metrics import rmsre_from_pct             # noqa: E402
+from validation.harness._harness import load_cases_df               # noqa: E402
+from validation.harness._case_sets import (D76_XLSX, D76_N_CASES,   # noqa: E402
                                     D76_EXCLUDE, d76_spec)
 
 N_CASES = D76_N_CASES

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from validation.validate_shanghai_3d_real import _build_inlet_profile
+from validation.cases.validate_shanghai_3d_real import _build_inlet_profile
 
 
 # ── r2-val-02: inlet profile no backflow ───────────────────────────────────

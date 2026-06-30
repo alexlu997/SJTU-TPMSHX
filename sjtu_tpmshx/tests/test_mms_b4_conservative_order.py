@@ -3,8 +3,8 @@
 Locks in that the strict-conservation kernel branch (cfg['conservative_ltne']
 =True, face-shared SOU + telescoping a_P) keeps 2nd-order accuracy — i.e.
 conservation does NOT cost order. Reads the persisted CSV from
-``validation/mms_phase_b4_order.py`` (the h-refinement sweep is not re-run in
-CI; regenerate via ``python -m validation.mms_phase_b4_order``).
+``validation/cases/mms_phase_b4_order.py`` (the h-refinement sweep is not re-run in
+CI; regenerate via ``python -m validation.cases.mms_phase_b4_order``).
 
 Hard gates (B-plan B4 §3):
     p_obs (L2_A) >= 1.8

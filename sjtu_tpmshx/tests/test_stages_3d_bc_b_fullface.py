@@ -11,7 +11,7 @@ widths at default silently returned nan (air uncooled, ``T_out_B=nan``,
 Via ``ComputeConfig`` fluid_B is always a configured second fluid (validated in
 ``_parse_inputs_3d_cfg``), so a None B BC at THIS boundary means "full-face
 cross-flow", not single-fluid. The genuine single-fluid path
-(``validation/audit_3d_conservation.py`` T5) calls ``_run_3d_stack`` directly
+(``validation/cases/audit_3d_conservation.py`` T5) calls ``_run_3d_stack`` directly
 with an explicit ``fluid_B_cfg=None`` and bypasses this boundary, so it — and
 ``bc_to_dict``'s documented side-B None asymmetry (``tests/test_bc_to_dict.py``)
 — are unaffected by the fix.

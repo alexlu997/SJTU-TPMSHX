@@ -98,10 +98,10 @@ python -m sjtu_tpmshx.main
 
 ```bash
 # Lumped ε-NTU dual-Nu — current paper baseline
-python sjtu_tpmshx/validation/validate_shanghai_lumped_dual_nu.py
+python sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py
 
 # 3D real solver (SIMPLE, Nz=10, mass-flux inlet)
-python sjtu_tpmshx/validation/validate_shanghai_3d_real.py
+python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 
 # 3-path 3D comparison: SIMPLE vs SF-axial vs SF-Poisson
 python sjtu_tpmshx/validation/validate_shanghai_3d_pp_compare.py

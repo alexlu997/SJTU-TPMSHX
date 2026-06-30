@@ -14,19 +14,19 @@ Scripts under `sjtu_tpmshx/runs/` SHALL be grouped by role into subdirectories â
 - **WHEN** a user looks for the runnable production scripts (optimizer drivers, the polygon pipeline)
 - **THEN** they are at the `runs/` root, not buried in a role subdirectory
 
-### Requirement: Validation separates harness, runners, data, and docs
+### Requirement: Validation separates reusable harness from runner scripts
 
-`sjtu_tpmshx/validation/` SHALL be layered: reusable test infrastructure in `validation/harness/`, runner scripts in `validation/cases/`, produced result data in `validation/data/results/`, and status/README docs in `validation/docs/` â€” not flat in one directory.
+`sjtu_tpmshx/validation/` SHALL group its code by role: reusable test infrastructure in `validation/harness/` and runner scripts in `validation/cases/`, rather than flat in one directory. Result data (CSV baselines, `.meta.json` sidecars, logs) and status docs remain discoverable at the `validation/` root, and a runner that moves into `cases/` keeps writing its outputs to that root (its output-path anchor is adjusted so the result location does not change).
 
 #### Scenario: Harness code is importable as a subpackage
 
-- **WHEN** a runner needs shared validation utilities
+- **WHEN** a runner or test needs shared validation utilities
 - **THEN** it imports them from `validation.harness.<module>` (a real subpackage with `__init__.py`)
 
-#### Scenario: Result data is separated from code
+#### Scenario: Runner output location is preserved across the move
 
-- **WHEN** a validation runner writes a result CSV
-- **THEN** it lands under `validation/data/results/`, not next to the runner source
+- **WHEN** a runner is moved from `validation/` into `validation/cases/`
+- **THEN** its result CSV still lands at the `validation/` root (the output path is re-anchored), so the baseline files and the tests that read them are unaffected
 
 ### Requirement: A relocated script re-anchors its package path
 

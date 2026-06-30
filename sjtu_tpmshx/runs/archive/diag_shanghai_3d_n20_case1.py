@@ -19,7 +19,7 @@ Usage:
     python -u -m runs.diag_shanghai_3d_n20_case1
 
 The script intentionally avoids touching solvers/roughness.py,
-validation/validate_shanghai_3d_real.py and the linked memory file
+validation/cases/validate_shanghai_3d_real.py and the linked memory file
 (other conversation's lock).
 """
 from __future__ import annotations

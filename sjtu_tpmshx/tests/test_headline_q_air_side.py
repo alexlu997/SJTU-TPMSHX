@@ -5,7 +5,7 @@ The B/water-side advective enthalpy (Q_enthalpy_B = m_B*cp*dT_B) drops the
 boundary-conduction flux, so it over/under-reads by ~8 % even when the scheme
 conserves. Averaging it into the headline made the displayed Q drift
 non-physically (e.g. it ROSE when the coolant flow FELL). The air-side enthalpy
-matches the experiment-validated duty (validation/validate_shanghai_3d_real
+matches the experiment-validated duty (validation/cases/validate_shanghai_3d_real
 computes the same m_air*cp*dT_A; RMSRE ~3 %), so the headline now reports it
 directly. Q_enthalpy_B stays in the result dict as a transparent diagnostic.
 """
