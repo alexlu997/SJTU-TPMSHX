@@ -13,7 +13,7 @@ Nu reduction the experiment used.
 
 Geometry/conditions read from
   data/raw_data/D-7-6-sCO2/D-7-6实验数据-V1.xlsx
-Run:  python sjtu_tpmshx/validation/validate_sco2_d76.py
+Run:  python projects/703-sCO2-D76/validate_sco2_d76.py
 Gate: max per-case |Q error| < 15 %.
 """
 import math
@@ -26,7 +26,7 @@ import openpyxl
 from openpyxl.utils import column_index_from_string as ci
 
 _HERE = Path(__file__).resolve()
-sys.path.insert(0, str(_HERE.parent.parent))   # sjtu_tpmshx/ on path
+sys.path.insert(0, str(_HERE.parent.parent.parent / "sjtu_tpmshx"))   # sjtu_tpmshx/ on path
 
 from solvers import fluid_props, tpms_calc      # noqa: E402
 

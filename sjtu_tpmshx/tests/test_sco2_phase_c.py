@@ -7,7 +7,7 @@ Covers the property-backend additions that Phase C needs over Phase A:
     refresh through the spike.
 
 The full 2D field-solver capability check lives in
-validation/validate_sco2_precooler_phasec.py (cross-check, not a gate — there is
+projects/703-sCO2-D76/validate_sco2_precooler_phasec.py (cross-check, not a gate — there is
 no TPMS near-critical experiment to validate against).
 """
 import numpy as np

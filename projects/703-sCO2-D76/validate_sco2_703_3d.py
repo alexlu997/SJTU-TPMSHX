@@ -22,7 +22,7 @@ the 3D coupled Q / cold-outlet are NOT — use the 2D double-live coupled solve
 703 is counterflow (the recuperator/heater have a temperature cross: cold-out >
 hot-out, impossible in crossflow).
 
-Run:  TPMSHX_ALLOW_EXTRAP=1 python -u sjtu_tpmshx/validation/validate_sco2_703_3d.py
+Run:  TPMSHX_ALLOW_EXTRAP=1 python -u projects/703-sCO2-D76/validate_sco2_703_3d.py
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from pathlib import Path
 
 os.environ.setdefault("TPMSHX_ALLOW_EXTRAP", "1")  # t=0.6 trips ConstDF window
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:

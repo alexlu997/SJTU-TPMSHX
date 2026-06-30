@@ -21,7 +21,7 @@ sizing's binding-side Δp is trustworthy). The precooler water side stays on the
 1D estimate (water is the prescribed side here; its cF is the Shanghai-gated
 gamma_df fit).
 
-Run:  python -u sjtu_tpmshx/validation/validate_sco2_703_field.py
+Run:  python -u projects/703-sCO2-D76/validate_sco2_703_field.py
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:
@@ -45,7 +45,7 @@ from solvers.ltne_energy import solve_full_domain              # noqa: E402
 from solvers.df_projection import extract_dP_mass_flux_from_simple  # noqa: E402
 from solvers.nu_correlations import nu_sco2_topo, nu_water_topo  # noqa: E402
 from df_surrogate.predict import SCO2_CF_SCALE                 # noqa: E402
-from validation.size_sco2_703 import (DEVICES, design_device,  # noqa: E402
+from size_sco2_703 import (DEVICES, design_device,  # noqa: E402
                                        EPS, EPS_A, D_H, A0, K_S, K0, CF0,
                                        _h as _enth, _props as _propsA)
 

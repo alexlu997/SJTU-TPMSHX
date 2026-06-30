@@ -8,7 +8,7 @@ solenoidal → telescoping 精确成立), 在同一定尺几何 / 同一 h_v / �
 from __future__ import annotations
 import sys, time
 from pathlib import Path
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 try:

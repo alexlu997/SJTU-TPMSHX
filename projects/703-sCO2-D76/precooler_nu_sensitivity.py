@@ -16,7 +16,7 @@ COOLING correlations and (2) bracket the sizing impact. Literature points:
 Both are TUBE correlations → a TPMS geometry factor is unknown; they bound the
 *property-variation* effect, not the absolute TPMS Nu.
 
-Run:  python -u sjtu_tpmshx/validation/precooler_nu_sensitivity.py
+Run:  python -u projects/703-sCO2-D76/precooler_nu_sensitivity.py
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:

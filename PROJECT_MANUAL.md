@@ -182,6 +182,11 @@ SJTU-TPMSHX/                       ← 仓库根
 ├── examples/                      ← 独立演示脚本（交互式 3D 可视化，仓根运行）
 ├── opt_runs/                      ← 历史优化跑归档（新跑输出按启动 CWD 落地，gitignore）
 │
+├── projects/                      ← 项目合作交付（每个项目一个自包含文件夹，只放调用包的驱动脚本）
+│   ├── 624-Retrodict/             ← 工况回填（Diamond D-6-4 / D-7-5）
+│   ├── 703-sCO2-D76/              ← 703 sCO2 PCHE/预冷器评估（D-7-6 晶胞）：定尺/耦合/场/Nu 闸门
+│   └── 704-Aircooler-10kW/        ← 10kW 空冷器定尺 + 热约束校核
+│
 ├── data/                          ← 实验原始数据（Excel，部分 gitignore）
 ├── reports/                       ← 计算结果、图、CSV
 ├── models/                        ← 模型/几何文件
@@ -589,8 +594,8 @@ SJTU-TPMSHX/                       ← 仓库根
 | `run_production_qnehvi_parallel.py` | 并行版生产优化（~2 倍加速）。 |
 | `run_3d_qnehvi_fast.py` | 3D 快速模式优化（小网格、少迭代）。 |
 | `smoke_3d_eval.py` | 测一次 3D 评估耗时，校准优化预算。 |
-| `predict_aircooler_10kw.py`（756 行） | 一次性：10kW 空冷器定尺（3 个工况）。 |
-| `aircooler_conservative_check.py` | 校核 10kW 空冷器设计是否满足热约束。 |
+| `predict_aircooler_10kw.py`（756 行）→ 已移至 `projects/704-Aircooler-10kW/` | 一次性：10kW 空冷器定尺（3 个工况）。 |
+| `aircooler_conservative_check.py` → 已移至 `projects/704-Aircooler-10kW/` | 校核 10kW 空冷器设计是否满足热约束。 |
 | `demo_3d_air_air.py` | 3D 空气-空气演示运行，画中截面。 |
 | `demo_3d_cube_air_air.py` / `demo_3d_cube_volume.py` | 单位立方体域 3D 演示 / 体加权场可视化。 |
 | `render_3d_styles.py` | 用不同配色/光照渲染 3D 场（出版图）。 |

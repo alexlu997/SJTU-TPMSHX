@@ -20,7 +20,7 @@ Conventions / why Q is computed externally:
 t=0.6 trips the ConstDF surrogate window → run needs allow-extrap (sCO2 uses its
 own D-7-6 closure, not ConstDF, so it is not a true extrapolation).
 
-Run:  python -u sjtu_tpmshx/validation/validate_sco2_703_coupled.py
+Run:  python -u projects/703-sCO2-D76/validate_sco2_703_coupled.py
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 os.environ.setdefault("TPMSHX_ALLOW_EXTRAP", "1")
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:

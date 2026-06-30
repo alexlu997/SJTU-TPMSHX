@@ -22,7 +22,7 @@ the held-out (non-GOLD, 45 cases) Δp error SEPARATELY from the calibration
 remains UNVERIFIED — there is no second sCO2 Δp dataset. This validates Re
 transfer, not geometry transfer.
 
-Run:  python -u sjtu_tpmshx/validation/validate_sco2_d76_dP_holdout.py
+Run:  python -u projects/703-sCO2-D76/validate_sco2_d76_dP_holdout.py
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ import numpy as np
 import openpyxl
 from openpyxl.utils import column_index_from_string as ci
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:
@@ -43,7 +43,7 @@ except Exception:
     pass
 
 # Reuse the gate's field driver + constants verbatim — no duplicated physics.
-from validation.validate_sco2_d76_2d import (_run_case, _col, GOLD, XLSX,  # noqa: E402
+from validate_sco2_d76_2d import (_run_case, _col, GOLD, XLSX,  # noqa: E402
                                              N_X, N_Y, L_CELL, T_WALL, L_DOM)
 from df_surrogate.predict import SCO2_CF_SCALE                             # noqa: E402
 

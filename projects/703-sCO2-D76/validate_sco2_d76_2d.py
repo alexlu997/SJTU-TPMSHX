@@ -16,7 +16,7 @@ Carries the prescribed-B caveat (same as the Shanghai paper baseline): the
 cold side is frozen, so this validates the A-side field heat transfer with
 the sCO2 closure, not a fully two-side-live coupled solve.
 
-Run:  python sjtu_tpmshx/validation/validate_sco2_d76_2d.py
+Run:  python projects/703-sCO2-D76/validate_sco2_d76_2d.py
 Gate: max per-case |Q error| < 15 %.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ import numpy as np
 import openpyxl
 from openpyxl.utils import column_index_from_string as ci
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings('ignore')
 try:

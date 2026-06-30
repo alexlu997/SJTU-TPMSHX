@@ -18,7 +18,7 @@ This driver is a CAPABILITY + CROSS-CHECK, not a validated gate:
   * per-cell Nu (local Re/Pr through the spike), per-cell rho*cp, fine streamwise
     grid clustered at the hot-outlet (cp peak), strong under-relaxation, NaN guard.
 
-Run:  python sjtu_tpmshx/validation/validate_sco2_precooler_phasec.py
+Run:  python projects/703-sCO2-D76/validate_sco2_precooler_phasec.py
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:

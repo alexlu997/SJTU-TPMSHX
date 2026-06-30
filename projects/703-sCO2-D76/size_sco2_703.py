@@ -27,7 +27,7 @@ embeds SLM roughness). The design point = smallest-V geometry whose BINDING-side
 Method B (validate_sco2_703_field.py) then drives the 2D field solver at these
 sized geometries to confirm the Δp independently (Phase C for the precooler).
 
-Run:  python -u sjtu_tpmshx/validation/size_sco2_703.py
+Run:  python -u projects/703-sCO2-D76/size_sco2_703.py
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import brentq
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2] / "sjtu_tpmshx"
 sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings("ignore")
 try:
