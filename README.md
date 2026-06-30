@@ -58,6 +58,12 @@
 
 <sub>All-axis (r=2) refinement. **Δp** RMSRE climbs to a **≈ 12 % geometry / closure floor** (Richardson, p<sub>obs</sub> ≈ 0.76) — the production `Nz=10` grid (★, ≈ 7 %) is under-resolved. **Q** is a duty integral: clean 2nd-order, grid-converged at **≈ 3 %**.</sub>
 
+<br><br>
+
+<img src="assets/gammadf-error.png" width="93%" alt="gamma_df closure error analysis — per-case parity of model vs experimental Δp (orange, log-log, RMSRE 9.7%) and Q (blue, RMSRE 2.9%) across the Shanghai 16 cases at the finest 64x32x16 grid.">
+
+<sub>**gamma_df** closure per-case parity at the finest computed grid (64×32×16). **Δp** (orange) tracks experiment across two decades — the high-Δp cases sit ≈ 10 % low, the systematic under-prediction that is the ≈ 12 % grid-converged floor. **Q** (blue) lies within ±5 % (RMSRE ≈ 3 %).</sub>
+
 </div>
 
 ---
