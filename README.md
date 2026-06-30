@@ -73,13 +73,28 @@
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (RBF over CFD micro-runs) · dual Nusselt: **air-side** v4.1 (×1.28 roughness-calibrated) / **water-side** Yan 2024 |
+| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: smooth-CFD × experimental roughness γ) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct (cross-checks Yan 2024) |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
 | **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈12 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 28 %** |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
+
+---
+
+## 📐 Nu closure correlations
+
+<div align="center">
+
+<table><tr>
+<td><img src="assets/nu-air-error.png" width="100%" alt="Air-side Nu correlation fit vs CFD — parity for Diamond (orange, n=163, RMSRE 10.1%) and Gyroid (blue, n=201, RMSRE 9.9%), Nu = c·Pr^(1/3)·Re^a·(Dh/L)^d, Re 400-16k."></td>
+<td><img src="assets/nu-water-error.png" width="100%" alt="Water-side Nu correlation fit vs CFD — parity for Diamond (orange, n=940, RMSRE 12.5%) and Gyroid (blue, n=939, RMSRE 12.0%), Nu = c·Re^a·Pr^(1/3), Re 100-50k, Pr 2.3-5.9."></td>
+</tr></table>
+
+<sub>Per-topology Nusselt power-laws fit to CFD (**Diamond** orange · **Gyroid** blue), parity vs the full fit set. **Air** `Nu = c·Pr^⅓·Re^a·(Dh/L)^d` — smooth-wall, RMSRE ≈ 10 % (the ×1.28 SLM-roughness factor is applied separately in production). **Water** `Nu = c·Re^a·Pr^⅓` — direct fit, RMSRE ≈ 12 %. Coefficients are single-sourced in `solvers/nu_correlations.py` (`NU_COEFFS` / `WATER_NU_COEFFS`).</sub>
+
+</div>
 
 ---
 
