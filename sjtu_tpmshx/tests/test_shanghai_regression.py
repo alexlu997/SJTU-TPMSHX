@@ -166,7 +166,15 @@ def test_shanghai_3d_baseline():
     # Traded for sane extrapolation outside the gate geometry (D7-class:
     # 454 vs rbf 745, end-to-end 67.4%). Old numbers reproducible with
     # TPMSHX_DF_METHOD=rbf.
-    BASELINE_DP = 9.82
+    # 2026-06-30 — dP now extracted with the 2nd-order face-extrapolation
+    # (SIMPLESolver3D.extract_dP_face_extrap): the cell-centre method sampled P
+    # ~h/2 inside the inlet/outlet faces (O(h) offset → ~1st-order, and it
+    # systematically UNDER-predicted dP, inflating the gap vs experiment).
+    # Extrapolating P to the faces recovers the true model dP, which is closer
+    # to experiment: Nz=3 RMSRE_dP 9.82% → 5.05% (Q unchanged — Q is a duty
+    # integral, independent of the dP reduction). Verified 2nd-order in the
+    # streamwise direction (tests/test_dp_face_extrap_order.py).
+    BASELINE_DP = 5.05
     BASELINE_Q = 3.20
     tol_dp = 0.05
     tol_q = 0.10

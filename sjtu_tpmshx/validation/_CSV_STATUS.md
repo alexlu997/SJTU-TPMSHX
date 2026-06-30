@@ -23,9 +23,17 @@
 > number is ever needed. Only the 4 live rows above + the plhub snapshot remain.
 
 ## Current authoritative numbers (v1.4.0, 2026-06-12)
-- **Production default (gamma_df backend): Nz=3 dP 9.82% / Q 3.20%**
-  (`shanghai_3d_baseline.csv`) · **Nz=10 dP 12.06% / Q 3.30%**
-  (`shanghai_3d_baseline_gammadf_nz10.csv`, measured 2026-06-30 — **README headline**).
+> **2026-06-30 — Δp extraction switched to 2nd-order face extrapolation**
+> (`SIMPLESolver3D.extract_dP_face_extrap`, kernel runner / headline path). The old
+> cell-centre reduction sampled P ~h/2 inside the inlet/outlet faces (O(h), ~1st-order)
+> and *under-predicted* Δp. With the 2nd-order face reduction the **gamma_df** RMSRE_dP is
+> **Nz=3 5.05% / Nz=10 7.03%** (was 9.82% / 12.06% cell-centre); Q unchanged (3.20% / 3.30%).
+> The `shanghai_3d_baseline*.csv` rows above were generated with the cell-centre reducer
+> (historical provenance); regenerate for the face-extrap numbers. NOTE: the **pipeline**
+> path (`stages_3d`, GUI) still uses the cell-centre reducer — switching it re-baselines the
+> golden gate (golden captures `dP`), so it's left as a separate decision.
+- **Production default (gamma_df, 2nd-order face Δp): Nz=3 dP 5.05% / Q 3.20% · Nz=10 dP 7.03% / Q 3.30%**
+  (README headline ≈7%). Cell-centre (legacy) was 9.82% / 12.06%.
   DF surrogate default = GammaDF multi-fidelity (`df_surrogate/gamma_df.py`) since 2026-06-12.
 - **rbf backend reference (`TPMSHX_DF_METHOD=rbf`): Nz=3 dP 7.19% / Q 3.22%,
   Nz=10 dP 8.69% / Q 3.33%** — post 2026-06-04 mass-flux-inlet fix (which cut
