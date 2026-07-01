@@ -33,6 +33,8 @@ Optionally make ε the primary kernel variable (`(L,t)→ε_A` analytic map, int
 
 Three rough-wall geometries: `D_7_6` (air), `G_7_6`/`D_7_6` (water). Model roughness as a **multiplicative** discrepancy γ_cF = c_F,rough / c_F,smooth (and γ_K). With only 3 anchors this is a per-topology scalar (or a mild trend), not a surface — analogous to the air-Nu ×1.28. **Blocker to resolve first:** the experimental Δp convention (core-only vs total/manifold; prototype channel count N≈28–34) — see `[[d76-cannot-calibrate-nu]]`. Until reconciled, report γ with its convention caveat; do not bake an unreconciled factor into the default.
 
+> **PHYSICS CONSTRAINT (2026-07-01 correction).** `K`, `c_F` are **geometric** (fluid enters the DF law only via μ/ρ/u), so there is exactly ONE (K, c_F) per geometry — **never a fluid-specific `γ_water` ≠ `γ_air`** (that would push a fluid-dependence into a geometric coefficient). The air↔water Δp discrepancy is therefore only ever (a) a **convention artifact** (reconcile a_flow / core-vs-total / N → both fluids collapse onto the same c_F), or (b) a genuine **Re-dependence** `c_F(Re)` / `γ(Re)` — a single geometric curve that air (high Re) and water (low Re) sample at different Re, jointly constraining it. The roughness γ is likewise geometric (a `γ(Re)` at most), shared by both fluids. Order: fix the convention first (kills the artifact, likely most of the water gap); only if a residual survives, fit ONE `c_F(Re)` from pooled air+water — not two coefficient sets.
+
 ## D7. Validation gates (acceptance)
 
 - Per-geometry LOO `c_F` RMSRE (primary target) and `K` LOO over the 40 CFD geometries.

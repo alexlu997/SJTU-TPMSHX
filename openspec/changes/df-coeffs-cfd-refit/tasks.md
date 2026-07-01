@@ -25,9 +25,13 @@
 
 ## 3. Roughness factor (multi-fidelity, multiplicative)
 
-- [ ] 3.1 Reconcile experiment Δp convention (core vs total/manifold, channel N) for `D_7_6` air + `7-6-Water` G/D — resolve or document the caveat (see [[d76-cannot-calibrate-nu]])
-- [ ] 3.2 Derive γ_cF = c_F,rough/c_F,smooth at the 3 anchors; fit a **constant** γ per topology (multiplicative, shrinkage to const). NO second roughness factor; NO additive KOH
-- [ ] 3.3 Validate γ against the experiment Δp end-to-end (water 7-6, air D_7_6); report residual
+> **(K, c_F) are GEOMETRIC — one set per geometry, never fluid-specific.** γ is a
+> geometric roughness factor (a `γ(Re)` at most), shared by air AND water; do NOT
+> fit a separate `γ_water`. See design D6 PHYSICS CONSTRAINT (2026-07-01).
+
+- [ ] 3.1 Reconcile experiment Δp convention (core vs total/manifold, channel N) for `D_7_6` air + `7-6-Water` G/D FIRST — this likely removes most of the water gap (artifact, not physics). Resolve or document (see [[d76-cannot-calibrate-nu]])
+- [ ] 3.2 If a residual air↔water discrepancy survives the convention fix, model it as ONE geometric `c_F(Re)` (or `γ(Re)`) fit from **pooled air+water** — air pins high-Re, water pins low-Re. NO fluid-specific γ; NO second roughness factor; NO additive KOH
+- [ ] 3.3 Validate the single geometric closure against BOTH experiments end-to-end (water 7-6, air D_7_6); the same (K, c_F[(Re)]) must fit both — report residual
 
 ## 4. Backend integration + gates
 
