@@ -132,7 +132,7 @@ Re_stored = ρ × (m_cfd / 2) × D_h / (ρ × A_single × μ)
 
 **Shanghai 的 m_air 已经是单股**(只流空气那一条通道),所以 Shanghai u_A 本身
 就是 single_stream 速度,直接用 `ρ × u_A × D_h / μ` 就对。训练公式里的 /2
-对 Shanghai **不适用**,否则等于又除了一次 2。
+对 Shanghai **不适用**,否则相当于多除以了一次 2。
 
 ## Step 5 — Nu → H_sf → h_vA
 
@@ -358,6 +358,6 @@ f_re path 的 Re 计算(`simple_solver._porous_src`)和 `pressure_drop()` 还在
 ## 结论一句话
 
 **Shanghai C-1 的 21.8% 高 Re Q 误差**(原始 2026-04-13 C-1 baseline 遗留的最
-大已知问题)**已被追到 `tpms_calc.compute()` 里 Re 约定的两个 bug 并修复**,
+大已知问题)**已被追溯到 `tpms_calc.compute()` 里 Re 约定的两个 bug,并已修复**,
 **新的 max |err_Q%| = 3.71%**(Case 12 异常除外)。**不是 thermal dispersion**。
 f_re 路径的 dP 侧误差(Case 1 +50% 等)**是独立问题**,本次未修。

@@ -17,7 +17,7 @@ Loader `solvers/sigmoid_field.py`: `cache_dir` defaults to `os.path.dirname(__fi
 `main.py` sits at the package root, so `os.path.dirname(__file__)` + `assets/logos/` is correct there. `ui/ui_builders.py` sits one level down; its banner reference must resolve to `…/sjtu_tpmshx/assets/logos/`, i.e. anchor on the package root (`os.path.dirname(os.path.dirname(__file__))` or an existing package-root constant), not on `ui/`. This mirrors the Phase-0 `projects/` lesson: a relocation that changes a file's depth must re-anchor its path, not assume the old depth.
 
 ### D3 — `skills-lock.json` belongs to tooling, not the package
-No `*.py` references it. It is a Claude Code skills lockfile that happened to land in the package root. Move to `.claude/` (or gitignore + remove). Keeps the package root pure source.
+No `*.py` references it. It is a Claude Code skills lockfile that happened to land in the package root. Move to `.claude/` (or gitignore + remove). This keeps the package root pure source.
 
 ### D4 — Fix the entry-guard bug here, not in Phase 3
 `validate_shanghai_aligned.py` runs on import (writes xlsx). It is a real correctness defect (the audit's only HIGH finding) and a one-file, self-contained fix, so it rides along with Phase 1 rather than waiting for the code-layer phase. It is an orphan (no importer), so wrapping its body in `main()` + guard cannot break a caller.

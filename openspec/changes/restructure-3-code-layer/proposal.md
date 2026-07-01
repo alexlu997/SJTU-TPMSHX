@@ -1,6 +1,6 @@
 ## Why
 
-**Phase 3 of the 3-phase restructure — the code layer.** The dead-code and boundary audits came back remarkably clean: single-sourced invariants intact, no circular deps, no commented-out dead code, essentially no orphan functions. So the code-layer work collapses to **one** genuine target plus a naming pass:
+**Phase 3 of the 3-phase restructure — the code layer.** The dead-code and boundary audits came back clean: single-sourced invariants intact, no circular deps, no commented-out dead code, essentially no orphan functions. So the code-layer work collapses to **one** genuine target plus a naming pass:
 
 - `pipelines/stages_3d.py` is **3243 lines** — the only true god-file. It mixes the 3D pipeline stage flow (parse cfg → build fields → run solvers → finalize) with **50+ helper functions** (flux/temperature/roughness/solver-setup/profiling). Everything else in the top-10-largest list is cohesive (solver kernels, UI panels, audits) and stays. `main.py` (2696 lines) is an intentional Qt mixin composition — left alone.
 - A final naming/consistency pass to retire any remaining stragglers and lock the `repository-structure` naming requirement.
@@ -21,7 +21,7 @@ This phase is **optional and deferrable**: it improves navigability of the 3D pi
 
 ### Modified Capabilities
 
-- `repository-structure`: add the code-layer requirements — a single source file SHOULD not grow into a god-file mixing orchestration with dozens of helpers; helper clusters are extracted into sibling modules while keeping the public stage entry thin; such a split must be behavior-preserving (golden bit-identical).
+- `repository-structure`: add the code-layer requirements — a single source file SHOULD NOT grow into a god-file mixing orchestration with dozens of helpers; helper clusters are extracted into sibling modules while keeping the public stage entry thin; such a split must be behavior-preserving (golden bit-identical).
 
 ## Impact
 

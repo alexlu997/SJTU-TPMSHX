@@ -10,7 +10,7 @@ The code-layer audit found the package clean: one true god-file (`pipelines/stag
 Only helpers that are pure (no closure over stage-local mutable state, inputs/outputs explicit) move out. The stage flow (`_run_3d_stack` and the public entry) stays in `stages_3d.py`, which becomes a thin orchestrator that imports from the new sibling modules. A helper that closes over loop-local state is left where it is — forcing it out would change semantics.
 
 ### D2 — One cluster at a time, golden-gated after each
-The extraction is incremental: move one cohesive cluster, then assert golden 3D bit-identical before the next. This bounds any regression to the single cluster just moved and makes revert trivial. A big-bang move would make a drift impossible to localize.
+The extraction is incremental: move one cohesive cluster, then assert golden 3D bit-identical before the next. This bounds any regression to the single cluster just moved and makes revert trivial. A big-bang move would make any drift impossible to localize.
 
 ### D3 — numba is the subtle hazard
 `@njit` kernels must move with their decorator and exact signature; calling an `njit` function across modules is fine but triggers a one-time cold recompile (expected, not a regression). The risk is accidentally changing a default argument, a global captured at jit time, or the order of array operations during the copy — any of which can perturb the last ULPs and fail bit-identical. The per-cluster golden check (D2) catches this immediately.

@@ -18,7 +18,7 @@ The relevant `eps_f_arr` usages in the 2D kernel are purely convective: the FxA 
 - Changing the 3D path (it is the reference, untouched).
 - Defining a new δ / offset-isosurface geometry (reuse `_asym_split_A`).
 - CFD validation of the asymmetric closure (P1-CFD, separate change).
-- **The optimizer 2D path (`optimization/evaluator.py` `evaluate_design`) — OUT OF SCOPE.** It is a *separate* `solve_full_domain` caller that does not read `delta_levelset`. A manual δ sweep is served by looping Pipeline2D over δ values (which this change enables). Driving δ as an *optimization variable* would need the same per-side plumbing in `evaluate_design`, but optimization is gated (Q/dP-stability-first workflow), so it is a documented follow-up, not part of this change.
+- **The optimizer 2D path (`optimization/evaluator.py` `evaluate_design`) — OUT OF SCOPE.** It is a *separate* `solve_full_domain` caller that does not read `delta_levelset`. A manual δ sweep is achieved by looping Pipeline2D over δ values (which this change enables). Driving δ as an *optimization variable* would need the same per-side plumbing in `evaluate_design`, but optimization is gated (Q/dP-stability-first workflow), so it is a documented follow-up, not part of this change.
 - UI changes — δ has no GUI knob; it stays programmatic (see Resolved Decisions).
 
 ## Decisions

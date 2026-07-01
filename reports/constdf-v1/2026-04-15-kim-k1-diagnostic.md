@@ -10,7 +10,7 @@ tags: [report, diagnostic, Kim-2026, K_1, linear-subset]
 逐点加入直到新点相对残差 > 5% 时停。剩下的 
 `n_linear` 个点构成 Kim 意义上的「线性 / viscous-inertial laminar」子集。
 
-- `K_1`  = μ̄ · L_ch / m(Kim 方法 2 的近似 Darcy 渗透率)
+- `K_1` = μ̄ · L_ch / m(Kim 方法 2 的近似 Darcy 渗透率)
 - `K_Q1` = 2-term WLS 拟合结果(本流水线 per-geom 的 K)
 - `K_1/l²` = Kim 用来横向比较的归一化量(他报告 0.1~2 × 10⁻³)
 
