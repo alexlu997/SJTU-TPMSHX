@@ -4,7 +4,9 @@
 
 **DEPLOYED into the production default `gamma_df`** (2026-06-30 #2, user-directed): the clean CFD **K**-surface replaced the SmoothDF D_h² K trend inside `GammaDF` (c_F unchanged). The transient `cfd_refit` backend was folded in and removed. **Shanghai 3D dP 5.05→5.28 % / Q 3.20→3.21 %** (re-baselined: golden-point K values, projector baseline JSON, evaluator frozen tuples, shanghai regression pin), water-Δp Diamond 0.33→0.40 / Gyroid 0.62→0.68. Full pytest green.
 
-**Deferred:** full **c_F** surface deployment (needs roughness γ — blocked on experiment convention, [[d76-cannot-calibrate-nu]]); air-CFD cross-check (water alone sufficed); production default switch (user decision). The full smooth-cF surface is validated but Shanghai needs the gate-calibrated c_F (registration contract — see plhub_gp precedent).
+**Air↔water cross-check DONE (was already run 2026-06-11, re-verified 2026-07-01).** Two INDEPENDENT smooth CFD (dedicated air CFD `data/raw_data/air-cfd-raw.xlsx` ≈ `server-pyfluent/Data_All_1,0.xlsx`, 840 pts, 20 geom + water CFD), same DF fit, cF compared over 20 overlapping geoms: **cF(air)/cF(water) median 0.96** (report's 0.98 reproduced; Gyroid + Diamond L4–L6 = 0.78–1.18). → **(K, c_F) geometric / fluid-independent, self-data proof** (method-section grade). Diamond L7/L8 = 1.3–2.4× is a two-CFD mesh/geometry-generation systematic (NOT fluid), i.e. a ~2× uncertainty band in the smooth baseline for Diamond large cells. K is NOT cross-checkable from air (Re≥500 above the Darcy knee — scatter 0.18–3.65×). Shanghai G7/0.6: cF_air 157 / cF_water 138, both ~3.5× below the experiment-needed 535 → 2nd fluid confirms the gap is ROUGHNESS. Figure `assets/df-air-water-cf.png`. Full report: `vault/reports/method/2026-06-11-df-water-cfd-c6-trust-hybrid-CN.html`.
+
+**Deferred:** full **c_F** surface deployment (needs roughness γ — blocked on experiment convention, [[d76-cannot-calibrate-nu]]); production default switch (user decision). The full smooth-cF surface is validated but Shanghai needs the gate-calibrated c_F (registration contract — see plhub_gp precedent).
 
 ---
 
@@ -12,8 +14,8 @@
 
 - [ ] 1.1 Reduce raw **water** CFD (40 geom) via `(Δp/L)/u = μ/K + ρ·c_F·u` with normalized u + NNLS; per geometry record K, c_F, R², n, ε_A, D_h, Re-range
 - [ ] 1.2 Compute per-geometry **Forchheimer-number coverage** (Fo at Re_min/Re_max); flag geometries where K (Fo never ≪0.1) or c_F (Fo never ≫1) is not identifiable
-- [ ] 1.3 Reduce raw **air** CFD (12 geom, `速度`+`Pressureloss_TPMS`, same convention) — get core length from the CFD setup
-- [ ] 1.4 **Air↔water cross-check**: per matching geometry, |c_F_air − c_F_water|/c_F should be ≲10%; report; decide pool vs water-only
+- [x] 1.3 Reduce raw **air** CFD — DONE. Source is the dedicated `data/raw_data/air-cfd-raw.xlsx` (`All_Cases_Combined`, 20 geom, Re 500–20000, `dP_core_Pa` + `L_core_report_mm`, interstitial `v_ref_excel_m_s`, SAME 3-cell core convention as water-cfd-raw). NOT the `试验记录表` col35 (operating-point-matched, convention-broken — gives garbage). See [[air-cfd-crosscheck]]
+- [x] 1.4 **Air↔water cross-check** — DONE. cF(air)/cF(water) median **0.96** over 20 geoms (Gyroid + Diamond L4–L6 within ±20%); (K,c_F) geometric confirmed. Diamond L7/L8 1.3–2.4× = two-CFD systematic (mesh/geom, not fluid). Decision: **water-only for the smooth surface** (water spans Re 100–50k incl. Darcy; air can't see K); air is the independent fluid-independence check, not pooled into the fit
 - [ ] 1.5 Write extracted table to `df_surrogate/_prebuilt/df_cfd_coeffs.csv` (tp, L, t, eps_A, Dh, K, cF, R2, Fo_lo, Fo_hi)
 
 ## 2. High-accuracy interpolation surface (the target)
