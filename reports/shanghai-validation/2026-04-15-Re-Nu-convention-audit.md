@@ -183,7 +183,7 @@ _nu_gyroid(400, 0.884, 8.0)    = 14.2942
 和修复前完全相同(因为只改了注释,没改公式)。
 
 全量验证:重跑 `CLOSURE=f_re python validate_shanghai.py`,16 个
-case 的 dP_A_sim 和 Q_sim **字字不变**:
+case 的 dP_A_sim 和 Q_sim **完全一致**:
 
 | Case | dP_A 修前 → 修后 | Q 修前 → 修后 |
 |---|---|---|
@@ -204,7 +204,7 @@ case 的 dP_A_sim 和 Q_sim **字字不变**:
    convention that differs from u_A by a factor of ~3 (likely an eps_f /
    porosity double-count)"。3 ≈ $1/\varepsilon_f$,很可能是
    SIMPLE(interstitial)→ solve_full(误用为 Darcy)的约定不一致。
-   **影响 Q 不影响 dP**(和 C-1 的现象吻合)
+   **影响 Q 但不影响 dP**(和 C-1 的现象吻合)
 2. **Thermal dispersion 缺失**(Popov 2025 论证)。$K_{ff}^\text{eff}$ 没
    有 Péclet 修正,高 Re 段被低估,对应 C-1 高 Re 段误差增长
 3. LTE / LTNE 建模选择或边界条件问题
@@ -212,7 +212,7 @@ case 的 dP_A_sim 和 Q_sim **字字不变**:
 ### Shanghai df 欠 70%(Case 16)仍在
 
 来源是 ConstDF-v1 MLP 在 t=0.6 外推失效,特别是 $c_F$ 被冻结在
-t=0.5 水平。见 [`2026-04-15-DF-residual-structure-diagnostic.md`]。
+t=0.5 水平。见 [`2026-04-15-DF-residual-structure-diagnostic.md`](../constdf-v1/2026-04-15-DF-residual-structure-diagnostic.md)。
 这和 Re 约定无关,通过补 (L=7, t=0.6) CFD 数据重训解决。
 
 ## 下一步

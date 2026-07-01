@@ -1,6 +1,6 @@
 ## Why
 
-The solver already supports asymmetric per-side porosity (ε_A ≠ ε_B from an offset-isosurface δ) in 3D, but the 2D LTNE kernel raises `NotImplementedError` on any ε_A ≠ ε_B (`solvers/ltne_energy.py:645`). This blocks using the fast 2D path — the optimizer, quick-design tool, and Shanghai 2D validation — to screen or sweep the offset-porosity design variable. Parameter sweeps over δ are only affordable in 2D, so the gap forces every δ study onto the ~order-of-magnitude slower 3D solver.
+The solver already supports asymmetric per-side porosity (ε_A ≠ ε_B from an offset-isosurface δ) in 3D, but the 2D LTNE kernel raises `NotImplementedError` on any ε_A ≠ ε_B (`solvers/ltne_energy.py:645`). This blocks the fast 2D path — the optimizer, quick-design tool, and Shanghai 2D validation — from screening or sweeping the offset-porosity design variable. Parameter sweeps over δ are only affordable in 2D, so the gap forces every δ study onto the ~order-of-magnitude slower 3D solver.
 
 ## What Changes
 

@@ -6,8 +6,8 @@ tags: [scratch, surrogate-exploration, failed-alternatives, SJTU-TPMSHX]
 # Scratch Experiments Archive — ConstDF-v1 之外的探索记录
 
 这里存的是 **绕开 ConstDF-v1 12.79/16.95% LOO MAPE 下限的探索实验**,
-全部"不入主干"(代码和 checkpoint 都不进生产),但**结果值得存档**
-避免未来会话重跑同样的死路。
+全部"不入主干"(代码和 checkpoint 都不进生产),但**结果值得存档**,
+以避免未来会话重跑同样的死路。
 
 ## 实验结果总表
 
@@ -25,10 +25,10 @@ tags: [scratch, surrogate-exploration, failed-alternatives, SJTU-TPMSHX]
 
 1. **失去物理可解释性**:输出是直接的 $\log_{10}\Delta P$,没有 $(K, c_F)$ 可用于下游求解器的 body-force 源项。Correa 2026 paper 本身也是这个路线,放弃 D-F 体形
 2. **求解器集成难**:当前 `simple_solver.py` 的 `_porous_src_df` 要求 $(K, c_F)$ 作为输入,直接 MLP 输出 ΔP 没法直接插进动量方程。改造求解器接口的工程成本大
-3. **外推风险未知**:训练域内 LOO 是低误差,但 Shanghai 这种 $t=0.6$ 超出训练范围的几何,wide 变体外推的行为**比 ConstDF-v1 更不可预测**(网络更宽更容易学到训练数据特定形状,边界衰减更极端)。ConstDF-v1 的 Shanghai 外推虽然 70% 欠预测,至少方向和物理一致(K 变小 c_F 变小);wide MLP 的外推可能是任意方向
+3. **外推风险未知**:训练域内 LOO 误差虽然低,但对 Shanghai 这种 $t=0.6$ 超出训练范围的几何,wide 变体外推的行为**比 ConstDF-v1 更不可预测**(网络更宽更容易学到训练数据特定形状,边界衰减更极端)。ConstDF-v1 的 Shanghai 外推虽然 70% 欠预测,至少方向和物理一致(K 变小 c_F 变小);wide MLP 的外推可能是任意方向
 4. **物理闭合形式的论文价值**:保留 D-F 闭合允许在论文里说"我们的代理在保留物理结构的前提下达到 12-17% LOO",这比"我们训了一个黑箱 MLP 达到 8-9% LOO"更有学术论点
 
-**决策时刻**:用户在 2026-04-15 下午明确说"我们先不要追求把 15% 降低到 8%,目前我感觉可以",所以 ConstDF-v1 锁定为基线,wide MLP 的数值优势不被采纳。
+**决策时刻**:用户在 2026-04-15 下午明确说"我们先不要追求把 15% 降低到 8%,目前我感觉可以",所以 ConstDF-v1 锁定为基线,wide MLP 的数值优势未被采纳。
 
 ## 对应的 Python 代码(scratch,留在原地)
 
@@ -36,7 +36,7 @@ tags: [scratch, surrogate-exploration, failed-alternatives, SJTU-TPMSHX]
 - `sjtu_tpmshx/df_fit/scratch_egdip_gompertz.py`
 
 这两个脚本产生了上面 5 个报告,**留在原地**不动(移动会破坏 import 路径)。
-它们被 `.gitignore` 接管但命名前缀 `scratch_` 明确标识其状态。
+它们被 `.gitignore` 忽略,但命名前缀 `scratch_` 明确标识其状态。
 
 ## 和 Kim 系列诊断的区别
 

@@ -7,7 +7,7 @@ The Darcy–Forchheimer coefficients (`K`, `c_F`) the solver runs on are built b
 
 Meanwhile `smooth_df` forces **`K` onto a single-parameter `Dh²` trend** (`logK = 2·logDh + b0K`), which we measured at **53 % RMSRE** vs the per-geometry CFD; the raw per-geometry `K` (24× spread in `K/Dh²`) is discarded. This crude `K` is invisible in the air production window (Re 400–16k, Darcy share 1–6 %) but **under-predicts the water-side Δp** (Re 100–1100, Darcy share 9–28 %) by up to 3× (`gamma_df` Diamond 0.33×, rbf 0.69× vs the `7-6-Water-dp` experiment).
 
-We now have a far better, **unused** foundation: the **raw water CFD** (`data/raw_data/water-cfd-raw.xlsx`, 40 geometries = 2 topologies × 5 cell sizes × 4 wall thicknesses, Re 100–50 000, `dp_core`). A per-geometry Forchheimer fit gives clean `(K, c_F)` at **R² median 0.994** with monotone, physical trends. Plus raw air CFD (`试验记录表` Pressureloss) and rough-wall experiments (`D_7_6` air, `7-6-Water` water).
+We now have a far better, **unused** foundation: the **raw water CFD** (`data/raw_data/water-cfd-raw.xlsx`, 40 geometries = 2 topologies × 5 cell sizes × 4 wall thicknesses, Re 100–50 000, `dp_core`). A per-geometry Forchheimer fit gives clean `(K, c_F)` at **R² median 0.994** with monotone, physical trends, plus raw air CFD (`试验记录表` Pressureloss) and rough-wall experiments (`D_7_6` air, `7-6-Water` water).
 
 ## What Changes
 

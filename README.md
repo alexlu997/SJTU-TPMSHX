@@ -45,8 +45,8 @@
 > things shape the *finite-grid* value: a **mass-flux** air-inlet BC (removes a compressible
 > velocity-inlet artifact) and a **2nd-order face-extrapolated** Δp reduction
 > (`extract_dP_face_extrap`, which removes the cell-centre O(h) half-cell offset and accelerates
-> convergence). At the production grid (`Nz=10`) the face-extracted Δp reads ≈ 7 %, but that is
-> under-resolved — refining all three axes the Δp RMSRE rises to the ≈ 12 % floor, and the
+> convergence). At the production grid (`Nz=10`) the face-extracted Δp reads ≈ 7 %, but that grid
+> is under-resolved: refining all three axes raises the Δp RMSRE to the ≈ 12 % floor, and the
 > cell-centre and face reducers converge to the same continuous-PDE Δp. **Q** is a duty integral,
 > independent of the Δp reduction, clean 2nd-order and grid-converged at **≈ 3 %**. Δp functional
 > order is verified in `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z

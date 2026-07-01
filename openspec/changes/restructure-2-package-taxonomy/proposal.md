@@ -32,7 +32,7 @@ The module-boundary audit confirmed the *import layering* is already clean (no i
 ## Impact
 
 - **High file-count, mechanical churn; behavior-preserving** — like the `projects/` move, a `sys.path` relocation cannot change numerical output, only break imports. Verification is per-script import-test + the full pytest suite + golden gates.
-- **CLAUDE-referenced paths change** (validation commands, golden-gate dir stays put): user approved updating them.
+- **CLAUDE-referenced paths change** (validation commands change; golden-gate dir stays put): user approved updating them.
 - **Known couplings to handle** (discovered in the audit; full edge-list re-derived at execution): `from validation.size_sco2_703`-style package imports were already fixed when those drivers left in the `projects/` change; remaining intra-`validation` package imports (`_harness`/`_metrics`/`_case_sets`/`_provenance`) need the `harness.` prefix; `test_shanghai_regression.py` invokes runners via `python -m validation.<module>` and reads result CSVs by path.
 - **Gates:** every moved script imports from its new path; `pytest sjtu_tpmshx/tests/ -q` green (incl. the opt-in `TPMSHX_RUN_SHANGHAI_REGRESSION=1` regression); golden 2D/3D bit-identical.
 - **Out of scope:** code-internal splits (`stages_3d.py` → Phase 3); any change to what a script computes.

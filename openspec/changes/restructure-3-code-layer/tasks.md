@@ -21,7 +21,7 @@
 
 ## 4. Verify + close-out
 
-- [x] 4.1 Golden 2D **and** 3D bit-identical vs the pre-split snapshots — **PASS** (empty diff both). This is the definitive proof the verbatim move changed no evaluation order.
+- [x] 4.1 Golden 2D **and** 3D bit-identical vs the pre-split snapshots — **PASS** (empty diff for both). This is the definitive proof the verbatim move changed no evaluation order.
 - [~] 4.2 Full `pytest sjtu_tpmshx/tests/ -q` — RUNNING.
 - [x] 4.3 Evaluation-order check satisfied by 4.1 (bit-identical golden = no order change); helpers moved verbatim with closure verification.
 - [x] 4.4 `openspec validate restructure-3-code-layer --strict`.

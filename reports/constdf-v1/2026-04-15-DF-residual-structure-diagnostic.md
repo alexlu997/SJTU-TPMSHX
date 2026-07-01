@@ -92,11 +92,11 @@ $$\frac{d^2 f}{d u^2}\bigg|_{u^\star} > 2b$$
 
 - **Barree & Conway (SPE 89325, 2004)**:早期提出 Forchheimer 系数 $\beta$
   不是常数,随 Re 变化,在过渡区"凸起"
-- **Balhoff, Mikelić, Wheeler (2010)**:从均质化严格证了
+- **Balhoff, Mikelić, Wheeler (2010)**:从均质化严格证明了
   $\Delta P = \mu u/K + \rho c_F u^2 + c_3 u^3 + O(u^4)$,三次系数 $c_3$
   符号未定,但非零项意味着 2-term 必然在某个 Re 段系统性偏
 - **Popov 2025**(TPMS 专题):直接报过这个 U 形残差,称之为 "intermediate
-  Reynolds regime discrepancy",并把它归给 thermal dispersion 的动量侧反向
+  Reynolds regime discrepancy",并把它归因于 thermal dispersion 的动量侧反向
   耦合
 
 (文献笔记全在 vault,`Balhoff-Mikelic-Wheeler-2010-Polynomial-Filtration-Laws.md`
@@ -138,8 +138,8 @@ C-1 baseline 时,**预期的误差方向是系统性的,不是随机的**:
 | $Re \gtrsim 3000$ | ΔP 接近或略高估 | 0 ~ +10% |
 
 如果 Shanghai case 的设计 Re 主要落在 U 谷底附近,总 ΔP 会系统性偏低,
-**这不是求解器耦合 bug,是代理模型的结构偏差**——看到这个现象要归因
-正确。
+**这不是求解器耦合 bug,是代理模型的结构偏差**——看到这个现象时应准确
+归因。
 
 ## 这张图**不能**说什么
 
@@ -149,8 +149,8 @@ C-1 baseline 时,**预期的误差方向是系统性的,不是随机的**:
   *consistent*,但单凭残差图不能证明机制。若要硬主张机制,要补分区域
   的雷诺数诊断(边界层厚度、惯性子层判据)或者 DNS 对比
 - **不等于"v1 一定不能改进"**:3 次项、局部多项式、分段模型都可能继续
-  降低 MAPE。只是都会付出"失去物理可解释性 / 需要更多数据 / 数值稳定性
-  代价"其中之一
+  降低 MAPE。只是都会以"失去物理可解释性 / 需要更多数据 / 数值稳定性"
+  其中之一为代价
 
 ## 相关
 

@@ -10,7 +10,7 @@ tags: [report, diagnostic, Kim-constrained, K_1]
 
 1. 用**全范围** 2 参数 D-F WLS 拟 (K_Q1, c_F_full)
 2. 低 Re 子集上从 ΔP_obs 里减掉 Forchheimer 贡献: ΔP_darcy = ΔP_obs − ρ·c_F_full·u²·L_ch
-3. 在子集上拟 ΔP_darcy = (μ·L_ch/K_1)·u 1 参数过原点 WLS
+3. 在子集上拟 ΔP_darcy = (μ·L_ch/K_1)·u,1 参数过原点 WLS
 4. K_1 = 斜率的倒数乘 μ̄·L_ch
 
 三种子集选法对照:

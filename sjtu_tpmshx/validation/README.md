@@ -12,15 +12,15 @@
 | `validate_shanghai_lumped_dual_nu.py` | 16-case lumped ε-NTU, dual-Nu (air v4.1×1.28 + water Yan[6]) | **Q RMSRE 1.71%**, bias −1.27%, max 3.78% | 论文 baseline (paper) |
 | `validate_shanghai_3d_real.py` | 16-case 3D SIMPLE + LTNE, Nz=10 | **Q 2.29% / dP 44.66%** | 3D production |
 
-Both write outputs to `data/` and reference figures to `reports/figs/`. Both are forward-prediction (no T_out leak; no test/train data leakage).
+Both write outputs to `data/` and reference figures to `reports/figs/`. Both are forward predictions (no T_out leak; no test/train data leakage).
 
 ### Re convention pitfall (must know)
 - Re uses **inlet manifold geometry** (Yan convention)
 - A_tot uses **full-HX surface** (sheet HX topology)
-- Mixing the two is silent error — `_lumped_dual_nu.py` documents this in-line.
+- Mixing the two is a silent error — `_lumped_dual_nu.py` documents this in-line.
 
 ### Compressibility hard rule
-All canonical scripts use `ρ = ρ(P, T)` (ideal gas). Never freeze ρ at inlet. Solver fix `simple_solver.py:_update_density` (2026-05-06 fix #1) clips P_abs ∈ [10 kPa, 1 MPa]; ρ derives.
+All canonical scripts use `ρ = ρ(P, T)` (ideal gas). Never freeze ρ at inlet. Solver fix `simple_solver.py:_update_density` (2026-05-06 fix #1) clips P_abs ∈ [10 kPa, 1 MPa]; ρ derives from it.
 
 ---
 

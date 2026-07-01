@@ -2,7 +2,7 @@
 
 ## Context
 
-The repo mixes two kinds of file under `sjtu_tpmshx/`: **shared solver machinery** (the package: `solvers/`, `pipelines/`, `df_surrogate/`, `design/`, plus the test suite and the canonical Shanghai V&V) and **per-collaboration driver scripts** that merely *call* that machinery to size or evaluate one partner's heat exchanger. The second kind has leaked into `validation/` and `runs/` next to the first, so a collaboration deliverable (e.g. everything for partner 703's D-7-6 sCO2 PCHE) is neither grouped nor distinguishable. `624-Retrodict/` is the one project that got it right — a self-contained folder. This change generalizes that pattern.
+The repo mixes two kinds of files under `sjtu_tpmshx/`: **shared solver machinery** (the package: `solvers/`, `pipelines/`, `df_surrogate/`, `design/`, plus the test suite and the canonical Shanghai V&V) and **per-collaboration driver scripts** that merely *call* that machinery to size or evaluate one partner's heat exchanger. The second kind has leaked into `validation/` and `runs/` next to the first, so a collaboration deliverable (e.g. everything for partner 703's D-7-6 sCO2 PCHE) is neither grouped nor distinguishable. `624-Retrodict/` is the one project that got it right — a self-contained folder. This change generalizes that pattern.
 
 ## Decisions
 

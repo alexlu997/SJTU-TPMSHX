@@ -2,7 +2,7 @@
 
 ## D1. One consistent convention (the root fix)
 
-All `(K, c_F)` come from `dp/L = μ·u/K + ρ·c_F·u²` with **u = interstitial velocity**, **dp = core pressure drop / core length**, **Re = ρ·u·D_h/μ**, `D_h = 4·ε_A/A_0`. Verified the water CFD `Um`/`dp_core`/`Lcore` already satisfy `Re = ρ·Um·Dh/μ`. The air CFD `速度/m/s` (col13) + `Pressureloss_TPMS` (col43) are reduced the same way. The experimental Δp is reconciled to core-only before any roughness fit (the col47 anchors' inconsistency — wrong t-trend, L6 spike — is exactly a convention break we are removing).
+All `(K, c_F)` come from `dp/L = μ·u/K + ρ·c_F·u²` with **u = interstitial velocity**, **dp = core pressure drop / core length**, **Re = ρ·u·D_h/μ**, `D_h = 4·ε_A/A_0`. We verified that the water CFD `Um`/`dp_core`/`Lcore` already satisfy `Re = ρ·Um·Dh/μ`. The air CFD `速度/m/s` (col13) + `Pressureloss_TPMS` (col43) are reduced the same way. The experimental Δp is reconciled to core-only before any roughness fit (the col47 anchors' inconsistency — wrong t-trend, L6 spike — is exactly a convention break we are removing).
 
 ## D2. c_F extraction (well-conditioned)
 
@@ -13,7 +13,7 @@ Forchheimer dominates over Re 100–50 000, so a per-geometry 2-term least squar
 `K` is the small Darcy term; the raw per-geometry fit scatters 24× in `K/Dh²`. Strategy (lit-confirmed):
 1. **Better extraction form**: regress `(Δp/L)/u = μ/K + (ρ·c_F)·u` (divide by u → kills the heteroscedasticity that lets high-Re points dominate K), with **u normalized to u/u_max** (cuts the [u,u²] condition number) and **NNLS** (K, c_F > 0; OLS often returns an unphysical negative Darcy intercept). Optionally weight by 1/y² (relative-error fit).
 2. **Per-geometry Re-coverage check via the Forchheimer number** `Fo = K·ρ·c_F·u/μ`: fit `c_F` from the high-Re plateau (Fo ≫ 1) and `K` from the low-Re Darcy region (Fo ≪ 0.1); flag geometries whose sweep never reaches a plateau (then that coefficient is not identifiable and falls back to the prior).
-3. Regularize the `K(L,t)` surface with a physical prior `K ≈ C·L²·(a + b·ε_A)` (Kozeny–Carman / lit form), per topology, plus a smoothed multiplicative residual — **uses the per-geometry information** the current `Dh²`-only trend throws away (the fix for the low-Re water-Δp under-prediction).
+3. Regularize the `K(L,t)` surface with a physical prior `K ≈ C·L²·(a + b·ε_A)` (Kozeny–Carman / lit form), per topology, plus a smoothed multiplicative residual — this **uses the per-geometry information** the current `Dh²`-only trend throws away (the fix for the low-Re water-Δp under-prediction).
 
 ## D4. High-accuracy interpolation surface (the user's target)
 

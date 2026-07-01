@@ -15,7 +15,7 @@
 - [ ] 1.1 Reduce raw **water** CFD (40 geom) via `(Δp/L)/u = μ/K + ρ·c_F·u` with normalized u + NNLS; per geometry record K, c_F, R², n, ε_A, D_h, Re-range
 - [ ] 1.2 Compute per-geometry **Forchheimer-number coverage** (Fo at Re_min/Re_max); flag geometries where K (Fo never ≪0.1) or c_F (Fo never ≫1) is not identifiable
 - [x] 1.3 Reduce raw **air** CFD — DONE. Source is the dedicated `data/raw_data/air-cfd-raw.xlsx` (`All_Cases_Combined`, 20 geom, Re 500–20000, `dP_core_Pa` + `L_core_report_mm`, interstitial `v_ref_excel_m_s`, SAME 3-cell core convention as water-cfd-raw). NOT the `试验记录表` col35 (operating-point-matched, convention-broken — gives garbage). See [[air-cfd-crosscheck]]
-- [x] 1.4 **Air↔water cross-check** — DONE. cF(air)/cF(water) median **0.96** over 20 geoms (Gyroid + Diamond L4–L6 within ±20%); (K,c_F) geometric confirmed. Diamond L7/L8 1.3–2.4× = two-CFD systematic (mesh/geom, not fluid). Decision: **water-only for the smooth surface** (water spans Re 100–50k incl. Darcy; air can't see K); air is the independent fluid-independence check, not pooled into the fit
+- [x] 1.4 **Air↔water cross-check** — DONE. cF(air)/cF(water) median **0.96** over 20 geoms (Gyroid + Diamond L4–L6 within ±20%); (K,c_F) geometric confirmed. Diamond L7/L8 1.3–2.4× = two-CFD systematic (mesh/geom, not fluid). Decision: **water-only for the smooth surface** (water spans Re 100–50k incl. Darcy; air can't see K); air is the independent check confirming fluid-independence, not pooled into the fit
 - [ ] 1.5 Write extracted table to `df_surrogate/_prebuilt/df_cfd_coeffs.csv` (tp, L, t, eps_A, Dh, K, cF, R2, Fo_lo, Fo_hi)
 
 ## 2. High-accuracy interpolation surface (the target)
