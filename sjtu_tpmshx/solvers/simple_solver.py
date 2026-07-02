@@ -34,6 +34,7 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
 
 import numpy as np
 from numba import njit
+from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._kernels_2d import minmod
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 
@@ -1206,7 +1207,6 @@ class SIMPLESolver:
         # Broadcast for uniform geometry; per-row predictions for zone_config
         # graded designs. zone_arrays path doesn't carry L/t/eps metadata, so
         # it falls back to the uniform (scalar) prediction.
-        from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 
         if zone_config is not None:
             # Per-row (L, t, eps_f) → batched prediction

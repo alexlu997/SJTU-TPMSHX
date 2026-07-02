@@ -71,7 +71,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from scipy.interpolate import RBFInterpolator
-from solvers.tpms_calc import geometry as tpms_geometry, air_viscosity, P_atm
+from solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
 
 R_AIR = 287.05
 K_S_CELLS = 10

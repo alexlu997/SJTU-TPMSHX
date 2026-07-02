@@ -37,7 +37,7 @@ import pandas as pd
 _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parent.parent  # .../sjtu_tpmshx
 sys.path.insert(0, str(_PROJECT_ROOT))
-from solvers.tpms_calc import geometry as tpms_geometry  # noqa: E402
+from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
 
 DATA_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 

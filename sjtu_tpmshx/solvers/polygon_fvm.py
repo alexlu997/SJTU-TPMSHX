@@ -26,6 +26,7 @@ import numpy as np
 from numba import njit
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
+from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from .tpms_calc import (air_density, air_conductivity, P_atm,
                        Sa_mm as _SA_MM, nu_from_Re)
 from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
@@ -335,7 +336,6 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     if (K_arr is None) ^ (cF_arr is None):
         raise ValueError("Provide both K_arr and cF_arr, or neither.")
     if K_arr is None:
-        from df_surrogate.predict import predict_K_cF
         K_val, cF_val = predict_K_cF(tpms_type, float(L_mm), float(t_mm),
                                      float(eps) / 2.0)
         K_arr = np.full(nc, K_val, dtype=np.float64)
@@ -517,7 +517,6 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
     Returns: u_cell, v_cell, P_cell, face_Un
     """
     nc = mesh.n_cells
-    from df_surrogate.predict import predict_K_cF
     K, cF = predict_K_cF(tpms_type, float(L_mm), float(t_mm), float(eps) / 2.0)
     mu_eff = mu / eps
 
@@ -873,7 +872,6 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
             mesh.cell_centers[:, 1] - ymin, nc, H_mesh)
 
         # Darcy solver: per-cell (K, c_F) via ConstDF-v1 surrogate
-        from df_surrogate.predict import predict_K_cF_vec
         L_row = np.empty(nc, dtype=np.float64)
         t_row = np.empty(nc, dtype=np.float64)
         for ci in range(nc):

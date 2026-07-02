@@ -13,6 +13,8 @@ patch-zoning optimizer was retired in favor of the continuous-field design.
 from __future__ import annotations
 from typing import List, Tuple
 
+from solvers.tpms_props import air_density, air_viscosity, geometry as _geom
+
 # ConstDF-v1 surrogate fitted window — single source in df_surrogate/_domain.py.
 from ._domain import (
     TRAIN_L as _SURROGATE_L_MM,
@@ -57,7 +59,6 @@ def check_surrogate_domain_at_point(tpms_type: str,
     ------
     ValueError when out-of-window and `allow_extrap` is False.
     """
-    from solvers.tpms_calc import air_density, air_viscosity, geometry as _geom
     import os as _os
     import warnings as _w
 
@@ -70,6 +71,9 @@ def check_surrogate_domain_at_point(tpms_type: str,
     # real-gas: its ρ swings ×3-4 vs air at the same (T,P), so an air-property
     # Re would be meaningless in the warning. Forward the sCO2 (T,P) props.
     if fluid == 'sco2':
+        # Deferred ON PURPOSE (runtime-only upward dep): fluid_props sits
+        # ABOVE df_surrogate in the import DAG (arch-b-c-e batch B) and pulls
+        # CoolProp; only the sCO2 path needs it.
         from solvers.fluid_props import get as _get_fluid
         _m = _get_fluid('sco2')
         rho = float(_m.rho(T, P))

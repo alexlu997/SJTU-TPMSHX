@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
+from df_surrogate.predict import predict_K_cF_vec
 from .tpms_calc import geometry as tpms_geometry
 from .simple_solver import build_wall_refined_1d
 
@@ -68,7 +69,6 @@ def project_cells_to_streamwise_K_cF(grid_cells: List[dict],
     This loses cross-stream variation but is the best 1D projection available
     under SIMPLE's current K/c_F array shape limitation.
     """
-    from df_surrogate.predict import predict_K_cF_vec
 
     # Cell-centre s_frac: uniform or from streamwise_dx (B2 2.3 helper)
     s_fracs = _cell_centre_fracs(Ny_sim, streamwise_dx)
@@ -158,7 +158,6 @@ def project_fields_to_streamwise_K_cF(L_field: np.ndarray,
 
     Returns (K_arr, cF_arr) both shape (Ny_sim,) float64.
     """
-    from df_surrogate.predict import predict_K_cF_vec
 
     (L_1d, t_1d), _src_n = _stream_profile((L_field, t_field), fluid)
     del Nx_field, Ny_field   # kept in the signature for call-site compat
@@ -256,7 +255,6 @@ def project_fields_to_streamwise_K_cF_3d(L_field: np.ndarray,
 
     Returns (K_arr, cF_arr) both shape (Ny_sim, Nz_sim) float64.
     """
-    from df_surrogate.predict import predict_K_cF_vec
 
     (L2, t2, e2), src_stream = _stream_profile(
         (L_field, t_field, eps_f_field), fluid)
