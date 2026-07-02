@@ -313,7 +313,7 @@ err = (Q_sim − Q_exp) / Q_exp = −3.709%
 
 ## 误差分析图
 
-保存在 `reports/figs/shanghai_validation_post_fix.png`,4 个子图:
+保存在 `reports/figs/shanghai/shanghai_validation_post_fix.png`,4 个子图:
 
 1. **左上** dP parity(log-log),颜色=Re,low-Re 段点偏离 y=x 最远
 2. **右上** Q parity,几乎全部点在 ±5% 带内,只有 Case 12 跳出

@@ -21,7 +21,7 @@ at a representative Shanghai water bulk T ≈ 30°C (was hardcoded 5.0;
 audit 2026-05-28 M3).
 
 Outputs:
-  reports/figs/water_nu_cross_check.png         (Nu vs Re overlay)
+  reports/figs/nu/water_nu_cross_check.png         (Nu vs Re overlay)
   data/water_nu_cross_check.csv                 (per-Re table)
 """
 from __future__ import annotations
@@ -194,7 +194,7 @@ def main():
     ax.set_xscale('log')
     ax.set_yscale('log')
 
-    fig_dir = _PROJECT / 'reports' / 'figs'
+    fig_dir = _PROJECT / 'reports' / 'figs' / 'nu'
     fig_dir.mkdir(parents=True, exist_ok=True)
     fig_path = fig_dir / 'water_nu_cross_check.png'
     plt.savefig(fig_path, dpi=150, bbox_inches='tight')
