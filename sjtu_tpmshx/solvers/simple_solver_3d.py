@@ -84,6 +84,7 @@ _AMG_GATE = 30_000
 from .tpms_calc import air_density, air_viscosity, P_atm
 from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
 from ._kernels_2d import minmod
+from ._solve_common import LowReExit
 
 
 # ===================================================================
@@ -1583,13 +1584,9 @@ class SIMPLESolver3D:
         #   (B) velocity-delta : max|Δv|/scale < vtol between iterations
         # Off → identical to the legacy behaviour. On (default) → only fires
         # AFTER the field stops moving, so the converged result is unchanged.
-        _early = getattr(self, 'lowre_early_exit', True)
-        _vtol = float(getattr(self, 'lowre_vel_tol', 1e-4))
-        _stall_window = int(getattr(self, 'lowre_stall_window', 30))
-        _stall_ratio = float(getattr(self, 'lowre_stall_ratio', 1e-3))
-        _u_prev = self.u.copy(); _v_prev = self.v.copy(); _w_prev = self.w.copy()
-        _res_at_window_start = None
-        _window_start_it = 0
+        # Criteria single-sourced in solvers/_solve_common.LowReExit since
+        # arch-b-c-e batch C (shared with the 2D solver).
+        _lowre = LowReExit(self, (self.u, self.v, self.w), min_iter=10)
 
         for it in range(1, max_iter + 1):
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
@@ -1725,37 +1722,9 @@ class SIMPLESolver3D:
             if res < tol and it >= 10:
                 return True, it
 
-            # ── A+B early-exit (low-Re / low-speed) ──────────────────────────
-            # Gate EVERYTHING on velocity stability so a moving field never
-            # exits early. _vd = max|Δv| this iter, normalised by the field's
-            # own velocity scale → dimensionless, scale-invariant (the whole
-            # point: the absolute mass residual is NOT scale-invariant, which
-            # is why low-speed water plateaus above the air-tuned tol).
-            if _early and it >= 10:
-                _du = np.max(np.abs(self.u - _u_prev))
-                _dv = np.max(np.abs(self.v - _v_prev))
-                _dw = np.max(np.abs(self.w - _w_prev))
-                _scale = max(np.max(np.abs(self.u)),
-                             np.max(np.abs(self.v)),
-                             np.max(np.abs(self.w)), 1e-30)
-                _vd = max(_du, _dv, _dw) / _scale
-                # (B) velocity-delta: field has stopped moving → converged.
-                if _vd < _vtol:
-                    return True, it
-                # (A) plateau-stall: residual flat for a full window AND the
-                # field is also barely moving (10× the velocity tol — looser,
-                # since this is the fallback for fields that creep but never
-                # meet (B)). Prevents exiting a slow-but-real descent.
-                if _res_at_window_start is None or (it - _window_start_it) >= _stall_window:
-                    if (_res_at_window_start is not None
-                            and _vd < 10.0 * _vtol
-                            and res > _res_at_window_start * (1.0 - _stall_ratio)):
-                        # residual improved < _stall_ratio over the window and
-                        # the field is near-static → plateau, no point grinding.
-                        return True, it
-                    _res_at_window_start = res
-                    _window_start_it = it
-            _u_prev[:] = self.u; _v_prev[:] = self.v; _w_prev[:] = self.w
+            # ── A+B early-exit (low-Re / low-speed) — see LowReExit.
+            if _lowre.check((self.u, self.v, self.w), res, it) is not None:
+                return True, it
 
         return False, max_iter
 

@@ -36,6 +36,7 @@ import numpy as np
 from numba import njit
 from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._kernels_2d import minmod
+from ._solve_common import LowReExit
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 
 
@@ -1504,21 +1505,10 @@ class SIMPLESolver:
             self._vhat = self.v.copy()
             self._P_hat = np.zeros_like(self.P)
 
-        # ── A+B early-exit — port of the 3D low-Re/plateau exit (R1, openspec
-        # solver-efficiency-r1-r4). The mass residual is an ABSOLUTE norm:
-        # cross-flow / low-speed sides plateau above the air-tuned tol and burn
-        # max_iter with a settled field (profiled: golden B-side spent 10000
-        # iters at |R|~1.3e-3, field static). Both tests are gated on velocity
-        # STABILITY so a moving field can never exit early; defaults match
-        # simple_solver_3d.py:solve.
-        _early = getattr(self, 'lowre_early_exit', True)
-        _vtol = float(getattr(self, 'lowre_vel_tol', 1e-4))
-        _stall_window = int(getattr(self, 'lowre_stall_window', 30))
-        _stall_ratio = float(getattr(self, 'lowre_stall_ratio', 1e-3))
-        if _early:
-            _u_prev = self.u.copy(); _v_prev = self.v.copy()
-        _res_at_window_start = None
-        _window_start_it = 0
+        # ── A+B early-exit (R1) — criteria single-sourced in
+        # solvers/_solve_common.LowReExit since arch-b-c-e batch C (the 2D/3D
+        # copies drifted for months before R1; see that module's docstring).
+        _lowre = LowReExit(self, (self.u, self.v), min_iter=20)
 
         # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
         # any pressure build-up. The `not hasattr` guard keeps it fixed across
@@ -1650,39 +1640,17 @@ class SIMPLESolver:
                 self._enforce_mass_conservation(verbose=verbose)
                 return True, it
 
-            # ── A+B early-exit (see setup above). (B) velocity-delta: the
-            # field has stopped moving → converged. (A) plateau-stall: the
-            # residual is flat over a window AND the field is near-static
-            # (10× looser gate — the fallback for fields that creep but never
-            # meet (B)). Same _enforce_mass_conservation closeout as the
-            # strict path.
-            if _early:
-                if it >= 20:
-                    _du = np.max(np.abs(self.u - _u_prev))
-                    _dv = np.max(np.abs(self.v - _v_prev))
-                    _scale = max(np.max(np.abs(self.u)),
-                                 np.max(np.abs(self.v)), 1e-30)
-                    _vd = max(_du, _dv) / _scale
-                    if _vd < _vtol:
-                        if verbose:
-                            print(f"  [OK] Early exit (velocity static) at "
-                                  f"iter {it}, |R| = {res:.3e}")
-                        self._enforce_mass_conservation(verbose=verbose)
-                        return True, it
-                    if _res_at_window_start is None or \
-                            (it - _window_start_it) >= _stall_window:
-                        if (_res_at_window_start is not None
-                                and _vd < 10.0 * _vtol
-                                and res > _res_at_window_start
-                                    * (1.0 - _stall_ratio)):
-                            if verbose:
-                                print(f"  [OK] Early exit (plateau stall) at "
-                                      f"iter {it}, |R| = {res:.3e}")
-                            self._enforce_mass_conservation(verbose=verbose)
-                            return True, it
-                        _res_at_window_start = res
-                        _window_start_it = it
-                _u_prev[:] = self.u; _v_prev[:] = self.v
+            # ── A+B early-exit — see LowReExit. Closeout mirrors the strict
+            # path (2D-specific _enforce_mass_conservation).
+            _reason = _lowre.check((self.u, self.v), res, it)
+            if _reason is not None:
+                if verbose:
+                    _label = ('velocity static' if _reason == 'velocity'
+                              else 'plateau stall')
+                    print(f"  [OK] Early exit ({_label}) at "
+                          f"iter {it}, |R| = {res:.3e}")
+                self._enforce_mass_conservation(verbose=verbose)
+                return True, it
 
         if verbose:
             print(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
