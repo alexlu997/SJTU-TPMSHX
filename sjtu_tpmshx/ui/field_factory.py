@@ -106,12 +106,17 @@ class FieldFactory:
     # ------------------------------------------------------------------ atoms
 
     def label(self, text: str, *, style_key: str = 'LBL',
-              rich: bool = True, word_wrap: bool = False) -> QLabel:
+              rich: bool = True, word_wrap: bool = True) -> QLabel:
         """Build a themed QLabel. Default style key = 'LBL' (row caption).
 
         Pass ``rich=False`` for plain text labels (no HTML interpretation —
         helpful when displaying user-supplied values that may contain
         ``<``).
+
+        ``word_wrap`` defaults ON (ui-layout-fixes, 2026-07-03): unwrapped
+        rich-text row captions set the grid's minimum width and pushed the
+        param pages into a horizontal scrollbar + clipped inputs. Wrapping
+        lets the label yield instead of widening the card.
         """
         lbl = QLabel(text)
         if rich:

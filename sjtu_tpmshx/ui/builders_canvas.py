@@ -338,14 +338,30 @@ def build_canvas_area(window):
     window._canvas_cols = 1
 
     # Empty state: visible until a Compute or Preview populates any card.
+    # Structured three-step guidance (ui-layout-fixes) instead of a text
+    # wall — verbs first, one job per line, theme-token colors.
+    _acc = _t.get('accent_primary', '#3B82F6')
+    _sub = _t.get('sub_fg', _t['fg'])
     _empty = QLabel(
-        "⚙  Configure parameters on the left and click ▶ Compute"
-        "\nto visualize temperature, pressure, and velocity fields.")
+        f"<div style='text-align:left;'>"
+        f"<p style='color:{_t['fg']}; font-size:12pt; font-weight:600;"
+        f" margin:0 0 14px 0;'>Run your first case</p>"
+        f"<p style='margin:0 0 8px 0;'><span style='color:{_acc};"
+        f" font-weight:700;'>1</span>&nbsp;&nbsp;Set the geometry and both"
+        f" fluids in the left panel</p>"
+        f"<p style='margin:0 0 8px 0;'><span style='color:{_acc};"
+        f" font-weight:700;'>2</span>&nbsp;&nbsp;Click <b>Compute</b>"
+        f" (Ctrl+R) — progress shows on the button</p>"
+        f"<p style='margin:0;'><span style='color:{_acc};"
+        f" font-weight:700;'>3</span>&nbsp;&nbsp;Read T / P / velocity"
+        f" fields here; tabs appear above when ready</p>"
+        f"</div>")
+    _empty.setTextFormat(Qt.TextFormat.RichText)
     _empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
     _empty.setStyleSheet(
-        f"color:{_t.get('sub_fg', _t['fg'])}; background:transparent;"
-        f"font-size:11pt; font-weight:500; letter-spacing:0.3px;"
-        f"padding:80px 40px; border:1px dashed {_t['card_border']};"
+        f"color:{_sub}; background:transparent;"
+        f"font-size:10pt; letter-spacing:0.2px;"
+        f"padding:56px 48px; border:1px dashed {_t['card_border']};"
         f"border-radius:8px;")
     canvas_lay.addWidget(_empty, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
     window._empty_state_label = _empty

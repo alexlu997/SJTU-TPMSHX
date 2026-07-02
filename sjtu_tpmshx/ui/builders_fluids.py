@@ -104,24 +104,26 @@ def build_page_fluids(window):
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    # ui-layout-fixes: no horizontal scroll — labels wrap, cards stack.
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setStyleSheet("border:none; background:transparent;")
 
     w = QWidget(); w.setStyleSheet(f"background:{_BG};")
     lay = QVBoxLayout(w)
     lay.setSpacing(12); lay.setContentsMargins(8, 4, 6, 6)
 
-    # Pack Fluid A and Fluid B side-by-side in a horizontal row. When the
-    # left panel is wide enough (≳ 520 px) the two cards sit next to each
-    # other, halving the vertical scroll footprint. When narrower, Qt's own
-    # layout engine will wrap/compress them gracefully; a follow-up
-    # resize-to-stack responsive pass can swap to QVBoxLayout below a
-    # threshold if it proves ugly in practice.
-    _fluids_row = QWidget()
-    _fluids_row.setStyleSheet("background:transparent;")
-    _fluids_row_lay = QHBoxLayout(_fluids_row)
-    _fluids_row_lay.setContentsMargins(0, 0, 0, 0)
-    _fluids_row_lay.setSpacing(10)
+    # Pack Fluid A and Fluid B side-by-side when the panel is wide enough
+    # (≥ 520 px), stacked vertically when narrower — ResponsiveRow flips the
+    # box direction on resize (ui-layout-fixes: the old hard QHBoxLayout
+    # clipped both cards on narrow panels).
+    from .responsive import ResponsiveRow
+    # Threshold 640: each card needs ~310px to breathe (measured — at the
+    # default 1600px window the panel hands this row 521px, and side-by-side
+    # at that width crams both input columns).
+    _fluids_row = ResponsiveRow(threshold=640, spacing=10)
+    _fluids_row_lay = _fluids_row.layout()
     lay.addWidget(_fluids_row)
+    window._fluids_row = _fluids_row   # exposed for layout-hygiene tests
 
     # ── Fluid A (input + computed) ────────────────────────
     g1, _ = section(window, _fluids_row_lay, "Fluid A", _T_A, _F_A)

@@ -286,6 +286,9 @@ def build_param_tabs(window):
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    # ui-layout-fixes: the left panel must never scroll horizontally —
+    # row labels word-wrap (FieldFactory.label) instead of widening cards.
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     # 8px track, semi-transparent handle — quieter than the old 10px slab but
     # still grabbable. Codex review 2026-04-22: "rgba(0.1)/0.2 on hover".
     scroll.setStyleSheet(
@@ -411,6 +414,8 @@ def build_page_zones(window):
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    # ui-layout-fixes: no horizontal scroll on param pages (labels wrap).
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setStyleSheet("border:none; background:transparent;")
 
     w = QWidget(); w.setStyleSheet(f"background:{t.style('BG')};")

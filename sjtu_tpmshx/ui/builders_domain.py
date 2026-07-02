@@ -65,6 +65,9 @@ def build_page_domain(window):
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    # ui-layout-fixes: labels word-wrap instead of widening the card, so a
+    # horizontal scrollbar can only mean clipped inputs — forbid it.
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setStyleSheet("border:none; background:transparent;")
 
     w = QWidget(); w.setStyleSheet(f"background:{_BG};")
