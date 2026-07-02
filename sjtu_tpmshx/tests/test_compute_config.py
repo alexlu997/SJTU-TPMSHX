@@ -18,7 +18,7 @@ from typing import Optional
 
 import pytest
 
-from controllers.compute_config import (
+from domain.compute_config import (
     ComputeConfig,
     FluidConfig,
     GeometryConfig,
@@ -28,6 +28,7 @@ from controllers.compute_config import (
     ExtrapPolicy,
     FeatureFlags,
 )
+from ui.window_config import config_from_window
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -206,7 +207,7 @@ def test_from_qt_window_full_smoke():
         PinA='200000.0', PinB='101325.0',
         TsInit='350.0',
     )
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.geometry.tpms == 'Diamond'
     assert cfg.geometry.L_cell_mm == pytest.approx(8.0)
     assert cfg.geometry.Lz_m == pytest.approx(0.05)
@@ -229,7 +230,7 @@ def test_from_qt_window_optional_widgets_missing():
     # Remove le_Lz / le_TsInit / combo_fluidB to simulate stripped-down UI
     if hasattr(window, 'le_Lz'):
         del window.le_Lz
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.geometry.Lz_m is None
     assert cfg.solver.T_s_init_K is None
     assert cfg.solver.Nz == 1
@@ -246,7 +247,7 @@ def test_from_qt_window_temp_to_K_hook_called():
         return float(widget.text()) + 273.15
 
     window._temp_to_K = _temp_to_K
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.fluid_A.T_in_K == pytest.approx(373.15)
     assert cfg.fluid_B.T_in_K == pytest.approx(323.15)
 
@@ -255,7 +256,7 @@ def test_from_qt_window_blank_lineedit_uses_default():
     """An empty QLineEdit (user deleted the value) falls back to the
     dataclass default rather than raising."""
     window = _StubWindow(uA='', Nx='', TinA='')
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.fluid_A.u_mps == 5.0   # FluidConfig default
     assert cfg.solver.Nx == 30        # SolverConfig default
     assert cfg.fluid_A.T_in_K == 300.0
@@ -267,7 +268,7 @@ def test_from_qt_window_blank_lineedit_uses_default():
 def test_from_qt_window_strict_passes_on_full_window():
     """Strict mode is a no-op when every required widget is filled."""
     window = _StubWindow()   # all defaults non-empty
-    cfg = ComputeConfig.from_qt_window(window, strict=True)
+    cfg = config_from_window(window, strict=True)
     assert cfg.fluid_A.u_mps == pytest.approx(10.0)
 
 
@@ -275,7 +276,7 @@ def test_from_qt_window_strict_flags_blank_required_field():
     """Blank Velocity A → strict raises ValueError naming the field."""
     window = _StubWindow(uA='', H='')
     with pytest.raises(ValueError) as exc:
-        ComputeConfig.from_qt_window(window, strict=True)
+        config_from_window(window, strict=True)
     msg = str(exc.value)
     assert 'Velocity A' in msg
     assert 'Domain Height' in msg
@@ -285,7 +286,7 @@ def test_from_qt_window_strict_flags_non_numeric_grid():
     """Garbage in Nx → strict raises naming the grid field."""
     window = _StubWindow(Nx='abc')
     with pytest.raises(ValueError) as exc:
-        ComputeConfig.from_qt_window(window, strict=True)
+        config_from_window(window, strict=True)
     assert 'Grid Nx' in str(exc.value)
 
 
@@ -295,7 +296,7 @@ def test_from_qt_window_strict_3d_requires_Lz_Nz():
     if hasattr(window, 'le_Lz'):
         del window.le_Lz   # 3D run with missing Lz
     with pytest.raises(ValueError) as exc:
-        ComputeConfig.from_qt_window(window, strict=True, force_3d=True)
+        config_from_window(window, strict=True, force_3d=True)
     assert 'Width Lz' in str(exc.value)
 
 
@@ -306,7 +307,7 @@ def test_from_qt_window_strict_autodetects_3d():
     if hasattr(window, 'le_Lz'):
         del window.le_Lz
     with pytest.raises(ValueError) as exc:
-        ComputeConfig.from_qt_window(window, strict=True)
+        config_from_window(window, strict=True)
     assert 'Width Lz' in str(exc.value)
 
 
@@ -336,7 +337,7 @@ def test_c4_new_dataclasses_have_safe_defaults():
 
 def test_read_feature_flags_variable_rho_cp():
     """`chk_var_rhocp` checkbox → FeatureFlags.variable_rho_cp (default ON)."""
-    from controllers.compute_config import _read_feature_flags
+    from ui.window_config import _read_feature_flags
 
     class _Chk:
         def __init__(self, v): self._v = v
@@ -380,7 +381,7 @@ def test_c4_from_qt_window_reads_partial_bc_widgets():
     window.le_pipeB_in_w = _StubLineEdit('0.080')
     window.le_pipeB_out_ctr = _StubLineEdit('0.091')
     window.le_pipeB_out_w = _StubLineEdit('0.080')
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.bc_A.dir == 0
     assert cfg.bc_A.in_ctr == pytest.approx(0.021)
     assert cfg.bc_A.out_w == pytest.approx(0.020)
@@ -405,7 +406,7 @@ def test_c4_from_qt_window_reads_partial_bc_z_when_visible():
     window.le_pipeA_in_z_w = _StubLineEdit('0.020', hidden=False)
     window.le_pipeA_out_z_ctr = _StubLineEdit('0.025', hidden=False)
     window.le_pipeA_out_z_w = _StubLineEdit('0.020', hidden=False)
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.bc_A.in_z_ctr == pytest.approx(0.025)
     assert cfg.bc_A.out_z_w == pytest.approx(0.020)
 
@@ -422,7 +423,7 @@ def test_c4_from_qt_window_skips_partial_bc_z_when_hidden():
     window.le_pipeA_in_z_w = _StubLineEdit('0.020', hidden=True)
     window.le_pipeA_out_z_ctr = _StubLineEdit('0.025', hidden=True)
     window.le_pipeA_out_z_w = _StubLineEdit('0.020', hidden=True)
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.bc_A.in_z_ctr is None
     assert cfg.bc_A.out_z_w is None
 
@@ -437,7 +438,7 @@ def test_c4_from_qt_window_reads_zone_state():
     window._pareto_x_decision = [0.1, 0.2, 0.3]
     window._pareto_y_trans_inlet = 0.15
     window._pareto_y_trans_outlet = 0.18
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.zones.enabled is True
     assert cfg.zones.axis == 'grid'
     assert cfg.zones.grid is not None
@@ -449,7 +450,7 @@ def test_c4_from_qt_window_reads_zone_state():
 def test_c4_from_qt_window_zone_defaults_when_widgets_absent():
     """No zone widgets on window → zones default (disabled, axis='y')."""
     window = _StubWindow()
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.zones.enabled is False
     assert cfg.zones.axis == 'y'
     assert cfg.zones.grid is None
@@ -459,13 +460,13 @@ def test_c4_from_qt_window_zone_defaults_when_widgets_absent():
 def test_c4_from_qt_window_reads_extrap_policy():
     window = _StubWindow()
     window.chk_allow_extrap = _StubCheckBox(checked=True)
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.extrap.allow is True
 
 
 def test_c4_from_qt_window_extrap_default_when_widget_absent():
     window = _StubWindow()
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.extrap.allow is False
 
 
@@ -473,14 +474,14 @@ def test_c4_from_qt_window_reads_feature_flags():
     window = _StubWindow()
     window.chk_wall_refine_3d = _StubCheckBox(checked=True)
     window._temp_unit = 'C'
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.flags.wall_refine_3d is True
     assert cfg.flags.temp_unit == 'C'
 
 
 def test_c4_feature_flags_default_when_widgets_absent():
     window = _StubWindow()
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.flags.wall_refine_3d is False
     assert cfg.flags.temp_unit == 'K'
 

@@ -454,7 +454,7 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
     (``--runner pipeline``). Do not silently swap the gate.
     """
     spec = SPEC if spec is None else spec
-    from controllers.compute_config import (ComputeConfig, FluidConfig,
+    from domain.compute_config import (ComputeConfig, FluidConfig,
                                             GeometryConfig, SolverConfig,
                                             PartialBCConfig, ExtrapPolicy)
     from controllers.compute_pipeline import Pipeline3D

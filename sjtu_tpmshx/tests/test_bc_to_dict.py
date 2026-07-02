@@ -1,4 +1,4 @@
-"""bc_to_dict (controllers.compute_config) must reproduce the three legacy
+"""bc_to_dict (domain.compute_config) must reproduce the three legacy
 _bc_cfg_to_dict_* functions it replaced (DUP-E / #8), including the
 intentional side-B None asymmetry. Exhaustive over (dir, in_w, out_w, z)."""
 import itertools
@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from controllers.compute_config import bc_to_dict
+from domain.compute_config import bc_to_dict
 
 
 # ── Reference reimplementations of the deleted legacy functions ──────

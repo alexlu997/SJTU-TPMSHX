@@ -1,4 +1,4 @@
-"""Unit tests for controllers.theme_manager.ThemeManager.
+"""Unit tests for ui.theme_manager.ThemeManager.
 
 Phase 3 of 2026-05-06 main.py refactor (audit fix #4).
 """
@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 
 from PySide6.QtCore import QCoreApplication
 
-from controllers.theme_manager import ThemeManager, _LEGACY_GLOBALS
+from ui.theme_manager import ThemeManager, _LEGACY_GLOBALS
 
 
 def _app():

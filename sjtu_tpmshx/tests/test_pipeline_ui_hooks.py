@@ -6,7 +6,7 @@ cfg path was a silent no-op (latent bug found in the B2 pre-check).
 """
 import pytest
 
-from controllers.compute_config import ComputeConfig
+from domain.compute_config import ComputeConfig
 from controllers.compute_orchestrator import CancelToken
 from controllers.compute_pipeline import (CancelledError, Pipeline2D,
                                           Pipeline3D, pipeline_for)

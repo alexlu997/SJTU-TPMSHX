@@ -16,9 +16,9 @@ _build_fields_3d_cfg → _run_solvers_3d_cfg → _finalize_3d_cfg).
 
 Moved out of `runs/run_calculation_3d.py` in batch-3 (2026-06-13) to fix
 the controllers→runs layer inversion.  This module imports nothing from
-`runs/`; the function-level `ComputeResult` import in `_finalize_3d_cfg`
-stays function-level (do not hoist — it would close a
-pipelines↔controllers import cycle).
+`runs/` or `controllers/` (contracts-layer split 2026-07-02: ComputeConfig /
+ComputeResult now come from `domain`, killing the old pipelines↔controllers
+cycle and its deferred imports).
 
 The finished :class:`ComputeResult` carries the 3D render/export contract
 (``fields`` arrays, headline scalars, ``diagnostics['mode']='3d'``);
@@ -30,7 +30,8 @@ import os
 import time as _time
 import numpy as np
 
-from controllers.compute_config import ComputeConfig, bc_to_dict
+from domain.compute_config import ComputeConfig, bc_to_dict
+from domain.compute_result import ComputeResult
 from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.ltne_energy_3d import solve_full_domain_3d
@@ -672,7 +673,6 @@ def _finalize_3d_cfg(raw, fields):
     CSV/NPZ export consume) is locked by
     ``tests/test_finalize_3d_result_sync.py``.
     """
-    from controllers.compute_pipeline import ComputeResult
     compute_cfg = fields.get('compute_cfg')
 
     # B2 2.1c (2026-06-13): mirror the legacy extrap tagging onto the raw

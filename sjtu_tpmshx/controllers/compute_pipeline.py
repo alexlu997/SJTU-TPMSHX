@@ -1,8 +1,9 @@
 """Compute pipeline ABC — unifies 2D / 3D entrypoints behind one contract.
 
 Audit followup C4 (L-a-2, 2026-05-28).  Built on top of the
-:class:`controllers.compute_config.ComputeConfig` introduced in C3
-(L-a-1).
+:class:`domain.compute_config.ComputeConfig` introduced in C3
+(L-a-1; contracts moved to ``domain/`` in the 2026-07-02 contracts-layer
+split — ``ComputeResult`` now lives in ``domain.compute_result``).
 
 Design
 ------
@@ -44,67 +45,10 @@ returned :class:`ComputeResult`.  No Qt event loop needed.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
-from .compute_config import ComputeConfig
-
-
-# ── Result dataclass ─────────────────────────────────────────────────
-
-
-@dataclass
-class ComputeResult:
-    """Output of a single :class:`ComputePipeline` run.
-
-    Headline scalars (``Q_W``, ``dP_*_Pa``, ``T_out_*_K``) match the
-    numbers shown in the UI result panel.  The rich
-    sub-dictionaries hold the arrays / coefficients / residuals so the
-    UI adapter (``Main_Menu.write_result``) and validation scripts can
-    pluck whatever they need without re-running the solver.
-    """
-
-    # ── headline scalars (UI compute panel) ──
-    Q_W: float = 0.0
-    dP_A_Pa: float = 0.0
-    dP_B_Pa: float = 0.0
-    T_out_A_K: float = 0.0
-    T_out_B_K: float = 0.0
-
-    # ── rich arrays ──
-    # 2D keys: T_fA, T_fB, T_s, P_A, P_B, u_A, v_A, u_B, v_B, eps_arr,
-    #          (+ axis_dir_A, axis_dir_B for plotting)
-    # 3D keys: + w_A, w_B + z_centres
-    fields: Dict[str, Any] = field(default_factory=dict)
-
-    # ── porous + coupling coefficients ──
-    # Keys: K_ffA, K_ffB, K_ss, h_vA, h_vB (scalar or array per zone mode)
-    coeffs: Dict[str, Any] = field(default_factory=dict)
-
-    # ── fluid + solid properties at iteration end ──
-    # Keys: rho_A, rho_B, mu_A, mu_B, eps_A, D_h_m, A_0_m2
-    props: Dict[str, Any] = field(default_factory=dict)
-
-    # ── residuals ──
-    # Keys: r_Q, r_dP_A, r_dP_B (relative deltas), simple_A, simple_B,
-    #       ltne_outer (max-T outer iteration delta)
-    residuals: Dict[str, float] = field(default_factory=dict)
-
-    # ── zones (None when zones disabled) ──
-    # Keys: axis_dir, stats, boundaries (list[float]),
-    #       boundaries_x, boundaries_y (3D / grid mode)
-    zones: Optional[Dict[str, Any]] = None
-
-    # ── warnings + extrap reasons ──
-    # ``warnings`` accumulates fluid-domain / zone-fallback messages.
-    # ``extrap_reasons`` is the surrogate-domain audit trail consumed
-    # by Main_Menu to display the watermark + status bar.
-    warnings: List[str] = field(default_factory=list)
-    extrap_reasons: List[str] = field(default_factory=list)
-
-    # ── diagnostics ──
-    # Keys: iter_outer, iter_simple_A, iter_simple_B, wall_time_s
-    diagnostics: Dict[str, Any] = field(default_factory=dict)
+from domain.compute_config import ComputeConfig
+from domain.compute_result import ComputeResult
 
 
 # ── Pipeline ABC ─────────────────────────────────────────────────────
@@ -124,7 +68,7 @@ class ComputePipeline(ABC):
     ----------
     cfg : ComputeConfig
         Strict-typed compute settings.  Built at the UI boundary via
-        :meth:`ComputeConfig.from_qt_window` or from JSON via
+        ``ui.window_config.config_from_window`` or from JSON via
         :meth:`ComputeConfig.from_json`.
     progress_cb : callable, optional
         Single-argument ``(percent: int)`` callback fired at 20 / 90 /
@@ -214,6 +158,9 @@ class Pipeline2D(ComputePipeline):
         self._parsed: Optional[Dict[str, Any]] = None
 
     def build_fields(self) -> Dict[str, Any]:
+        # Lazy on purpose (NOT a cycle since the contracts-layer split):
+        # importing stages_2d pulls the numba solver chain + JIT warmup;
+        # keeping it method-local spares GUI cold-start when no compute runs.
         from pipelines.stages_2d import (
             _parse_inputs_cfg, _build_fields_cfg,
         )
@@ -254,6 +201,7 @@ class Pipeline3D(ComputePipeline):
         self._parsed: Optional[Dict[str, Any]] = None
 
     def build_fields(self) -> Dict[str, Any]:
+        # Lazy on purpose — see Pipeline2D.build_fields.
         from pipelines.stages_3d import (
             _parse_inputs_3d_cfg, _build_fields_3d_cfg,
         )

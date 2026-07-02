@@ -8,25 +8,15 @@ Phase 3: ThemeManager + SignalRouter — theme + connection lifecycle.
 Phase 4: DomainValidator (TODO).
 Phase 5: FieldFactory — done (ui/field_factory.py, installed in main.py).
 """
-from .compute_config import (
-    ComputeConfig,
-    FluidConfig,
-    GeometryConfig,
-    SolverConfig,
-    PartialBCConfig,
-    ZoneInputConfig,
-    ExtrapPolicy,
-    FeatureFlags,
-)
+# contracts-layer split (2026-07-02): the compute contracts moved to
+# domain.compute_config / domain.compute_result; the window-harvest adapter
+# to ui.window_config; ThemeManager to ui.theme_manager. This package keeps
+# the orchestration/state controllers only.
 from .compute_orchestrator import ComputeOrchestrator
 from .result_cache import ResultCache
 from .session_manager import SessionManager
-from .theme_manager import ThemeManager
 from .signal_router import SignalRouter
 
 __all__ = [
-    'ComputeConfig', 'FluidConfig', 'GeometryConfig', 'SolverConfig',
-    'PartialBCConfig', 'ZoneInputConfig', 'ExtrapPolicy', 'FeatureFlags',
-    'ComputeOrchestrator', 'ResultCache', 'SessionManager',
-    'ThemeManager', 'SignalRouter',
+    'ComputeOrchestrator', 'ResultCache', 'SessionManager', 'SignalRouter',
 ]

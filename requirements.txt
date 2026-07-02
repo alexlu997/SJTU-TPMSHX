@@ -33,3 +33,4 @@ CoolProp>=6.4               # Span-Wagner CO2 EOS for the sCO2 fluid (Phase A)
 
 # --- Test ---
 pytest>=8.0
+scikit-image>=0.24          # asym-porosity marching cubes (solvers/asym_geometry)

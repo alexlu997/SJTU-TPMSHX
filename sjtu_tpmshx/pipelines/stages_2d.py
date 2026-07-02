@@ -8,18 +8,18 @@ _build_fields_cfg → _run_solvers_cfg → _finalize_cfg).  Compute-only
 
 Moved out of `runs/run_calculation.py` in batch-3 (2026-06-13) — completing
 the controllers→runs layer-inversion fix.  This module imports nothing from
-`runs/`; the function-level `ComputeResult` import in `_finalize_cfg` stays
-function-level (do not hoist — it would close a pipelines↔controllers import
-cycle).
+`runs/` or `controllers/` (contracts-layer split 2026-07-02: ComputeConfig /
+ComputeResult now come from `domain`, so the old pipelines↔controllers cycle
+— and the deferred imports that held it shut — is gone).
 
 Originally extracted from main.py (Task B.9). C3 audit (2026-05-28, L-a-1):
-scalar UI inputs route through
-``controllers.compute_config.ComputeConfig.from_qt_window`` rather than
-direct ``le_*`` widget reads; the window is still required for non-le state
-(zone config, _eps_A, extrap reasons, _temp_to_K hook, _DIR_MAP).
+scalar UI inputs route through ``ui.window_config.config_from_window`` rather
+than direct ``le_*`` widget reads; the window is still required for non-le
+state (zone config, _eps_A, extrap reasons, _temp_to_K hook, _DIR_MAP).
 """
 import numpy as np
-from controllers.compute_config import ComputeConfig, bc_to_dict
+from domain.compute_config import ComputeConfig, bc_to_dict
+from domain.compute_result import ComputeResult
 from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
@@ -270,7 +270,7 @@ def _parse_inputs_cfg(compute_cfg):
             else:
                 # 1D zone mode — cfg.zones.config carries the resolved
                 # ZoneConfig (pre-built at the UI boundary by
-                # _read_zone_input in controllers.compute_config).
+                # _read_zone_input in domain.compute_config).
                 if compute_cfg.zones.config is None:
                     warnings_list.append(
                         "Zone enabled in 1D mode but no ZoneConfig "
@@ -1880,7 +1880,7 @@ def _finalize_cfg(raw, fields):
     raw ``_run_solvers_cfg`` output and the original ``fields`` dict.
 
     Audit C4 (L-a-2): no window writes; everything moves through the
-    returned :class:`controllers.compute_pipeline.ComputeResult`.
+    returned :class:`domain.compute_result.ComputeResult`.
     Legacy ``_store_results(window, cfg, result)`` becomes a thin
     adapter that copies the result's slots into the UI attributes
     that ``finalize_plots`` already reads from ``window``.
@@ -1891,9 +1891,6 @@ def _finalize_cfg(raw, fields):
     ``zone_config`` / ``za`` — the same keys ``_store_results`` read
     from the parsed-cfg dict.
     """
-    # Local import — avoid circulars at module load.
-    from controllers.compute_pipeline import ComputeResult
-
     Ta, Tb, Ts = raw['Ta'], raw['Tb'], raw['Ts']
     ucA, vcA = raw['ucA'], raw['vcA']
     ucB, vcB = raw['ucB'], raw['vcB']

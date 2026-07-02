@@ -72,7 +72,7 @@ def test_gate_solution_raises_on_ma_max_override():
 
 # ── envelope_mode reachable through ComputeConfig (audit: unreachable) ──────
 def test_envelope_mode_field_and_from_dict():
-    from controllers.compute_config import ComputeConfig
+    from domain.compute_config import ComputeConfig
     assert ComputeConfig().envelope_mode == 'raise'              # default
     assert ComputeConfig(envelope_mode='warn').envelope_mode == 'warn'
     # canonical-layout dict (the asdict round-trip path) carries it
@@ -82,7 +82,7 @@ def test_envelope_mode_field_and_from_dict():
 
 def test_envelope_mode_propagates_into_3d_cfg():
     from dataclasses import replace
-    from controllers.compute_config import ComputeConfig
+    from domain.compute_config import ComputeConfig
     from pipelines.stages_3d import _parse_inputs_3d_cfg
     base = ComputeConfig()
     cc = replace(base,

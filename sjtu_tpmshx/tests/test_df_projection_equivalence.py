@@ -49,6 +49,14 @@ def _fields_3d():
     return L3, t3, e3
 
 
+# Same-machine bit-repro gates (exact float ==): skip on CI — libm/FMA ULP
+# differences across platforms; same rationale as test_df_backend_registry.
+_CI = pytest.mark.skipif(__import__('os').environ.get('CI') == 'true',
+                         reason='same-machine exact-equality gate (ULP '
+                                'differs across platforms)')
+
+
+@_CI
 @pytest.mark.parametrize('fluid', ('A', 'B'))
 @pytest.mark.parametrize('tag,dx', (('uni', None), ('nonuni', _DX_NU)))
 def test_2d_projector_baseline_exact(fluid, tag, dx):
@@ -60,6 +68,7 @@ def test_2d_projector_baseline_exact(fluid, tag, dx):
     assert cF.tolist() == cF_ref
 
 
+@_CI
 @pytest.mark.parametrize('fluid', ('A', 'B'))
 @pytest.mark.parametrize('tag,sdx,zdx', (('uni', None, None),
                                          ('nonuni', _DX_NU, _ZDX_NU)))

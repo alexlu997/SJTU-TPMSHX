@@ -84,10 +84,10 @@ class RunControllerMixin:
         # Qt widgets are read EXACTLY ONCE here on the main thread; the
         # worker thread only ever sees the pure ComputeConfig. strict=True
         # reproduces the legacy blank/non-numeric widget validation.
-        from controllers.compute_config import ComputeConfig
+        from ui.window_config import config_from_window
         try:
-            compute_cfg = ComputeConfig.from_qt_window(self, strict=True,
-                                                       force_3d=False)
+            compute_cfg = config_from_window(self, strict=True,
+                                             force_3d=False)
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", str(e))
             return
@@ -250,10 +250,10 @@ class RunControllerMixin:
         # deleted. Qt widgets are read exactly once HERE on the main
         # thread (before the UI locks, so a validation error leaves the
         # window usable).
-        from controllers.compute_config import ComputeConfig
+        from ui.window_config import config_from_window
         try:
-            compute_cfg = ComputeConfig.from_qt_window(self, strict=True,
-                                                       force_3d=True)
+            compute_cfg = config_from_window(self, strict=True,
+                                             force_3d=True)
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", str(e))
             return
@@ -359,7 +359,7 @@ class RunControllerMixin:
         return out
 
     def write_result(self, result):
-        """Copy a :class:`controllers.compute_pipeline.ComputeResult`
+        """Copy a :class:`domain.compute_result.ComputeResult`
         onto the legacy window attributes (``_compute_results`` dict,
         ``_compute_warnings``, ``_extrap_reasons``, ``_K_ff*``,
         ``_rho_*``, ``_mu_*``, ``_h_v*``, ``_zone_*``) so the existing

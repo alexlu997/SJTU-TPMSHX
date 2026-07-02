@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from controllers.theme_manager import ThemeManager
+from ui.theme_manager import ThemeManager
 from ui.field_factory import (
     FieldFactory, default_factory, set_default_factory,
 )

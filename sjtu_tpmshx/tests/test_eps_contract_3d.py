@@ -20,6 +20,9 @@ def _shanghai_df():
     # Use the canonical data anchor (resilient to where the runner module lives)
     # instead of recomputing the path from V.__file__ depth.
     from validation.harness._case_sets import SHANGHAI_XLSX
+    import pathlib
+    if not pathlib.Path(str(SHANGHAI_XLSX)).exists():
+        pytest.skip('Shanghai experiment Excel (gitignored data/) not present')
     return pd.read_excel(str(SHANGHAI_XLSX), engine="openpyxl",
                          sheet_name="Sheet1", header=None, skiprows=2)
 

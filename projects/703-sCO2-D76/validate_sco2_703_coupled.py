@@ -40,7 +40,7 @@ except Exception:
     pass
 
 from CoolProp.CoolProp import PropsSI as _P                    # noqa: E402
-from controllers.compute_config import (ComputeConfig, FluidConfig,  # noqa: E402
+from domain.compute_config import (ComputeConfig, FluidConfig,  # noqa: E402
     GeometryConfig, SolverConfig, PartialBCConfig, ExtrapPolicy)
 from controllers.compute_pipeline import Pipeline2D            # noqa: E402
 from solvers.tpms_calc import geometry as _geom               # noqa: E402

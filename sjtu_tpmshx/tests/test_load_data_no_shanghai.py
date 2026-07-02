@@ -24,6 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Raw training Excel is a local asset (data/ is gitignored) — skip cleanly
+# on checkouts without it (CI) instead of FileNotFoundError.
+_RAW_XLSX = ROOT.parent / 'data' / 'raw_data' / '试验记录表_整理版.xlsx'
+pytestmark = pytest.mark.skipif(
+    not _RAW_XLSX.exists(),
+    reason='local training Excel (gitignored data/) not present')
+
 
 # ---------------------------------------------------------------- live load
 

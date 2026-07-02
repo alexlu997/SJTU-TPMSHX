@@ -21,7 +21,7 @@ from solvers.tpms_calc import geometry, compute, water_density
 import solvers.nu_correlations as nu_correlations
 from solvers.nu_correlations import nu_water_topo
 from df_surrogate.predict import predict_dP_compressible
-from controllers.compute_config import (ComputeConfig, FluidConfig,
+from domain.compute_config import (ComputeConfig, FluidConfig,
                                          ZoneInputConfig)
 from pipelines.stages_2d import _check_zoned_fluid_support
 

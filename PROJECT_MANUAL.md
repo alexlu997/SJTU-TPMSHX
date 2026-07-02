@@ -391,16 +391,15 @@ SJTU-TPMSHX/                       ← 仓库根
 
 这一组把“图形界面”和“数值求解器”解耦，让求解器不依赖 Qt。
 
-#### `compute_config.py` — 严格类型配置（Qt → 求解器的唯一边界）
-- **作用**：用 dataclass 定义全部计算配置，是**唯一**读取 Qt 控件文本的地方；之后一切都是纯 Python，求解器永不接触窗口对象。
-- **关键类**：`ComputeConfig`（组合下面这些）：`FluidConfig`（每侧流体：类型、速度、进口温/压）、`GeometryConfig`（结构类型、L、t、k_s、域尺寸、Lz；Lz=None 表示 2D）、`SolverConfig`（迭代/容差/网格/粗糙度模式）、`PartialBCConfig`（部分进出口）、`ZoneInputConfig`、`ExtrapPolicy`、`FeatureFlags`。属性 `is_3d` 由 Nz≥2 判定。
-- **关键方法**：`from_qt_window(window, strict, force_3d)`（唯一读控件处）、`from_json/to_json/from_dict`（支持规范布局和上海基准遗留布局）。
-- **依赖**：仅标准库（刻意不引 PySide6，避免循环依赖）。
+#### 计算契约（contracts-layer 拆分后，2026-07-02）：`domain/compute_config.py` + `domain/compute_result.py`
+- **作用**：dataclass 契约现在住在 `domain/`（controllers/pipelines/validation 都从下方 import，import 图成 DAG）。`ComputeConfig` 组合：`FluidConfig`、`GeometryConfig`（Lz=None 表示 2D）、`SolverConfig`、`PartialBCConfig`、`ZoneInputConfig`、`ExtrapPolicy`、`FeatureFlags`；属性 `is_3d` 由 Nz≥2 判定。`ComputeResult`（Q、dP、出口温度、场/系数/残差/诊断）同层独立模块。
+- **关键方法**：`from_json/to_json/from_dict`（支持规范布局和上海基准遗留布局）。窗口采集在 **`ui/window_config.py` 的 `config_from_window(window, strict, force_3d)`** —— 唯一读控件处（鸭子类型，不 import Qt）。
+- **依赖**：仅标准库。
 
 #### `compute_pipeline.py` — 计算流水线抽象（统一 2D/3D）
 - **作用**：用抽象基类统一 2D/3D 求解入口，三阶段状态机：`build_fields()` → `run_solvers()` → `finalize()`。
-- **关键类**：`ComputePipeline`（抽象）、`Pipeline2D`/`Pipeline3D`（具体，委托给 `runs/` 里的辅助函数）、`ComputeResult`（结果数据类：Q、dP、出口温度、各种场/系数/残差/诊断）、`CancelledError`。`pipeline_for(cfg)` 工厂按维度派发。
-- **要点**：阶段间检查取消令牌，支持中途取消；进度回调在 20/90/100% 触发。
+- **关键类**：`ComputePipeline`（抽象）、`Pipeline2D`/`Pipeline3D`（具体，委托给 `pipelines/` 的 stage 函数）、`CancelledError`。`pipeline_for(cfg)` 工厂按维度派发。`ComputeResult` 从 `domain.compute_result` import。
+- **要点**：阶段间检查取消令牌，支持中途取消；进度回调在 20/90/100% 触发；stages 的 import 保持方法内懒加载（numba 链冷启动开销），非循环。
 
 #### `compute_orchestrator.py` — Qt 原生求解线程生命周期
 - **作用**：用 `QThreadPool + QRunnable + 信号` 取代裸线程轮询，跑后台求解。带重入保护、协作式取消、求解器 stdout 捕获（500KB 环形缓冲，给日志查看器）、各模式 ETA 历史。
@@ -680,7 +679,7 @@ SJTU-TPMSHX/                       ← 仓库根
 3. **速度口径统一 interstitial**（孔隙内真实速度），不要和 superficial（表观）混用。
 4. **粗糙度别重复算**：c_F 已用真实 SLM 实验压降训练（隐含粗糙），Nu 已含 ×1.28。再加摩擦乘子 = 重复计算。
 5. **防数据泄漏**：上海 16 工况是预测目标，训练集严禁含 t=0.6mm 或 L=7.0mm 的点（`df_surrogate/load_data.py` 会拒绝）。
-6. **Qt-free 契约**：求解器、配置、校验层刻意不依赖 PySide6，方便无界面测试和批跑复用。读 Qt 控件只在 `compute_config.from_qt_window` 一处。
+6. **Qt-free 契约**：求解器、配置、校验层刻意不依赖 PySide6，方便无界面测试和批跑复用。读 Qt 控件只在 `ui/window_config.py` 的 `config_from_window` 一处（contracts-layer 拆分，2026-07-02）。
 7. **ε 减半契约**：3D 内核约定调用方传完整 ε，内核自己 `eps_f=0.5·ε`。曾因双重减半出 bug，现有测试守护。
 8. **mass-flux 入口**：3D 默认对理想气体用质量流入口（固定 ρ·v），避免可压缩正反馈“跑飞”。
 9. **代理外推**：几何超出训练窗口（L∈[4,8]、t∈[0.3,0.5]）时，代理会把 K 钳到地板，需用 `TPMSHX_ALLOW_EXTRAP=1` 显式放行。

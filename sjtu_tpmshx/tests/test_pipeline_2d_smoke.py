@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from controllers.compute_config import (
+from domain.compute_config import (
     ComputeConfig,
     FluidConfig,
     GeometryConfig,

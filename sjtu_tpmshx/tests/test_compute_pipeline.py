@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from controllers.compute_config import ComputeConfig, SolverConfig
+from domain.compute_config import ComputeConfig, SolverConfig
 from controllers.compute_pipeline import (
     CancelledError,
     ComputePipeline,

@@ -15,10 +15,10 @@ import json
 
 import pytest
 
-from controllers.compute_config import (ComputeConfig, CONFIG_FIELDS,
-                                        FluidConfig, GeometryConfig,
-                                        SolverConfig,
-                                        _validate_required_widgets)
+from domain.compute_config import (ComputeConfig, FluidConfig,
+                                    GeometryConfig, SolverConfig)
+from ui.window_config import (CONFIG_FIELDS, config_from_window,
+                              _validate_required_widgets)
 from tests.test_compute_config import _StubWindow
 
 _SECTION_TYPES = {
@@ -78,7 +78,7 @@ def test_window_to_json_roundtrip(tmp_path):
     window = _StubWindow(L='0.2', H='0.05', Nx='18', Ny='12', Nz='4',
                          uA='9.5', uB='0.2', TinA='400', TinB='305',
                          Lcell='6.5', t='0.4', ks='15')
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     p = tmp_path / 'cfg.json'
     cfg.to_json(p)
     back = ComputeConfig.from_json(p)
@@ -94,7 +94,7 @@ def test_fluid_b_velocity_cross_default():
     (the registry marks it special for exactly this reason)."""
     window = _StubWindow(uA='7.25')
     delattr(window, 'le_uB')
-    cfg = ComputeConfig.from_qt_window(window)
+    cfg = config_from_window(window)
     assert cfg.fluid_B.u_mps == cfg.fluid_A.u_mps == 7.25
 
 

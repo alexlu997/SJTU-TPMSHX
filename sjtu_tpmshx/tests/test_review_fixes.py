@@ -31,7 +31,7 @@ def test_domain_firewall_blocks_meter_typed_as_mm():
     window adapter the original test used was deleted with the legacy
     entrypoints.
     """
-    from controllers.compute_config import ComputeConfig, GeometryConfig, SolverConfig
+    from domain.compute_config import ComputeConfig, GeometryConfig, SolverConfig
     from pipelines.stages_3d import _parse_inputs_3d_cfg
 
     cc = ComputeConfig(

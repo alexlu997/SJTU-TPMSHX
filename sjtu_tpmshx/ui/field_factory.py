@@ -12,7 +12,7 @@ times:
 
 The repetition couples ``ui_builders`` to ``main`` (circular import dodge)
 and means a style change touches dozens of places. ``FieldFactory`` owns
-a :class:`controllers.theme_manager.ThemeManager` reference and exposes
+a :class:`ui.theme_manager.ThemeManager` reference and exposes
 single-call constructors:
 
     f = FieldFactory(theme_manager)
@@ -66,7 +66,7 @@ def default_factory() -> 'FieldFactory':
     """Return the installed process factory, or a stand-alone fallback.
 
     The fallback constructs a fresh :class:`FieldFactory` with a brand-new
-    :class:`controllers.theme_manager.ThemeManager`. This keeps unit
+    :class:`ui.theme_manager.ThemeManager`. This keeps unit
     tests + headless validation runs working when no Main_Menu has been
     built; the styles will mirror whatever ``ui.theme`` reports.
     """
@@ -75,7 +75,7 @@ def default_factory() -> 'FieldFactory':
         # Lazy import: theme_manager pulls Qt; importing it at module top
         # would force pytest collection to spin Qt for tests that don't
         # need styling.
-        from controllers.theme_manager import ThemeManager
+        from ui.theme_manager import ThemeManager
         _FACTORY = FieldFactory(ThemeManager())
     return _FACTORY
 

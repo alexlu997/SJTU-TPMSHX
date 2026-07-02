@@ -64,7 +64,7 @@ from solvers.tpms_calc import (
 # (cross-flow, narrow 42×42 port). Internal interstitial flow areas
 # differ between streams since flow direction differs.
 from configs import load_shanghai_baseline
-from controllers.compute_config import ComputeConfig
+from domain.compute_config import ComputeConfig
 # Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()
 _SH_CC = ComputeConfig.from_dict(_SH)

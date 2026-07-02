@@ -16,8 +16,11 @@
 
 ## Decisions
 
-### D1 — 拆分而非整移
-`domain/compute_config.py` ← 纯契约部分（dataclasses + 纯函数，零 Qt、零 window 参数）。窗口采集函数留在 `controllers/compute_config.py`（从 domain import 契约类型）。判据：函数签名含 `window`/widget 或 body 摸 Qt 属性 → 留 controllers。`ZoneInputConfig` dataclass 本身进 domain；`build_zone_config(window)` 调用留在 controllers 采集侧 → **controllers→ui 泄漏随拆分自然消失**（采集函数在 controllers 调 ui 合法：等等——controllers 不应 import ui。改为把 zone 采集函数移到 ui 侧或由 main/mixins 注入）。裁决：`from_window` 采集函数的 ui.zone_table 调用改为**参数注入**（`zone_builder: callable = None`），main.py/mixins 调用时传入——controllers 零 ui import。
+### D1 — 拆分而非整移（勘察后修订，2026-07-02）
+勘察结论：`from_qt_window` 生产调用点仅 2 处（`ui/mixins/run_controller.py:89,255`）+ 2 个测试文件 ~24 处；采集全部发生在 UI 层。据此弃用注入方案，改为**采集函数整体移入 `ui/window_config.py`**：
+- `domain/compute_config.py` ← 纯契约：类型别名、全部 dataclass、`bc_to_dict`、`ComputeConfig`（含 `from_json/to_json/from_dict`，去掉 `from_qt_window`）。
+- `ui/window_config.py` ← 采集：`_qt_*` 助手、`FieldSpec`/`CONFIG_FIELDS`、`_validate_required_widgets`、`_read_*` 家族 + 新自由函数 `config_from_window(window, *, strict, force_3d)`（原 classmethod body）。`ui.zone_table` 调用变包内引用——泄漏自然消失，零注入机制。该模块全程 getattr 鸭子类型，不 import Qt（测试可无 Qt 运行）。
+- `controllers/compute_config.py` 删除；`controllers/__init__` 契约 re-export 移除（grep `from controllers import ComputeConfig` 一并更新）。controllers 剩 orchestrator/pipeline/cache/session/signal 五件套。
 ### D2 — ComputeResult → `domain/compute_result.py`
 独立小模块（contracts 的另一半）。stages_2d/3d 顶层 import 之，deferred 消失。
 ### D3 — theme_manager → `ui/theme_manager.py`

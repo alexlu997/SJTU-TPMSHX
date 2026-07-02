@@ -78,7 +78,7 @@ def _rebuild_styles(theme_name=None):
 
     Batch-3 (2026-06-10): the module-level style globals (``_BG``,
     ``_LBL``, ``_COMBO``, …) are retired — every consumer reads styles
-    through :class:`controllers.theme_manager.ThemeManager` (via
+    through :class:`ui.theme_manager.ThemeManager` (via
     ``ui.field_factory.default_factory().theme``). This hook persists
     the theme choice, refreshes the live window's manager when one
     exists, and re-applies the matplotlib theme.
@@ -165,7 +165,8 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, 
         # Controllers — Phase 1+2+3 of 2026-05-06 main.py refactor (#4).
         # See vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
         from controllers import (ComputeOrchestrator, ResultCache,
-                                  SessionManager, ThemeManager, SignalRouter)
+                                  SessionManager, SignalRouter)
+        from ui.theme_manager import ThemeManager
 
         # Phase 3: ThemeManager owns the style dict. Batch-3 (2026-06-10):
         # the legacy `import main as _m; m._BG` back-import path is retired
