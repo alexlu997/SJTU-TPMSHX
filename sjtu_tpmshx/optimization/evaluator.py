@@ -174,7 +174,7 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
 
     Note the axis swap on the SIMPLESolver constructor: SIMPLE's W=H_real,
     H=L_real, Nx=Ny_real, Ny=Nx_real. This matches the fluid-A convention in
-    runs/run_calculation.py.
+    pipelines/stages_2d.py (formerly runs/run_calculation.py).
     """
     L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
     T_inA = float(cfg['T_inA']);   P_inA = float(cfg['P_inA'])

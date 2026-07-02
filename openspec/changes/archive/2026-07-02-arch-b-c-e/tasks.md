@@ -20,4 +20,4 @@
 
 ## 4. 收尾
 
-- [ ] 4.1 push 全部，CI 绿；PROJECT_MANUAL 更新（tpms_props/_solve_common/新 mixin 条目）；归档本 change
+- [x] 4.1 三 commit 推送（96a2840/e78fea6/3797648），CI run 28602198020 **success**；PROJECT_MANUAL 更新（tpms_props/_solve_common 条目）；备注时效性清理（用户加请求：14 处指向已迁移模块的过期注释修正——run_calculation→pipelines、validate_shanghai→aligned、from_qt_window→config_from_window 等；历史溯源注释保留）；归档本 change

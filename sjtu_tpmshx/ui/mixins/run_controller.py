@@ -9,8 +9,9 @@ _finished / _error / _cancelled), the result writer + plot finalizer
 _active_compute_mode / _update_result_summary / _begin_btn_ticker /
 _tick_btn / _drain_live_residuals). 18 methods.
 
-UI-orchestration only: the numeric solve lives in runs/run_calculation*.py
-(reached via ComputeOrchestrator workers), not here. Deps are stable
+UI-orchestration only: the numeric solve lives in pipelines/stages_2d.py /
+stages_3d.py (reached via Pipeline2D/3D on ComputeOrchestrator workers),
+not here. Deps are stable
 imports (PySide6 widgets, ui.fmt._fmt_dur, ui.ui_constants constants,
 time) — no main.py module state. Adopted via
 ``class Main_Menu(..., RunControllerMixin, QMainWindow)``; external wiring

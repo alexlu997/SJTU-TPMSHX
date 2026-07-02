@@ -845,7 +845,7 @@ def write_report(out_path: Path, sections: list, header_meta: dict) -> None:
     lines.append(f"- Grid: Nx=Ny=Nz={header_meta['grid']}")
     lines.append(f"- Audit script: `sjtu_tpmshx/validation/audit_partial_b_ltne.py`")
     lines.append(f"- Result-dict additive exports: keys prefixed `_audit_*` "
-                 f"in `runs/run_calculation_3d.py`\n")
+                 f"in `pipelines/stages_3d.py` (formerly run_calculation_3d)\n")
     lines.append('## Scope\n')
     lines.append('- Read-only audit. No solver, M4, M3, K/cF, momentum, or '
                  'closure formula was modified.')

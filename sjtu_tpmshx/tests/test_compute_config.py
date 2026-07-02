@@ -1,11 +1,11 @@
-"""Tests for ``controllers/compute_config.py`` — audit C3 dataclass.
+"""Tests for the compute contracts (domain/compute_config.py) + the window adapter (ui/window_config.py).
 
 Covers:
 - Default construction
 - ``is_3d`` derived property
 - JSON round-trip (canonical schema)
 - JSON load from legacy ``configs/shanghai_baseline.json`` layout
-- ``from_qt_window`` adapter with a minimal mock window
+- ``config_from_window`` adapter with a minimal mock window
 - Optional-widget tolerance (le_Lz / le_TsInit / combo_fluidB missing)
 - K/°C toggle honoured via ``window._temp_to_K``
 """
@@ -69,7 +69,7 @@ class _StubCheckBox:
 
 
 class _StubWindow:
-    """Build only the attributes that ``from_qt_window`` reads."""
+    """Build only the attributes that ``config_from_window`` reads."""
 
     def __init__(self, **fields):
         # geometry
@@ -193,10 +193,10 @@ def test_repo_shanghai_baseline_loads():
     assert cfg.geometry.L_dom_m == pytest.approx(0.182)
 
 
-# ── from_qt_window adapter ──────────────────────────────────────────
+# ── config_from_window adapter ─────────────────────────────────────────
 
 
-def test_from_qt_window_full_smoke():
+def test_config_from_window_full_smoke():
     window = _StubWindow(
         tpms='Diamond', Lcell='8.0', t='0.5', ks='20.0',
         L='0.20', H='0.05', Lz='0.05',
@@ -220,7 +220,7 @@ def test_from_qt_window_full_smoke():
     assert cfg.is_3d
 
 
-def test_from_qt_window_optional_widgets_missing():
+def test_config_from_window_optional_widgets_missing():
     """No le_Lz, no le_TsInit, no combo_fluidB → falls back to defaults
     without raising."""
     window = _StubWindow(
@@ -238,7 +238,7 @@ def test_from_qt_window_optional_widgets_missing():
     assert not cfg.is_3d
 
 
-def test_from_qt_window_temp_to_K_hook_called():
+def test_config_from_window_temp_to_K_hook_called():
     """The window's ``_temp_to_K`` hook converts °C → K. The adapter
     must use it instead of raw float()."""
     window = _StubWindow(TinA='100', TinB='50')   # °C if hook present
@@ -252,7 +252,7 @@ def test_from_qt_window_temp_to_K_hook_called():
     assert cfg.fluid_B.T_in_K == pytest.approx(323.15)
 
 
-def test_from_qt_window_blank_lineedit_uses_default():
+def test_config_from_window_blank_lineedit_uses_default():
     """An empty QLineEdit (user deleted the value) falls back to the
     dataclass default rather than raising."""
     window = _StubWindow(uA='', Nx='', TinA='')
@@ -265,14 +265,14 @@ def test_from_qt_window_blank_lineedit_uses_default():
 # ── strict validation ───────────────────────────────────────────────
 
 
-def test_from_qt_window_strict_passes_on_full_window():
+def test_config_from_window_strict_passes_on_full_window():
     """Strict mode is a no-op when every required widget is filled."""
     window = _StubWindow()   # all defaults non-empty
     cfg = config_from_window(window, strict=True)
     assert cfg.fluid_A.u_mps == pytest.approx(10.0)
 
 
-def test_from_qt_window_strict_flags_blank_required_field():
+def test_config_from_window_strict_flags_blank_required_field():
     """Blank Velocity A → strict raises ValueError naming the field."""
     window = _StubWindow(uA='', H='')
     with pytest.raises(ValueError) as exc:
@@ -282,7 +282,7 @@ def test_from_qt_window_strict_flags_blank_required_field():
     assert 'Domain Height' in msg
 
 
-def test_from_qt_window_strict_flags_non_numeric_grid():
+def test_config_from_window_strict_flags_non_numeric_grid():
     """Garbage in Nx → strict raises naming the grid field."""
     window = _StubWindow(Nx='abc')
     with pytest.raises(ValueError) as exc:
@@ -290,7 +290,7 @@ def test_from_qt_window_strict_flags_non_numeric_grid():
     assert 'Grid Nx' in str(exc.value)
 
 
-def test_from_qt_window_strict_3d_requires_Lz_Nz():
+def test_config_from_window_strict_3d_requires_Lz_Nz():
     """force_3d=True checks le_Lz / le_Nz as well."""
     window = _StubWindow(Nz='5')
     if hasattr(window, 'le_Lz'):
@@ -300,7 +300,7 @@ def test_from_qt_window_strict_3d_requires_Lz_Nz():
     assert 'Width Lz' in str(exc.value)
 
 
-def test_from_qt_window_strict_autodetects_3d():
+def test_config_from_window_strict_autodetects_3d():
     """Nz>=2 in the widget auto-triggers the 3D required set even when
     ``force_3d`` is left as the default ``None``."""
     window = _StubWindow(Nz='5')
@@ -368,7 +368,7 @@ def test_c4_compute_config_default_has_new_fields():
     assert isinstance(cfg.extrap, ExtrapPolicy)
 
 
-def test_c4_from_qt_window_reads_partial_bc_widgets():
+def test_c4_config_from_window_reads_partial_bc_widgets():
     """The 2D partial-BC pipe widgets feed ``bc_A`` / ``bc_B``."""
     window = _StubWindow()
     window.combo_dirA = _StubComboBox('+x', index=0)
@@ -392,7 +392,7 @@ def test_c4_from_qt_window_reads_partial_bc_widgets():
     assert cfg.bc_B.in_z_w is None
 
 
-def test_c4_from_qt_window_reads_partial_bc_z_when_visible():
+def test_c4_config_from_window_reads_partial_bc_z_when_visible():
     """``le_pipe<side>_in_z_*`` honoured when present and not hidden
     (3D mode)."""
     window = _StubWindow()
@@ -411,7 +411,7 @@ def test_c4_from_qt_window_reads_partial_bc_z_when_visible():
     assert cfg.bc_A.out_z_w == pytest.approx(0.020)
 
 
-def test_c4_from_qt_window_skips_partial_bc_z_when_hidden():
+def test_c4_config_from_window_skips_partial_bc_z_when_hidden():
     """Hidden z-widgets fall back to None (2D mode hides them)."""
     window = _StubWindow()
     window.combo_dirA = _StubComboBox('+x', index=0)
@@ -428,7 +428,7 @@ def test_c4_from_qt_window_skips_partial_bc_z_when_hidden():
     assert cfg.bc_A.out_z_w is None
 
 
-def test_c4_from_qt_window_reads_zone_state():
+def test_c4_config_from_window_reads_zone_state():
     """``chk_zones`` + ``combo_zone_axis`` + ``_zone_grid`` snapshot
     into ``cfg.zones``. ``_pareto_*`` carried through unchanged."""
     window = _StubWindow()
@@ -447,7 +447,7 @@ def test_c4_from_qt_window_reads_zone_state():
     assert cfg.zones.pareto_y_trans_inlet == pytest.approx(0.15)
 
 
-def test_c4_from_qt_window_zone_defaults_when_widgets_absent():
+def test_c4_config_from_window_zone_defaults_when_widgets_absent():
     """No zone widgets on window → zones default (disabled, axis='y')."""
     window = _StubWindow()
     cfg = config_from_window(window)
@@ -457,20 +457,20 @@ def test_c4_from_qt_window_zone_defaults_when_widgets_absent():
     assert cfg.zones.pareto_x_decision is None
 
 
-def test_c4_from_qt_window_reads_extrap_policy():
+def test_c4_config_from_window_reads_extrap_policy():
     window = _StubWindow()
     window.chk_allow_extrap = _StubCheckBox(checked=True)
     cfg = config_from_window(window)
     assert cfg.extrap.allow is True
 
 
-def test_c4_from_qt_window_extrap_default_when_widget_absent():
+def test_c4_config_from_window_extrap_default_when_widget_absent():
     window = _StubWindow()
     cfg = config_from_window(window)
     assert cfg.extrap.allow is False
 
 
-def test_c4_from_qt_window_reads_feature_flags():
+def test_c4_config_from_window_reads_feature_flags():
     window = _StubWindow()
     window.chk_wall_refine_3d = _StubCheckBox(checked=True)
     window._temp_unit = 'C'

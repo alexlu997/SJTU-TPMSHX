@@ -6,8 +6,8 @@ property ladders with registry dispatch. These tests pin:
   1. registry primitives == the direct tpms_calc functions they wrap
      (exact float equality — the migration must be value-preserving);
   2. flow_model() mapping (SIMPLE fluid_type strings);
-  3. embeds_roughness flags (roughness double-count guard, see
-     runs/run_calculation_3d._apply_roughness_*);
+  3. embeds_roughness flags (roughness double-count guard, see the
+     _apply_roughness_* helpers now in pipelines/stages_3d.py);
   4. nu_water_topo == the retired design/fluids.py inline formula;
   5. design.fluids thin-adapter outputs == registry primitives.
 """

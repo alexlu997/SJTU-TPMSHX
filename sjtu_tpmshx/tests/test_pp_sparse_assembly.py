@@ -96,7 +96,8 @@ def _run_both(Nx, Ny, seed):
 
 
 def test_169x31_shanghai_grid():
-    """The exact grid used by validate_shanghai.py."""
+    """The exact grid used by the Shanghai 2D validation
+    (validate_shanghai_aligned.py; historically validate_shanghai.py)."""
     (Pp_r, A_r, rhs_r), (Pp_f, A_f, rhs_f) = _run_both(169, 31, seed=42)
     # rhs must match exactly (same input, same math)
     assert np.allclose(rhs_r, rhs_f, rtol=1e-14, atol=1e-20), \

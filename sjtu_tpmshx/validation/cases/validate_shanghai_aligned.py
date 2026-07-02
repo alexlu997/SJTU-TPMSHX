@@ -44,8 +44,8 @@ print(f"[Shanghai aligned] roughness mode = {_ROUGH_MODE}"
 
 R_AIR_VAL = 287.05
 
-# ── Match run_calculation.py constants ──
-# Bumped 5→10 on 2026-05-14 to align with runs/run_calculation.py (Phase
+# ── Match the production compute-path constants (pipelines/stages_2d.py) ──
+# Bumped 5→10 on 2026-05-14 to align with the then run_calculation.py (Phase
 # bump 2026-05-09). Old baseline at 5 sometimes left B residual ~3e-3
 # instead of converging to 1e-3; unifying keeps validation in lock-step
 # with production.

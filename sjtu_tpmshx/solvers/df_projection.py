@@ -277,8 +277,9 @@ def project_fields_to_streamwise_K_cF_3d(L_field: np.ndarray,
 def extract_dP_from_simple(s: Any) -> float:
     """Extract inlet/outlet-averaged dP from a converged SIMPLE instance.
 
-    Uses the inlet_frac/outlet_frac weighting (same as validate_shanghai.py:273-276)
-    to handle partial inlet/outlet openings correctly. Geometric open-area
+    Uses the inlet_frac/outlet_frac weighting (same convention as the Shanghai
+    2D validation, now validate_shanghai_aligned.py) to handle partial
+    inlet/outlet openings correctly. Geometric open-area
     weights — see `extract_dP_mass_flux_from_simple` for the ρ·|v| variant.
     """
     wA_in = s.inlet_frac; wA_out = s.outlet_frac

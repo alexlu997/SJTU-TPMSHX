@@ -72,11 +72,11 @@ class FieldSpec:
     ↔ parse kind ↔ required-validation membership (B2 2.4, 2026-06-12).
 
     Single source for the add-a-field procedure — previously adding one
-    field meant touching the dataclass, ``from_qt_window``, and the
+    field meant touching the dataclass, ``config_from_window``, and the
     ``_REQUIRED_*`` lists independently (silent-default drift when one
     was missed). ``kind``: 'float' | 'int' | 'temp' (unit-aware Kelvin).
     ``special=True`` rows participate in validation only; their read has
-    bespoke semantics kept explicit in ``from_qt_window`` (cross-field
+    bespoke semantics kept explicit in ``config_from_window`` (cross-field
     defaults, None-when-missing, combo parsing).
     """
     section: str            # 'geometry' | 'solver' | 'fluid_A' | 'fluid_B'
@@ -196,7 +196,7 @@ def _temp_in_K(window, widget, default_K: float) -> float:
     Both ``run_calculation._parse_inputs`` and
     ``run_calculation_3d._parse_inputs`` route inlet-temperature reads
     through ``window._temp_to_K`` so the K/°C UI toggle is honoured.
-    We do the same here so ``from_qt_window`` always returns Kelvin.
+    We do the same here so ``config_from_window`` always returns Kelvin.
     """
     if widget is None:
         return default_K

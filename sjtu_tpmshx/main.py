@@ -206,7 +206,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         # ResultCache is instantiated for new code; legacy result attrs
         # (_compute_results / _recent_runs / _has_results_*) stay in place
         # and will migrate incrementally in later phases to avoid touching
-        # runs/run_calculation*.py call sites in this commit.
+        # the compute-path call sites (now pipelines/stages_*.py).
         self.sm = SessionManager(parent=self)
         self.cache = ResultCache(self)
 

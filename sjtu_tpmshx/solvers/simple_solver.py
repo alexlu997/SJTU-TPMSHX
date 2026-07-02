@@ -1426,7 +1426,7 @@ class SIMPLESolver:
         If wall refinement is on and the incoming T_field has the pre-refine
         shape, we linearly interpolate along the cross-stream axis so the user
         can keep passing fields at their original resolution (common in the
-        non-isothermal coupling loop of validate_shanghai.py).
+        non-isothermal coupling loop, e.g. validate_shanghai_aligned.py).
         """
         if np.ndim(T_field) == 0:
             self.T_field = np.full((self.Nx, self.Ny), float(T_field), dtype=np.float64)

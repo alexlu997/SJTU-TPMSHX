@@ -9,9 +9,10 @@ bicubic B-spline) for continuous-field optimization, which superseded
 the old patch-zoning NSGA-II workflow (2026-05-08 rewrite).
 
 This module is RETAINED ONLY for the UI Compute path's "Define zones"
-tab (`runs/run_calculation.py:_parse_inputs` reads window._zone_grid /
-window._build_zone_config). New optimization code MUST NOT import
-ZoneConfig — use ContinuousFieldConfig instead.
+tab (`pipelines/stages_2d.py` consumes the ZoneInputConfig snapshot that
+`ui/window_config.py` builds from window._zone_grid / the zone table).
+New optimization code MUST NOT import ZoneConfig — use
+ContinuousFieldConfig instead.
 
 Defines discrete zones along the y-axis, each with independent TPMS
 parameters (L, t). Computes per-zone properties and builds per-cell

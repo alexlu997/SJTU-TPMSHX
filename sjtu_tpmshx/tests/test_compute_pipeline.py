@@ -7,11 +7,10 @@ Covers the ABC contract independently of the 2D / 3D implementations:
 - ``CancelledError`` raised on truthy cancel token
 - ``pipeline_for(cfg)`` dim dispatch by ``cfg.is_3d``
 - ``Pipeline2D`` / ``Pipeline3D`` instantiate without invoking the
-  not-yet-implemented runs.* helpers
+  stage helpers (now ``pipelines/stages_2d.py`` / ``stages_3d.py``)
 
 The concrete 2D / 3D pipelines are covered by their own integration
-tests (``test_pipeline_2d_smoke.py``, ``test_pipeline_3d_smoke.py``)
-once ``runs/run_calculation*.py`` exposes the cfg-only refactor.
+tests (``test_pipeline_2d_smoke.py`` etc.).
 """
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Shared output-schema contract for structured grid-array builders.
 
 Two builders emit the same per-cell property dict consumed by the 2D
-compute path (``runs/run_calculation.py``) and the optimizer:
+compute path (``pipelines/stages_2d.py``) and the optimizer:
 
   * ``zone_config.ZoneConfig.build_structured_arrays``  (UI zone table)
   * ``continuous_field.ContinuousFieldConfig.build_grid_arrays``

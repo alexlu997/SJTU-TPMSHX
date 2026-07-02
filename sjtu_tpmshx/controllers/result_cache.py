@@ -15,10 +15,10 @@ that was previously scattered across Main_Menu instance attributes:
 
 Backwards-compat: Main_Menu still exposes the old attribute names via
 @property bridges (see main.py edits in same commit), so existing call
-sites in `runs/run_calculation.py`, `runs/run_calculation_3d.py`, and
-panel modules continue to read/write the legacy attributes — they
-transparently delegate to ResultCache. New code should use the
-ResultCache API directly.
+sites in the compute path (now `pipelines/stages_2d.py` /
+`stages_3d.py` since the batch-3 move) and panel modules continue to
+read/write the legacy attributes — they transparently delegate to
+ResultCache. New code should use the ResultCache API directly.
 
 Signals
 -------
