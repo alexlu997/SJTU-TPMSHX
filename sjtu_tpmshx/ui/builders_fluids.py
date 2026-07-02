@@ -41,6 +41,7 @@ def _build_pipe_section(window, lay, side, *, title_style, frame_style,
     gio, sec = section(window, lay, f"  Fluid {side}  Inlet / Outlet",
                        title_style, frame_style)
     window._rect_only_widgets.append(sec)
+    window._ia_sections[f'pipe_{side.lower()}'] = sec
     combo = QComboBox(); combo.addItems(_DIR_ITEMS)
     combo.setCurrentIndex(dir_index)
     combo.setStyleSheet(combo_style)
@@ -124,6 +125,7 @@ def build_page_fluids(window):
     _fluids_row_lay = _fluids_row.layout()
     lay.addWidget(_fluids_row)
     window._fluids_row = _fluids_row   # exposed for layout-hygiene tests
+    window._ia_sections['fluids_row'] = _fluids_row
 
     # ── Fluid A (input + computed) ────────────────────────
     g1, _ = section(window, _fluids_row_lay, "Fluid A", _T_A, _F_A)
@@ -242,6 +244,8 @@ def build_page_fluids(window):
     lay.addWidget(window._poly_pipe_frame)
     window._poly_pipe_frame.hide()
     window._poly_pipe_label.hide()
+    window._ia_sections['poly_pipe_label'] = window._poly_pipe_label
+    window._ia_sections['poly_pipe_frame'] = window._poly_pipe_frame
 
     # Preview button
     btn_preview = QPushButton("&Preview Layout")
@@ -249,6 +253,7 @@ def build_page_fluids(window):
     btn_preview.setToolTip("Draw domain + inlet/outlet geometry on the canvas")
     btn_preview.clicked.connect(window._draw_layout)
     lay.addWidget(btn_preview)
+    window._ia_sections['preview_btn'] = btn_preview
 
     lay.addStretch()
     # Initial dir-aware label sync (cross1 axis name per current combo_dirA/B)

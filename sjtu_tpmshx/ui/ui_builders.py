@@ -324,8 +324,16 @@ def build_param_tabs(window):
         "QGroupBox::indicator:unchecked { image:none; }"
     )
 
-    page_geometry = build_page_domain(window)
-    page_boundary = build_page_fluids(window)
+    # Build the pages for their WIDGET SIDE EFFECTS (every input widget +
+    # the window._ia_sections registry); the page scroll shells themselves
+    # are discarded — sections re-home into the four workflow groups below
+    # (ui-ia-batch1), killing the old nested-scroll-area layout.
+    # KEEP the shell references alive until after the re-homing addWidget
+    # calls: dropping them immediately lets shiboken delete the C++ scroll
+    # (no Qt parent) and its whole child tree — including the sections we
+    # are about to re-parent.
+    _shell_domain = build_page_domain(window)
+    _shell_fluids = build_page_fluids(window)
     # Zone configuration now lives inside the Optimize tab (QSplitter on
     # the left side). The builder still runs here so the attached widgets
     # (zone_table, chk_zones, +Row/-Row, combo_zone_axis, etc.) exist on
@@ -348,26 +356,71 @@ def build_param_tabs(window):
     vlay.setContentsMargins(6, 4, 6, 4)
     vlay.setSpacing(12)
 
+    # Workflow-ordered groups (ui-ia-batch1): the two everyday groups open,
+    # grid/solver + boundary-details collapsed (sane defaults cover the
+    # standard full-face cross-flow case; flow-direction combos live in ④).
+    sec = window._ia_sections
+    _GROUPS = [
+        ("Geometry & Structure", True,
+         ['domain_geometry', 'tpms_structure', 'tpms_computed']),
+        ("Fluids", True,
+         ['fluids_row', 'preview_btn']),
+        ("Grid & Solver", False,
+         ['grid_rect', 'mesh_poly', 'material']),
+        ("Boundary Details & Advanced", False,
+         ['pipe_a', 'pipe_b', 'poly_pipe_label', 'poly_pipe_frame',
+          'advanced_flags']),
+    ]
+
     window._accordion_groups = {}
-    for title, page, default_open in [
-        ("Geometry",            page_geometry,      True),
-        ("Boundary Conditions", page_boundary,      True),
-    ]:
+    for title, default_open, keys in _GROUPS:
         grp = QGroupBox(_chevron_title(title, default_open))
         grp.setCheckable(True)
         grp.setChecked(default_open)
         grp.setStyleSheet(_GRP_QSS)
         grp_lay = QVBoxLayout(grp)
-        grp_lay.setContentsMargins(4, 4, 4, 4)
-        grp_lay.setSpacing(0)
-        grp_lay.addWidget(page)
-        page.setVisible(default_open)
-        grp.toggled.connect(lambda checked, p=page, t=title, g=grp: (
-            p.setVisible(checked),
-            g.setTitle(_chevron_title(t, checked)),
-        ))
+        grp_lay.setContentsMargins(6, 4, 8, 6)
+        grp_lay.setSpacing(12)
+        content = QWidget()
+        content.setStyleSheet("background:transparent;")
+        c_lay = QVBoxLayout(content)
+        c_lay.setContentsMargins(0, 0, 0, 0)
+        c_lay.setSpacing(12)
+        for k in keys:
+            w = sec.get(k)
+            if w is not None:
+                c_lay.addWidget(w)
+        grp_lay.addWidget(content)
+        content.setVisible(default_open)
+
+        def _on_toggled(checked, p=content, t=title, g=grp):
+            p.setVisible(checked)
+            g.setTitle(_chevron_title(t, checked))
+            # Re-assert per-widget mode gates: QWidget.setVisible(True)
+            # blanket-shows children, which would resurrect widgets a 2D/3D
+            # or rect/poly gate had hidden (same rationale as the Advanced
+            # collapsible's on_toggle in builders_domain).
+            if checked:
+                try:
+                    from .builders_domain import _on_dim_changed as _dim_gate
+                    _dim_gate(window)
+                    window._on_shape_changed(
+                        window.combo_shape.currentIndex())
+                except Exception:
+                    pass
+        grp.toggled.connect(_on_toggled)
         vlay.addWidget(grp)
         window._accordion_groups[title] = grp
+
+    # Last-run results summary stays OUTSIDE the accordion — always visible
+    # at the bottom regardless of which groups are collapsed.
+    if sec.get('results') is not None:
+        vlay.addWidget(sec['results'])
+
+    # Every registered section is re-parented now — the empty page shells
+    # can go (deleteLater: safe teardown after the event loop resumes).
+    _shell_domain.deleteLater()
+    _shell_fluids.deleteLater()
 
     vlay.addStretch(1)
     scroll.setWidget(container)
@@ -381,10 +434,13 @@ def build_param_tabs(window):
 def switch_param_tab(window, index):
     """Expand accordion group by index.
 
-    Mapping (post 2026-04-22 restructure):
-      0 = Geometry, 1 = Boundary Conditions, 2 = Zone Layout, 3 = Optimization
+    Mapping (ui-ia-batch1 four-group restructure; no current callers —
+    kept defensively for compat):
+      0 = Geometry & Structure, 1 = Fluids, 2 = Grid & Solver,
+      3 = Boundary Details & Advanced
     """
-    names = ["Geometry", "Boundary Conditions", "Zone Layout", "Optimization"]
+    names = ["Geometry & Structure", "Fluids", "Grid & Solver",
+             "Boundary Details & Advanced"]
     groups = getattr(window, '_accordion_groups', {})
     if 0 <= index < len(names):
         grp = groups.get(names[index])

@@ -77,9 +77,14 @@ def build_page_domain(window):
     # 3D-only widget registry — reset here because the domain page builds
     # first on every (re)build; builders_fluids appends its z-partial rows.
     window._3d_only_widgets = []
+    # ui-ia-batch1: section-container registry. The page builders create the
+    # widgets; build_param_tabs re-homes these containers into the four
+    # workflow accordion groups (the page scroll shells are discarded).
+    window._ia_sections = {}
 
     # Domain Geometry
-    g, _ = section(window, lay, "  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
+    g, _sec_dg = section(window, lay, "  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
+    window._ia_sections['domain_geometry'] = _sec_dg
     window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.182")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
     window.le_Lz       = row(window, g, 2, "Depth <i>L<sub>z</sub></i> [m] (3D only)", "0.042")
@@ -106,7 +111,8 @@ def build_page_domain(window):
     add_row(window, g, 4, "Dimensionality", window.combo_dim)
 
     # ── TPMS Structure ──
-    g0, _ = section(window, lay, "  TPMS Structure", _T_NEUTRAL, _F_NEUTRAL)
+    g0, _sec_tp = section(window, lay, "  TPMS Structure", _T_NEUTRAL, _F_NEUTRAL)
+    window._ia_sections['tpms_structure'] = _sec_tp
     window.combo_tpms = QComboBox()
     window.combo_tpms.addItems(["Diamond", "Gyroid"])
     window.combo_tpms.setCurrentIndex(1)  # default Gyroid
@@ -126,11 +132,17 @@ def build_page_domain(window):
     btn_tpms.setToolTip("Compute porosity, specific area, hydraulic diameter, k_ss from current L_cell / t")
     btn_tpms.clicked.connect(window.compute_tpms)
     g0.addWidget(btn_tpms, 4, 0, 1, 2)
-    # Computed outputs (green values)
-    window._v_eps  = res_row(window, g0, 5, "<i>&epsilon;</i>")
-    window._v_A0   = res_row(window, g0, 6, "<i>A</i><sub>0</sub> [m<sup>-1</sup>]")
-    window._v_Dh   = res_row(window, g0, 7, "<i>D<sub>h</sub></i> [mm]")
-    window._v_Kss  = res_row(window, g0, 8, "<i>K</i><sub>ss</sub> [W/(m·K)]")
+    # Computed outputs — own collapsible card (ui-ia-batch1 / IA-2): starts
+    # collapsed so the input flow reads clean; compute_tpms auto-expands it
+    # via container._set_expanded once values exist.
+    gC, _sec_tc = collapsible_section(
+        window, lay, "Computed geometry", _T_NEUTRAL, _F_NEUTRAL,
+        expanded=False)
+    window._ia_sections['tpms_computed'] = _sec_tc
+    window._v_eps  = res_row(window, gC, 0, "<i>&epsilon;</i>")
+    window._v_A0   = res_row(window, gC, 1, "<i>A</i><sub>0</sub> [m<sup>-1</sup>]")
+    window._v_Dh   = res_row(window, gC, 2, "<i>D<sub>h</sub></i> [mm]")
+    window._v_Kss  = res_row(window, gC, 3, "<i>K</i><sub>ss</sub> [W/(m·K)]")
     # NOTE: `chk_allow_extrap` used to live here; relocated to the
     # collapsible "Advanced" sub-section built right after Grid Settings
     # (2026-06-25 UI declutter). Construction is unchanged — just reparented.
@@ -139,7 +151,8 @@ def build_page_domain(window):
     # cp_s and cp_f were removed: no solver path reads them. Solid cp is a
     # per-material constant hardcoded downstream; fluid cp is computed
     # per-cell via air_cp(T) inside tpms_calc.
-    g2, _ = section(window, lay, "  Material Properties", _T_NEUTRAL, _F_NEUTRAL)
+    g2, _sec_mat = section(window, lay, "  Material Properties", _T_NEUTRAL, _F_NEUTRAL)
+    window._ia_sections['material'] = _sec_mat
     window.le_rho_s = row(window, g2, 0, "<i>&rho;</i><sub>s</sub> [kg/m³]", "7900")
     # rho_s is NOT consumed by the steady-state LTNE energy equation
     # (∂T_s/∂t is dropped → ρ_s·cp_s prefactor disappears). It is saved with
@@ -158,6 +171,7 @@ def build_page_domain(window):
     # ── Grid Settings (rect mode) ──
     g4, sec_solver_rect = section(window, lay, "  Grid Settings", _T_NEUTRAL, _F_NEUTRAL)
     window._rect_only_widgets.append(sec_solver_rect)
+    window._ia_sections['grid_rect'] = sec_solver_rect
     window.le_Nx = row(window, g4, 0, "Grid <i>N<sub>x</sub></i>", "30")
     window.le_Ny = row(window, g4, 1, "Grid <i>N<sub>y</sub></i>", "20")
     window.le_Nz = row(window, g4, 2, "Grid <i>N<sub>z</sub></i> (3D only)", "5")
@@ -169,9 +183,10 @@ def build_page_domain(window):
     # the core inputs (L/H · TPMS · Nx/Ny/Nz · ρ_s) read clean. Click the
     # header to expand. The 3D-only members register below exactly as before;
     # the collapse composes with `_on_dim_changed` (see collapsible_section).
-    g_adv, _ = collapsible_section(
+    g_adv, _sec_adv = collapsible_section(
         window, lay, "Advanced", _T_NEUTRAL, _F_NEUTRAL, expanded=False,
         on_toggle=lambda _open: _on_dim_changed(window))
+    window._ia_sections['advanced_flags'] = _sec_adv
 
     # One shared style for every Advanced checkbox so the rows read as a
     # uniform set (boxed card · 10pt bold · 16px indicator). Previously
@@ -344,6 +359,7 @@ def build_page_domain(window):
     # ── Solver Settings (polygon mode) ──
     gp, sec_solver_poly = section(window, lay, "  Mesh Settings", _T_NEUTRAL, _F_NEUTRAL)
     window._poly_only_widgets.append(sec_solver_poly)
+    window._ia_sections['mesh_poly'] = sec_solver_poly
     sec_solver_poly.hide()  # hidden by default (rect mode)
     window.le_mesh_density = row(window, gp, 0, "Target cells", "auto")
     window._v_mesh_actual  = res_row(window, gp, 1, "Actual cells")
@@ -387,6 +403,7 @@ def build_page_domain(window):
     except Exception:
         pass
     lay.addWidget(res_frame, 0)
+    window._ia_sections['results'] = res_frame
 
     lay.addStretch()
     scroll.setWidget(w)

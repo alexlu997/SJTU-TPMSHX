@@ -75,3 +75,54 @@ def test_empty_state_has_three_steps(win):
     txt = lbl.text()
     for marker in (">1<", ">2<", ">3<", "Compute"):
         assert marker in txt, f"empty state missing {marker!r}"
+
+
+# ── ui-ia-batch1: four workflow accordion groups ─────────────────────
+
+_EXPECTED_GROUPS = {
+    "Geometry & Structure": True,
+    "Fluids": True,
+    "Grid & Solver": False,
+    "Boundary Details & Advanced": False,
+}
+
+
+def test_four_workflow_groups_with_default_states(win):
+    groups = getattr(win, "_accordion_groups", {})
+    assert set(groups) == set(_EXPECTED_GROUPS)
+    for name, open_ in _EXPECTED_GROUPS.items():
+        assert groups[name].isChecked() == open_, name
+
+
+def test_left_panel_has_single_scroll_area(win):
+    """Nested page scroll shells were dropped — one outer scroll only."""
+    outer = win._splitter.widget(0) if hasattr(win, "_splitter") else None
+    assert outer is not None
+    scrolls = [s for s in outer.findChildren(QScrollArea) if s.isVisible()]
+    assert len(scrolls) <= 1, [s.objectName() or repr(s) for s in scrolls]
+
+
+def test_tpms_computed_collapsed_then_autoexpands(win):
+    app = QApplication.instance()
+    sec = win._ia_sections["tpms_computed"]
+    frame = sec.layout().itemAt(1).widget()
+    assert not frame.isVisible()          # starts collapsed
+    assert win.compute_tpms()             # default inputs are valid
+    app.processEvents()
+    # group ① is open, so the expanded card becomes visible-to-window
+    assert frame.isVisibleTo(win)
+    assert win._v_eps.text() not in ("—", "")
+
+
+def test_mode_gates_survive_group_toggle(win):
+    """Expanding a collapsed group must not resurrect 3D-only widgets in
+    2D mode (blanket-show + re-assert)."""
+    app = QApplication.instance()
+    win.combo_dim.setCurrentIndex(0)      # force 2D
+    app.processEvents()
+    grp = win._accordion_groups["Grid & Solver"]
+    grp.setChecked(True)
+    app.processEvents()
+    assert not win.le_Nz.isVisibleTo(win), "3D-only Nz visible in 2D mode"
+    grp.setChecked(False)
+    app.processEvents()

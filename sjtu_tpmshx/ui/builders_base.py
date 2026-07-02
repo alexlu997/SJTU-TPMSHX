@@ -83,6 +83,10 @@ def collapsible_section(window, parent_lay, title, title_style, frame_style,
             on_toggle(frame.isVisible())
 
     title_lbl.mousePressEvent = _toggle
+    # Programmatic expand/collapse hook (ui-ia-batch1): lets callers open a
+    # collapsed section when its content becomes relevant (e.g. compute_tpms
+    # auto-expands "Computed geometry" once values exist).
+    container._set_expanded = _apply
     return grid, container
 
 
