@@ -15,4 +15,4 @@
 - [x] 3.1 `--collect-only` 1032 collected 零错误；`import pipelines.stages_2d/3d` 后 sys.modules 无 controllers（DAG 成立）；`config_from_window` 裸 stub 冒烟通过
 - [x] 3.2 离屏 UI 冒烟 — **预存环境失败**（HEAD 上同样 exit 1：本机 PySide6 缺 Qt 字体目录，与本 change 无关；stash 判别验证）。UI 构造覆盖由全量 pytest 的 test_main_smoke 等承担
 - [x] 3.3 golden 2D/3D `--check` 双 PASS (bit-identical)
-- [ ] 3.4 全量 pytest 0 failed；commit + push；CI 绿
+- [x] 3.4 全量 pytest 1056+4 passed / 0 failed（main.py 多名 import 漏改致 3 个 UI smoke 失败，修复后复跑绿）；commit `48b97c6` + push；CI run 28597107501 **success**
