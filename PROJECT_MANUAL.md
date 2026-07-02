@@ -320,6 +320,12 @@ SJTU-TPMSHX/                       ← 仓库根
 - **作用**：先在半分辨率粗网格上把流场快速解个大概（松弛收敛），再三线性插值到细网格作热启动，省掉大网格的冷启动暂态。
 - **关键函数**：`bootstrap_simple_3d(solver_fine, ...)` → 报告字典。当单元数 >3 万时自动启用。
 
+#### `tpms_props.py` — 叶子模块：几何 + 流体物性关联式（arch-b-c-e B，2026-07-02）
+- **作用**：`geometry()`、air/water 物性关联式、CHI_S 的唯一住所；df_surrogate 只 import 这里，打破了旧的 solvers↔df_surrogate 互赖。`tpms_calc` 全量 re-export，老 import 路径不变。import 方向锁定于 `tests/test_import_dag.py`。
+
+#### `_solve_common.py` — SIMPLE 外循环共享骨架（arch-b-c-e C）
+- **作用**：`LowReExit` —— 2D/3D 共用的低速/平台早退判据单一实现（速度稳定门控 + 平台失速），消灭"3D 修了 2D 漏"的双维护面。纯 Python 无 fastmath，浮点次序与原两份逐运算一致（golden bit-identical 门）。
+
 #### `polygon_fvm.py` — 非结构三角网格有限体积求解器
 - **作用**：在任意多边形域（如带集管的上海换热器）上用非结构三角网格解流动+LTNE。用 Rhie-Chow 插值防止压力棋盘振荡。
 - **状态（2026-07 架构扫描，用户决策）**：polygon 链（本模块 + `unstructured_mesh` + `runs/polygon_calc`）当前只从 UI 菜单可达、生产管线未用——**有意保留**，是后续计划方向。

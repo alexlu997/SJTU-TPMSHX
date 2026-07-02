@@ -16,5 +16,7 @@ from ui.mixins.tab_view import TabViewMixin
 from ui.mixins.ui_builder import UIBuilderMixin
 from ui.mixins.fluid_input import FluidInputMixin
 from ui.mixins.run_controller import RunControllerMixin
+from ui.mixins.appearance import AppearanceMixin
+from ui.mixins.session_presets import SessionPresetsMixin
 
-__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin", "FluidInputMixin", "RunControllerMixin"]
+__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin", "FluidInputMixin", "RunControllerMixin", "AppearanceMixin", "SessionPresetsMixin"]

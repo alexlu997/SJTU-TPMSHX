@@ -1,22 +1,22 @@
 ## 1. B — kernel DAG
 
-- [ ] 1.1 建 `solvers/tpms_props.py`（常数/警告助手/air_*/water_*/CHI_S/geometry 移入），`tpms_calc` 显式 re-export；AST 校验 + golden 双 `--check`
-- [ ] 1.2 df_surrogate 全部改 import 叶子（5 顶层文件 + predict/surrogate_domain deferred 提升；sCO2 fluid_props deferral 保留注明）
-- [ ] 1.3 solvers 侧 deferred df import 提升顶层（tpms_calc/df_projection/simple_solver/polygon_fvm）
-- [ ] 1.4 新增 import-DAG 测试（df_surrogate.predict 不拉 tpms_calc/simple_solver）；B commit
+- [x] 1.1 `solvers/tpms_props.py` 建成（geometry/air_*/water_*/CHI_S/警告助手 verbatim 移入），`tpms_calc` 显式 re-export（compute() 的 `_tpms_geom` 直接引用补回 import）；golden 双 PASS
+- [x] 1.2 df_surrogate 6 文件改 import 叶子；surrogate_domain deferred 提升顶层，sCO2 fluid_props deferral 注明 runtime-only
+- [x] 1.3 solvers 侧 7 处 deferred df import 提升顶层（tpms_calc/df_projection/simple_solver/polygon_fvm）
+- [x] 1.4 `tests/test_import_dag.py`（3 探针：df 不拉 kernel、tpms_props 是叶子、pipelines 不拉 controllers）；gamma_df golden-point 精确值不变；commit `96a2840`
 
 ## 2. C — solve 骨架单源
 
-- [ ] 2.1 `solvers/_solve_common.py`：LowReExit（参数读取 + 判据 + prev 更新），浮点次序与两份现行逐运算一致
-- [ ] 2.2 2D/3D solve() 换用共享实现（收尾各自保留）；golden 2D/3D bit-identical 硬门（不平不合，禁止重基线）
-- [ ] 2.3 R1 早退测试复跑 + 全量 pytest；C commit
+- [x] 2.1 `solvers/_solve_common.py` LowReExit（max 归约次序与原两份逐运算一致；prev 更新语义保真：exit 路径不更新、min_iter 前更新）
+- [x] 2.2 2D（min_iter=20 + `_enforce_mass_conservation` 收尾留 caller）/3D（min_iter=10）接入；golden 2D/3D **bit-identical PASS**（硬门过，无重基线）
+- [x] 2.3 R1 早退测试 3/3 复跑绿；commit `e78fea6`
 
 ## 3. E — UI 减肥
 
-- [ ] 3.1 扫 main.py 方法分组，选 1-2 个内聚块（优先：结果写回/绘图胶水、菜单构建）
-- [ ] 3.2 抽入 mixins（既有或新建），main.py ≤ ~2000 行；离屏 UI pytest 子集过
-- [ ] 3.3 panel_vis_3d：有无 Qt 辅助函数群则抽 helpers，否则记录放弃理由
-- [ ] 3.4 全量 pytest + golden 双检；E commit
+- [x] 3.1 扫描定块：外观切换（accent/density/theme/immersive/left-panel，~230 行）+ 预设/工作区/会话持久化（~515 行）
+- [x] 3.2 `ui/mixins/appearance.py` + `ui/mixins/session_presets.py`（verbatim 行区间抽取），main.py 2696 → **1954 行**；离屏 UI pytest 23/23 过
+- [x] 3.3 panel_vis_3d **放弃拆分（有据）**：单个内聚 ThreeDVisPanel Qt 类 + 145 行 QSS 字符串构造器，无非 Qt 函数群切面；拆 Qt 方法跨文件反伤可读性
+- [x] 3.4 golden 双 PASS + 全量 pytest；E commit
 
 ## 4. 收尾
 

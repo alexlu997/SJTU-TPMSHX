@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import solvers.tpms_calc as tpms_calc
+import solvers.tpms_props as tpms_props   # warn-state lives here (arch-b-c-e B)
 from solvers.tpms_calc import geometry, compute, water_density
 import solvers.nu_correlations as nu_correlations
 from solvers.nu_correlations import nu_water_topo
@@ -55,7 +56,7 @@ def test_zoned_air_air_ok_and_disabled_zones_ok():
 
 # ── water two-phase warning above 1-atm boiling ────────────────────────────
 def test_water_density_warns_two_phase_above_boiling():
-    tpms_calc._WATER_TWO_PHASE_WARNED.clear()
+    tpms_props._WATER_TWO_PHASE_WARNED.clear()
     with W.catch_warnings(record=True) as rec:
         W.simplefilter('always')
         water_density(400.0)               # 127 C, two-phase at 1 atm
@@ -78,7 +79,7 @@ def test_water_viscosity_unchanged_for_physical_water():
 
 
 def test_water_density_no_two_phase_warn_in_range():
-    tpms_calc._WATER_TWO_PHASE_WARNED.clear()
+    tpms_props._WATER_TWO_PHASE_WARNED.clear()
     with W.catch_warnings(record=True) as rec:
         W.simplefilter('always')
         water_density(330.0)               # 57 C, liquid
