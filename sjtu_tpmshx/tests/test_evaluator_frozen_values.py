@@ -89,9 +89,17 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # CFD-refit surface (c_F unchanged). dP[0] and Q[1] move (K shifts the Darcy term
 # and, via the velocity field, the h_v coupling); mass[2] (geometry) is unchanged.
 # See gamma_df.py K UPDATE note + openspec/changes/df-coeffs-cfd-refit.
+#
+# 2D NONUNIF re-baselined 2026-07-02 (R1, openspec solver-efficiency-r1-r4):
+# SIMPLESolver.solve() gained the 3D-style lowre early-exit (velocity-stability
+# gated). The nonuniform eval's SIMPLE solve now exits at the plateau instead of
+# burning max_iter_simple, so the frozen iterate shifts at plateau-noise level:
+# Q[0] 1.4e-4, dP[1] 6.5e-4 rel; mass[2] (geometry) bit-identical. Deterministic.
+# The UNIFORM case reaches the strict residual tol before the early-exit fires
+# and is unchanged. Old: (-7724.45529028308, 8027.234654920353).
 _FROZEN_2D_UNIFORM = (-8155.898092263062, 10661.113158337937,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7724.45529028308, 8027.234654920353,
+_FROZEN_2D_NONUNIF = (-7725.544448374041, 8022.029234363068,
                       3.6729327392578126)
 _FROZEN_3D_UNIFORM = (-7847.064062565555, 18179.20973508683,
                       6.323593139648438)

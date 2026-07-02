@@ -400,6 +400,167 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
             v[i, Ny] = 0.0
 
 
+# ── SIMPLER steps 1-2: pseudo-velocities (opt-in coupling='simpler') ──
+# openspec change simpler-coupling-2d. Patankar/Tao SIMPLER: û/v̂ are the
+# momentum equations WITHOUT the pressure-gradient source, evaluated in a
+# single Jacobi pass over the frozen (u, v) state:  hat = (Σ a_nb·φ_nb + SOU)/aP0.
+# The caller pre-copies u→uhat / v→vhat so boundary faces carry the BC values
+# (Tao Main95.f:528-539 fills UHAT boundaries with the real BC velocity).
+#
+# COEFFICIENT PARITY: the aE/aW/aN/aS/Sp blocks below MUST stay line-for-line
+# identical to _sweep_u_jit_df / _sweep_v_jit_df (DF source, Brinkman wall
+# penalty, SOU deferred correction, variable-ρ/μ face interpolation) minus the
+# pressure source and under-relaxation. Update BOTH kernels when touching either.
+
+@njit(cache=True)
+def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
+                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
+                     K_arr, cF_arr, mu_field):
+    """SIMPLER pseudo-velocity û. Writes uhat interior + fills d_u = dy/aP0."""
+    for i in range(1, Nx):
+        for j in range(Ny):
+            dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
+            dyj = dy_arr[j]
+            vol = dxi * dyj
+
+            il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
+            mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
+            De0 = mu_e * dyj / dxi
+            Dn0 = mu_e * dxi / dyj
+
+            uE = u[i + 1, j] if i + 1 < Nx else 0.0
+            uW = u[i - 1, j] if i > 1 else 0.0
+            uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+            uS = u[i, j - 1] if j > 0 else 0.0
+
+            De = De0; Dw = De0
+            Dn = Dn0 if j < Ny - 1 else 0.0
+            Ds = Dn0 if j > 0 else 0.0
+
+            ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
+            uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
+            il = max(i - 1, 0); ir = min(i, Nx - 1)
+            vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+            vs = 0.5 * (v[il, j] + v[ir, j])
+
+            rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
+            mu_loc  = 0.5 * (mu_field[il_r, j] + mu_field[ir_r, j])
+
+            Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
+            Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+
+            aE = De + max(-Fe, 0.0)
+            aW = Dw + max(Fw, 0.0)
+            aN = Dn + max(-Fn, 0.0)
+            aS = Ds + max(Fs, 0.0)
+
+            umag = _umag_u(u, v, i, j, Nx, Ny)
+            Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
+
+            aP_nat = aE + aW + aN + aS
+            il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
+            wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
+            if wall_out > 0.01 and j >= Ny - 8:
+                wall_dist = Ny - j
+                Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+            wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
+            if wall_in > 0.01 and j < 8:
+                wall_dist = j + 1
+                Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+            sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
+                 + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
+            aP0 = aE + aW + aN + aS + Sp
+            uhat[i, j] = (aE * uE + aW * uW + aN * uN + aS * uS + sou) / aP0
+            d_u[i, j] = dyj / aP0
+
+    for j in range(Ny):
+        uhat[0, j] = 0.0; uhat[Nx, j] = 0.0
+
+
+@njit(cache=True)
+def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
+                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
+                     K_arr, cF_arr, mu_field):
+    """SIMPLER pseudo-velocity v̂. Writes vhat interior + fills d_v = dx/aP0."""
+    for i in range(Nx):
+        for j in range(1, Ny):
+            jc = min(j, Ny - 1)
+            dxi = dx_arr[i]
+            dyj = 0.5 * (dy_arr[j - 1] + dy_arr[min(j, Ny - 1)])
+            vol = dxi * dyj
+
+            jb = max(j - 1, 0); jt = min(j, Ny - 1)
+            mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
+            De0 = mu_e * dyj / dxi
+            Dn0 = mu_e * dxi / dyj
+
+            if i < Nx - 1:
+                vE = v[i + 1, j]; De = De0
+            else:
+                vE = 0.0; De = 2.0 * De0   # east wall (no-slip)
+            if i > 0:
+                vW = v[i - 1, j]; Dw = De0
+            else:
+                vW = 0.0; Dw = 2.0 * De0   # west wall (no-slip)
+            vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+            vS = v[i, j - 1]
+
+            Dn = Dn0 if j < Ny - 1 else 0.0
+            Ds = Dn0
+
+            ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
+            uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
+            vn = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
+            vs = 0.5 * (v[i, max(j - 1, 0)] + v[i, j])
+
+            rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
+            mu_loc  = 0.5 * (mu_field[i, jb] + mu_field[i, jt])
+
+            Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
+            Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+
+            aE = De + max(-Fe, 0.0)
+            aW = Dw + max(Fw, 0.0)
+            aN = Dn + max(-Fn, 0.0)
+            aS = Ds + max(Fs, 0.0)
+
+            umag = _umag_v(u, v, i, j, Nx, Ny)
+            Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
+
+            aP_nat = aE + aW + aN + aS
+            wall_out = 1.0 - outlet_frac[i]
+            if wall_out > 0.01 and j >= Ny - 8:
+                wall_dist = Ny - j
+                Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+            wall_in = 1.0 - inlet_frac[i]
+            if wall_in > 0.01 and j < 8:
+                wall_dist = j + 1
+                Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+            sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
+                 + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
+            aP0 = aE + aW + aN + aS + Sp
+            vhat[i, j] = (aE * vE + aW * vW + aN * vN + aS * vS + sou) / aP0
+            d_v[i, j] = dxi / aP0
+
+    for i in range(Nx):
+        vhat[i, 0] = v_inlet_field[i] * inlet_frac[i]
+        if outlet_frac[i] > 0.5:
+            if Ny >= 2:
+                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
+                rho_outer_face = rho_field[i, Ny-1]
+                vhat[i, Ny] = vhat[i, Ny - 1] * rho_inner_face / rho_outer_face
+            else:
+                vhat[i, Ny] = vhat[i, Ny - 1]
+        else:
+            vhat[i, Ny] = 0.0
+
+
 # ── SIMPLE Steps 3-4: pressure correction (sparse direct solver) ──
 
 from scipy import sparse
@@ -1183,7 +1344,16 @@ class SIMPLESolver:
         """
         if self.fluid_type != 'ideal_gas':
             return
-        P_abs = self.P_ref_abs + self.P
+        # Persistent scratch (R2, openspec solver-efficiency-r1-r4): P_abs and
+        # rho_new were reallocated every outer iteration (7% of pipeline wall
+        # on small grids); reuse buffers like solve()'s _rho_eps. Bit-identical
+        # (commutative add/multiply, same operand values).
+        if getattr(self, '_pabs_buf', None) is None or \
+                self._pabs_buf.shape != self.P.shape:
+            self._pabs_buf = np.empty_like(self.P)
+            self._rho_new_buf = np.empty_like(self.P)
+        P_abs = self._pabs_buf
+        np.add(self.P, self.P_ref_abs, out=P_abs)
         # 2026-05-07: clip widened from [10 kPa, 1 MPa] to [1 kPa, 10 MPa]
         # so SIMPLE transients on high-u cases (u>10 m/s, Forchheimer
         # branch) don't trip the clip and stall outer convergence. See
@@ -1201,8 +1371,12 @@ class SIMPLESolver:
         # never clip (_eng all False) -> self.P untouched -> bit-identical.
         if _eng.any():
             self.P = np.where(_eng, P_abs - self.P_ref_abs, self.P)
-        rho_new = P_abs / (self.R_gas * self.T_field)
+        rho_new = self._rho_new_buf
+        np.multiply(self.T_field, self.R_gas, out=rho_new)
+        np.divide(P_abs, rho_new, out=rho_new)
         # No ρ clip: ρ derives from (P,T); clipping ρ violates ideal gas law.
+        # Blend stays a rebind (not in-place): rho_field may alias the caller's
+        # array from __init__ (ascontiguousarray no-copy) — never mutate it.
         self.rho_field = (self.alpha_rho * rho_new
                           + (1.0 - self.alpha_rho) * self.rho_field)
         # Compressible inlet: hold the inlet MASS FLUX (ρ·v) constant, not v.
@@ -1298,14 +1472,53 @@ class SIMPLESolver:
     def solve(self, max_iter=3000, tol=1e-6,
               alpha_u=0.7, alpha_p=0.3,
               n_inner=2,
+              coupling='simple', simpler_relax_p=1.0,
               verbose=True, progress_cb=None):
         """
         Run SIMPLE iterations. PP equation solved by sparse direct solver.
 
+        coupling : {'simple', 'simpler'}
+            'simple' (default) — the production SIMPLE loop, unchanged.
+            'simpler' — EXPERIMENTAL Patankar/Tao SIMPLER (openspec change
+            simpler-coupling-2d): pseudo-velocities û/v̂ build a pressure
+            equation solved directly each outer iteration (no α_p relaxation);
+            p' then corrects the velocities only. Benchmarked on full-width
+            inlet/outlet ideal-gas configs; partial-BC configs NOT benchmarked.
+        simpler_relax_p : float in (0, 1]
+            Relaxation for the direct P replacement in SIMPLER mode
+            (1.0 = Tao's unrelaxed replacement; fallback hook if the
+            compressible ρ(P) feedback oscillates). Ignored for 'simple'.
+
         Returns (converged: bool, iterations: int).
         """
+        if coupling not in ('simple', 'simpler'):
+            raise ValueError(
+                f"coupling must be 'simple' or 'simpler', got {coupling!r}")
         Nx, Ny = self.Nx, self.Ny
         dx_a, dy_a = self.dx_arr, self.dy_arr
+
+        if coupling == 'simpler' and getattr(self, '_uhat', None) is None:
+            # Persistent SIMPLER scratch: û/v̂ (pre-copied from u/v each iter so
+            # boundary faces carry BC values) and the directly-solved P field.
+            self._uhat = self.u.copy()
+            self._vhat = self.v.copy()
+            self._P_hat = np.zeros_like(self.P)
+
+        # ── A+B early-exit — port of the 3D low-Re/plateau exit (R1, openspec
+        # solver-efficiency-r1-r4). The mass residual is an ABSOLUTE norm:
+        # cross-flow / low-speed sides plateau above the air-tuned tol and burn
+        # max_iter with a settled field (profiled: golden B-side spent 10000
+        # iters at |R|~1.3e-3, field static). Both tests are gated on velocity
+        # STABILITY so a moving field can never exit early; defaults match
+        # simple_solver_3d.py:solve.
+        _early = getattr(self, 'lowre_early_exit', True)
+        _vtol = float(getattr(self, 'lowre_vel_tol', 1e-4))
+        _stall_window = int(getattr(self, 'lowre_stall_window', 30))
+        _stall_ratio = float(getattr(self, 'lowre_stall_ratio', 1e-3))
+        if _early:
+            _u_prev = self.u.copy(); _v_prev = self.v.copy()
+        _res_at_window_start = None
+        _window_start_it = 0
 
         # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
         # any pressure build-up. The `not hasattr` guard keeps it fixed across
@@ -1340,26 +1553,80 @@ class SIMPLESolver:
                 self._rho_eps = np.empty_like(self.rho_field)
             np.multiply(self.rho_field, self.eps_field, out=self._rho_eps)
             rho_eps_field = self._rho_eps
-            _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
-                            self.inlet_frac, self.outlet_frac,
-                            Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                            self._K_arr, self._cF_arr, self.mu_field,
-                            alpha_u, n_inner)
-            _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
-                            self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                            Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                            self._K_arr, self._cF_arr, self.mu_field,
-                            alpha_u, n_inner)
             if self._pp_sparsity is None:
                 self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_frac)
-            _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
-                                  self.outlet_frac,
-                                  Nx, Ny, dx_a, dy_a, rho_eps_field,
-                                  self._pp_sparsity)
-            _correct_jit(self.u, self.v, self.P, self.Pp,
-                         self.d_u, self.d_v,
-                         self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                         Nx, Ny, alpha_p, self.rho_field)
+
+            if coupling == 'simpler':
+                # SIMPLER six steps (design D2, openspec simpler-coupling-2d):
+                # ①② pseudo-velocities û/v̂ (no pressure source, no relax),
+                #     filling d_u/d_v with the same A/aP0 formula as the sweeps
+                np.copyto(self._uhat, self.u)
+                np.copyto(self._vhat, self.v)
+                _pseudo_u_jit_df(self.u, self.v, self._uhat, self.d_u,
+                                 self.inlet_frac, self.outlet_frac,
+                                 Nx, Ny, dx_a, dy_a, self.rho_field,
+                                 self._mu_eff_field,
+                                 self._K_arr, self._cF_arr, self.mu_field)
+                _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
+                                 self.inlet_frac, self.v_inlet_field,
+                                 self.outlet_frac,
+                                 Nx, Ny, dx_a, dy_a, self.rho_field,
+                                 self._mu_eff_field,
+                                 self._K_arr, self._cF_arr, self.mu_field)
+                # ③ pressure equation from û/v̂ (same ρ·A·d stencil as p') —
+                #    P solved directly, replaced without α_p under-relaxation
+                _solve_pp_sparse_fast(self._P_hat, self._uhat, self._vhat,
+                                      self.d_u, self.d_v, self.outlet_frac,
+                                      Nx, Ny, dx_a, dy_a, rho_eps_field,
+                                      self._pp_sparsity)
+                if simpler_relax_p >= 1.0:
+                    self.P[:, :] = self._P_hat
+                else:
+                    self.P *= (1.0 - simpler_relax_p)
+                    self.P += simpler_relax_p * self._P_hat
+                # ④ momentum with the solved P (existing kernels, α_u as usual)
+                _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
+                                self.inlet_frac, self.outlet_frac,
+                                Nx, Ny, dx_a, dy_a, self.rho_field,
+                                self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
+                                alpha_u, n_inner)
+                _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
+                                self.inlet_frac, self.v_inlet_field,
+                                self.outlet_frac,
+                                Nx, Ny, dx_a, dy_a, self.rho_field,
+                                self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
+                                alpha_u, n_inner)
+                # ⑤ p' from u*/v*  ⑥ α_p=0.0 → P untouched, velocities only
+                _solve_pp_sparse_fast(self.Pp, self.u, self.v,
+                                      self.d_u, self.d_v, self.outlet_frac,
+                                      Nx, Ny, dx_a, dy_a, rho_eps_field,
+                                      self._pp_sparsity)
+                _correct_jit(self.u, self.v, self.P, self.Pp,
+                             self.d_u, self.d_v,
+                             self.inlet_frac, self.v_inlet_field,
+                             self.outlet_frac,
+                             Nx, Ny, 0.0, self.rho_field)
+            else:
+                _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
+                                self.inlet_frac, self.outlet_frac,
+                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
+                                alpha_u, n_inner)
+                _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
+                                self.inlet_frac, self.v_inlet_field, self.outlet_frac,
+                                Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
+                                self._K_arr, self._cF_arr, self.mu_field,
+                                alpha_u, n_inner)
+                _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
+                                      self.outlet_frac,
+                                      Nx, Ny, dx_a, dy_a, rho_eps_field,
+                                      self._pp_sparsity)
+                _correct_jit(self.u, self.v, self.P, self.Pp,
+                             self.d_u, self.d_v,
+                             self.inlet_frac, self.v_inlet_field, self.outlet_frac,
+                             Nx, Ny, alpha_p, self.rho_field)
             self._update_density()  # compressible: update rho from P
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
@@ -1382,6 +1649,40 @@ class SIMPLESolver:
                     print(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
                 self._enforce_mass_conservation(verbose=verbose)
                 return True, it
+
+            # ── A+B early-exit (see setup above). (B) velocity-delta: the
+            # field has stopped moving → converged. (A) plateau-stall: the
+            # residual is flat over a window AND the field is near-static
+            # (10× looser gate — the fallback for fields that creep but never
+            # meet (B)). Same _enforce_mass_conservation closeout as the
+            # strict path.
+            if _early:
+                if it >= 20:
+                    _du = np.max(np.abs(self.u - _u_prev))
+                    _dv = np.max(np.abs(self.v - _v_prev))
+                    _scale = max(np.max(np.abs(self.u)),
+                                 np.max(np.abs(self.v)), 1e-30)
+                    _vd = max(_du, _dv) / _scale
+                    if _vd < _vtol:
+                        if verbose:
+                            print(f"  [OK] Early exit (velocity static) at "
+                                  f"iter {it}, |R| = {res:.3e}")
+                        self._enforce_mass_conservation(verbose=verbose)
+                        return True, it
+                    if _res_at_window_start is None or \
+                            (it - _window_start_it) >= _stall_window:
+                        if (_res_at_window_start is not None
+                                and _vd < 10.0 * _vtol
+                                and res > _res_at_window_start
+                                    * (1.0 - _stall_ratio)):
+                            if verbose:
+                                print(f"  [OK] Early exit (plateau stall) at "
+                                      f"iter {it}, |R| = {res:.3e}")
+                            self._enforce_mass_conservation(verbose=verbose)
+                            return True, it
+                        _res_at_window_start = res
+                        _window_start_it = it
+                _u_prev[:] = self.u; _v_prev[:] = self.v
 
         if verbose:
             print(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")

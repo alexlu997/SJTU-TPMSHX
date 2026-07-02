@@ -284,7 +284,7 @@ SJTU-TPMSHX/                       ← 仓库根
 - **作用**：在二维交错网格上用 SIMPLE 算法解多孔介质里的流动（动量+连续性），可选解冻结速度下的两温度传热。是上海工况 2D 验证的主力。
 - **主类**：`SIMPLESolver`。构造时给域尺寸、网格数、物性、进口速度、孔隙率、K/c_F 数组、可压缩标志等。
 - **关键方法**：
-  - `solve(...)`：SIMPLE 主循环——x 动量扫掠 → y 动量扫掠 → 压力修正泊松方程（稀疏直接解）→ 修正速度和压力 → 查质量残差 →（可压缩时）更新密度。返回 (是否收敛, 迭代数)。
+  - `solve(...)`：SIMPLE 主循环——x 动量扫掠 → y 动量扫掠 → 压力修正泊松方程（稀疏直接解）→ 修正速度和压力 → 查质量残差 →（可压缩时）更新密度。返回 (是否收敛, 迭代数)。`coupling='simpler'` 可选 Patankar/Tao SIMPLER 模式（实验性，openspec `simpler-coupling-2d`）——基准结论为负：精确直接解 PP 的 SIMPLE 无压力外迭代瓶颈，SIMPLER 的第二次椭圆解是纯开销（0.5-0.6×），默认勿用。低速/横流早退：`lowre_early_exit`（默认 True，3D 同款速度稳定性门控判据的 2D 移植，openspec `solver-efficiency-r1-r4`）——绝对质量残差平台工况从燃尽 max_iter 降到 ~26 iter（golden 管线 164× 提速）。
   - `solve_temperature(...)`：冻结速度下解流体+固体两温度（Gauss-Seidel）。
 - **数值要点**：对流用迎风+二阶迎风修正（MINMOD）；多孔阻力线性化进源项；压力修正用 `ρ·ε·d` 加权；压力被钳在 [1 kPa, 10 MPa] 物理区间。
 - **速度口径**：interstitial（孔隙内真实速度），进口 BC 用 `v=Q/(ρ·ε·A)`。
@@ -297,7 +297,7 @@ SJTU-TPMSHX/                       ← 仓库根
   - 网格 >3 万单元（`_AMG_GATE=30000`）才启用 PyAMG，否则用稀疏直接解。PyAMG 层级每 100 步重建一次，并带“漂移检测”提前重建。
   - 网格 >20 万单元启用红黑 Gauss-Seidel 并行（Numba prange）。
   - `mass-flux inlet`（质量流入口，默认对理想气体开启）：固定 ρ·v 而非 v，避免可压缩正反馈发散——这是 2026-06-04 修复 air-air 偏置“跑飞”问题的关键。
-- **关键方法**：`solve`、`extract_dP_weighted`、`extract_dP_mass_flux_weighted`、`update_T_field`、`apply_outlet_taper`。
+- **关键方法**：`solve`、`extract_dP_weighted`、`extract_dP_mass_flux_weighted`、`update_T_field`、`apply_outlet_taper`。动量对流默认一阶迎风；`use_sou_momentum=True` 可选 minmod SOU（openspec `solver-efficiency-r1-r4`，实测 DF 源主导下 dP 差 <0.01%，故不扶正为默认）。
 - **依赖**：`pyamg`（可选，缺失则退回直接解）、`anderson_acceleration`、`coarse_bootstrap_3d`。
 
 #### `ltne_energy.py` — 2D 全域 LTNE 传热求解器

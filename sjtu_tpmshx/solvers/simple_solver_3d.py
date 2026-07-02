@@ -83,6 +83,7 @@ _AMG_GATE = 30_000
 
 from .tpms_calc import air_density, air_viscosity, P_atm
 from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
+from ._kernels_2d import minmod
 
 
 # ===================================================================
@@ -136,13 +137,39 @@ def _porous_src_df_3d(umag, K, cF, mu, rho):
     return mu / K + rho * cF * umag
 
 
+# ── SOU deferred correction, shared axis kernel (R4, opt-in) ───────
+# openspec solver-efficiency-r1-r4. Minmod second-order-upwind deferred
+# correction in the 2D N2 telescoping convention (lo-face limiter × Flo,
+# hi-face limiter × Fhi — the SAME face fluxes the first-order a_nb use).
+# One kernel serves all 9 (component × axis) combinations; the call sites
+# only gather the 5-point stencil (clamped indices) and the boundary flags
+# that mirror simple_solver.py's _sou_corr_* index conditions. Enabled per
+# solve via `use_sou_momentum` (default False → term is exactly 0.0).
+
+@njit(cache=True, fastmath=True, inline='always')
+def _sou_axis(p_mm, p_m, p_c, p_p, p_pp,
+              lo_pos, hi_pos, hi_neg, lo_neg,
+              Flo, Fhi, adv):
+    """SOU correction along ONE axis. p_c = this face's value; p_m/p_p the
+    axis neighbours (lo/hi side); p_mm/p_pp the second neighbours. Values at
+    clamped indices are ignored when the matching flag is False. Flo/Fhi =
+    lo/hi-face convective fluxes of this CV; adv selects the upwind branch."""
+    if adv >= 0.0:
+        lo = minmod(p_m - p_mm, p_c - p_m) if lo_pos else 0.0
+        hi = minmod(p_c - p_m, p_p - p_c) if hi_pos else 0.0
+        return 0.5 * (Flo * lo - Fhi * hi)
+    hi = minmod(p_p - p_pp, p_c - p_p) if hi_neg else 0.0
+    lo = minmod(p_c - p_p, p_m - p_c) if lo_neg else 0.0
+    return 0.5 * (Fhi * hi - Flo * lo)
+
+
 # ── SIMPLE Step 1: u-momentum (x-direction), 7-point first-order upwind ──
 
 @njit(cache=True, fastmath=True, inline='always')
 def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
     """One Gauss-Seidel update of the u-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup; previously duplicated
     verbatim). ``inline='always'`` so Numba fuses it into each loop."""
@@ -228,6 +255,25 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
     aP0 = aE + aW + aN + aS + aT + aB + Sp
     rhs = (aE * uE + aW * uW + aN * uN + aS * uS
            + aT * uT + aB * uB + p_src)
+    # R4: minmod SOU deferred correction (flags mirror 2D _sou_corr_u_x/_y).
+    # Added via a guarded += so the use_sou=0 rhs expression tree is unchanged
+    # (fastmath would re-associate an inline `+ sou` and break bit-identity).
+    if use_sou == 1:
+        rhs += (_sou_axis(u[max(i - 2, 0), j, k], u[max(i - 1, 0), j, k],
+                          u[i, j, k], u[min(i + 1, Nx), j, k],
+                          u[min(i + 2, Nx), j, k],
+                          i > 2, i > 1 and i + 1 < Nx, i + 2 <= Nx, i > 1,
+                          Fw, Fe, ue)
+                + _sou_axis(u[i, max(j - 2, 0), k], u[i, max(j - 1, 0), k],
+                            u[i, j, k], u[i, min(j + 1, Ny - 1), k],
+                            u[i, min(j + 2, Ny - 1), k],
+                            j > 1, j > 0 and j < Ny - 1, j < Ny - 2,
+                            j > 0 and j < Ny - 1, Fs, Fn, Fn)
+                + _sou_axis(u[i, j, max(k - 2, 0)], u[i, j, max(k - 1, 0)],
+                            u[i, j, k], u[i, j, min(k + 1, Nz - 1)],
+                            u[i, j, min(k + 2, Nz - 1)],
+                            k > 1, k > 0 and k < Nz - 1, k < Nz - 2,
+                            k > 0 and k < Nz - 1, Fb, Ft, Ft))
     aP = aP0 / alpha_u
     rhs += (1.0 - alpha_u) / alpha_u * aP0 * u[i, j, k]
 
@@ -242,7 +288,7 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                         rho_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps):
+                        alpha_u, n_sweeps, use_sou):
     """Solve the x-momentum equation on the u-staggered face.
 
     u : (Nx+1, Ny, Nz) — updated in place.
@@ -258,7 +304,7 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u)
+                                  alpha_u, use_sou)
 
     # No-slip BC at x-walls
     for j in range(Ny):
@@ -279,7 +325,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                  rho_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps):
+                                 alpha_u, n_sweeps, use_sou):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(1, Nx):
@@ -291,7 +337,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u)
+                                      inlet_frac, alpha_u, use_sou)
     for j in range(Ny):
         for k in range(Nz):
             u[0, j, k] = 0.0
@@ -304,7 +350,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
 def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
     """One Gauss-Seidel update of the v-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup)."""
     jc = min(j, Ny - 1)
@@ -379,6 +425,24 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
     aP0 = aE + aW + aN + aS + aT + aB + Sp
     rhs = (aE * vE + aW * vW + aN * vN + aS * vS
            + aT * vT + aB * vB + p_src)
+    # R4: minmod SOU deferred correction (flags mirror 2D _sou_corr_v_x/_y).
+    # Guarded += keeps the use_sou=0 rhs expression tree unchanged (fastmath).
+    if use_sou == 1:
+        rhs += (_sou_axis(v[max(i - 2, 0), j, k], v[max(i - 1, 0), j, k],
+                          v[i, j, k], v[min(i + 1, Nx - 1), j, k],
+                          v[min(i + 2, Nx - 1), j, k],
+                          i > 1, i > 0 and i < Nx - 1, i < Nx - 2,
+                          i > 0 and i < Nx - 1, Fw, Fe, Fe)
+                + _sou_axis(v[i, max(j - 2, 0), k], v[i, max(j - 1, 0), k],
+                            v[i, j, k], v[i, min(j + 1, Ny), k],
+                            v[i, min(j + 2, Ny), k],
+                            j > 2, j > 1, j + 2 <= Ny, j > 1,
+                            Fs, Fn, vn)
+                + _sou_axis(v[i, j, max(k - 2, 0)], v[i, j, max(k - 1, 0)],
+                            v[i, j, k], v[i, j, min(k + 1, Nz - 1)],
+                            v[i, j, min(k + 2, Nz - 1)],
+                            k > 1, k > 0 and k < Nz - 1, k < Nz - 2,
+                            k > 0 and k < Nz - 1, Fb, Ft, Ft))
     aP = aP0 / alpha_u
     rhs += (1.0 - alpha_u) / alpha_u * aP0 * v[i, j, k]
 
@@ -432,7 +496,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps):
+                        alpha_u, n_sweeps, use_sou):
     """Solve the y-momentum equation on the v-staggered face.
 
     Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
@@ -448,7 +512,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u)
+                                  alpha_u, use_sou)
 
     # Apply BCs
     _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
@@ -463,7 +527,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps):
+                                 alpha_u, n_sweeps, use_sou):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -475,7 +539,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u)
+                                      inlet_frac, alpha_u, use_sou)
     _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
 
 
@@ -485,7 +549,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
 def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u):
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
     """One Gauss-Seidel update of the w-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup)."""
     kc = min(k, Nz - 1)
@@ -561,6 +625,24 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
     aP0 = aE + aW + aN + aS + aT + aB + Sp
     rhs = (aE * wE + aW * wW + aN * wN + aS * wS
            + aT * wT + aB * wB + p_src)
+    # R4: minmod SOU deferred correction (cross axes mirror v; parallel = z).
+    # Guarded += keeps the use_sou=0 rhs expression tree unchanged (fastmath).
+    if use_sou == 1:
+        rhs += (_sou_axis(w[max(i - 2, 0), j, k], w[max(i - 1, 0), j, k],
+                          w[i, j, k], w[min(i + 1, Nx - 1), j, k],
+                          w[min(i + 2, Nx - 1), j, k],
+                          i > 1, i > 0 and i < Nx - 1, i < Nx - 2,
+                          i > 0 and i < Nx - 1, Fw_, Fe, Fe)
+                + _sou_axis(w[i, max(j - 2, 0), k], w[i, max(j - 1, 0), k],
+                            w[i, j, k], w[i, min(j + 1, Ny - 1), k],
+                            w[i, min(j + 2, Ny - 1), k],
+                            j > 1, j > 0 and j < Ny - 1, j < Ny - 2,
+                            j > 0 and j < Ny - 1, Fs, Fn, Fn)
+                + _sou_axis(w[i, j, max(k - 2, 0)], w[i, j, max(k - 1, 0)],
+                            w[i, j, k], w[i, j, min(k + 1, Nz)],
+                            w[i, j, min(k + 2, Nz)],
+                            k > 2, k > 1, k + 2 <= Nz, k > 1,
+                            Fb, Ft, wn))
     aP = aP0 / alpha_u
     rhs += (1.0 - alpha_u) / alpha_u * aP0 * w[i, j, k]
 
@@ -575,7 +657,7 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                         rho_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps):
+                        alpha_u, n_sweeps, use_sou):
     """Solve the z-momentum equation on the w-staggered face.
 
     Top/bottom z-walls (k=0, k=Nz) are no-slip by default (w=0).
@@ -589,7 +671,7 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u)
+                                  alpha_u, use_sou)
 
     # No-slip at z-walls
     for i in range(Nx):
@@ -606,7 +688,7 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                                  rho_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps):
+                                 alpha_u, n_sweeps, use_sou):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -618,7 +700,7 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u)
+                                      inlet_frac, alpha_u, use_sou)
     for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0
@@ -1472,6 +1554,11 @@ class SIMPLESolver3D:
             _sweep_v = _sweep_v_jit_df_3d
             _sweep_w = _sweep_w_jit_df_3d
 
+        # R4 (openspec solver-efficiency-r1-r4): opt-in minmod SOU deferred
+        # correction in the momentum sweeps. 0 (default) = first-order upwind,
+        # numerically identical to the pre-R4 kernels.
+        _use_sou = 1 if getattr(self, 'use_sou_momentum', False) else 0
+
         # Phase B — Anderson acceleration on SIMPLE outer Picard map.
         # Off-by-default for safety; opt-in via solver attribute set by caller.
         use_anderson = getattr(self, 'use_anderson', False)
@@ -1526,7 +1613,7 @@ class SIMPLESolver3D:
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner)
+                      self.alpha_u, n_inner, _use_sou)
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
                       Nx, Ny, Nz, dx, dy, dz,
@@ -1534,13 +1621,13 @@ class SIMPLESolver3D:
                       self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner)
+                      self.alpha_u, n_inner, _use_sou)
             _sweep_w(self.u, self.v, self.w, self.P, self.d_w,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner)
+                      self.alpha_u, n_inner, _use_sou)
 
             # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
             # when the hierarchy cache is COLD. On a warm restart (the 3D outer
@@ -1710,18 +1797,21 @@ def _warmup_simple_3d():
         in_frac = ones3((Nx, Nz))
         alpha_u = 0.5
         n = 1
-        # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu, K,cF, out,in, alpha,n)
+        # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu, K,cF, out,in,
+        #           alpha, n, use_sou)
         for ku in (_sweep_u_jit_df_3d, _sweep_u_jit_df_3d_parallel):
             ku(u, v, w, P, d_u, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               n, 0)
         # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz; eps after rho.
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
                rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
-               alpha_u, n)
+               alpha_u, n, 0)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u, n)
+               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               n, 0)
         _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho)
     except Exception as e:
         import os

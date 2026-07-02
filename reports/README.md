@@ -62,10 +62,23 @@ Shanghai 16-case 从"21.8% 高 Re Q 误差"的 C-1 遗留问题到"3.7% 已解�
 
 ---
 
+## 4. SIMPLER 耦合实验(负结果)
+
+[`simpler-coupling-2d/`](simpler-coupling-2d/) — pysimpler(Tao SIMPLER 蒸馏版)的算法移植实验,
+openspec change `simpler-coupling-2d`。
+
+| 文件 | 一句话结论 |
+|---|---|
+| [`CONCLUSIONS.md`](simpler-coupling-2d/CONCLUSIONS.md) | **SIMPLER 在 2D 生产求解器上是纯开销(0.5-0.6×)**:精确直接解 PP 的 SIMPLE 无压力外迭代瓶颈(质量残差 iter 1 即机器精度,收敛由 α_rho 密度松弛控制),Tao 的 3.3× 外迭代收益不可移植。`coupling='simpler'` 保留 experimental,不推广 3D |
+
+后续 [`solver-efficiency-r1-r4/CONCLUSIONS.md`](solver-efficiency-r1-r4/CONCLUSIONS.md)(openspec `solver-efficiency-r1-r4`):**R1** 3D early-exit 判据回流 2D → golden 管线 47.6s→0.29s(164×,B 侧横流 10000 燃尽→26 iter),Shanghai 2D RMSRE 8.76% 复现;**R2** 密度更新零分配(bit-identical);**R3** 3D gate 剖析 → 求解器仅 3.2%,无行动;**R4** 3D 动量 SOU opt-in → DF 源主导下格式差 <0.01%,不扶正。附带发现:golden 3D 校验需 `PYTHONHASHSEED=0`。
+
+---
+
 ## 相关产物(本目录外)
 
 - **训练曲线 / LOO parity 图**:[`figs/df_fit/`](figs/df_fit/)
-- **Shanghai 验证误差分析图**:[`figs/shanghai_validation_post_fix.png`](figs/shanghai_validation_post_fix.png)
+- **Shanghai 验证误差分析图**:[`figs/shanghai/shanghai_validation_post_fix.png`](figs/shanghai/shanghai_validation_post_fix.png)
 - **模型 ckpt**:`../models/df_surrogate_{diamond,gyroid}.joblib`(gitignored,可重生)
 - **原始 CFD 数据**:`../data/raw_data/`(gitignored)
 
