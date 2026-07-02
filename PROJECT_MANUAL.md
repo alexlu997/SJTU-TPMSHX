@@ -261,6 +261,7 @@ SJTU-TPMSHX/                       ← 仓库根
 #### `sigmoid_field_3d.py` — sigmoid 连续场的 3D 版（108 维）
 - **作用**：把 sigmoid 场推广到三维，用 3×3×3 进口 + 3×3×3 出口控制立方体，张量积 sigmoid 混合，生成 (Nx,Ny,Nz) 的 L、t 场。决策向量 108 维。
 - **关键函数**：`sigmoid_field_3d`、`build_continuous_arrays_3d`。
+- **状态（2026-07 架构扫描）**：目前仅 `ui/demo_vis_3d.py` 与其测试引用，生产管线未接——保留待用，非遗漏。
 
 #### `df_projection.py` — 把 2D/3D 设计投影到 SIMPLE 的 1D 阻力数组
 - **作用**：SIMPLE 求解器内部用沿流向的一维 K、c_F 数组描述阻力；这个文件负责把优化器给的二维/三维几何设计“投影”成那种一维数组。还负责从 SIMPLE 收敛后的压力场里**提取压降**。
@@ -321,6 +322,7 @@ SJTU-TPMSHX/                       ← 仓库根
 
 #### `polygon_fvm.py` — 非结构三角网格有限体积求解器
 - **作用**：在任意多边形域（如带集管的上海换热器）上用非结构三角网格解流动+LTNE。用 Rhie-Chow 插值防止压力棋盘振荡。
+- **状态（2026-07 架构扫描，用户决策）**：polygon 链（本模块 + `unstructured_mesh` + `runs/polygon_calc`）当前只从 UI 菜单可达、生产管线未用——**有意保留**，是后续计划方向。
 - **关键函数**：`solve_velocity_darcy`（达西流，直接解压力泊松）、`solve_velocity_simple`（完整 SIMPLE）、`solve_energy`（LTNE 三温度）、`solve_polygon_domain`（总编排）。
 - **依赖**：`unstructured_mesh`、`tpms_calc`、`df_surrogate.predict`。
 

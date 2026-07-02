@@ -22,7 +22,7 @@
 ## 4. Verify + close-out
 
 - [x] 4.1 Golden 2D **and** 3D bit-identical vs the pre-split snapshots — **PASS** (empty diff for both). This is the definitive proof the verbatim move changed no evaluation order.
-- [~] 4.2 Full `pytest sjtu_tpmshx/tests/ -q` — RUNNING.
+- [x] 4.2 Full `pytest sjtu_tpmshx/tests/ -q` — confirmed green post-hoc: multiple full-suite runs since (2026-07-02: 1053→1058→1062 passed, 0 failed) all include this refactor.
 - [x] 4.3 Evaluation-order check satisfied by 4.1 (bit-identical golden = no order change); helpers moved verbatim with closure verification.
 - [x] 4.4 `openspec validate restructure-3-code-layer --strict`.
-- [ ] 4.5 Single refactor commit — pending the 4.2 gate. Push via /ship at end. (Golden stayed bit-identical, so no abandon needed.)
+- [x] 4.5 Single refactor commit — landed as `2161dfe` (refactor(pipelines): Phase 3 — split stages_3d god-file), pushed.

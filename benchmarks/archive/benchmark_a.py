@@ -5,6 +5,10 @@ Tasks 4-5 depend on runs/batch_runner.py, which was removed in B1 (no
 production consumer); those tasks no longer run. Kept as historical record
 alongside benchmark_snapshot_a.md / _b.md.
 
+ARCHIVED (cleanup-ci, 2026-07-02): task 3's target
+`validation/legacy/validate_shanghai.py` has also been deleted since, so no
+task in this file is runnable any more — frozen record only.
+
 Measures:
   1. Cold import of solve_full (with __pycache__ cleared)
   2. Warm import of solve_full (3 runs, take min)
