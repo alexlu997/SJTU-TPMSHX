@@ -605,15 +605,21 @@ SJTU-TPMSHX/                       ← 仓库根
 
 界面“计算”按钮的实际求解编排。历史上是 `runs/run_calculation.py` / `run_calculation_3d.py` 两个巨型脚本，现拆为 Qt-free 的 stage 函数，由 `controllers/compute_pipeline.py` 的 `Pipeline2D`/`Pipeline3D` 按 `build_fields() → run_solvers() → finalize()` 调用（UI 侧入口在 `ui/mixins/run_controller.py` + `controllers/compute_orchestrator.py` 后台线程）。
 
-#### `stages_2d.py` — 2D 四阶段
-- **阶段**：`_parse_inputs_cfg`（从 ComputeConfig 取参；防“单位滑移”（L/H 米 vs L_cell/t 毫米，上限 10 m）；代理窗口守卫；分区配置）→ `_build_fields_cfg`（对齐/加密网格；`_run_simple` 闭包；4 流向坐标变换；分区/设计 K/c_F 覆盖）→ `_run_solvers`（外层 LTNE 迭代耦合可压缩 SIMPLE，质量加权 Q/dP）→ finalize（组装 `ComputeResult`）。
-- **关键函数**：`_enthalpy_balance_2d`、`_compute_pressure_2d`（按开口比例加权提 dP）。
-- **要点**：2D 是入口锚定（高 Δp 抬入口压力，很少 choke）；`rho_inlet_ref` 显式传参防外迭代 ratchet。
+2026-07-03（split-pipelines）再拆一层：`stages_2d`/`stages_3d` 只留 **cfg 边界**（parse/build/run_cfg/finalize）并全量 re-export 迁出符号（外部 `from pipelines.stages_3d import _run_3d_stack` 等 import 面零变更）；引擎按下表分家。依赖是 DAG：`flux_3d`/`grid_3d` ← `run_stack_3d` ← `stages_3d`；`solve_2d` ← `stages_2d`。
 
-#### `stages_3d.py`（+ `stages_3d_helpers.py`） — 3D 四阶段
-- **阶段**：`_parse_inputs_3d_cfg` → 建场 → `_run_3d_stack`（核心循环，被诊断/演示/优化直接调用）→ `_finalize_3d_result`（render/export 契约锁在 `tests/test_finalize_3d_result_sync.py`）。
-- **关键加速/特性**：A、B 两股 SIMPLE **并行**（`_run_two_simple_parallel`，独立线程释放 GIL）；外层 ρ(T) 耦合循环（默认 max_outer=5，A、B 都收敛就早停）；可选剖析（`TPMSHX_PROFILE_3D=1`）；`_face_flux_weights` / `_mass_weighted_T_out` 质量流加权出口温度。
-- **要点**：ε 减半契约（调用方传完整 ε；asym 例外见 `solvers/asym_split.py`）；3D 是出口锚定 —— `solvers/envelope.py` 的 choke 守卫主要在这里生效；边界层加密单元数封顶 ~5 万。
+| 模块 | 内容 |
+|---|---|
+| `stages_2d.py`（~780 行） | 2D cfg 边界：`_parse_inputs_cfg`（防单位滑移、代理窗口守卫、分区配置）→ `_build_fields_cfg`（对齐/加密网格、4 流向坐标变换、K/c_F 覆盖）→ `_run_solvers_cfg` → `_finalize_cfg`。 |
+| `solve_2d.py`（~1240 行） | 2D 引擎：`_run_solvers`（外层 LTNE 迭代耦合可压缩 SIMPLE）、`_compute_Q_richardson`、`_compute_pressure_2d`（按开口比例加权提 dP）、`_enthalpy_balance_2d`、`_PipelineWindowShim`。 |
+| `stages_3d.py`（~360 行） | 3D cfg 边界：`_parse_inputs_3d_cfg` → `_build_fields_3d_cfg` → `_run_solvers_3d_cfg` → `_finalize_3d_cfg`（render/export 契约锁在 `tests/test_finalize_3d_result_sync.py`）+ re-export 块。 |
+| `run_stack_3d.py`（~2020 行） | 3D 引擎：`_run_3d_stack`（核心循环，被诊断/演示/优化直接调用）、`_run_two_simple_parallel`（A、B 两股 SIMPLE 并行，独立线程释放 GIL）、`_conservation_diagnostics_3d`、choke 种子 `_seed_p_ref`、剖析（`TPMSHX_PROFILE_3D=1`）。 |
+| `flux_3d.py`（~250 行） | 面通量加权（`_face_flux_weights`、`_mass_weighted_T_out/h_out`、`_simple_mass_flow`）+ 粗糙度施加（`_apply_roughness_KcF/h_v`）+ sCO2 局域 h_v。 |
+| `grid_3d.py`（~160 行） | 轴映射 `_resolve_axis_map`、分区场 `_build_zone_fields_3d`、网格 `_build_grid_3d`、间距 `_solver_spacings`。 |
+| `stages_3d_helpers.py`（~460 行） | Phase-3 早期抽出的纯 numpy 助手（χ_B 阈值等）。 |
+| `_stage_common.py` | 2D/3D 共享非内核胶水（域尺寸防火墙、外推守卫、safe_float、props 三元组）。 |
+
+- **2D 要点**：入口锚定（高 Δp 抬入口压力，很少 choke）；`rho_inlet_ref` 显式传参防外迭代 ratchet。
+- **3D 要点**：ε 减半契约（调用方传完整 ε；asym 例外见 `solvers/asym_split.py`）；出口锚定 —— `solvers/envelope.py` 的 choke 守卫主要在这里生效；外层 ρ(T) 耦合循环（默认 max_outer=5，A、B 都收敛就早停）；边界层加密单元数封顶 ~5 万。
 
 ---
 
