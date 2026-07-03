@@ -66,6 +66,8 @@ class TabViewMixin:
             # results computed).
             '2d_view': (not is_3d) and getattr(self, '_has_results_2d', False),
         }
+        # ui-plan3-workbench: the 结果 tab aggregates every result rendering.
+        rules['result'] = rules['2d_view'] or rules['3d']
         btn_map = {
             'layout':  self.btn_tab_layout,
             'temp':    self.btn_tab_temp,
@@ -74,6 +76,7 @@ class TabViewMixin:
             '3d':      self.btn_tab_3d,
             'pareto':  self.btn_tab_pareto,
             '2d_view': getattr(self, 'btn_tab_2d_view', None),
+            'result':  getattr(self, 'btn_tab_result', None),
         }
         for key, enabled in rules.items():
             btn = btn_map[key]
@@ -93,9 +96,24 @@ class TabViewMixin:
             _combo.setEnabled(rules.get('2d_view', False))
         # ui-batch4: the segmented 温度/速度/压力 buttons gate with the tab
         # just like the (now hidden) combo did.
+        # ui-plan3-workbench: the field seg is only meaningful while the 2D
+        # rendering is showable; the 2D|3D toggle gates each side on its
+        # own rule.
         _seg = getattr(self, '_2d_field_seg', None)
         if _seg is not None:
             _seg.setEnabled(rules.get('2d_view', False))
+        _rv = getattr(self, '_result_view_btns', None)
+        if _rv:
+            _rv['2d'].setEnabled(rules.get('2d_view', False))
+            _rv['3d'].setEnabled(rules.get('3d', False))
+            # Snap the toggle to the only available side.
+            if rules.get('3d') and not rules.get('2d_view'):
+                self._result_view = '3d'
+            elif rules.get('2d_view') and not rules.get('3d'):
+                self._result_view = '2d'
+            paint = getattr(self, '_paint_result_seg', None)
+            if paint is not None:
+                paint()
         # Fall back to Layout if active tab just became disabled
         if not rules.get(getattr(self, '_active_tab', 'layout'), True):
             self._switch_tab('layout')
@@ -114,6 +132,9 @@ class TabViewMixin:
         # the misleading "Split view requires both tabs to have data"
         # status message. Resolve '2d_view' to whichever field card is
         # currently selected by the 2D field combo.
+        if tab == 'result':
+            tab = ('3d' if getattr(self, '_result_view', '2d') == '3d'
+                   else self._resolve_2d_view_card())
         if tab == '2d_view':
             tab = self._resolve_2d_view_card()
         cur = getattr(self, '_active_tab', None)
@@ -177,6 +198,12 @@ class TabViewMixin:
             'vel':  "Velocity |U|",
             'pres': "Pressure",
         }
+        # ui-plan3-workbench: 'result' aggregates 2D fields + the 3D volume;
+        # window._result_view picks the rendering, then the resolved key
+        # flows through the legacy machinery untouched.
+        if tab == 'result':
+            tab = ('3d' if getattr(self, '_result_view', '2d') == '3d'
+                   else '2d_view')
         if tab == '2d_view':
             sel = _combo.currentText() if _combo is not None else "Temperature"
             tab = {
@@ -267,6 +294,21 @@ class TabViewMixin:
                 _btn_2d.setStyleSheet(self._PTAB_OFF)
             else:
                 _btn_2d.setStyleSheet(self._PTAB_DISABLED)
+        # ui-plan3-workbench: 结果 button lights for ANY result rendering;
+        # legacy direct calls (_switch_tab('temp')/'3d') reverse-sync the
+        # 2D|3D toggle so the seg always tells the truth.
+        _btn_res = getattr(self, 'btn_tab_result', None)
+        if _btn_res is not None:
+            if tab in ('temp', 'pres', 'vel', '3d'):
+                self._result_view = '3d' if tab == '3d' else '2d'
+                paint = getattr(self, '_paint_result_seg', None)
+                if paint is not None:
+                    paint()
+                _btn_res.setStyleSheet(self._PTAB_ON)
+            elif _btn_res.isEnabled():
+                _btn_res.setStyleSheet(self._PTAB_OFF)
+            else:
+                _btn_res.setStyleSheet(self._PTAB_DISABLED)
         if _viewport is not None:
             _viewport.setUpdatesEnabled(True)
         # Phase 1 flush — paint button + hides before heavy work.
@@ -297,6 +339,12 @@ class TabViewMixin:
                 self._update_result_summary()
             except Exception:
                 pass
+        # ui-plan3-workbench T2: sidebar follows the result family.
+        try:
+            from ui.builders_canvas import update_result_sidebar_visibility
+            update_result_sidebar_visibility(self)
+        except Exception:
+            pass
         self._hover_label.setText("")
 
     def _on_hover(self, event):

@@ -378,6 +378,29 @@ class RunControllerMixin:
         ``run_calculation_inner`` / ``run_calculation_3d_inner`` paths
         are deleted.
         """
+        # ui-plan3-workbench T2: one diagnostics snapshot per run, consumed
+        # by the result sidebar + the 诊断详情 dialog. Built BEFORE the 3D
+        # early-return so both modes fill it.
+        self._diag_summary = {
+            'mode': result.diagnostics.get('mode', '2d'),
+            'Q_W': result.Q_W,
+            'dP_A': result.dP_A_Pa, 'dP_B': result.dP_B_Pa,
+            'Q_A': result.residuals.get('Q_A'),
+            'Q_B': result.residuals.get('Q_B'),
+            'Q_net': result.residuals.get('Q_net'),
+            'closure_rel': result.residuals.get('energy_imbalance_rel'),
+            'envelope_valid': result.diagnostics.get('envelope_valid'),
+            'envelope_warnings': list(
+                result.diagnostics.get('envelope_warnings', []) or []),
+            'extrap': list(result.extrap_reasons),
+            'warnings': list(result.warnings),
+            'iters': {k: result.diagnostics.get(k) for k in
+                      ('iter_outer', 'iter_simple_A', 'iter_simple_B')},
+            'wall_s': result.diagnostics.get('wall_time_s'),
+            'coeffs': {k: result.coeffs.get(k) for k in
+                       ('K_ffA', 'K_ffB', 'K_ss', 'h_vA', 'h_vB')},
+        }
+
         # ── 3D branch: the renderer (ui/plot_3d_results) now consumes the
         # ComputeResult directly (B3 C5 — raw_3d dict carrier retired).
         # Publish the dataclass as window._result_3d and stop.
@@ -1042,8 +1065,85 @@ class RunControllerMixin:
         # the chip strip when the user is on the Geometry tab — it adds
         # value as a persistent reminder on Temperature/Pressure/Velocity/
         # 3D tabs where the inputs aren't visible.
-        on_geom = (getattr(self, '_active_tab', None) == 'layout')
-        self._result_summary_bar.setVisible(shown_any and not on_geom)
+        # ui-plan3-workbench T2: the horizontal chip strip is RETIRED — the
+        # sidebar's 本次结果 card shows the same data next to the field.
+        # Chips stay alive as the data carriers this method writes.
+        self._result_summary_bar.setVisible(False)
+        try:
+            from ui.builders_canvas import (refresh_result_sidebar,
+                                            update_result_sidebar_visibility)
+            refresh_result_sidebar(self)
+            update_result_sidebar_visibility(self)
+        except Exception:
+            pass
+
+    def _diag_summary_text(self):
+        """Plain-text diagnostics block (ui-plan3-workbench T3) — pasteable
+        into 组会/周报. Returns '' when no run has landed."""
+        d = getattr(self, '_diag_summary', None)
+        if not d:
+            return ''
+        def _f(v, fmt="{:.4g}"):
+            return fmt.format(v) if isinstance(v, (int, float)) and v == v else '—'
+        rel = d.get('closure_rel')
+        env = d.get('envelope_valid')
+        it = d.get('iters') or {}
+        co = d.get('coeffs') or {}
+        lines = [
+            f"SJTU-TPMSHX 诊断摘要 ({d.get('mode', '2d').upper()})",
+            f"Q = {_f(d.get('Q_W'))} W · ΔP_A = {_f(d.get('dP_A'))} Pa"
+            f" · ΔP_B = {_f(d.get('dP_B'))} Pa",
+            f"能量对账: Q_A = {_f(d.get('Q_A'))} W · Q_B = {_f(d.get('Q_B'))} W"
+            f" · 闭合 = {_f(abs(rel) * 100 if isinstance(rel, (int, float)) and rel == rel else None, '{:.2f}')} %",
+            f"包络: {'有效' if env else ('失效' if env is not None else '—')}"
+            f" · 外推 {len(d.get('extrap') or [])} 项",
+            f"迭代: 外循环 {it.get('iter_outer', '—')} · SIMPLE A/B"
+            f" {it.get('iter_simple_A', '—')}/{it.get('iter_simple_B', '—')}"
+            f" · 耗时 {_f(d.get('wall_s'), '{:.1f}')} s",
+            f"闭合系数: K_ffA={_f(co.get('K_ffA'))} K_ffB={_f(co.get('K_ffB'))}"
+            f" h_vA={_f(co.get('h_vA'))} h_vB={_f(co.get('h_vB'))}",
+        ]
+        for w in (d.get('warnings') or []) + (d.get('envelope_warnings') or []):
+            lines.append(f"⚠ {w}")
+        for e in d.get('extrap') or []:
+            lines.append(f"⚠ 外推: {e}")
+        return "\n".join(lines)
+
+    def _show_diag_dialog(self):
+        """诊断详情 dialog: energy ledger, coefficients, iterations,
+        warnings, one-click copy (ui-plan3-workbench T3)."""
+        txt = self._diag_summary_text()
+        if not txt:
+            self.statusBar().showMessage("暂无诊断数据 — 请先计算。",
+                                         TOAST_MS_SHORT)
+            return
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QPlainTextEdit,
+                                       QPushButton, QHBoxLayout)
+        from ui.theme import get_theme as _gt
+        _t = _gt()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("诊断详情")
+        dlg.resize(560, 420)
+        lay = QVBoxLayout(dlg)
+        view = QPlainTextEdit(txt)
+        view.setReadOnly(True)
+        view.setStyleSheet(
+            f"QPlainTextEdit{{background:{_t['card_bg']}; color:{_t['fg']};"
+            f" border:1px solid {_t['card_border']}; border-radius:6px;"
+            f" font-family:{_t['mono_family']}; font-size:9pt;}}")
+        lay.addWidget(view)
+        row = QHBoxLayout()
+        btn_copy = QPushButton("复制诊断摘要")
+        def _copy():
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.clipboard().setText(self._diag_summary_text())
+            self.statusBar().showMessage("诊断摘要已复制。", TOAST_MS_SHORT)
+        btn_copy.clicked.connect(_copy)
+        btn_close = QPushButton("关闭")
+        btn_close.clicked.connect(dlg.accept)
+        row.addStretch(1); row.addWidget(btn_copy); row.addWidget(btn_close)
+        lay.addLayout(row)
+        dlg.exec()
 
     def _begin_btn_ticker(self):
         """500 ms ticker driving the Compute/Cancel button live text."""

@@ -213,6 +213,51 @@ def test_copy_figure_clipboard_no_data_safe(win):
     win._copy_figure_clipboard()                # must not raise
 
 
+# ── ui-plan3-workbench T1: three-tab toolbar + result aggregation ────
+
+def test_workbench_toolbar_visible_set(win):
+    """Toolbar shows only 几何布局/结果/优化; legacy buttons live off-toolbar."""
+    assert win.btn_tab_layout.isVisibleTo(win)
+    assert win.btn_tab_result.isVisibleTo(win)
+    assert win.btn_tab_pareto.isVisibleTo(win)
+    for b in (win.btn_tab_temp, win.btn_tab_pres, win.btn_tab_vel,
+              win.btn_tab_3d, win.btn_tab_2d_view):
+        assert not b.isVisibleTo(win), b.text()
+
+
+def test_legacy_switch_lights_result_button(win):
+    """_switch_tab('temp') (the post-compute auto-jump path) must light the
+    结果 aggregate button and snap the 2D|3D toggle to 2D.
+
+    `_has_results_2d` is a ResultCache property bridge (writing True is a
+    no-op) — seed the cache instead. combo_dim is forced to 2D because the
+    earlier preset test leaves the window in 3D mode."""
+    win.combo_dim.setCurrentIndex(0)
+    win.cache.set_result('2d', {'stub': True})
+    win._update_tab_visibility()
+    win._switch_tab('temp')
+    assert win._active_tab == 'temp'
+    assert win._result_view == '2d'
+    assert win.btn_tab_result.styleSheet() == win._PTAB_ON
+    win._switch_tab('layout')
+    win._has_results_2d = False       # setter clears the cached result
+    win._update_tab_visibility()
+
+
+def test_result_view_toggle_gating(win):
+    """2D side of the toggle follows the 2D rule; 3D side needs a ready
+    3D view. In 2D mode with results: 2D enabled, 3D disabled."""
+    win.combo_dim.setCurrentIndex(0)
+    win.cache.set_result('2d', {'stub': True})
+    win._update_tab_visibility()
+    assert win._result_view_btns['2d'].isEnabled()
+    assert not win._result_view_btns['3d'].isEnabled()
+    assert win.btn_tab_result.isEnabled()
+    win._has_results_2d = False
+    win._update_tab_visibility()
+    assert not win.btn_tab_result.isEnabled()
+
+
 # ── ui-plan3a: design-token discipline ───────────────────────────────
 
 _UI_DIR = os.path.join(os.path.dirname(os.path.dirname(
