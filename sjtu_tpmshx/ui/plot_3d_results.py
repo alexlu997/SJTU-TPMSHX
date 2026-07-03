@@ -20,6 +20,10 @@ import numpy as np
 # Theme — resolved at call time via get_theme()
 from ui.theme import get_theme as _get_theme
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 def _fmt_metric(value, fmt, dash='-'):
     try:
@@ -75,8 +79,8 @@ def finalize_plots_3d(window) -> bool:
     """
     res = getattr(window, '_result_3d', None)
     if res is None:
-        print("[3D vis] window._result_3d is None — solver produced no "
-              "stashed ComputeResult; nothing to visualise.")
+        _log.warning("[3D vis] window._result_3d is None — solver produced no "
+                     "stashed ComputeResult; nothing to visualise.")
         return False
     # B3 C5: res is the ComputeResult (raw_3d dict carrier retired). The
     # renderer reads arrays from res.fields and headline scalars from the
@@ -99,14 +103,14 @@ def finalize_plots_3d(window) -> bool:
             panel = getattr(window, 'canvas_3d', None)
         except Exception as _e_lazy:
             panel = None
-            print(f"[3D vis] _lazy_init_3d_panel failed: {_e_lazy}")
+            _log.warning(f"[3D vis] _lazy_init_3d_panel failed: {_e_lazy}")
     if panel is None:
         # Either lazy init failed, or offscreen mode left the placeholder
         # in place. Either way, the 3D visualisation cannot be displayed
         # and the caller must not switch the user to a blank tab.
-        print("[3D vis] no PyVistaQt panel (canvas_3d is None after lazy "
-              "init) — embedded 3D view cannot be populated. Check the "
-              "[3D vis] _lazy_init_3d_panel line above for the import error.")
+        _log.warning("[3D vis] no PyVistaQt panel (canvas_3d is None after lazy "
+                     "init) — embedded 3D view cannot be populated. Check the "
+                     "[3D vis] _lazy_init_3d_panel line above for the import error.")
         _3d_vis_ok = False
     if panel is not None:
         try:
@@ -163,7 +167,7 @@ def finalize_plots_3d(window) -> bool:
                     pass
         except Exception as e:
             import traceback; traceback.print_exc()
-            print(f"[3D vis] set_fields failed: {e}")
+            _log.warning(f"[3D vis] set_fields failed: {e}")
             _3d_vis_ok = False
 
     # ── 2. 2D canvases: auto mid-z slice (keeps Temperature/Pressure/Velocity
@@ -239,7 +243,7 @@ def _render_2d_slices_from_3d(window, res):
             fn(canvas, *args)
         except Exception as e:
             import traceback; traceback.print_exc()
-            print(f"[3D->2D {attr}] {e}")
+            _log.warning(f"[3D->2D {attr}] {e}")
 
     # Surrogate-extrapolation watermark on the 2D mid-z slice canvases so the
     # Temperature / Pressure / Velocity tabs under 3D mode carry the same

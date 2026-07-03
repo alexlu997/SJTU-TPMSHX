@@ -44,6 +44,9 @@ from solvers.continuous_field import (
     decision_dim,
     decision_bounds,
 )
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 # ─── Module-level worker for joblib (must be top-level for pickle) ─
@@ -238,11 +241,11 @@ def run_qnehvi(config: Optional[dict] = None,
     os.makedirs(save_dir, exist_ok=True)
 
     if verbose:
-        print(f"[qNEHVI] D = {D} (n_ctrl=({cfg['n_ctrl_x']},{cfg['n_ctrl_y']}), "
-              f"symmetric_y={cfg['symmetric_y']})")
-        print(f"[qNEHVI] {n_init} Sobol init + {n_iter} iter × q={q_batch} "
-              f"= {n_init + n_iter * q_batch} evals total")
-        print(f"[qNEHVI] save_dir = {save_dir}")
+        _log.info(f"[qNEHVI] D = {D} (n_ctrl=({cfg['n_ctrl_x']},{cfg['n_ctrl_y']}), "
+                  f"symmetric_y={cfg['symmetric_y']})")
+        _log.info(f"[qNEHVI] {n_init} Sobol init + {n_iter} iter × q={q_batch} "
+                  f"= {n_init + n_iter * q_batch} evals total")
+        _log.info(f"[qNEHVI] save_dir = {save_dir}")
 
     with open(os.path.join(save_dir, 'config.json'), 'w') as f:
         json.dump({k: v for k, v in cfg.items()
@@ -292,7 +295,7 @@ def run_qnehvi(config: Optional[dict] = None,
         F = np.zeros((B, 2), dtype=np.float64)
         for i, (Q, dP_c, err) in enumerate(results):
             if err is not None and verbose:
-                print(f"  [eval ERR] x_idx={i}: {err}")
+                _log.warning(f"  [eval ERR] x_idx={i}: {err}")
             F[i, 0] = Q                                 # maximize Q
             F[i, 1] = -np.log10(dP_c)                   # maximize -log10(dP)
             progress['count'] += 1
@@ -312,13 +315,13 @@ def run_qnehvi(config: Optional[dict] = None,
     train_X = draw_sobol_samples(bounds=bounds, n=n_init, q=1).squeeze(1)
     train_X_np = train_X.numpy()
     if verbose:
-        print(f"[qNEHVI] Evaluating {n_init} Sobol initial points …")
+        _log.info(f"[qNEHVI] Evaluating {n_init} Sobol initial points …")
     t_phase = time.perf_counter()
     train_Y_np = _evaluate_batch(train_X_np)
     train_Y = torch.tensor(train_Y_np, dtype=torch.double)
     if verbose:
-        print(f"[qNEHVI] init done in {time.perf_counter() - t_phase:.0f}s, "
-              f"best Q = {progress['best_Q']:.0f} W/m")
+        _log.info(f"[qNEHVI] init done in {time.perf_counter() - t_phase:.0f}s, "
+                  f"best Q = {progress['best_Q']:.0f} W/m")
 
     # 4. Reference point for hypervolume — slightly worse than worst observed
     span = train_Y.max(dim=0).values - train_Y.min(dim=0).values
@@ -332,7 +335,7 @@ def run_qnehvi(config: Optional[dict] = None,
     for it in range(n_iter):
         if progress['cancel_requested']:
             if verbose:
-                print(f"[qNEHVI] cancel requested → stopping at iter {it+1}")
+                _log.info(f"[qNEHVI] cancel requested → stopping at iter {it+1}")
             break
 
         t_iter = time.perf_counter()
@@ -403,9 +406,9 @@ def run_qnehvi(config: Optional[dict] = None,
                 pass
         n_evals = train_X.shape[0]
         if verbose:
-            print(f"[qNEHVI] iter {it+1:3d}/{n_iter}  "
-                  f"HV={hv:.3e}  best Q={progress['best_Q']:.0f}  "
-                  f"n_evals={n_evals}  t={time.perf_counter()-t_iter:.0f}s")
+            _log.info(f"[qNEHVI] iter {it+1:3d}/{n_iter}  "
+                      f"HV={hv:.3e}  best Q={progress['best_Q']:.0f}  "
+                      f"n_evals={n_evals}  t={time.perf_counter()-t_iter:.0f}s")
 
         if (it + 1) % 5 == 0 or it == n_iter - 1:
             _save_current_pareto(train_X, train_Y, save_dir, it + 1)
@@ -414,8 +417,8 @@ def run_qnehvi(config: Optional[dict] = None,
         # if the front isn't moving meaningfully, more evals waste budget.
         if hv_tol > 0.0 and hv_plateau_detected(hv_hist, hv_tol, hv_window):
             if verbose:
-                print(f"[qNEHVI] HV plateau (rel < {hv_tol:.1%} for "
-                      f"{hv_window} iter) → early stop at iter {it+1}/{n_iter}")
+                _log.info(f"[qNEHVI] HV plateau (rel < {hv_tol:.1%} for "
+                          f"{hv_window} iter) → early stop at iter {it+1}/{n_iter}")
             break
 
     # 6. Extract Pareto and pack output. train_Y stores (Q, -log10(dP)) in
@@ -444,10 +447,10 @@ def run_qnehvi(config: Optional[dict] = None,
         # nonsense like "dP range [4, 4]").
         Q_real  = Y_pareto[:, 0]
         dP_real = np.power(10.0, -Y_pareto[:, 1])
-        print(f"[qNEHVI] DONE — {len(X_pareto)} Pareto solutions across "
-              f"{len(X_np)} total evaluations")
-        print(f"  Q range  [{Q_real.min():.0f}, {Q_real.max():.0f}] W/m")
-        print(f"  dP range [{dP_real.min():.0f}, {dP_real.max():.0f}] Pa")
+        _log.info(f"[qNEHVI] DONE — {len(X_pareto)} Pareto solutions across "
+                  f"{len(X_np)} total evaluations")
+        _log.info(f"  Q range  [{Q_real.min():.0f}, {Q_real.max():.0f}] W/m")
+        _log.info(f"  dP range [{dP_real.min():.0f}, {dP_real.max():.0f}] Pa")
 
     _save_pareto_csv(os.path.join(save_dir, 'pareto_final.csv'), X_pareto, F_min)
     _save_pareto_csv(os.path.join(save_dir, 'history.csv'), X_np, F_hist_min)

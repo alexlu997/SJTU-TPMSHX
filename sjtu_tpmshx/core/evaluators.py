@@ -47,6 +47,9 @@ from solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
 from solvers.continuous_field import from_decision_vector
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 R_AIR = 287.05
@@ -194,9 +197,9 @@ def evaluate_3d(x_decision: np.ndarray,
             arrays['h_vA_arr'] = (arrays['h_vA_arr'] * nu_extra_A).astype(
                 np.float64, copy=False)
         if verbose:
-            print(f"[3D rough] mode={roughness_mode} eps={roughness_eps_um} μm  "
-                  f"Re_A={Re_A_case:.0f}  f_gain_A={f_gain_A:.3f}  "
-                  f"nu_extra_A={nu_extra_A:.3f}")
+            _log.info(f"[3D rough] mode={roughness_mode} eps={roughness_eps_um} μm  "
+                      f"Re_A={Re_A_case:.0f}  f_gain_A={f_gain_A:.3f}  "
+                      f"nu_extra_A={nu_extra_A:.3f}")
 
     # 3. Build SIMPLE 3D for both fluids. Fluid A: +x streamwise → axis swap
     # so SIMPLE-y = real-x; Fluid B: -y streamwise → SIMPLE-y = real-y reversed.
@@ -244,9 +247,9 @@ def evaluate_3d(x_decision: np.ndarray,
     # `test_predict_dP_strict_returns_nan_on_infeasible`.
     if P_out_sq_A <= 0.0 or P_out_sq_B <= 0.0:
         if verbose:
-            print(f"[3D verify] INFEASIBLE — P_out²_A={P_out_sq_A:.3e} Pa², "
-                  f"P_out²_B={P_out_sq_B:.3e} Pa². Returning NaN per strict "
-                  "validation contract.")
+            _log.warning(f"[3D verify] INFEASIBLE — P_out²_A={P_out_sq_A:.3e} Pa², "
+                         f"P_out²_B={P_out_sq_B:.3e} Pa². Returning NaN per strict "
+                         "validation contract.")
         return {
             'Q_3D_W':         float('nan'),
             'dP_A_Pa':        float('nan'),
@@ -283,16 +286,16 @@ def evaluate_3d(x_decision: np.ndarray,
 
     # 4. Initial SIMPLE solves
     if verbose:
-        print(f"[3D] Solving SIMPLE A (cold) … ", end='', flush=True)
+        _log.info(f"[3D] Solving SIMPLE A (cold) … ")
     t0 = time.perf_counter()
     sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
     if verbose:
-        print(f"{time.perf_counter()-t0:.0f}s")
-        print(f"[3D] Solving SIMPLE B (cold) … ", end='', flush=True)
+        _log.info(f"{time.perf_counter()-t0:.0f}s")
+        _log.info(f"[3D] Solving SIMPLE B (cold) … ")
     t0 = time.perf_counter()
     sB.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
     if verbose:
-        print(f"{time.perf_counter()-t0:.0f}s")
+        _log.info(f"{time.perf_counter()-t0:.0f}s")
 
     # 5. Outer LTNE coupling with variable density on fluid A.
     rcp_A_field = np.full((Nx, Ny, Nz), rho_A0 * air_cp(T_inA), dtype=np.float64)
@@ -333,7 +336,7 @@ def evaluate_3d(x_decision: np.ndarray,
         wfB = np.ascontiguousarray(sB.w[:, ::-1, :])          # (Nx,Ny,Nz+1)
 
         if verbose:
-            print(f"[3D] outer {outer_it+1}/{max_outer} … ", end='', flush=True)
+            _log.info(f"[3D] outer {outer_it+1}/{max_outer} … ")
         t0 = time.perf_counter()
         # 2026-05-19 ε contract (Option A): pass FULL porosity. Kernel does
         # the single halving (eps_f = 0.5*epsilon → ε_A). Pre-halving here
@@ -354,14 +357,14 @@ def evaluate_3d(x_decision: np.ndarray,
             conservative_ltne=True,
         )
         if verbose:
-            print(f"{time.perf_counter()-t0:.0f}s")
+            _log.info(f"{time.perf_counter()-t0:.0f}s")
 
         if Ta_prev is not None:
             dT_max = float(np.max(np.abs(Ta - Ta_prev)))
             if dT_max < outer_tol_K:
                 if verbose:
-                    print(f"[3D] outer converged at iter {outer_it+1} "
-                          f"(dT_max={dT_max:.2f} < {outer_tol_K} K)")
+                    _log.info(f"[3D] outer converged at iter {outer_it+1} "
+                              f"(dT_max={dT_max:.2f} < {outer_tol_K} K)")
                 break
         Ta_prev = Ta.copy()
 
@@ -396,12 +399,11 @@ def evaluate_3d(x_decision: np.ndarray,
         sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
 
         if verbose:
-            print(f"[3D] re-solving SIMPLE A with var-ρ … ",
-                  end='', flush=True)
+            _log.info(f"[3D] re-solving SIMPLE A with var-ρ … ")
         t0 = time.perf_counter()
         sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
         if verbose:
-            print(f"{time.perf_counter()-t0:.0f}s")
+            _log.info(f"{time.perf_counter()-t0:.0f}s")
 
         # Update rcp (real coords) using current Ta, Tb
         rcp_A_field = np.ascontiguousarray(

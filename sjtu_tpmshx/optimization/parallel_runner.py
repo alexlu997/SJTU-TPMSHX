@@ -36,6 +36,10 @@ from typing import List, Optional
 
 import numpy as np
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 def _set_thread_caps() -> None:
     """Pin BLAS / OpenMP threads to 1 in the *current* process.
@@ -177,10 +181,10 @@ def run_qnehvi_multiseed(config: Optional[dict] = None,
     os.makedirs(save_dir_base, exist_ok=True)
 
     if verbose:
-        print(f"[multiseed] {n_seeds} seeds × q_batch={q_batch} inner = "
-              f"{n_seeds * q_batch} concurrent SIMPLE solves")
-        print(f"[multiseed] save_dir_base = {save_dir_base}")
-        print(f"[multiseed] seeds = {seeds}")
+        _log.info(f"[multiseed] {n_seeds} seeds × q_batch={q_batch} inner = "
+                  f"{n_seeds * q_batch} concurrent SIMPLE solves")
+        _log.info(f"[multiseed] save_dir_base = {save_dir_base}")
+        _log.info(f"[multiseed] seeds = {seeds}")
 
     t0 = time.perf_counter()
 
@@ -203,23 +207,23 @@ def run_qnehvi_multiseed(config: Optional[dict] = None,
             try:
                 per_seed_results.append(fut.result())
             except Exception as e:
-                print(f"[multiseed] seed worker FAILED: {e!r}")
+                _log.warning(f"[multiseed] seed worker FAILED: {e!r}")
 
     wall = time.perf_counter() - t0
 
     X_m, F_m, X_h, F_h, n_evals_total = _merge_paretos(per_seed_results)
 
     if verbose:
-        print(f"\n[multiseed] DONE in {wall:.0f}s")
-        print(f"  per-seed: " + " ".join(
+        _log.info(f"\n[multiseed] DONE in {wall:.0f}s")
+        _log.info(f"  per-seed: " + " ".join(
             f"seed{r['seed']}={len(r['X'])}P/{r['n_evals']}E"
             for r in per_seed_results))
-        print(f"  merged Pareto: {len(X_m)} points across "
-              f"{n_evals_total} total evals")
+        _log.info(f"  merged Pareto: {len(X_m)} points across "
+                  f"{n_evals_total} total evals")
         if len(X_m) > 0:
             Q = -F_m[:, 0]; dP = F_m[:, 1]
-            print(f"  Q range  [{Q.min():.0f}, {Q.max():.0f}] W/m")
-            print(f"  dP range [{dP.min():.0f}, {dP.max():.0f}] Pa")
+            _log.info(f"  Q range  [{Q.min():.0f}, {Q.max():.0f}] W/m")
+            _log.info(f"  dP range [{dP.min():.0f}, {dP.max():.0f}] Pa")
 
     # Write merged Pareto + history at top level
     from optimization.optimizer_qnehvi import _save_pareto_csv

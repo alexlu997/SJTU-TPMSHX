@@ -29,6 +29,10 @@ from typing import Optional
 
 import numpy as np
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 # Time module already imported above; alias for the closures below
 _time = time
 
@@ -210,7 +214,7 @@ def _gather_cfg(window) -> dict:
         except Exception:
             pass
         # Also log to stdout so it lands in the run journal.
-        print(f"[optimize] _gather_cfg fallbacks: {_names}")
+        _log.warning(f"[optimize] _gather_cfg fallbacks: {_names}")
 
     return cfg
 
@@ -235,7 +239,7 @@ def _set_status(window, text: str) -> None:
             return
         except Exception:
             pass
-    print(f"[optimize] {text}")
+    _log.info(f"[optimize] {text}")
 
 
 def _set_kpi(window, gen=None, best_q=None, best_dp=None, eta=None) -> None:
@@ -359,7 +363,7 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
         )
         from PySide6.QtCore import Qt
     except Exception as e:
-        print(f"[optimize] dialog unavailable ({e}); using defaults")
+        _log.warning(f"[optimize] dialog unavailable ({e}); using defaults")
         return _qnehvi_param_defaults(window, cfg)
 
     cached = getattr(window, '_opt_param_cache', None) or {}
@@ -576,11 +580,11 @@ def show_field_preview(window, x_decision=None) -> None:
     canvas = (getattr(window, 'canvas_layout', None)
               or getattr(window, 'canvas_pareto', None))
     if canvas is None:
-        print(f"[optimize] field preview (no canvas):")
-        print(f"  L: {L_field.min():.2f}–{L_field.max():.2f} mm "
-              f"(avg {L_field.mean():.2f})")
-        print(f"  t: {t_field.min():.3f}–{t_field.max():.3f} mm "
-              f"(avg {t_field.mean():.3f})")
+        _log.info(f"[optimize] field preview (no canvas):")
+        _log.info(f"  L: {L_field.min():.2f}–{L_field.max():.2f} mm "
+                  f"(avg {L_field.mean():.2f})")
+        _log.info(f"  t: {t_field.min():.3f}–{t_field.max():.3f} mm "
+                  f"(avg {t_field.mean():.3f})")
         return
 
     fig = canvas.figure
@@ -631,7 +635,7 @@ def _rewire_preview_button(window) -> None:
         btn.clicked.connect(lambda *_: show_field_preview(window))
         window._field_preview_wired = True
     except Exception as e:
-        print(f"[optimize] preview rewire failed: {e}")
+        _log.warning(f"[optimize] preview rewire failed: {e}")
 
 
 # ─── Public API (called by main.py) ─────────────────────────────────
@@ -796,11 +800,11 @@ def run_optimize(window) -> None:
         try:
             show_pareto(window, res)
         except Exception as e:
-            print(f"[optimize] show_pareto failed: {e}")
+            _log.warning(f"[optimize] show_pareto failed: {e}")
         try:
             save_opt_results(window, res, cfg)
         except Exception as e:
-            print(f"[optimize] save_opt_results failed: {e}")
+            _log.warning(f"[optimize] save_opt_results failed: {e}")
 
     def _on_error(msg):
         _set_status(window, f"qNEHVI ERROR: {msg}")
@@ -824,7 +828,7 @@ def run_optimize(window) -> None:
         # Release the reentrance latch in case the error fires before
         # worker.start() unblocked it (e.g. worker constructor raised).
         window._opt_launching = False
-        print(f"[optimize] worker error: {msg}")
+        _log.warning(f"[optimize] worker error: {msg}")
 
     def _on_hv(iter_idx, hv, hv_hist):
         # Phase 2 — push HV trace to the sparkline (preferred) or surface as
@@ -890,8 +894,8 @@ def run_optimize(window) -> None:
     # button for the duration of the run, so this does not re-open the
     # double-click window.
     window._opt_launching = False
-    print(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
-          f"save_dir={save_dir}")
+    _log.info(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
+              f"save_dir={save_dir}")
     # Update the button label to match the actual algorithm in case the
     # legacy "(NSGA-II)" wording is still on screen.
     btn = getattr(window, '_opt_btn', None)
@@ -975,10 +979,10 @@ def show_pareto(window, res: dict) -> None:
 
     canvas = getattr(window, 'canvas_pareto', None)
     if canvas is None:
-        print("[optimize] Pareto front (no canvas; showing top 10):")
+        _log.info("[optimize] Pareto front (no canvas; showing top 10):")
         order = np.argsort(Q)[::-1][:10]
         for i in order:
-            print(f"  Q = {Q[i]:8.0f} W/m   dP = {dP[i]:8.0f} Pa")
+            _log.info(f"  Q = {Q[i]:8.0f} W/m   dP = {dP[i]:8.0f} Pa")
         return
 
     fig = canvas.figure
@@ -1016,7 +1020,7 @@ def show_pareto(window, res: dict) -> None:
         try:
             window._pareto_pick_cid = canvas.mpl_connect('pick_event', handler)
         except Exception as e:
-            print(f"[optimize] mpl_connect(pick_event) failed: {e}")
+            _log.warning(f"[optimize] mpl_connect(pick_event) failed: {e}")
 
     # Update stage pills: config (done), running (done), result (active)
     _set_stage_pill(window, 'config',  'done')
@@ -1083,7 +1087,7 @@ def save_opt_results(window, res: dict, cfg: dict) -> None:
                        if isinstance(v, (int, float, str, bool, type(None)))},
                       f, indent=2)
     except Exception as e:
-        print(f"[optimize] cfg dump failed: {e}")
+        _log.warning(f"[optimize] cfg dump failed: {e}")
     _set_status(window, f'results saved → {save_dir}')
 
 

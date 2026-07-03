@@ -55,6 +55,10 @@ try:
 except ImportError:
     _HAS_PYAMG = False
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ─── Adaptive parallel-dispatch threshold ─────────────────────────
 # Below this cell count the serial natural-ordering Gauss-Seidel sweep is
@@ -1529,15 +1533,15 @@ class SIMPLESolver3D:
                 )
                 self._coarse_bootstrap_info = _bs_info
                 if verbose and _bs_info.get('applied'):
-                    print(f"  3D coarse bootstrap: shape="
-                          f"{_bs_info['coarse_shape']}, iters="
-                          f"{_bs_info['coarse_iters']}, "
-                          f"res={_bs_info['coarse_residual']:.3e}")
+                    _log.info(f"  3D coarse bootstrap: shape="
+                              f"{_bs_info['coarse_shape']}, iters="
+                              f"{_bs_info['coarse_iters']}, "
+                              f"res={_bs_info['coarse_residual']:.3e}")
             except Exception as exc:   # robust: never block fine solve
                 self._coarse_bootstrap_info = {
                     'applied': False, 'reason': f'exception:{exc}'}
                 if verbose:
-                    print(f"  3D coarse bootstrap skipped: {exc}")
+                    _log.warning(f"  3D coarse bootstrap skipped: {exc}")
 
         if self._pp_sparsity is None:
             self._pp_sparsity = _build_pp_sparsity_3d(Nx, Ny, Nz,
@@ -1716,7 +1720,7 @@ class SIMPLESolver3D:
             self.residuals.append(res)
 
             if verbose and it % 50 == 0:
-                print(f"  3D iter {it:5d}  |R| = {res:.3e}")
+                _log.info(f"  3D iter {it:5d}  |R| = {res:.3e}")
 
             # Legacy strict exit (unchanged): absolute residual below tol.
             if res < tol and it >= 10:

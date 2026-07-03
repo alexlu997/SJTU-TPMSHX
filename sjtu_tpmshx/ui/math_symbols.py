@@ -20,6 +20,10 @@ from __future__ import annotations
 
 from typing import Dict
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ─── Greek alphabet (lower-case + select upper) ────────────────────
 

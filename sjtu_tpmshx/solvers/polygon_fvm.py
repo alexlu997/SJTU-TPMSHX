@@ -33,6 +33,10 @@ from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
                                BC_INLET_A, BC_OUTLET_A,
                                BC_INLET_B, BC_OUTLET_B)
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ===================================================================
 #  Porous resistance (Darcy-Forchheimer)
@@ -488,17 +492,17 @@ def solve_velocity_darcy(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         R_cell = 0.7 * R_cell + 0.3 * R_new   # under-relax
 
         if verbose and (it <= 3 or it % 5 == 0):
-            print(f"  Darcy iter {it:3d}: max(dR/R)={max_dR:.3e}, "
-                  f"|U|=[{_umag_gg.min():.3f}, {_umag_gg.max():.3f}]")
+            _log.info(f"  Darcy iter {it:3d}: max(dR/R)={max_dR:.3e}, "
+                      f"|U|=[{_umag_gg.min():.3f}, {_umag_gg.max():.3f}]")
 
         if max_dR < tol and it > 1:
             if verbose:
-                print(f"  [OK] Darcy converged at iter {it}")
+                _log.info(f"  [OK] Darcy converged at iter {it}")
             break
 
     if verbose:
         umag = np.sqrt(u_cell**2 + v_cell**2)
-        print(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
+        _log.info(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
 
     return u_cell, v_cell, P, face_Un
 
@@ -582,11 +586,11 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
         res = _mass_residual(face_flux, nc)
         if verbose and it % 100 == 0:
             umag = np.sqrt(u_cell**2 + v_cell**2)
-            print(f"  SIMPLE iter {it:4d}: |R|={res:.3e}, "
-                  f"|U|=[{umag.min():.2f}, {umag.max():.2f}]")
+            _log.info(f"  SIMPLE iter {it:4d}: |R|={res:.3e}, "
+                      f"|U|=[{umag.min():.2f}, {umag.max():.2f}]")
         if res < tol and it > 10:
             if verbose:
-                print(f"  [OK] Converged at iter {it}, |R|={res:.3e}")
+                _log.info(f"  [OK] Converged at iter {it}, |R|={res:.3e}")
             break
 
     # Extract face-normal velocity for energy solver
@@ -595,7 +599,7 @@ def solve_velocity_simple(mesh, tpms_type, L_mm, t_mm, eps, r_h,
 
     if verbose:
         umag = np.sqrt(u_cell**2 + v_cell**2)
-        print(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
+        _log.info(f"  |U|: [{umag.min():.3f}, {umag.max():.3f}], mean={umag.mean():.3f}")
 
     return u_cell, v_cell, P, face_Un
 
@@ -890,13 +894,13 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
             K_ss=za['K_ss_arr'], epsilon=za['eps_arr'],
         )
 
-    if verbose: print("=== Darcy solver: Fluid A ===")
+    if verbose: _log.info("=== Darcy solver: Fluid A ===")
     uA, vA, PA, fUnA = solve_velocity_darcy(
         mesh, tpms_type, L_mm, t_mm, eps, r_h,
         rho_A, mu_A, T_inA, u_A, edge_inA,
         BC_INLET_A, BC_OUTLET_A, verbose=verbose, **darcy_kw_A)
 
-    if verbose: print("=== Darcy solver: Fluid B ===")
+    if verbose: _log.info("=== Darcy solver: Fluid B ===")
     uB, vB, PB, fUnB = solve_velocity_darcy(
         mesh, tpms_type, L_mm, t_mm, eps, r_h,
         rho_B, mu_B, T_inB, u_B, edge_inB,
@@ -919,8 +923,8 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
         h_vB_arr = np.full(nc, h_vB)
 
     if verbose:
-        print(f"  h_vA: [{h_vA_arr.min():.0f}, {h_vA_arr.max():.0f}] W/(m3.K)")
-        print(f"  h_vB: [{h_vB_arr.min():.0f}, {h_vB_arr.max():.0f}] W/(m3.K)")
+        _log.info(f"  h_vA: [{h_vA_arr.min():.0f}, {h_vA_arr.max():.0f}] W/(m3.K)")
+        _log.info(f"  h_vB: [{h_vB_arr.min():.0f}, {h_vB_arr.max():.0f}] W/(m3.K)")
 
     # Energy solver params
     e_K_ffA = energy_kw.get('K_ffA', K_ffA)
@@ -928,7 +932,7 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
     e_K_ss  = energy_kw.get('K_ss', K_ss)
     e_eps   = energy_kw.get('epsilon', eps)
 
-    if verbose: print("=== Solving energy (LTNE) ===")
+    if verbose: _log.info("=== Solving energy (LTNE) ===")
     Ta, Tb, Ts = solve_energy(
         mesh, fUnA, fUnB,
         e_K_ffA, e_K_ffB, e_K_ss, h_vA_arr, h_vB_arr,
@@ -937,9 +941,9 @@ def solve_polygon_domain(mesh, tpms_type, L_mm, t_mm, eps, D_h,
         max_iter=max_iter_energy, progress_cb=progress_cb)
 
     if verbose:
-        print(f"  Ta: [{Ta.min():.1f}, {Ta.max():.1f}] K")
-        print(f"  Tb: [{Tb.min():.1f}, {Tb.max():.1f}] K")
-        print(f"  Ts: [{Ts.min():.1f}, {Ts.max():.1f}] K")
+        _log.info(f"  Ta: [{Ta.min():.1f}, {Ta.max():.1f}] K")
+        _log.info(f"  Tb: [{Tb.min():.1f}, {Tb.max():.1f}] K")
+        _log.info(f"  Ts: [{Ts.min():.1f}, {Ts.max():.1f}] K")
 
     return {'u_A': uA, 'v_A': vA, 'P_A': PA, 'face_Un_A': fUnA,
             'u_B': uB, 'v_B': vB, 'P_B': PB, 'face_Un_B': fUnB,

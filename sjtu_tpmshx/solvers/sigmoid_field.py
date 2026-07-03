@@ -17,6 +17,10 @@ from .tpms_geometry import compute_geometry, _phi_grid, _C_from_tL, _eps_from_C,
 from .tpms_calc import (Pr, Sa_mm, P_atm,
                        air_density, air_viscosity, air_conductivity, air_cp)
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ── Sigmoid basis ────────────────────────────────────────────
 

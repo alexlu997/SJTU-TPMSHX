@@ -7,6 +7,10 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 def _flist(text, cast=float):
     """'5, 6, 7' → [5.0,6.0,7.0]; 空 → []。"""
     return [cast(x) for x in str(text).replace("|", ",").split(",") if x.strip()]
@@ -114,7 +118,7 @@ def _set_status(window, text):
     if t is not None and hasattr(t, "setText"):
         try: t.setText(text); return
         except Exception: pass
-    print(f"[quick-design] {text}")
+    _log.info(f"[quick-design] {text}")
 
 def _fill_table(window, feasible, best):
     """把可行件按 V 排序填进 window._qd_table (QTableWidget)。无表则打印。"""
@@ -128,11 +132,11 @@ def _fill_table(window, feasible, best):
     if tbl is None or not hasattr(tbl, "setRowCount"):
         for d in rows:
             vd = getattr(d, "validity", "")
-            print(f"  {d.topo} l={d.l} t={d.t} WxH={_hmm(d)} Lx={d.Lx*1e3:.1f} "
-                  f"V={d.V*1e3:.3f}L wt={d.weight:.3f} dPh={d.dP_hot_max*100:.2f} "
-                  f"dPc={d.dP_cold_max*100:.2f} Re_h={getattr(d,'Re_hot_max',0):.0f} "
-                  f"Re_c={getattr(d,'Re_cold_max',0):.0f} "
-                  f"{'⚠'+vd if vd else ''} {','.join(tags.get(id(d),[]))}")
+            _log.info(f"  {d.topo} l={d.l} t={d.t} WxH={_hmm(d)} Lx={d.Lx*1e3:.1f} "
+                      f"V={d.V*1e3:.3f}L wt={d.weight:.3f} dPh={d.dP_hot_max*100:.2f} "
+                      f"dPc={d.dP_cold_max*100:.2f} Re_h={getattr(d,'Re_hot_max',0):.0f} "
+                      f"Re_c={getattr(d,'Re_cold_max',0):.0f} "
+                      f"{'⚠'+vd if vd else ''} {','.join(tags.get(id(d),[]))}")
         return
     cols = ["拓扑","l","t","W×H(mm)","Lx(mm)","V(L)","重量(kg)","热侧压损%","冷侧压损%",
             "Re热","Re冷","验证域","标签"]

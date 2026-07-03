@@ -77,6 +77,9 @@ from pathlib import Path
 import numpy as np
 
 from .smooth_df import SmoothDF, _geom
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 RE_REF = 2530.0          # geometric mean of production window 400-16000
 GATE_CF_G7 = 534.8       # production / Shanghai-3D-validated cF, Gyroid L7/t0.6
@@ -253,11 +256,11 @@ class GammaDF:
         return float(K), float(cF)
 
     def summary(self) -> None:
-        print(f"GammaDF[{self.tpms}]  m_lat={self.m_lat:.3f}  "
-              f"shared_curvature={'%.2f' % self._c if self.use_curvature else 'off'}")
+        _log.info(f"GammaDF[{self.tpms}]  m_lat={self.m_lat:.3f}  "
+                  f"shared_curvature={'%.2f' % self._c if self.use_curvature else 'off'}")
         for (L, t), g in sorted(self._gamma_anch.items()):
-            print(f"  anchor {self.tpms[0]}_{L}_{t}: gamma={g:.3f} "
-                  f"(fit {self._ev(L, t):.3f})")
+            _log.info(f"  anchor {self.tpms[0]}_{L}_{t}: gamma={g:.3f} "
+                      f"(fit {self._ev(L, t):.3f})")
         if self.gamma_g7 is not None:
-            print(f"  G7 calibration gamma={self.gamma_g7:.3f} "
-                  f"-> cF(7,0.6)={self.predict(7.0, 0.6)[1]:.1f}")
+            _log.info(f"  G7 calibration gamma={self.gamma_g7:.3f} "
+                      f"-> cF(7,0.6)={self.predict(7.0, 0.6)[1]:.1f}")

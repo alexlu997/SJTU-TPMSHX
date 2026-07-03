@@ -54,6 +54,9 @@ from solvers.continuous_field import (
     DEFAULT_T_BOUNDS,
     from_decision_vector,
 )
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 # ─── Defaults ───────────────────────────────────────────────────────

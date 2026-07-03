@@ -72,6 +72,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from scipy.interpolate import RBFInterpolator
 from solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 R_AIR = 287.05
 K_S_CELLS = 10
@@ -448,15 +451,15 @@ class SurrogateV3:
 
     def summary(self) -> None:
         """Print model summary."""
-        print(f"SurrogateV3 ({self.tpms})")
-        print(f"  Geometries: {len(self.ref)}")
-        print(f"  Training rows: {len(self.rows_df)}")
-        print(f"  K_min: {self.K_min:.0e}")
-        print(f"\n  Per-geometry (K, c_F):")
-        print(f"  {'L':>3} {'t':>4} {'K':>10} {'c_F':>8}")
+        _log.info(f"SurrogateV3 ({self.tpms})")
+        _log.info(f"  Geometries: {len(self.ref)}")
+        _log.info(f"  Training rows: {len(self.rows_df)}")
+        _log.info(f"  K_min: {self.K_min:.0e}")
+        _log.info(f"\n  Per-geometry (K, c_F):")
+        _log.info(f"  {'L':>3} {'t':>4} {'K':>10} {'c_F':>8}")
         for _, r in self.ref.iterrows():
             K_str = f"{r.K:.3e}" if r.K is not None and not np.isnan(r.K) else "N/A"
-            print(f"  {r.L_mm:3.0f} {r.t_mm:4.1f} {K_str:>10} {r.c_F:8.1f}")
+            _log.info(f"  {r.L_mm:3.0f} {r.t_mm:4.1f} {K_str:>10} {r.c_F:8.1f}")
 
 
 # ==================================================================
@@ -481,7 +484,7 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
                    # 182+42+7 historical "total" guess); corrected 2026-05-28.
 
     K, c_F = model.predict(L, t)
-    print(f"K = {K:.4e}, c_F = {c_F:.2f}")
+    _log.info(f"K = {K:.4e}, c_F = {c_F:.2f}")
 
     err_sq = 0.0
     n_valid = 0
@@ -514,8 +517,8 @@ def eval_shanghai(model: SurrogateV3, L: float = 7.0, t: float = 0.6):
 
     rmsre = (sqrt(err_sq / n_valid) * 100) if n_valid else float('nan')
     if n_invalid:
-        print(f"  ⚠ {n_invalid}/16 cases infeasible (P_out²≤0) — "
-              f"excluded from RMSRE (computed over {n_valid} valid)")
+        _log.warning(f"  ⚠ {n_invalid}/16 cases infeasible (P_out²≤0) — "
+                     f"excluded from RMSRE (computed over {n_valid} valid)")
     return rmsre, results
 
 
@@ -576,11 +579,11 @@ def eval_loo(model: SurrogateV3):
             dPp = Pit[_ok] - np.sqrt(Psq[_ok])
             mape = float(np.mean(np.abs(dPp - dPt[_ok]) / dPt[_ok]) * 100)
         if not _ok.all():
-            print(f"  ⚠ L={r.L_mm:.0f} t={r.t_mm:.1f}: "
-                  f"{int((~_ok).sum())}/{_ok.size} pts infeasible — excluded")
+            _log.warning(f"  ⚠ L={r.L_mm:.0f} t={r.t_mm:.1f}: "
+                         f"{int((~_ok).sum())}/{_ok.size} pts infeasible — excluded")
         mapes.append(mape)
-        print(f"  L={r.L_mm:.0f} t={r.t_mm:.1f}: "
-              f"K={K_p:.3e} cF={cF_p:.0f} MAPE={mape:.1f}%")
+        _log.info(f"  L={r.L_mm:.0f} t={r.t_mm:.1f}: "
+                  f"K={K_p:.3e} cF={cF_p:.0f} MAPE={mape:.1f}%")
 
     return float(np.nanmean(mapes))  # Codex #6: skip fully-infeasible geoms
 

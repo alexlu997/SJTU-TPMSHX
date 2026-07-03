@@ -30,6 +30,10 @@ from scipy.interpolate import RectBivariateSpline
 
 from . import tpms_calc
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ─── Default decision-vector layout ─────────────────────────────────
 

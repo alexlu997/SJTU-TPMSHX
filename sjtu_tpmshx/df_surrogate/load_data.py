@@ -38,6 +38,9 @@ _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parent.parent  # .../sjtu_tpmshx
 sys.path.insert(0, str(_PROJECT_ROOT))
 from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from logutil import get_logger  # noqa: E402
+
+_log = get_logger(__name__)
 
 DATA_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"
 
@@ -120,7 +123,7 @@ def _load_sheet(tpms: str) -> pd.DataFrame:
     l8_mask = (df["L_mm"] == 8.0) & (df["Re"] < _L8_RE_MIN)
     if l8_mask.any():
         df = df[~l8_mask].reset_index(drop=True)
-        print(f"  [{tpms}] dropped {n_before - len(df)} L=8 rows with Re < {_L8_RE_MIN:g}")
+        _log.info(f"  [{tpms}] dropped {n_before - len(df)} L=8 rows with Re < {_L8_RE_MIN:g}")
 
     return df
 

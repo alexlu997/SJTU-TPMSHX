@@ -44,6 +44,9 @@ _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parent.parent          # .../sjtu_tpmshx
 sys.path.insert(0, str(_PROJECT_ROOT))
 from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from logutil import get_logger  # noqa: E402
+
+_log = get_logger(__name__)
 
 PREBUILT_CSV = _THIS.parent / "_prebuilt" / "smooth_df_coeffs.csv"
 WATER_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "water-cfd-raw.xlsx"

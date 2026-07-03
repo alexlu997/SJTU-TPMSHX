@@ -56,6 +56,10 @@ from .tpms_props import (  # noqa: F401 — re-exports
 )
 from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 # ── Physical constants ────────────────────────────────────────
 Pr    = 0.72       # Prandtl number (air, approximately constant)
 Sa_mm = 0.031      # Surface roughness Sa [mm]  (= 31 μm, constant for both TPMS types)

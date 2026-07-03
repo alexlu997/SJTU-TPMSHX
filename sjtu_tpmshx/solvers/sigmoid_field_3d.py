@@ -26,6 +26,10 @@ from solvers.sigmoid_field import _sigmoid, _blend_1d, _nu_vec
 from solvers.tpms_calc import (air_density, air_viscosity,
                                 air_conductivity, P_atm)
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 def _xz_blend(ctrl_xz, x_frac, z_frac, width_x, width_z):
     """Tensor-product sigmoid paint-over in (x, z) plane.

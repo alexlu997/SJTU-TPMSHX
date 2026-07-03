@@ -65,6 +65,9 @@ from solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_T_BOUNDS,
 )
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 # ─── Default cfg (continuous-field flavour) ─────────────────────────

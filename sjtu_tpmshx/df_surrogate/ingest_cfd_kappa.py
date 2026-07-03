@@ -29,6 +29,9 @@ import numpy as np
 
 from df_surrogate.predict import predict_K_cF
 from df_surrogate import kappa_asym
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 def _monotone_interp(r_pts, k_pts):

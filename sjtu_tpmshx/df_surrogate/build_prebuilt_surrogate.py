@@ -18,6 +18,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from df_surrogate.surrogate_v3 import SurrogateV3, XLSX
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 def main() -> int:

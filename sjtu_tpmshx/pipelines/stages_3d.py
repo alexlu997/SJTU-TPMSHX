@@ -65,6 +65,9 @@ from pipelines.stages_3d_helpers import (  # Phase 3: extracted pure helpers
     _balance_stream_outflow, _build_chi_B_union_extrude,
     _build_chi_B_mass_flux_threshold, _build_chi_B_velocity_threshold,
 )
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
     """Pre-solve choke gate + the legacy 1D P_ref_abs seed.
@@ -404,18 +407,18 @@ def _prof_res_trace(tag, solver):
     try:
         r = list(getattr(solver, 'residuals', []) or [])
         if not r:
-            print(f"[PROF-RES] {tag}: (no residuals)", flush=True)
+            _log.info(f"[PROF-RES] {tag}: (no residuals)")
             return
         import numpy as _np
         arr = _np.asarray(r, dtype=float)
         i_min = int(_np.argmin(arr))
         head = " ".join(f"{x:.2e}" for x in arr[:5])
         tail = " ".join(f"{x:.2e}" for x in arr[-5:])
-        print(f"[PROF-RES] {tag}: n={len(arr)} first=[{head}] "
-              f"last=[{tail}] min={arr[i_min]:.2e}@{i_min} "
-              f"final={arr[-1]:.2e}", flush=True)
+        _log.info(f"[PROF-RES] {tag}: n={len(arr)} first=[{head}] "
+                  f"last=[{tail}] min={arr[i_min]:.2e}@{i_min} "
+                  f"final={arr[-1]:.2e}")
     except Exception as _e:
-        print(f"[PROF-RES] {tag}: trace failed: {_e}", flush=True)
+        _log.warning(f"[PROF-RES] {tag}: trace failed: {_e}")
 
 
 def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
@@ -463,8 +466,8 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
 
     if _prof:
         _dt = _time.perf_counter() - _t0
-        print(f"[PROF] initial SIMPLE (A||B parallel) {_dt:7.2f}s  "
-              f"A={res[0]}  B={res[1]}  (cap={max_iter})", flush=True)
+        _log.info(f"[PROF] initial SIMPLE (A||B parallel) {_dt:7.2f}s  "
+                  f"A={res[0]}  B={res[1]}  (cap={max_iter})")
         _prof_res_trace("initial SIMPLE_A", sA)
         _prof_res_trace("initial SIMPLE_B", sB)
 
@@ -901,10 +904,10 @@ def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
             dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
                 L, H, Lz, Nx_u, Ny_u, Nz_u,
                 n_refine=8, first_cell=0.02e-3, growth=1.8)
-            print(f"[3D grid] wall-refine: user {Nx_u}x{Ny_u}x{Nz_u} -> "
-                  f"actual {Nx}x{Ny}x{Nz}")
+            _log.info(f"[3D grid] wall-refine: user {Nx_u}x{Ny_u}x{Nz_u} -> "
+                      f"actual {Nx}x{Ny}x{Nz}")
         except ValueError as e:
-            print(f"[3D grid] wall-refine skipped ({e}); using uniform")
+            _log.warning(f"[3D grid] wall-refine skipped ({e}); using uniform")
             dx = np.full(Nx_u, L / Nx_u, dtype=np.float64)
             dy = np.full(Ny_u, H / Ny_u, dtype=np.float64)
             dz = np.full(Nz_u, Lz / Nz_u, dtype=np.float64)
@@ -1132,8 +1135,8 @@ def _run_3d_stack(cfg):
         cF_A_arr = np.ascontiguousarray(cF_sol.mean(axis=0))
         K_pred = float(K_A_arr.mean())
         cF_pred = float(cF_A_arr.mean())
-        print(f"[3D zones] using {len(zone_cells)} zone cells; "
-              f"K range [{K_field_3d.min():.2e}, {K_field_3d.max():.2e}]")
+        _log.info(f"[3D zones] using {len(zone_cells)} zone cells; "
+                  f"K range [{K_field_3d.min():.2e}, {K_field_3d.max():.2e}]")
         # Zoned path is a uniform-only-δ exception: no asymmetric split here.
         K_pred_B, cF_pred_B = K_pred, cF_pred
     else:
@@ -1328,9 +1331,9 @@ def _run_3d_stack(cfg):
         if not _a0_conv:
             _simple_nonconv.append('A@init')
         if _prof_t_a0 is not None:
-            print(f"[PROF] initial SIMPLE_A (serial, no-B) "
-                  f"{_time.perf_counter()-_prof_t_a0:7.2f}s  "
-                  f"iters={_a0_it}  conv={_a0_conv}  (cap=2000)", flush=True)
+            _log.info(f"[PROF] initial SIMPLE_A (serial, no-B) "
+                      f"{_time.perf_counter()-_prof_t_a0:7.2f}s  "
+                      f"iters={_a0_it}  conv={_a0_conv}  (cap=2000)")
         ucB = np.zeros((Nx, Ny, Nz))
         vcB = np.zeros((Nx, Ny, Nz))
         wcB = np.zeros((Nx, Ny, Nz))
@@ -1735,9 +1738,9 @@ def _run_3d_stack(cfg):
                 # NOTE: legacy path does NOT modify K_ffB — that's exactly
                 # the diffusion-leak channel the per-cell path closes.
                 if outer == 0:
-                    print(f"[M4-legacy] r_in={_r_in:.4f} r_out={_r_out:.4f} "
-                          f"mode={_mode} r_eff={r_eff:.4f} "
-                          f"p={p} η_eff={eta_eff:.4f}")
+                    _log.info(f"[M4-legacy] r_in={_r_in:.4f} r_out={_r_out:.4f} "
+                              f"mode={_mode} r_eff={r_eff:.4f} "
+                              f"p={p} η_eff={eta_eff:.4f}")
             elif _closure == 'per_cell_chi_b':
                 # ── Phase 1 fix: per-cell 3D participation field ──
                 _method = cfg.get('chi_B_method', 'mass_flux_threshold')
@@ -1778,10 +1781,10 @@ def _run_3d_stack(cfg):
                 K_ffB      = K_ffB      * chi_B_eff_K
                 if outer == 0:
                     _part_frac = float(np.sum(chi_B > 0.5)) / chi_B.size
-                    print(f"[χ_B] closure=per_cell_chi_b method={_method} "
-                          f"min={chi_B.min():.3f} max={chi_B.max():.3f} "
-                          f"mean={chi_B.mean():.3f} part_frac={_part_frac:.3f} "
-                          f"floor={chi_floor:.1e}")
+                    _log.info(f"[χ_B] closure=per_cell_chi_b method={_method} "
+                              f"min={chi_B.min():.3f} max={chi_B.max():.3f} "
+                              f"mean={chi_B.mean():.3f} part_frac={_part_frac:.3f} "
+                              f"floor={chi_floor:.1e}")
             else:
                 chi_B = np.ones((Nx, Ny, Nz), dtype=np.float64)
 
@@ -1808,8 +1811,8 @@ def _run_3d_stack(cfg):
             _h2_floor = float(cfg.get('audit_h2_K_floor', 1e-6))
             K_ffB[_sl] = K_ffB[_sl] * 0.0 + _h2_floor * float(np.mean(K_ffB))
             if outer == 0:
-                print(f"[H2-audit] K_ffB := {_h2_floor:.0e}·K̄ at outlet "
-                      f"axis={_ax} idx={_idx} ({_layers} cell-layer)")
+                _log.info(f"[H2-audit] K_ffB := {_h2_floor:.0e}·K̄ at outlet "
+                          f"axis={_ax} idx={_idx} ({_layers} cell-layer)")
 
         # Extract SIMPLE's staggered face velocities in REAL coords for the
         # mass-conserving LTNE kernel (2026-04-25 FV#6).
@@ -1989,11 +1992,11 @@ def _run_3d_stack(cfg):
                                residual=_ltne_info_d.get('residual',0.0)))
         if _prof_t_ltne is not None:
             _dt = _time.perf_counter() - _prof_t_ltne
-            print(f"[PROF] outer {outer}: LTNE {_dt:7.2f}s  "
-                  f"iters={_ltne_info_d.get('iterations',0)}  "
-                  f"conv={_ltne_info_d.get('converged',False)}  "
-                  f"res={_ltne_info_d.get('residual',0.0):.2e}  "
-                  f"(cap={_ltne_max_iter})", flush=True)
+            _log.info(f"[PROF] outer {outer}: LTNE {_dt:7.2f}s  "
+                      f"iters={_ltne_info_d.get('iterations',0)}  "
+                      f"conv={_ltne_info_d.get('converged',False)}  "
+                      f"res={_ltne_info_d.get('residual',0.0):.2e}  "
+                      f"(cap={_ltne_max_iter})")
 
         _converged, _ = _outer_conv.check({'Ta': Ta})
         return _converged, None
@@ -2097,8 +2100,8 @@ def _run_3d_stack(cfg):
         if not _sa_conv:
             _simple_nonconv.append(f'A@outer{outer}')
         if _prof_t_sa is not None:
-            print(f"[PROF] outer {outer}: SIMPLE_A {_time.perf_counter()-_prof_t_sa:7.2f}s  "
-                  f"iters={_sa_it}  conv={_sa_conv}  (cap=600)", flush=True)
+            _log.info(f"[PROF] outer {outer}: SIMPLE_A {_time.perf_counter()-_prof_t_sa:7.2f}s  "
+                      f"iters={_sa_it}  conv={_sa_conv}  (cap=600)")
 
         # Refresh fluid-property fields using the *local* T field, keeping
         # the spatial structure built by the zoned-geometry pass up-front
@@ -2214,8 +2217,8 @@ def _run_3d_stack(cfg):
             if not _sb_conv:
                 _simple_nonconv.append(f'B@outer{outer}')
             if _prof_t_sb is not None:
-                print(f"[PROF] outer {outer}: SIMPLE_B {_time.perf_counter()-_prof_t_sb:7.2f}s  "
-                      f"iters={_sb_it}  conv={_sb_conv}  (cap=600)", flush=True)
+                _log.info(f"[PROF] outer {outer}: SIMPLE_B {_time.perf_counter()-_prof_t_sb:7.2f}s  "
+                          f"iters={_sb_it}  conv={_sb_conv}  (cap=600)")
                 _prof_res_trace(f"outer {outer} SIMPLE_B", sB)
 
             # rho_cp_fB already refreshed above (P0/P1/P2 block)
@@ -2457,12 +2460,12 @@ def _run_3d_stack(cfg):
         eps_obs = ((T_B_out - T_inB) / (T_inA - T_inB)
                    if sB is not None and T_inA != T_inB else 0.0)
         chi_p50 = float(np.percentile(chi_B, 50)) if chi_B is not None else 1.0
-        print(f"[SWEEP-CSV] {cfg.get('_case_label','?')},"
-              f"{len(_ltne_info)},{_ltne_iters},{_ltne_conv},"
-              f"{any(_ltne_hit_max)},{_ltne_info[-1]['residual']:.2e},"
-              f"{T_A_out:.1f},{T_B_out:.1f},{Q:.1f},"
-              f"{Q_sA:.1f},{Q_sB:.1f},{Q_sA+Q_sB:.1f},"
-              f"{energy_rel:.6f},{eps_obs:.4f},{chi_p50:.4f}")
+        _log.info(f"[SWEEP-CSV] {cfg.get('_case_label','?')},"
+                  f"{len(_ltne_info)},{_ltne_iters},{_ltne_conv},"
+                  f"{any(_ltne_hit_max)},{_ltne_info[-1]['residual']:.2e},"
+                  f"{T_A_out:.1f},{T_B_out:.1f},{Q:.1f},"
+                  f"{Q_sA:.1f},{Q_sB:.1f},{Q_sA+Q_sB:.1f},"
+                  f"{energy_rel:.6f},{eps_obs:.4f},{chi_p50:.4f}")
     # Run diagnostics (Q-DIAG / CHI / CHI-BC) — OPT-IN, skipped in production.
     # None of these locals feed the return dict; gating avoids the extra
     # _face_flux_weights / percentile / histogram recompute + ~30 lines of
@@ -2486,44 +2489,44 @@ def _run_3d_stack(cfg):
         else:
             Q_enth_B_phys = 0.0
 
-        print(f"[Q-DIAG] === LTNE-effective group ===")
-        print(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
-              f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
+        _log.info(f"[Q-DIAG] === LTNE-effective group ===")
+        _log.info(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
+                  f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
         if sB is not None:
-            print(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
-                  f"T_B_out={T_B_out:.1f} K (chi)  "
-                  f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
-                  f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
-        print(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
-              f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
-        print(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
-              f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
-              f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
+            _log.info(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
+                      f"T_B_out={T_B_out:.1f} K (chi)  "
+                      f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
+                      f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
+        _log.info(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
+                  f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
+        _log.info(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
+                  f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
+                  f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
 
-        print(f"[Q-DIAG] === Physical-boundary group ===")
-        print(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
-              f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
+        _log.info(f"[Q-DIAG] === Physical-boundary group ===")
+        _log.info(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
+                  f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
         if sB is not None:
-            print(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
-                  f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
-                  f"T_B_out={T_B_out:.1f} K")
-            print(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
+            _log.info(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
+                      f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
+                      f"T_B_out={T_B_out:.1f} K")
+            _log.info(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
 
         # ── REQ_2: χ_B distribution histogram ──
         if chi_B is not None:
             chi_flat = chi_B.ravel()
-            print(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
-                  f"mean={chi_flat.mean():.3f}")
-            print(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
-                  f"p25={_dbg.percentile(chi_flat,25):.3f} "
-                  f"p50={_dbg.percentile(chi_flat,50):.3f} "
-                  f"p75={_dbg.percentile(chi_flat,75):.3f} "
-                  f"p90={_dbg.percentile(chi_flat,90):.3f}")
+            _log.info(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
+                      f"mean={chi_flat.mean():.3f}")
+            _log.info(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
+                      f"p25={_dbg.percentile(chi_flat,25):.3f} "
+                      f"p50={_dbg.percentile(chi_flat,50):.3f} "
+                      f"p75={_dbg.percentile(chi_flat,75):.3f} "
+                      f"p90={_dbg.percentile(chi_flat,90):.3f}")
             hist, bin_edges = _dbg.histogram(chi_flat, bins=10, range=(0, 1))
-            print("[CHI] histogram bins:")
+            _log.info("[CHI] histogram bins:")
             for i, c in enumerate(hist):
-                print(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
-                      f"{c} ({100*c/chi_flat.size:.1f}%)")
+                _log.info(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
+                          f"{c} ({100*c/chi_flat.size:.1f}%)")
 
         # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
         if chi_B is not None and sB is not None:
@@ -2535,18 +2538,18 @@ def _run_3d_stack(cfg):
             if _ltne_mask_B_val is not None:
                 chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
                 if len(chi_in_patch) > 0:
-                    print(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
-                          f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
-                          f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
-                          f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
+                    _log.info(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
+                              f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
+                              f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
+                              f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
             # Outlet patch
             if chi_B_out_face is not None:
                 chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
                 if len(chi_out_patch) > 0:
-                    print(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
-                          f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
-                          f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
-                          f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
+                    _log.info(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
+                              f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
+                              f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
+                              f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
     # ═══════════════════════════════════════════════════════════════════
 
     _result = dict(

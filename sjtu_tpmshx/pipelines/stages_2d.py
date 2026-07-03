@@ -30,6 +30,9 @@ from pipelines._stage_common import (
     validate_domain_dims, surrogate_extrap_reasons, safe_float,
     geometry_props,
 )
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
@@ -233,7 +236,7 @@ def _parse_inputs_cfg(compute_cfg):
                         P_in=P_in_val,  # FIX (2026-06-24 audit): was defaulting to P_atm
                         allow_extrap=_allow_extrap,
                         fluid_type=fluid_A)  # air-only builder; non-air raises
-                    print(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
+                    _log.info(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
                     from solvers.zone_config import ZoneConfig
                     za = ZoneConfig.build_grid_arrays(
@@ -241,7 +244,7 @@ def _parse_inputs_cfg(compute_cfg):
                         grid['cells'],
                         grid['tpms_type'], grid['k_s'],
                         u_A, u_B, T_inA, T_inB, P_in_val)
-                    print(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
+                    _log.info(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
                 zone_config = 'grid'
             else:
                 # 1D zone mode — cfg.zones.config carries the resolved
@@ -259,8 +262,8 @@ def _parse_inputs_cfg(compute_cfg):
                     z_dim = H if z_axis == 'y' else L
                     za = zone_config.build_structured_arrays(
                         N_x, N_y, z_dim, axis=z_axis)
-                    print(f"[ZONE] {len(zone_config.zones)} zones along "
-                          f"{z_axis}")
+                    _log.info(f"[ZONE] {len(zone_config.zones)} zones along "
+                              f"{z_axis}")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -412,7 +415,7 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
         try:
             energy_dx, energy_dy, N_x, N_y = build_master_refined_grid(
                 L, H, N_x, N_y, n_refine=8, first_cell=0.02e-3, growth=1.8)
-            print(f"[run_calculation] Wall-refined grid: {N_x}×{N_y} cells (4-wall BL resolved)")
+            _log.info(f"[run_calculation] Wall-refined grid: {N_x}×{N_y} cells (4-wall BL resolved)")
         except ValueError:
             energy_dx = _aligned_grid(N_x, L, list(_x_breaks))
             energy_dy = _aligned_grid(N_y, H, list(_y_breaks))
@@ -896,8 +899,8 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
                                             cell_area=_ca)
-            print("\n[ZONE STATISTICS]")
-            print(format_zone_report(stats))
+            _log.info("\n[ZONE STATISTICS]")
+            _log.info(format_zone_report(stats))
             window._zone_stats = stats
         else:
             # 1D mode
@@ -905,8 +908,8 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
                                             zone_config.zones, cell_area=_ca)
-            print("\n[ZONE STATISTICS]")
-            print(format_zone_report(stats))
+            _log.info("\n[ZONE STATISTICS]")
+            _log.info(format_zone_report(stats))
             window._zone_stats = stats
             window._zone_boundaries_x = None
             window._zone_boundaries_y = None
@@ -1153,8 +1156,8 @@ def _compute_Q_richardson(
     except Exception as _q_exc:
         import traceback as _tb
         _tb.print_exc()
-        print(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
-              f"falling through to 1D-mean fallback.")
+        _log.warning(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
+                     f"falling through to 1D-mean fallback.")
         Q_A_fine = Q_B_fine = float('nan')
         Q_A_ext = Q_B_ext = float('nan')
         Q_fine_max = float('nan')
@@ -1221,15 +1224,15 @@ def _compute_Q_richardson(
                     f"Q_A={Q_A_simple:.0f} W/m, Q_B={Q_B_simple:.0f} W/m. "
                     f"Tighten tol or refine grid for production-grade Q.")
                 richardson_warn = True
-            print(f"[Q-calc] 1D fallback: Q_A={Q_A_simple:.1f}, "
-                  f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
-                  f"(T_out_A_mean={T_out_A_mean:.2f}K, "
-                  f"T_out_B_mean={T_out_B_mean:.2f}K)")
+            _log.warning(f"[Q-calc] 1D fallback: Q_A={Q_A_simple:.1f}, "
+                         f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
+                         f"(T_out_A_mean={T_out_A_mean:.2f}K, "
+                         f"T_out_B_mean={T_out_B_mean:.2f}K)")
         except Exception as _fb_exc:
             import traceback as _tb2
             _tb2.print_exc()
-            print(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
-                  f"Q_total stays nan.")
+            _log.warning(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
+                         f"Q_total stays nan.")
     return (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
             richardson_warn)
 
@@ -1675,9 +1678,9 @@ def _run_solvers(window, cfg, fields):
             {'Ta': Ta, 'Tb': Tb},
             extra=(drho_A, drho_B), extra_tol=_COUPLING_TOL)
         dT_A = _deltas['Ta']; dT_B = _deltas['Tb']
-        print(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
-              f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
-              f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
+        _log.info(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
+                  f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
+                  f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
         # Carry the under-relaxation inputs to `post` (avoids 4 more nonlocals).
         return _converged, (rho_A_field_new, rho_B_field_new,

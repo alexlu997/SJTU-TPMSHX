@@ -28,6 +28,10 @@ though the band spans 2*C in phi-units.
 import numpy as np
 from functools import lru_cache
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 # ── TPMS implicit functions ──────────────────────────────────────
 

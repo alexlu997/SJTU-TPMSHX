@@ -36,6 +36,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from . import tpms_calc
 
+from logutil import get_logger
+
+_log = get_logger(__name__)
+
 
 @dataclass
 class Zone:

@@ -38,6 +38,9 @@ from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._kernels_2d import minmod
 from ._solve_common import LowReExit
 from .tpms_calc import (air_density, air_viscosity, P_atm)
+from logutil import get_logger
+
+_log = get_logger(__name__)
 
 
 # ===================================================================
@@ -1631,12 +1634,12 @@ class SIMPLESolver:
                     pass
 
             if verbose and it % 200 == 0:
-                print(f"  iter {it:5d}  |R| = {res:.3e}")
+                _log.info(f"  iter {it:5d}  |R| = {res:.3e}")
             # Require minimum iterations for pressure field to develop
             # (exact PP gives mass convergence in 1 iter, but P needs more)
             if res < tol and it >= 20:
                 if verbose:
-                    print(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
+                    _log.info(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
                 self._enforce_mass_conservation(verbose=verbose)
                 return True, it
 
@@ -1647,13 +1650,13 @@ class SIMPLESolver:
                 if verbose:
                     _label = ('velocity static' if _reason == 'velocity'
                               else 'plateau stall')
-                    print(f"  [OK] Early exit ({_label}) at "
-                          f"iter {it}, |R| = {res:.3e}")
+                    _log.info(f"  [OK] Early exit ({_label}) at "
+                              f"iter {it}, |R| = {res:.3e}")
                 self._enforce_mass_conservation(verbose=verbose)
                 return True, it
 
         if verbose:
-            print(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
+            _log.warning(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
 
         # Post-solve: enforce mass conservation at partial outlet
         self._enforce_mass_conservation(verbose=verbose)
@@ -1725,9 +1728,9 @@ class SIMPLESolver:
             # Diagnostic: warn if rescale magnitude > 0.1% — indicates loose
             # pp-equation convergence, not a healthy "free" mass balance.
             if verbose and abs(scale - 1.0) > 1e-3:
-                print(f"  [WARN] outlet mass rescale = {scale:.6f} "
-                      f"(|Δ| = {abs(scale-1)*100:.3f}%); "
-                      f"pp-equation residual likely loose at outlet face.")
+                _log.warning(f"  [WARN] outlet mass rescale = {scale:.6f} "
+                             f"(|Δ| = {abs(scale-1)*100:.3f}%); "
+                             f"pp-equation residual likely loose at outlet face.")
             for i in range(Nx):
                 if self.outlet_frac[i] > 0.5:
                     self.v[i, Ny] *= scale
@@ -1769,9 +1772,9 @@ class SIMPLESolver:
 
         if verbose:
             tag = "[OK]" if iters < max_iter else "[!!]"
-            print(f"  {tag} Temperature: {iters} iters, "
-                  f"Tf=[{self.Tf.min():.2f}, {self.Tf.max():.2f}], "
-                  f"Ts=[{self.Ts.min():.2f}, {self.Ts.max():.2f}]")
+            _log.info(f"  {tag} Temperature: {iters} iters, "
+                      f"Tf=[{self.Tf.min():.2f}, {self.Tf.max():.2f}], "
+                      f"Ts=[{self.Ts.min():.2f}, {self.Ts.max():.2f}]")
         return iters < max_iter, iters
 
     # ──────────────── output for coupling ─────────────────────────

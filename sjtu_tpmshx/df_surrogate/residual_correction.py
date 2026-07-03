@@ -50,6 +50,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 from scipy.interpolate import RBFInterpolator
 
 from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from logutil import get_logger  # noqa: E402
+
+_log = get_logger(__name__)
 
 R_AIR = 287.05
 _KS = 16.0
