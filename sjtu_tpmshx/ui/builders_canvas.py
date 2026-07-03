@@ -284,7 +284,7 @@ def build_canvas_area(window):
         f"QMenu {{ background:{_t['card_bg']}; color:{_t['fg']}; "
         f"border:1px solid {_t['card_border']}; border-radius:6px; padding:4px; }}"
         f"QMenu::item {{ padding:6px 20px; border-radius:4px; }}"
-        f"QMenu::item:selected {{ background:{_t['accent_primary']}; color:#ffffff; }}")
+        f"QMenu::item:selected {{ background:{_t['accent_primary']}; color:{_t['tab_on_fg']}; }}")
     _ex_menu.addAction("导出结果 — CSV + NPZ", window._export_results)
     _ex_menu.addAction("导出图像 — PNG / SVG / PDF", window._export_figure)
     _ex_menu.addAction("复制当前图像", window._copy_figure_clipboard)
@@ -422,7 +422,7 @@ def build_canvas_area(window):
     _empty_box = QWidget()
     _empty_box.setStyleSheet(
         f"background:transparent; border:1px dashed {_t['card_border']};"
-        f"border-radius:8px;")
+        f"border-radius:6px;")
     _eb_lay = QVBoxLayout(_empty_box)
     _eb_lay.setContentsMargins(48, 48, 48, 40)
     _eb_lay.setSpacing(18)
@@ -585,11 +585,11 @@ def build_canvas_area(window):
                 bg=_surface_ra, fg=_sub_fg, bd=_border_sub)
             _pill_active = _pill_base.format(
                 bg=_t.get('accent_primary', '#3B82F6'),
-                fg='#FFFFFF',
+                fg=_t['tab_on_fg'],
                 bd=_t.get('accent_primary', '#3B82F6'))
             _pill_done = _pill_base.format(
                 bg=_t.get('accent_green', '#22C55E'),
-                fg='#FFFFFF',
+                fg=_t['tab_on_fg'],
                 bd=_t.get('accent_green', '#22C55E'))
             window._opt_pill_styles = (_pill_idle, _pill_active, _pill_done)
 
@@ -626,7 +626,7 @@ def build_canvas_area(window):
                 card = _QFop()
                 card.setStyleSheet(
                     f"QFrame{{background:{_surface_el};"
-                    f"border:1px solid {_border_sub}; border-radius:10px;}}")
+                    f"border:1px solid {_border_sub}; border-radius:6px;}}")
                 card.setFixedHeight(78)
                 card.setMinimumWidth(min_w)
                 cl = _VBop(card)
@@ -664,7 +664,7 @@ def build_canvas_area(window):
             spark_card = _QFop()
             spark_card.setStyleSheet(
                 f"QFrame{{background:{_surface_el};"
-                f"border:1px solid {_border_sub}; border-radius:10px;}}")
+                f"border:1px solid {_border_sub}; border-radius:6px;}}")
             spark_card.setFixedHeight(72)
             spark_card.setMinimumWidth(220)
             scl = _VBop(spark_card)
@@ -739,9 +739,9 @@ def build_canvas_area(window):
             # ── Summary banner (hidden initially) ────────────────
             banner = QLabel("")
             banner.setStyleSheet(
-                f"QLabel{{color:#FFFFFF;"
+                f"QLabel{{color:{_t.get('tab_on_fg', '#FFFFFF')};"
                 f"background:{_t.get('accent_green', '#22C55E')};"
-                f"border:none; border-radius:8px;"
+                f"border:none; border-radius:6px;"
                 f"padding:10px 16px;"
                 f"font-family:{_mono}; font-size:10pt; font-weight:700;"
                 "letter-spacing:0.3px;}")

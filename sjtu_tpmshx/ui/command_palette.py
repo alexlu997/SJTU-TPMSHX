@@ -134,7 +134,7 @@ class CommandPalette(QDialog):
         self._frame.setObjectName("paletteFrame")
         self._frame.setStyleSheet(
             f"#paletteFrame{{background:{_surface};"
-            f"border:1px solid {_border}; border-radius:12px;}}")
+            f"border:1px solid {_border}; border-radius:6px;}}")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._frame)
@@ -149,7 +149,7 @@ class CommandPalette(QDialog):
         self._input.setStyleSheet(
             f"QLineEdit{{background:{_t.get('surface_raised', _t['card_bg'])};"
             f"color:{_t['fg']}; border:1px solid {_border};"
-            f"border-radius:8px; padding:10px 14px; font-size:12pt;"
+            f"border-radius:6px; padding:10px 14px; font-size:12pt;"
             f"font-family:'Fira Sans','Inter','Segoe UI',sans-serif;}}"
             f"QLineEdit:focus{{border:1px solid {_t.get('accent_primary', '#3B82F6')};}}")
         lay.addWidget(self._input)

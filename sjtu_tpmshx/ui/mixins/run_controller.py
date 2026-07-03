@@ -895,11 +895,12 @@ class RunControllerMixin:
             # Micro-anim polish: pulse the result chips + floating toast.
             try:
                 from ui.microanim import pulse_glow, toast
+                from ui.theme import get_theme as _gt
                 for key in ('Q', 'dPA', 'dPB'):
                     chip = self._res_chips.get(key) if hasattr(
                         self, '_res_chips') else None
                     if chip is not None:
-                        pulse_glow(chip, color='#22C55E',
+                        pulse_glow(chip,
                                     blur_peak=20, duration_ms=550)
                 if elapsed is not None:
                     toast(self, f"Compute done · {_fmt_dur(elapsed)}", kind='success')
@@ -912,7 +913,7 @@ class RunControllerMixin:
                               and self.combo_dim.currentIndex() == 1)
                     nxt = self.btn_tab_3d if is_3d else self.btn_tab_temp
                     if nxt is not None and nxt.isEnabled():
-                        pulse_glow(nxt, color='#3B82F6',
+                        pulse_glow(nxt, color=_gt().get('accent_primary', '#3B82F6'),
                                     blur_peak=22, duration_ms=700)
             except Exception:
                 pass
@@ -994,7 +995,7 @@ class RunControllerMixin:
         from ui.theme import get_theme as _gt
         _t = _gt()
         _up_good = _t.get('accent_green', '#22C55E')
-        _bad = '#F87171'
+        _bad = _gt().get('err_soft', '#F87171')
         _neutral = _t.get('sub_fg', '#94A3B8')
 
         shown_any = False

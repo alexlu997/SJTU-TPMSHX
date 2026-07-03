@@ -132,6 +132,11 @@ class FieldFactory:
         """Build a themed QLineEdit. Style key default = 'INP'."""
         le = QLineEdit(default)
         le.setStyleSheet(self._style(style_key))
+        # ui-plan3a: numeric parameters read right-aligned (mono font is in
+        # the INP style already) so decimals and magnitudes line up down a
+        # card. Typing is unaffected — only the resting position changes.
+        le.setAlignment(Qt.AlignmentFlag.AlignRight |
+                        Qt.AlignmentFlag.AlignVCenter)
         if placeholder is not None:
             le.setPlaceholderText(placeholder)
         if tooltip is not None:
@@ -208,9 +213,8 @@ class FieldFactory:
 
         # Belt-and-suspenders palette pinning (see ui_builders.section
         # for the QSS-vs-palette inheritance comment).
-        from .theme import get_theme_name
-        _tt_fg = (QColor('#020617') if get_theme_name() == 'light'
-                  else QColor('#F8FAFC'))
+        from .theme import get_theme
+        _tt_fg = QColor(get_theme()['title_fg'])
         _pal = t.palette()
         _pal.setColor(QPalette.ColorRole.WindowText, _tt_fg)
         _pal.setColor(QPalette.ColorRole.Text, _tt_fg)

@@ -30,12 +30,17 @@ BTN_H_PRIMARY = 32
 BTN_H_SECONDARY = 28
 BTN_H_SMALL = 26
 
-# ── Corner radii — 2-step system (SM 6 · MD 12 · pill 14) ────
+# ── Corner radii — unified 6px + semantic exceptions (ui-plan3a) ────
+# Policy: every card / input / button / frame / menu takes 6px. Semantic
+# shapes keep their own radius: pill tabs / status pills / toasts (14-18px,
+# rounded ends ARE the shape) and micro-controls (slider grooves, checkbox
+# indicators, progress chunks, scrollbar handles — radius is proportional
+# to the element and forcing 6px breaks the geometry).
 RADIUS_INPUT = 6     # inputs + small/secondary buttons
 RADIUS_BTN = 6
-RADIUS_CARD = 12     # cards, primary CTA, header
-RADIUS_HEADER = 12
-RADIUS_TAB = 14      # pill tabs
+RADIUS_CARD = 6      # cards, primary CTA, header (was 12 pre-plan3a)
+RADIUS_HEADER = 6
+RADIUS_TAB = 14      # pill tabs (semantic)
 
 # ── Theme colour definitions ────────────────────────────────
 _THEMES = {
@@ -80,6 +85,11 @@ _THEMES = {
         slider_sub="rgba(68,114,196,120)",
         scroll_handle="#9ca3af", scroll_handle_hover="#6b7280",
         accent_primary="#4F46E5", accent_green="#548235", accent_orange="#c55a11",
+        # Semantic state colors (ui-plan3a) — darker pair for the white ground.
+        err="#B91C1C", err_soft="#B91C1C", search_hl="#B45309",
+        # Section-title fg: forced near-black so titles stay legible on white
+        # card_bg regardless of parent QGroupBox color cascades.
+        title_fg="#020617",
         mpl_subtitle="#6b7280",
         sub_fg="#6b7280",              # secondary/caption gray (WCAG AA on white)
         val_empty_fg="#9ca3af",        # muted placeholder color for unfilled res_row
@@ -161,6 +171,13 @@ _THEMES = {
         slider_sub="#1D4ED8",
         scroll_handle="#64748B", scroll_handle_hover="#94A3B8",
         accent_primary="#3B82F6", accent_green="#22C55E", accent_orange="#F97316",
+        # Semantic state colors (ui-plan3a): error border + Ctrl+F highlight.
+        # err_soft = readable light red for error TEXT on the dark ground
+        # (residual diagnostics); err stays the border/badge red.
+        err="#DC2626", err_soft="#F87171", search_hl="#F59E0B",
+        # Section-title fg: near-white counterpart of the light theme's
+        # forced near-black (see that token's comment).
+        title_fg="#F8FAFC",
         mpl_subtitle="#94A3B8",
         sub_fg="#94A3B8",              # secondary/caption gray (WCAG AA on #0B1220)
         val_empty_fg="#475569",        # muted placeholder color for unfilled res_row
@@ -312,23 +329,22 @@ def _build_styles(theme_name=None):
         f"selection-background-color:rgba(44,82,130,0.15);}}"
         f"QLineEdit:hover{{border:1px solid {t['combo_hover_border']};}}"
         f"QLineEdit:focus{{border:2px solid {t['inp_focus']}; padding:{_focus_v}px {_focus_h}px;}}"
-        f"QLineEdit[inpError=\"true\"]{{border:2px solid #DC2626; padding:{_focus_v}px {_focus_h}px;}}"
-        f"QLineEdit[inpError=\"true\"]:focus{{border:2px solid #DC2626;}}"
+        f"QLineEdit[inpError=\"true\"]{{border:2px solid {t['err']}; padding:{_focus_v}px {_focus_h}px;}}"
+        f"QLineEdit[inpError=\"true\"]:focus{{border:2px solid {t['err']};}}"
         # Ctrl+F param-search highlight: amber outline for fields matching
         # the current query. Does not steal focus; outline reads over the
         # field's own border so searchable fields stay legible.
-        f"QLineEdit[searchMatch=\"true\"]{{border:2px solid #F59E0B;"
+        f"QLineEdit[searchMatch=\"true\"]{{border:2px solid {t['search_hl']};"
         f"padding:{_focus_v}px {_focus_h}px;}}"
         f"QLineEdit:disabled{{color:{t['val_empty_fg']};"
         f"background:{t['scroll_bg']}; border-color:{t['card_border']};}}"
     )
     s['INP_FOCUS'] = f"border:2px solid {t['inp_focus']};"
 
-    # Section-title text color — forced near-black in light mode (#020617)
-    # to guarantee legibility on white card_bg regardless of any parent
-    # QGroupBox stylesheet color inheritance. Dark mode uses the theme's
-    # near-white `fg` token for the same high-contrast result.
-    _title_fg = "#020617" if theme_name == 'light' else "#F8FAFC"
+    # Section-title text color — per-theme `title_fg` token (near-black on
+    # light / near-white on dark) to guarantee legibility on card_bg
+    # regardless of any parent QGroupBox stylesheet color inheritance.
+    _title_fg = t['title_fg']
 
     def _title(rgb, _border=None):
         # Flat card_bg + 4px left accent bar (unified second-level title style).
@@ -352,7 +368,7 @@ def _build_styles(theme_name=None):
 
     def _frame(rgba):
         return (f"QFrame{{background:rgba({rgba}); border:1px solid {t['frame_border']};"
-                f"border-radius:8px; padding:3px;}}")
+                f"border-radius:{RADIUS_CARD}px; padding:3px;}}")
 
     s['T_NEUTRAL'] = _title(*t['t_neutral'])
     s['T_A'] = _title(*t['t_a'])

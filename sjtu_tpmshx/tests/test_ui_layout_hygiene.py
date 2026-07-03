@@ -213,6 +213,74 @@ def test_copy_figure_clipboard_no_data_safe(win):
     win._copy_figure_clipboard()                # must not raise
 
 
+# ── ui-plan3a: design-token discipline ───────────────────────────────
+
+_UI_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "ui")
+
+# Micro-controls whose radius is proportional to the element (sliders,
+# checkbox indicators, progress chunks, scrollbar handles) and semantic
+# pills/toasts are exempt — see theme.py radius policy comment.
+_RADIUS_EXEMPT_FILES = {"panel_vis_3d.py", "theme.py"}
+
+
+def _ui_sources():
+    import glob
+    for p in (glob.glob(os.path.join(_UI_DIR, "*.py"))
+              + glob.glob(os.path.join(_UI_DIR, "mixins", "*.py"))):
+        yield p, open(p, encoding="utf-8").read()
+
+
+def test_no_stray_card_radii():
+    """Card/control-level radii are 6px; 8/10/12px strays are regressions.
+    Pills (14/18) and micro-controls (1-3px on tiny elements) are exempt."""
+    import re
+    bad = []
+    for p, src in _ui_sources():
+        name = os.path.basename(p)
+        if name in _RADIUS_EXEMPT_FILES:
+            continue
+        for i, line in enumerate(src.splitlines(), 1):
+            m = re.search(r"border-radius:\s*(8|10|12)px", line)
+            # builders_canvas pill badge (padding 5px 14px chip) is the one
+            # sanctioned 12px pill outside the exempt files.
+            if m and "padding:5px 14px" not in line:
+                bad.append(f"{name}:{i}: {line.strip()}")
+    assert not bad, "stray card radii:\n" + "\n".join(bad)
+
+
+def test_no_raw_hex_outside_theme():
+    """UI colors flow through theme tokens. Allowed: token fallbacks in
+    `t.get('x', '#…')`, glass_panel's dark-art gradient, microanim's deep
+    glow hints, docstrings/comments."""
+    import re
+    allow_files = {"theme.py", "glass_panel.py"}
+    bad = []
+    for p, src in _ui_sources():
+        name = os.path.basename(p)
+        if name in allow_files:
+            continue
+        for i, line in enumerate(src.splitlines(), 1):
+            code = line.split("#")[0] if not re.search(
+                r"['\"]#[0-9A-Fa-f]{6}", line) else line
+            for m in re.finditer(r"['\"](#[0-9A-Fa-f]{6})['\"]", code):
+                seg = code[:m.start()]
+                # token fallback pattern: .get('tok', '#hex') — compliant
+                if re.search(r"\.get\(\s*['\"][\w]+['\"]\s*,\s*$", seg):
+                    continue
+                # microanim deep glow hints tuple: ('#tok-resolved', '#deep', '…')
+                if name == "microanim.py":
+                    continue
+                bad.append(f"{name}:{i}: {line.strip()[:90]}")
+    assert not bad, "raw hex outside theme:\n" + "\n".join(bad)
+
+
+def test_numeric_inputs_right_aligned(win):
+    from PySide6.QtCore import Qt as _Qt
+    assert win.le_L.alignment() & _Qt.AlignmentFlag.AlignRight
+    assert win.le_Nx.alignment() & _Qt.AlignmentFlag.AlignRight
+
+
 def test_mode_gates_survive_group_toggle(win):
     """Expanding a collapsed group must not resurrect 3D-only widgets in
     2D mode (blanket-show + re-assert)."""

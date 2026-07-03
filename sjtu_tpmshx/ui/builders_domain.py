@@ -328,7 +328,7 @@ def build_page_domain(window):
     _step_qss = (
         f"QPushButton {{ background:{_tc['surface_elevated']}; color:{_tc['fg']};"
         f" border:1px solid {_tc['inp_border']}; border-radius:4px;"
-        f" font-size:13pt; font-weight:bold; padding:0; }}"
+        f" font-size:12pt; font-weight:bold; padding:0; }}"
         f"QPushButton:hover {{ border-color:{_tc['chk_hover_border']};"
         f" background:{_tc['chk_hover_bg']}; }}"
         f"QPushButton:pressed {{ background:{_tc['inp_bg']}; }}")

@@ -67,7 +67,7 @@ def build_ui(window):
     # Header bar: navy blue background strip
     header_widget = QWidget()
     header_widget.setStyleSheet(
-        f"background:{_t['hdr_bg']}; border-radius:12px;")
+        f"background:{_t['hdr_bg']}; border-radius:6px;")
     header_widget.setFixedHeight(44)
     header_row = QHBoxLayout(header_widget)
     header_row.setContentsMargins(8, 4, 8, 4)

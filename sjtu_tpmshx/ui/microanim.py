@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 
-def pulse_glow(widget, color="#22C55E", blur_peak=20, duration_ms=260):
+def pulse_glow(widget, color=None, blur_peak=20, duration_ms=260):
     """Wrap `widget` in a short glow pulse. Sequential:
         0   → blur 0, alpha 0
         40% → blur peak, alpha 200
@@ -29,6 +29,9 @@ def pulse_glow(widget, color="#22C55E", blur_peak=20, duration_ms=260):
     Existing effect on the widget is replaced for the pulse, then restored
     to None on finish so layout stays cheap.
     """
+    if color is None:
+        from .theme import get_theme
+        color = get_theme().get('accent_green', '#22C55E')
     eff = QGraphicsDropShadowEffect(widget)
     c = QColor(color)
     eff.setColor(c)
@@ -59,11 +62,17 @@ def toast(parent, text, kind="success", duration_ms=2200, copy_payload=None):
     (5 s) and expose a "Copy" affordance via `copy_payload` — pass the
     traceback text so users can one-click grab it for bug reports.
     """
+    # Toast pill colors resolve from theme tokens at call time (ui-plan3a)
+    # so light theme gets its darker semantic pair. The glyph is the third
+    # element; the second (deep glow hint) is a dark-design asset kept
+    # literal like glass_panel's gradient.
+    from .theme import get_theme
+    _tk = get_theme()
     _PALETTE = {
-        'success': ('#22C55E', '#064E3B', '✓'),
-        'info':    ('#3B82F6', '#1E3A8A', '›'),
-        'warn':    ('#F59E0B', '#78350F', '!'),
-        'error':   ('#DC2626', '#450A0A', '✕'),
+        'success': (_tk.get('accent_green', '#22C55E'), '#064E3B', '✓'),
+        'info':    (_tk.get('accent_primary', '#3B82F6'), '#1E3A8A', '›'),
+        'warn':    (_tk.get('search_hl', '#F59E0B'), '#78350F', '!'),
+        'error':   (_tk.get('err', '#DC2626'), '#450A0A', '✕'),
     }
     fg_hint, _dark, glyph = _PALETTE.get(kind, _PALETTE['info'])
     # Errors deserve more screen time.
@@ -82,7 +91,7 @@ def toast(parent, text, kind="success", duration_ms=2200, copy_payload=None):
     else:
         pill.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
     pill.setStyleSheet(
-        f"color:#FFFFFF; background:{fg_hint};"
+        f"color:{_tk.get('tab_on_fg', '#FFFFFF')}; background:{fg_hint};"
         f"border:none; border-radius:18px; padding:10px 18px;"
         f"font-family:'Fira Sans','Inter','Segoe UI',sans-serif;"
         f"font-size:10pt; font-weight:700; letter-spacing:0.3px;")

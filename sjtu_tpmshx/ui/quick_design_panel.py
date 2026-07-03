@@ -284,7 +284,7 @@ def build_quick_design_dialog(parent=None):
         f" color:{_t['combo_list_fg']}; selection-background-color:{_t['combo_sel']};"
         f" border:1px solid {_t['combo_border']}; outline:none;}}"
         f"QGroupBox{{color:{_t['fg']}; background:{_t['surface_raised']};"
-        f" border:1px solid {_t['card_border']}; border-radius:8px;"
+        f" border:1px solid {_t['card_border']}; border-radius:6px;"
         f" margin-top:12px; padding:12px 8px 8px 8px; font-weight:600;}}"
         f"QGroupBox::title{{subcontrol-origin:margin; subcontrol-position:top left;"
         f" left:10px; padding:0 5px; color:{_t['sub_fg']};}}"

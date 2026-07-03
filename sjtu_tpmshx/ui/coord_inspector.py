@@ -264,7 +264,7 @@ class CoordInspector(QDockWidget):
         if self._pinned:
             self._status.setText("◉ Pinned")
             self._status.setStyleSheet(
-                "color:#F59E0B; font-size:9pt; font-weight:600;"
+                "color:" + _t.get('search_hl', '#F59E0B') + "; font-size:9pt; font-weight:600;"
                 "background:transparent; border:none;")
         else:
             _t = get_theme()
