@@ -281,10 +281,12 @@ SJTU-TPMSHX/                       ← 仓库根
 
 这一组是“真正解方程”的部分，也是计算量最大的部分。
 
+> 2026-07-03（split-solver-kernels）：三大求解器文件的 numba 内核拆到独立模块 —— `_kernels_simple_2d.py`（2D SIMPLE 内核 + 压力泊松装配，~860 行）、`_kernels_simple_3d.py`（3D SIMPLE 内核 18 个，~830 行）、`_kernels_ltne_3d.py`（3D LTNE 内核 20 个，~1180 行）。原模块保留求解器类/网格构建器/Python 驱动/warmup，并全量 re-export 内核名（外部 import 面不变，逐字搬移、金档位相同）。
+
 #### `_kernels_2d.py` — 共享小内核
 - **作用**：把 2D 求解器里重复用到的 MINMOD 限制器抽出来，做成一个 Numba JIT 编译的函数（`minmod(gu, gd)`）。MINMOD 用于二阶迎风格式防止数值振荡：两侧梯度异号时返回 0（在极值处不修正），否则返回较小梯度。
 
-#### `simple_solver.py` — 2D SIMPLE 流动求解器（~1650 行）
+#### `simple_solver.py` — 2D SIMPLE 流动求解器（~1290 行；内核在 `_kernels_simple_2d.py`）
 - **作用**：在二维交错网格上用 SIMPLE 算法解多孔介质里的流动（动量+连续性），可选解冻结速度下的两温度传热。是上海工况 2D 验证的主力。
 - **主类**：`SIMPLESolver`。构造时给域尺寸、网格数、物性、进口速度、孔隙率、K/c_F 数组、可压缩标志等。
 - **关键方法**：
@@ -294,7 +296,7 @@ SJTU-TPMSHX/                       ← 仓库根
 - **速度口径**：interstitial（孔隙内真实速度），进口 BC 用 `v=Q/(ρ·ε·A)`。
 - **依赖**：`_kernels_2d.minmod`、`tpms_calc`、`df_surrogate.predict`。
 
-#### `simple_solver_3d.py` — 3D SIMPLE 流动求解器（~1776 行）
+#### `simple_solver_3d.py` — 3D SIMPLE 流动求解器（~1000 行；内核在 `_kernels_simple_3d.py`）
 - **作用**：2D 的三维推广。在 3D 交错网格上解流动，压力泊松用代数多重网格（PyAMG）。
 - **主类**：`SIMPLESolver3D`。多了 z 方向、PyAMG 重建节奏、粗网格预热、Anderson 加速等开关。
 - **关键加速**：
@@ -309,7 +311,7 @@ SJTU-TPMSHX/                       ← 仓库根
 - **关键函数**：`solve_full_domain(...)` → `(Ta, Tb, Ts, 迭代数, 是否收敛)`。内部用分块 Gauss-Seidel（每块 500 步，JIT 高效）；每格按“Ta→Ts→Tb”顺序更新；对流二阶迎风、扩散用调和平均面导热（在分区界面守恒）；支持部分进出口、温度欠松弛 `alpha_T`、可冻结 Tb。
 - **依赖**：`_kernels_2d.minmod`。
 
-#### `ltne_energy_3d.py` — 3D 全域 LTNE 传热求解器（~1719 行）
+#### `ltne_energy_3d.py` — 3D 全域 LTNE 传热求解器（~970 行；内核在 `_kernels_ltne_3d.py`）
 - **作用**：`ltne_energy.py` 的三维版。三方向二阶迎风，可选“面心严格守恒离散”分支，内置能量/质量守恒残差审计。当 Nz==1 时直接委托给 2D 版本（逐位一致）。
 - **关键函数**：`solve_full_domain_3d(...)`、`_project_faces_div_free`（可选把速度投影到无散场，保证严格能量守恒）、`energy_balance_3d/mass_balance_3d`（守恒审计）。
 - **重要约定（ε 减半契约）**：调用方传完整 ε，内核内部自己做 `eps_f=0.5·ε`。历史上曾因“调用方先减半、内核又减半”导致 ε 被减成 1/4 的 bug，已修并有测试守护。
