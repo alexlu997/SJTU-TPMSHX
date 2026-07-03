@@ -294,6 +294,12 @@ class TabViewMixin:
                 _btn_2d.setStyleSheet(self._PTAB_OFF)
             else:
                 _btn_2d.setStyleSheet(self._PTAB_DISABLED)
+        # ui-plan3-workbench follow-up (user screenshot): the 温度/速度/压力
+        # field seg is a CONTEXT control — visible only while a 2D field
+        # card is active, not parked highlighted next to 优化.
+        _fs = getattr(self, '_2d_field_seg', None)
+        if _fs is not None:
+            _fs.setVisible(tab in ('temp', 'pres', 'vel'))
         # ui-plan3-workbench: 结果 button lights for ANY result rendering;
         # legacy direct calls (_switch_tab('temp')/'3d') reverse-sync the
         # 2D|3D toggle so the seg always tells the truth.

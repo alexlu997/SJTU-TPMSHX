@@ -434,6 +434,9 @@ def build_canvas_area(window):
     toolbar.addWidget(window.btn_tab_layout)
     toolbar.addWidget(window.btn_tab_result)
     toolbar.addWidget(window._2d_field_seg)
+    # Context control: hidden until a 2D field card is active (the
+    # _switch_tab handler flips it per tab).
+    window._2d_field_seg.hide()
     toolbar.addWidget(window.btn_tab_pareto)
     # Legacy buttons retained in window.* but hidden from the toolbar so
     # _split_with_current / hotkeys / _switch_tab routing still resolves them.
