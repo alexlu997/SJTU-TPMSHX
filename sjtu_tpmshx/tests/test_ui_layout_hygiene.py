@@ -69,12 +69,38 @@ def test_responsive_row_direction_flips():
     row.close()
 
 
-def test_empty_state_has_three_steps(win):
-    lbl = getattr(win, "_empty_state_label", None)
-    assert lbl is not None and lbl.isVisibleTo(win)
-    txt = lbl.text()
+def test_empty_state_has_three_steps_and_preset(win):
+    from PySide6.QtWidgets import QLabel
+    box = getattr(win, "_empty_state_label", None)   # container since batch2
+    assert box is not None and box.isVisibleTo(win)
+    txt = " ".join(l.text() for l in box.findChildren(QLabel))
     for marker in (">1<", ">2<", ">3<", "Compute"):
         assert marker in txt, f"empty state missing {marker!r}"
+    btn = getattr(win, "_empty_state_preset_btn", None)
+    assert btn is not None and btn.isVisibleTo(win)
+
+
+def test_empty_state_preset_button_applies_shanghai(win):
+    app = QApplication.instance()
+    win._empty_state_preset_btn.click()
+    app.processEvents()
+    assert getattr(win, "_active_preset_name", None) == "Shanghai (3D Gyroid)"
+
+
+def test_sticky_cta_outside_scroll(win):
+    """btn_compute lives in the fixed bottom bar, not inside the scroll —
+    it stays visible however far the params scroll."""
+    from PySide6.QtWidgets import QScrollArea
+    assert win.btn_compute.isVisibleTo(win)
+    p = win.btn_compute.parentWidget()
+    inside_scroll = False
+    while p is not None:
+        if isinstance(p, QScrollArea):
+            inside_scroll = True
+            break
+        p = p.parentWidget()
+    assert not inside_scroll
+    assert getattr(win, "_cta_bar", None) is not None
 
 
 # ── ui-ia-batch1: four workflow accordion groups ─────────────────────

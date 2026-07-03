@@ -1254,21 +1254,29 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             '.first_run_done')
         if _os_ob.path.exists(flag):
             return
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Welcome to SJTU-TPMSHX")
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText(
-            "Quick tour\n\n"
-            "1.  Left panel — configure Geometry, Boundary Conditions, "
-            "Zone Layout.\n"
-            "2.  Header ▶ Compute — run a single-point solve "
-            "(menu → Optimize for qNEHVI optimization).\n"
-            "3.  Right canvas — explore Temperature / Pressure / "
-            "Velocity / 3D View tabs once compute finishes.\n\n"
-            "Presets, theme toggle (☀/☾), and K/°C units live in the "
-            "header. This hint will not show again.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
+        # Headless guard: a fresh checkout has no flag file, and a modal
+        # exec() on the offscreen platform blocks forever (no one to click
+        # OK — this hung CI at the 45-min job kill). Skip the dialog but
+        # still write the flag.
+        if QApplication.instance().platformName() == 'offscreen':
+            pass
+        else:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Welcome to SJTU-TPMSHX")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText(
+                "Quick tour\n\n"
+                "1.  Left panel — configure the four workflow groups "
+                "(Geometry & Structure → Fluids → Grid & Solver → "
+                "Boundary Details).\n"
+                "2.  ▶ Compute — the blue button at the panel's bottom "
+                "(menu → Optimize for qNEHVI optimization).\n"
+                "3.  Right canvas — explore Temperature / Pressure / "
+                "Velocity / 3D View tabs once compute finishes.\n\n"
+                "Presets, theme toggle (☀/☾), and K/°C units live in the "
+                "header. This hint will not show again.")
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
         try:
             with open(flag, 'w', encoding='utf-8') as _f:
                 _f.write("1")

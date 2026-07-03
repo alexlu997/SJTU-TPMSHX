@@ -208,18 +208,9 @@ def build_ui(window):
     window.btn_quick_design = btn_qd
     header_row.addWidget(btn_qd, 0)
     header_row.addSpacing(6)
-    # Single-action Compute button. Optimize lives in the left
-    # Optimization panel + Ctrl+K command palette, so no duplicate entry
-    # here — keeps the header tidy and drops the split-arrow affordance.
-    btn_run = QPushButton("▶  &Compute")
-    btn_run.setFixedHeight(32)
-    btn_run.setMinimumWidth(160)
-    btn_run.setStyleSheet(t.style('BTN_PRIMARY'))
-    btn_run.setToolTip("Run single-point compute (Ctrl+R)")
-    btn_run.clicked.connect(window.run_calculation)
-    window.btn_compute = btn_run
-    header_row.addWidget(btn_run, 0)
-    header_row.addSpacing(6)
+    # Compute moved to the left panel's sticky bottom bar (ui-batch2 IA-3):
+    # the primary CTA now lives next to the parameters it acts on and never
+    # scrolls away. See build_param_tabs.
     root.addWidget(header_widget, 0)
 
     # Splitter: 1px separator — narrow band that reads as a divider,
@@ -428,7 +419,35 @@ def build_param_tabs(window):
     window._param_stack = None
     window._param_btns = []
 
-    return scroll
+    # ── Sticky Compute CTA (ui-batch2 IA-3) ──────────────────────────
+    # The ONE primary action, permanently visible at the bottom of the
+    # parameter panel (moved from the header's far corner). Same widget
+    # object the run_controller ticker owns — text/handler state machine
+    # untouched.
+    panel = QWidget()
+    panel.setStyleSheet(f"background:{_BG};")
+    p_lay = QVBoxLayout(panel)
+    p_lay.setContentsMargins(0, 0, 0, 0)
+    p_lay.setSpacing(0)
+    p_lay.addWidget(scroll, 1)
+
+    cta_bar = QWidget()
+    cta_bar.setStyleSheet(
+        f"background:{_ts.get('surface_raised', _ts['card_bg'])};"
+        f"border-top:1px solid {_ts['card_border']};")
+    cta_lay = QVBoxLayout(cta_bar)
+    cta_lay.setContentsMargins(10, 8, 10, 8)
+    btn_run = QPushButton("▶  &Compute")
+    btn_run.setMinimumHeight(40)
+    btn_run.setStyleSheet(t.style('BTN_PRIMARY'))
+    btn_run.setToolTip("Run single-point compute (Ctrl+R)")
+    btn_run.clicked.connect(window.run_calculation)
+    window.btn_compute = btn_run
+    cta_lay.addWidget(btn_run)
+    p_lay.addWidget(cta_bar, 0)
+    window._cta_bar = cta_bar
+
+    return panel
 
 
 def switch_param_tab(window, index):

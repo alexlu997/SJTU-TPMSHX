@@ -269,6 +269,13 @@ def build_canvas_area(window):
         f"color:{_t['fg']}; background:transparent; border:none;"
         f"font-family:'Fira Code','Consolas',monospace;"
         f"font-size:9pt; font-weight:600;")
+    # Primary tier (ui-batch2 RS-2): the engineering headline numbers
+    # (Q, ΔP_A, ΔP_B) read one step above the secondary T_out chips.
+    _chip_num_primary_qss = (
+        f"color:{_t['val']}; background:transparent; border:none;"
+        f"font-family:'Fira Code','Consolas',monospace;"
+        f"font-size:10pt; font-weight:700;")
+    _PRIMARY_KEYS = ('Q', 'dPA', 'dPB')
     window._res_chips = {}
     # HTML captions render real subscripts (no literal underscores): ΔP_A,
     # T_out,A → Δ<i>P</i><sub>A</sub>, <i>T</i><sub>out,A</sub>. unit kept
@@ -284,7 +291,8 @@ def build_canvas_area(window):
         _cap.setTextFormat(Qt.TextFormat.RichText)
         _cap.setStyleSheet(_cap_qss)
         _val = QLabel("—")
-        _val.setStyleSheet(_chip_num_qss)
+        _val.setStyleSheet(_chip_num_primary_qss if key in _PRIMARY_KEYS
+                           else _chip_num_qss)
         # Delta badge beside the numeric chip — populated by
         # `_update_result_summary` with "↑5.1%" style annotations relative
         # to the previous run. Starts empty so the first compute just
@@ -328,8 +336,9 @@ def build_canvas_area(window):
 
     canvas_container = QWidget()
     canvas_container.setStyleSheet(f"background:{_t['scroll_bg']};")
-    # QGridLayout backs the card area so _relayout_cards() can re-pack
-    # single-column ↔ two-column on demand (see window._set_canvas_cols).
+    # QGridLayout backs the card area (single column; a planned two-column
+    # re-pack was never built — stale _relayout_cards reference removed
+    # ui-batch2. Wide-aspect field plots stack correctly in one column).
     canvas_lay = QGridLayout(canvas_container)
     canvas_lay.setContentsMargins(12, 12, 12, 12)
     canvas_lay.setHorizontalSpacing(12)
@@ -359,12 +368,31 @@ def build_canvas_area(window):
     _empty.setTextFormat(Qt.TextFormat.RichText)
     _empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
     _empty.setStyleSheet(
-        f"color:{_sub}; background:transparent;"
-        f"font-size:10pt; letter-spacing:0.2px;"
-        f"padding:56px 48px; border:1px dashed {_t['card_border']};"
+        f"color:{_sub}; background:transparent; border:none;"
+        f"font-size:10pt; letter-spacing:0.2px; padding:0;")
+    # Container (ui-batch2 IA-5): guidance text + one-click Shanghai preset.
+    # `_empty_state_label` now points at the CONTAINER — its only consumers
+    # call setVisible, so text+button hide together after the first compute.
+    _empty_box = QWidget()
+    _empty_box.setStyleSheet(
+        f"background:transparent; border:1px dashed {_t['card_border']};"
         f"border-radius:8px;")
-    canvas_lay.addWidget(_empty, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-    window._empty_state_label = _empty
+    _eb_lay = QVBoxLayout(_empty_box)
+    _eb_lay.setContentsMargins(48, 48, 48, 40)
+    _eb_lay.setSpacing(18)
+    _eb_lay.addWidget(_empty)
+    _btn_preset = QPushButton("⚡  Load Shanghai preset (3D Gyroid)")
+    _btn_preset.setMinimumHeight(30)
+    _btn_preset.setStyleSheet(t.style('BTN_SECONDARY'))
+    _btn_preset.setToolTip(
+        "Fill every field with the validated Shanghai Electric case — "
+        "ready to Compute immediately.")
+    _btn_preset.clicked.connect(
+        lambda: window._load_named_preset("Shanghai (3D Gyroid)"))
+    _eb_lay.addWidget(_btn_preset, 0, Qt.AlignmentFlag.AlignHCenter)
+    canvas_lay.addWidget(_empty_box, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+    window._empty_state_label = _empty_box
+    window._empty_state_preset_btn = _btn_preset
 
     # Canvas widgets (reuse if available from theme switch)
     _reuse = getattr(window, '_reuse_canvases', None)
