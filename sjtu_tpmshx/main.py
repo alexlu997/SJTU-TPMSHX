@@ -1624,6 +1624,12 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         )
 
         def _cb():
+            # Badge repaint FIRST — the empty-text case returns early below
+            # (empty is preflight's job, not a blur-time error), but the
+            # group ⚠N badge must still update for exactly that case.
+            # getattr-guarded: test mocks borrow this handler without the
+            # badge machinery.
+            getattr(self, '_kick_badge_timer', lambda: None)()
             txt = le.text().strip()
             if not txt:
                 return
@@ -1690,6 +1696,21 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
                 le.setToolTip(base_tip)
 
         return _cb
+
+    def _kick_badge_timer(self):
+        """Debounced accordion ⚠N badge repaint (ui-batch3 IA-4). Called on
+        every field blur; 150 ms coalesces preset loads that rewrite every
+        field in one burst."""
+        timer = getattr(self, '_badge_timer', None)
+        if timer is None:
+            from PySide6.QtCore import QTimer
+            from ui.ui_builders import refresh_group_badges
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(150)
+            timer.timeout.connect(lambda: refresh_group_badges(self))
+            self._badge_timer = timer
+        timer.start()
 
 
     # -------------------------------------------------------------------

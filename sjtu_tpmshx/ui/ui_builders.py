@@ -239,6 +239,51 @@ def build_ui(window):
     root.addWidget(splitter, 1)
 
 
+def _group_title_text(window, title):
+    """Accordion group title: chevron + name + `⚠N` invalid-field badge.
+
+    Single renderer for both the toggle handler and refresh_group_badges —
+    a separate chevron-only path would wipe the badge on expand/collapse.
+    """
+    grp = window._accordion_groups.get(title)
+    chev = "▾" if (grp is not None and grp.isChecked()) else "▸"
+    n = getattr(window, '_group_badge_counts', {}).get(title, 0)
+    return f"{chev}  {title}" + (f"     ⚠ {n}" if n else "")
+
+
+def refresh_group_badges(window):
+    """Recount invalid/empty session fields per accordion group and repaint
+    group titles (ui-batch3 IA-4).
+
+    Bad = same criterion as `_validate_inputs_preflight`: `inpError` set by
+    the field validator, or empty text. Fields hidden by a 2D/3D or
+    rect/poly mode gate are skipped via `isVisibleTo(content)` — that check
+    ignores the ancestors' own visibility, so fields inside a COLLAPSED
+    group still count (the badge's whole point) while gate-hidden ones
+    don't.
+    """
+    contents = getattr(window, '_accordion_contents', None)
+    if not contents:
+        return
+    counts = {}
+    for title, content in contents.items():
+        n = 0
+        for name in getattr(window, '_SESSION_LINE_EDITS', ()):
+            le = getattr(window, name, None)
+            if le is None or not content.isAncestorOf(le):
+                continue
+            if not le.isVisibleTo(content):
+                continue
+            if le.property('inpError') == 'true' or not le.text().strip():
+                n += 1
+        counts[title] = n
+    window._group_badge_counts = counts
+    for title, grp in window._accordion_groups.items():
+        txt = _group_title_text(window, title)
+        if grp.title() != txt:
+            grp.setTitle(txt)
+
+
 def build_param_tabs(window):
     """Left-panel parameter groups — collapsible accordion layout."""
     # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
@@ -340,9 +385,6 @@ def build_param_tabs(window):
 
     from PySide6.QtWidgets import QGroupBox
 
-    def _chevron_title(title, expanded):
-        return f"▾  {title}" if expanded else f"▸  {title}"
-
     container = QWidget()
     container.setStyleSheet(f"background:{_BG};")
     vlay = QVBoxLayout(container)
@@ -368,8 +410,9 @@ def build_param_tabs(window):
     ]
 
     window._accordion_groups = {}
+    window._accordion_contents = {}
     for title, default_open, keys in _GROUPS:
-        grp = QGroupBox(_chevron_title(title, default_open))
+        grp = QGroupBox()
         grp.setCheckable(True)
         grp.setChecked(default_open)
         grp.setStyleSheet(_GRP_QSS)
@@ -390,7 +433,7 @@ def build_param_tabs(window):
 
         def _on_toggled(checked, p=content, t=title, g=grp):
             p.setVisible(checked)
-            g.setTitle(_chevron_title(t, checked))
+            g.setTitle(_group_title_text(window, t))
             # Re-assert per-widget mode gates: QWidget.setVisible(True)
             # blanket-shows children, which would resurrect widgets a 2D/3D
             # or rect/poly gate had hidden (same rationale as the Advanced
@@ -403,9 +446,15 @@ def build_param_tabs(window):
                         window.combo_shape.currentIndex())
                 except Exception:
                     pass
+            # Gate re-assertion may flip field visibility → recount badges.
+            refresh_group_badges(window)
         grp.toggled.connect(_on_toggled)
         vlay.addWidget(grp)
         window._accordion_groups[title] = grp
+        window._accordion_contents[title] = content
+    # Initial titles + badge counts (empty-field only at this point —
+    # validators attach later in Main_Menu.__init__ and re-trigger).
+    refresh_group_badges(window)
 
     # Last-run results summary stays OUTSIDE the accordion — always visible
     # at the bottom regardless of which groups are collapsed.

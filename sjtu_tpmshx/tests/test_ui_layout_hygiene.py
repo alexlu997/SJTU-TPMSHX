@@ -140,6 +140,58 @@ def test_tpms_computed_collapsed_then_autoexpands(win):
     assert win._v_eps.text() not in ("—", "")
 
 
+def test_group_badge_counts_empty_field(win):
+    """ui-batch3 IA-4: clearing a field inside a collapsed group surfaces
+    a ⚠N badge in that group's title; fixing it clears the badge."""
+    from ui.ui_builders import refresh_group_badges
+    grp = win._accordion_groups["Grid & Solver"]
+    old = win.le_Nx.text()
+    win.le_Nx.setText("")
+    refresh_group_badges(win)
+    assert "⚠" in grp.title(), grp.title()
+    assert win._group_badge_counts["Grid & Solver"] >= 1
+    win.le_Nx.setText(old or "40")
+    refresh_group_badges(win)
+    assert "⚠" not in grp.title(), grp.title()
+
+
+def test_group_badge_updates_via_validator_debounce(win):
+    """End-to-end: editingFinished → validator cb → debounce timer →
+    badge repaint, without calling refresh directly. Uses le_L — it has a
+    validator handler attached (positive+unit field); le_Nx does not."""
+    import time
+    app = QApplication.instance()
+    grp = win._accordion_groups["Geometry & Structure"]
+    old = win.le_L.text()
+    win.le_L.setText("")
+    win.le_L.editingFinished.emit()
+    deadline = time.monotonic() + 2.0
+    while "⚠" not in grp.title() and time.monotonic() < deadline:
+        app.processEvents()
+    assert "⚠" in grp.title(), grp.title()
+    win.le_L.setText(old or "0.182")
+    win.le_L.editingFinished.emit()
+    deadline = time.monotonic() + 2.0
+    while "⚠" in grp.title() and time.monotonic() < deadline:
+        app.processEvents()
+    assert "⚠" not in grp.title(), grp.title()
+
+
+def test_group_badge_survives_toggle(win):
+    from ui.ui_builders import refresh_group_badges
+    grp = win._accordion_groups["Grid & Solver"]
+    old = win.le_Nx.text()
+    win.le_Nx.setText("")
+    refresh_group_badges(win)
+    assert "⚠" in grp.title()
+    grp.setChecked(True)     # expand — toggle handler re-renders title
+    assert "⚠" in grp.title(), "badge wiped by expand"
+    grp.setChecked(False)
+    assert "⚠" in grp.title(), "badge wiped by collapse"
+    win.le_Nx.setText(old or "40")
+    refresh_group_badges(win)
+
+
 def test_mode_gates_survive_group_toggle(win):
     """Expanding a collapsed group must not resurrect 3D-only widgets in
     2D mode (blanket-show + re-assert)."""
