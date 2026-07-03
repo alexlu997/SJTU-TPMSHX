@@ -198,7 +198,7 @@ def build_ui(window):
     btn_reset.setFixedWidth(108)
     btn_reset.setStyleSheet(
         _hdr_btn_qss)
-    btn_reset.setToolTip("Reset all parameters to Shanghai Electric preset (Ctrl+Shift+R)")
+    btn_reset.setToolTip("重置全部参数为基准算例 (Ctrl+Shift+R)")
     btn_reset.clicked.connect(window._reset_defaults)
     header_row.addWidget(btn_reset, 0)
     header_row.addSpacing(6)

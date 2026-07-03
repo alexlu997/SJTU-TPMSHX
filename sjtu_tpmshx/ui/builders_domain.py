@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from .theme import get_theme
-from .builders_base import section, collapsible_section, row, res_row, add_row
+from .builders_base import (section, collapsible_section, row, res_row, add_row, right_align_combo)
 
 
 def _res_ab_row(window, rg, r, label, attr_a, attr_b, *, unit_lbl_attrs=None):
@@ -100,7 +100,7 @@ def build_page_domain(window):
     window.combo_shape.addItems(["Rectangle", "Hexagon", "Octagon"])
     window.combo_shape.setStyleSheet(_COMBO)
     window.combo_shape.currentIndexChanged.connect(window._on_shape_changed)
-    add_row(window, g, 3, "Domain shape", window.combo_shape)
+    add_row(window, g, 3, "Domain shape", right_align_combo(window.combo_shape))
 
     # Dimensionality (2D / 3D MVP) — dispatch in run_calculation
     window.combo_dim = QComboBox()
@@ -108,7 +108,7 @@ def build_page_domain(window):
     window.combo_dim.setStyleSheet(_COMBO)
     window.combo_dim.currentIndexChanged.connect(
         lambda *_: _on_dim_changed(window))
-    add_row(window, g, 4, "Dimensionality", window.combo_dim)
+    add_row(window, g, 4, "Dimensionality", right_align_combo(window.combo_dim))
 
     # ── TPMS Structure ──
     g0, _sec_tp = section(window, lay, "  TPMS 结构", _T_NEUTRAL, _F_NEUTRAL)
@@ -117,7 +117,7 @@ def build_page_domain(window):
     window.combo_tpms.addItems(["Diamond", "Gyroid"])
     window.combo_tpms.setCurrentIndex(1)  # default Gyroid
     window.combo_tpms.setStyleSheet(_COMBO)
-    add_row(window, g0, 0, "Type", window.combo_tpms)
+    add_row(window, g0, 0, "Type", right_align_combo(window.combo_tpms))
     window.le_Lcell = row(window, g0, 1, "<i>L</i><sub>cell</sub> [mm]", "7.0")
     # t default: 0.6 mm = the Shanghai Electric specimen wall thickness
     # (canonical geometry). This is 20% above the ConstDF-v1 surrogate

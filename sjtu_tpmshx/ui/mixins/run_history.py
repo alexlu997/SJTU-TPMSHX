@@ -297,7 +297,8 @@ class RunHistoryMixin:
             dur = f"{elapsed:.1f}s"
         else:
             dur = f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
-        preset = getattr(self, "_active_preset_name", "—") or "—"
+        from ui.fmt import preset_display as _pd
+        preset = _pd(getattr(self, "_active_preset_name", "—") or "—")
         tip = (f"Computed @ {ts}  ·  {dur}  ·  grid {grid}  ·  preset: {preset}"
                + (f"  ·  commit: {commit}" if commit else ""))
         for attr in ("_r_Q", "_r_dP_A", "_r_dP_B", "_r_ToutA", "_r_ToutB"):

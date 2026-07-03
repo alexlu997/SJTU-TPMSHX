@@ -369,11 +369,13 @@ def build_actions(w) -> list[Action]:
             (lambda t=tab: w._switch_tab(t)),
             keywords=(key, "tab", "view"))
 
-    # Presets
+    # Presets — display de-branded (ui.fmt.preset_display); the internal
+    # key passed to _load_named_preset keeps the historical spelling.
+    from ui.fmt import preset_display as _pd
     for name in getattr(w, '_BUILTIN_PRESETS', ()):
-        add(f"Preset: {name}", "Preset",
+        add(f"Preset: {_pd(name)}", "Preset",
             (lambda n=name: w._load_named_preset(n)),
-            keywords=("preset", "load", name.lower()))
+            keywords=("preset", "load", "算例", name.lower()))
 
     # Fluid type switches
     if hasattr(w, 'combo_fluidA'):

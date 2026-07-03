@@ -50,6 +50,16 @@ def pct(value, digits=1):
     return f"{v * 100:+.{digits}f}%"
 
 
+def preset_display(name):
+    """De-branded DISPLAY name for a preset (2026-07-03 user request):
+    the internal key keeps its historical 'Shanghai (…)' spelling (presets
+    dict, session files, tests), but every user-visible surface (command
+    palette, status bar, session overview) shows 算例工况 instead."""
+    if not name:
+        return name
+    return str(name).replace("Shanghai", "算例工况")
+
+
 def duration(seconds):
     """'8.4s' / '2m15s' / '1h12m'."""
     try:

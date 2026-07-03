@@ -53,8 +53,9 @@ class OverviewDialog(QDialog):
         import main as _m   # __version__ only — styles come from ThemeManager
         from .field_factory import default_factory
         _tm = default_factory().theme
+        from .fmt import preset_display as _pd
         sub = QLabel(
-            f"Preset: {getattr(window, '_active_preset_name', '—')}  "
+            f"Preset: {_pd(getattr(window, '_active_preset_name', '—'))}  "
             f"·  Workspace: {getattr(window, '_active_workspace', 'A')}  "
             f"·  v{getattr(_m, '__version__', '?')}")
         sub.setStyleSheet(

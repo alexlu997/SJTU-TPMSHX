@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox, QScrollArea, QFrame,
 )
 
-from .builders_base import section, row, res_row, add_row, _computed_divider
+from .builders_base import (section, row, res_row, add_row, _computed_divider, right_align_combo)
 
 _DIR_ITEMS = ["+x  (left → right)", "-x  (right → left)",
               "+y  (bottom → top)", "-y  (top → bottom)",
@@ -163,7 +163,7 @@ def build_page_fluids(window):
                 "conservation caveat; dP + hot-side duty are trustworthy.")
     except Exception:
         pass
-    add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
+    add_row(window, g1, 0, "Fluid type", right_align_combo(window.combo_fluidA))
     _build_fluid_io_rows(window, g1, 'A', t,
                          u_default="20.0", T_default="422.0",
                          P_default="192362", btn_text="自动填充 A")
@@ -197,7 +197,7 @@ def build_page_fluids(window):
                 "conservation caveat; dP + hot-side duty are trustworthy.")
     except Exception:
         pass
-    add_row(window, g2b, 0, "Fluid type", window.combo_fluidB)
+    add_row(window, g2b, 0, "Fluid type", right_align_combo(window.combo_fluidB))
     # Fluid B defaults: Shanghai Electric cold side = Water (case 8,
     # Re_water≈400). Raw values from data/raw_data/20260401-上海电气天然气
     # 加热器实验工况.xlsx Sheet1 row 9: water_in 26.89 °C → 300.0 K (col 24),

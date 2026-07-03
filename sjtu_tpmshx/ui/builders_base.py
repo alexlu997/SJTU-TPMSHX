@@ -14,6 +14,42 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame
 from .theme import get_theme
 
 
+def right_align_combo(combo):
+    """Right-align a QComboBox's displayed text so combo rows read like the
+    numeric inputs beside them (ui-plan3a follow-up, user request).
+
+    Qt can't right-align a NON-editable combo via QSS, so: make it editable
+    with a read-only line edit (alignment lives there), and re-open the
+    popup on click since a read-only line edit swallows the press. Dropdown
+    items get TextAlignmentRole for the same reading direction.
+    """
+    from PySide6.QtCore import QObject, QEvent
+    combo.setEditable(True)
+    le = combo.lineEdit()
+    le.setReadOnly(True)
+    le.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    t = get_theme()
+    # The embedded QLineEdit doesn't inherit the combo QSS — keep it
+    # invisible chrome (transparent, borderless) in the combo's text color.
+    le.setStyleSheet(f"background:transparent; border:none;"
+                     f" color:{t['inp_fg']}; font-weight:bold;")
+
+    class _PopupOnClick(QObject):
+        def eventFilter(self, _obj, ev):
+            if ev.type() == QEvent.Type.MouseButtonPress:
+                combo.showPopup()
+                return True
+            return False
+
+    filt = _PopupOnClick(combo)
+    le.installEventFilter(filt)
+    combo._right_align_filter = filt      # keep the filter alive
+    align = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    for i in range(combo.count()):
+        combo.setItemData(i, align, Qt.ItemDataRole.TextAlignmentRole)
+    return combo
+
+
 def section(window, parent_lay, title, title_style, frame_style):
     """Ex-Main_Menu._section. Phase 5: delegates to FieldFactory.
 
