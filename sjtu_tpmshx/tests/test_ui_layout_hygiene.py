@@ -258,6 +258,39 @@ def test_result_view_toggle_gating(win):
     assert not win.btn_tab_result.isEnabled()
 
 
+# ── ui-plan-b-wizard: Optimize tab three-page wizard ─────────────────
+
+def test_optimize_wizard_pages(win):
+    """Three wizard pages; pills flip the stack; engine stage transitions
+    drive the page via _set_stage_pill(state='active')."""
+    stack = win._opt_stack
+    assert stack.count() == 3
+    assert stack.currentIndex() == 0          # starts on 配置
+    from ui.optimize_panel import _set_stage_pill
+    _set_stage_pill(win, 'running', 'active')
+    assert stack.currentIndex() == 1
+    _set_stage_pill(win, 'result', 'active')
+    assert stack.currentIndex() == 2
+    _set_stage_pill(win, 'config', 'active')
+    assert stack.currentIndex() == 0
+
+
+def test_optimize_inline_params_complete(win):
+    """Page-1 inline params carry every key the launch path consumes —
+    the modal dialog is only the fallback for hosts without the wizard."""
+    keys = set(win._opt_inline_params)
+    assert keys == {'n_init', 'n_iter', 'q_batch', 'seed', 'n_rho_loops'}
+    for sp in win._opt_inline_params.values():
+        assert sp.value() > 0 or sp.value() == 0   # constructed + in range
+
+
+def test_optimize_zone_panel_in_wizard(win):
+    """The zone panel lives inside wizard page 1 (the old splitter is
+    retired)."""
+    p1 = win._opt_stack.widget(0)
+    assert win._zone_panel.isVisibleTo(p1) or p1.isAncestorOf(win._zone_panel)
+
+
 # ── ui-plan3a: design-token discipline ───────────────────────────────
 
 _UI_DIR = os.path.join(os.path.dirname(os.path.dirname(

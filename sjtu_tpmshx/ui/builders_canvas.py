@@ -768,7 +768,8 @@ def build_canvas_area(window):
             from PySide6.QtWidgets import (
                 QWidget as _QWop, QHBoxLayout as _HBop,
                 QVBoxLayout as _VBop, QProgressBar as _PBop,
-                QFrame as _QFop)
+                QFrame as _QFop, QStackedWidget as _QSWop,
+                QSpinBox as _QSBop)
             from .sparkline import Sparkline as _SLop
             _surface_el = _t.get('surface_elevated', _t['card_bg'])
             _surface_ra = _t.get('surface_raised', _t['card_bg'])
@@ -776,6 +777,10 @@ def build_canvas_area(window):
             _sub_fg = _t.get('sub_fg', _t['fg'])
             _mono = "'Fira Code','JetBrains Mono','Consolas',monospace"
 
+            # ui-plan-b-wizard: the Optimize tab is a THREE-PAGE WIZARD
+            # (配置 → 运行 → 结果) in a QStackedWidget. The engine, worker,
+            # KPI/status setters and stage-pill machinery are untouched —
+            # _set_stage_pill('…', 'active') now also flips the page.
             op_host = _QWop()
             op_v = _VBop(op_host)
             op_v.setContentsMargins(0, 0, 0, 10); op_v.setSpacing(12)
@@ -801,12 +806,16 @@ def build_canvas_area(window):
             stage_row = _HBop()
             stage_row.setSpacing(6); stage_row.setContentsMargins(0, 0, 0, 0)
             window._opt_stage_pills = {}
-            stage_items = [('config', '01  CONFIG'),
-                           ('running', '02  RUNNING'),
-                           ('result', '03  RESULT')]
+            stage_items = [('config', '1  配置'),
+                           ('running', '2  运行'),
+                           ('result', '3  结果')]
             for i, (skey, slabel) in enumerate(stage_items):
                 pill = QLabel(slabel)
                 pill.setStyleSheet(_pill_idle)
+                # Wizard nav: pills are clickable page switches.
+                pill.setCursor(Qt.CursorShape.PointingHandCursor)
+                pill.mousePressEvent = (
+                    lambda _ev, idx=i: window._opt_stack.setCurrentIndex(idx))
                 stage_row.addWidget(pill)
                 window._opt_stage_pills[skey] = pill
                 if i < len(stage_items) - 1:
@@ -816,9 +825,122 @@ def build_canvas_area(window):
                         "background:transparent; border:none; padding:0 2px;")
                     stage_row.addWidget(arr)
             stage_row.addStretch(1)
+            status = QLabel("空闲 — 配置参数后点击启动")
+            status.setMinimumHeight(24)
+            status.setStyleSheet(
+                f"color:{_sub_fg}; font-family:{_mono};"
+                f"font-size:9pt; font-weight:bold;"
+                f"background:transparent; border:none; padding:2px 8px;")
+            status.setAlignment(Qt.AlignmentFlag.AlignRight
+                                | Qt.AlignmentFlag.AlignVCenter)
+            window._opt_status = status
+            stage_row.addWidget(status, 0)
             op_v.addLayout(stage_row)
             # Initial stage: Config active, others idle
             window._opt_stage_pills['config'].setStyleSheet(_pill_active)
+
+            # ── The wizard stack ──────────────────────────────────
+            _stack = _QSWop()
+            window._opt_stack = _stack
+            op_v.addWidget(_stack, 1)
+
+            # ═══ Page 1 · 配置 ═══
+            p1 = _QWop()
+            p1v = _VBop(p1)
+            p1v.setContentsMargins(0, 0, 0, 0); p1v.setSpacing(10)
+            p1row = _HBop(); p1row.setSpacing(10)
+
+            def _opt_card(title, min_w=0):
+                fr = _QFop()
+                fr.setStyleSheet(
+                    f"QFrame{{background:{_surface_el};"
+                    f"border:1px solid {_border_sub}; border-radius:6px;}}")
+                if min_w:
+                    fr.setMinimumWidth(min_w)
+                fl = _VBop(fr)
+                fl.setContentsMargins(14, 10, 14, 12); fl.setSpacing(6)
+                cap = QLabel(title)
+                cap.setStyleSheet(
+                    f"color:{_sub_fg}; font-size:8pt; font-weight:700;"
+                    "letter-spacing:1.4px; background:transparent;"
+                    "border:none;")
+                fl.addWidget(cap)
+                return fr, fl
+
+            # 优化参数 — the four BO knobs + rho loop, inline (the modal
+            # dialog stays as the headless fallback; _launch prefers these).
+            par_card, par_lay = _opt_card("优化参数 (qNEHVI)", 260)
+            _spin_qss = (
+                f"QSpinBox{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+                f" border:1px solid {_t['inp_border']}; border-radius:6px;"
+                f" padding:3px 8px; font-family:{_mono}; font-size:9pt;}}"
+                f"QSpinBox:focus{{border-color:{_t['inp_focus']};}}")
+            window._opt_inline_params = {}
+            _param_specs = [
+                ('n_init',      "初始样本 n_init", 4, 256, 32,
+                 "Sobol 初始采样数（约 2×决策维度）"),
+                ('n_iter',      "迭代数 n_iter", 0, 200, 24,
+                 "BO 迭代次数（HV 平台早停可能提前结束）"),
+                ('q_batch',     "每代批量 q_batch", 1, 8, 2,
+                 "每次 BO 迭代的并行候选数"),
+                ('seed',        "随机种子 seed", 0, 9999, 42,
+                 "Sobol + BoTorch 随机种子（复现实验用）"),
+                ('n_rho_loops', "ρ(T) 外循环", 1, 8, 3,
+                 "压缩性密度外循环次数；3 = 上海基准"),
+            ]
+            for pkey, plabel, lo, hi, dflt, tip in _param_specs:
+                prow = _HBop(); prow.setSpacing(8)
+                pl = QLabel(plabel)
+                pl.setStyleSheet(f"color:{_sub_fg}; font-size:9pt;"
+                                 " background:transparent; border:none;")
+                sp = _QSBop(); sp.setRange(lo, hi); sp.setValue(dflt)
+                sp.setToolTip(tip)
+                sp.setStyleSheet(_spin_qss)
+                sp.setAlignment(Qt.AlignmentFlag.AlignRight)
+                sp.setFixedWidth(86)
+                prow.addWidget(pl); prow.addStretch(1); prow.addWidget(sp)
+                par_lay.addLayout(prow)
+                window._opt_inline_params[pkey] = sp
+            _eval_preview = QLabel("")
+            _eval_preview.setStyleSheet(
+                f"color:{_sub_fg}; font-size:8.5pt; font-style:italic;"
+                " background:transparent; border:none;")
+
+            def _refresh_eval_preview(*_):
+                ps = window._opt_inline_params
+                total = (ps['n_init'].value()
+                         + ps['n_iter'].value() * ps['q_batch'].value())
+                sec = total * (3 + 3 * ps['n_rho_loops'].value())
+                _eval_preview.setText(
+                    f"≈ {total} 次求解 · 约 {sec // 60} 分 {sec % 60} 秒")
+            for _sp in window._opt_inline_params.values():
+                _sp.valueChanged.connect(_refresh_eval_preview)
+            _refresh_eval_preview()
+            par_lay.addWidget(_eval_preview)
+            par_lay.addStretch(1)
+            p1row.addWidget(par_card, 0)
+
+            # 搜索空间 — hosts the zone panel (moved from the old splitter).
+            zone_card, zone_lay = _opt_card("搜索空间")
+            if getattr(window, '_zone_panel', None) is not None:
+                zone_lay.addWidget(window._zone_panel, 1)
+            p1row.addWidget(zone_card, 1)
+            p1v.addLayout(p1row, 1)
+            _stack.addWidget(p1)
+
+            # ═══ Page 2 · 运行 ═══ (assembled below once the KPI row and
+            # progress bar are built — see p2v.addLayout calls.)
+            p2 = _QWop()
+            p2v = _VBop(p2)
+            p2v.setContentsMargins(0, 0, 0, 0); p2v.setSpacing(12)
+            _stack.addWidget(p2)
+
+            # ═══ Page 3 · 结果 ═══ (banner + Pareto canvas mounted below.)
+            p3 = _QWop()
+            p3v = _VBop(p3)
+            p3v.setContentsMargins(0, 0, 0, 0); p3v.setSpacing(10)
+            _stack.addWidget(p3)
+            window._opt_page3_lay = p3v
 
             # ── Hero KPI row ──────────────────────────────────────
             # Display-serif stack for hero numerics — research-tool gravitas.
@@ -852,10 +974,10 @@ def build_canvas_area(window):
 
             kpi_row = _HBop()
             kpi_row.setSpacing(10)
-            card_gen, val_gen = _mk_kpi("GENERATION", "—", 130)
-            card_q,   val_q   = _mk_kpi("BEST Q [W/m]", "—", 180)
-            card_dp,  val_dp  = _mk_kpi("BEST ΔP [Pa]", "—", 180)
-            card_eta, val_eta = _mk_kpi("ETA", "—", 120)
+            card_gen, val_gen = _mk_kpi("阶段 · 代数", "—", 130)
+            card_q,   val_q   = _mk_kpi("最优 Q [W/m]", "—", 180)
+            card_dp,  val_dp  = _mk_kpi("最优 ΔP [Pa]", "—", 180)
+            card_eta, val_eta = _mk_kpi("剩余时间", "—", 120)
             window._opt_kpi_gen = val_gen
             window._opt_kpi_q = val_q
             window._opt_kpi_dp = val_dp
@@ -874,7 +996,7 @@ def build_canvas_area(window):
             spark_card.setMinimumWidth(220)
             scl = _VBop(spark_card)
             scl.setContentsMargins(14, 8, 14, 8); scl.setSpacing(2)
-            spark_cap = QLabel("CONVERGENCE · BEST Q")
+            spark_cap = QLabel("收敛 · 最优 Q / 超体积")
             spark_cap.setStyleSheet(
                 f"color:{_sub_fg}; font-size:8pt; font-weight:700;"
                 "letter-spacing:1.4px; background:transparent; border:none;"
@@ -884,45 +1006,35 @@ def build_canvas_area(window):
             scl.addWidget(spark_cap)
             scl.addWidget(spark, 1)
             kpi_row.addWidget(spark_card, 1)
-            op_v.addLayout(kpi_row)
+            p2v.addLayout(kpi_row)
 
-            # ── Control row: Launch + Cancel + status ────────────
-            ctrl_row = _HBop()
-            ctrl_row.setSpacing(10)
-            btn_opt = QPushButton("▶  &Optimize Zones (NSGA-II)")
+            # ── Launch (inside the 优化参数 card, always above the fold)
+            #    + Cancel (page 2) ──────────────────────────────────
+            btn_opt = QPushButton("▶  启动 Pareto 搜索")
             btn_opt.setFixedHeight(36)
-            btn_opt.setMinimumWidth(250)
             btn_opt.setStyleSheet(t.style('BTN_LONG'))
             btn_opt.setToolTip(
-                "Launch NSGA-II Pareto search (minutes to hours). "
-                "Progress + live Pareto render in this tab.")
+                "启动 qNEHVI 多目标搜索（数分钟到数小时）。"
+                "进度与收敛在「2 运行」页实时显示。")
             btn_opt.clicked.connect(window._run_optimize)
             window._opt_btn = btn_opt
-            ctrl_row.addWidget(btn_opt)
+            # Insert BEFORE the trailing stretch so the CTA sits right
+            # under the eval-count preview, above the fold.
+            par_lay.insertWidget(par_lay.count() - 1, btn_opt)
 
-            btn_opt_cancel = QPushButton("Cancel")
-            btn_opt_cancel.setFixedHeight(36)
+            btn_opt_cancel = QPushButton("✕ 取消（保留已算样本）")
+            btn_opt_cancel.setFixedHeight(32)
             btn_opt_cancel.setMinimumWidth(90)
             btn_opt_cancel.setStyleSheet(t.style('BTN_TERTIARY'))
-            btn_opt_cancel.setToolTip(
-                "Request graceful cancel of the running NSGA-II search")
+            btn_opt_cancel.setToolTip("请求优雅取消当前搜索")
             btn_opt_cancel.setEnabled(False)
             btn_opt_cancel.clicked.connect(window._cancel_optimize)
             window._opt_cancel_btn = btn_opt_cancel
-            ctrl_row.addWidget(btn_opt_cancel)
-            ctrl_row.addStretch(1)
-
-            status = QLabel("Idle — click Launch to start a search")
-            status.setMinimumHeight(32)
-            status.setStyleSheet(
-                f"color:{_sub_fg}; font-family:{_mono};"
-                f"font-size:10pt; font-weight:bold;"
-                f"background:transparent; border:none; padding:4px 8px;")
-            status.setAlignment(Qt.AlignmentFlag.AlignRight
-                                | Qt.AlignmentFlag.AlignVCenter)
-            window._opt_status = status
-            ctrl_row.addWidget(status, 0)
-            op_v.addLayout(ctrl_row)
+            cancel_row = _HBop()
+            cancel_row.addWidget(btn_opt_cancel)
+            cancel_row.addStretch(1)
+            p2v.addLayout(cancel_row)
+            p2v.addStretch(1)
 
             # ── Fat progress bar (8 px rounded pill) ─────────────
             op_pb = _PBop()
@@ -939,7 +1051,7 @@ def build_canvas_area(window):
                 f"border-radius:4px;}}")
             op_pb.hide()
             window._opt_progress = op_pb
-            op_v.addWidget(op_pb)
+            p2v.insertWidget(1, op_pb)
 
             # ── Summary banner (hidden initially) ────────────────
             banner = QLabel("")
@@ -953,7 +1065,7 @@ def build_canvas_area(window):
             banner.setWordWrap(True)
             banner.hide()
             window._opt_summary_banner = banner
-            op_v.addWidget(banner)
+            p3v.addWidget(banner)
 
             card_lay.addWidget(op_host)
 
@@ -965,24 +1077,11 @@ def build_canvas_area(window):
         c.setSizePolicy(QSizePolicy.Policy.Expanding,
                         QSizePolicy.Policy.Expanding)
         c.setStyleSheet("border-radius:6px;")
-        if key == 'pareto' and getattr(window, '_zone_panel', None) is not None:
-            _zp = window._zone_panel
-            _zp.setMinimumWidth(280)
-            _zp.setMaximumWidth(460)
-            _split = QSplitter(Qt.Orientation.Horizontal)
-            _split.setChildrenCollapsible(False)
-            _split.setHandleWidth(6)
-            _split.setStyleSheet(
-                f"QSplitter::handle{{background:{_t.get('border_subtle', _t['card_border'])};"
-                f"margin:0 2px; border-radius:2px;}}"
-                f"QSplitter::handle:hover{{background:{_t.get('accent_primary', '#3B82F6')};}}")
-            _split.addWidget(_zp)
-            _split.addWidget(c)
-            _split.setStretchFactor(0, 0)
-            _split.setStretchFactor(1, 1)
-            _split.setSizes([300, 1100])
-            card_lay.addWidget(_split, 1)
-            window._optimize_split = _split
+        if key == 'pareto':
+            # ui-plan-b-wizard: the Pareto canvas is page 3 of the wizard;
+            # the zone panel already lives in page 1's 搜索空间 card (the
+            # old zones|canvas splitter is retired).
+            window._opt_page3_lay.addWidget(c, 1)
         else:
             card_lay.addWidget(c)
 

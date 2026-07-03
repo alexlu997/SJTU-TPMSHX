@@ -316,6 +316,17 @@ def _set_stage_pill(window, key: str, state: str) -> None:
         pill.setStyleSheet(styles[state_idx])
     except Exception:
         pass
+    # ui-plan-b-wizard: the ACTIVE pill also flips the wizard page, so the
+    # engine's existing stage transitions drive the page flow for free
+    # (launch → 运行, finish → 结果).
+    if state == 'active':
+        stack = getattr(window, '_opt_stack', None)
+        page = {'config': 0, 'running': 1, 'result': 2}.get(key)
+        if stack is not None and page is not None:
+            try:
+                stack.setCurrentIndex(page)
+            except Exception:
+                pass
 
 
 def _set_summary_banner(window, text: str, *, show: bool = True) -> None:
@@ -687,18 +698,22 @@ def run_optimize(window) -> None:
         _abort_launch(f"launch aborted — _gather_cfg failed: {_e}")
         return
 
-    # qNEHVI parameter dialog — surfaces the four BO knobs that the v1 panel
-    # silently locked at compile-time defaults. Returns None on Cancel; the
-    # 'remember' choice is cached on the window for subsequent clicks.
-    try:
-        params = _show_qnehvi_param_dialog(window, cfg)
-    except Exception as _e:
-        _abort_launch(f"launch aborted — param dialog failed: {_e}")
-        return
-    if params is None:
-        _set_status(window, 'launch cancelled')
-        _abort_launch()
-        return
+    # BO parameters: the wizard's page-1 inline spinboxes are the primary
+    # source (ui-plan-b-wizard); the modal dialog survives as the fallback
+    # for hosts built without the wizard (tests / legacy embeds).
+    inline = getattr(window, '_opt_inline_params', None)
+    if inline:
+        params = {k: sp.value() for k, sp in inline.items()}
+    else:
+        try:
+            params = _show_qnehvi_param_dialog(window, cfg)
+        except Exception as _e:
+            _abort_launch(f"launch aborted — param dialog failed: {_e}")
+            return
+        if params is None:
+            _set_status(window, 'launch cancelled')
+            _abort_launch()
+            return
     try:
         n_init  = int(params['n_init'])
         n_iter  = int(params['n_iter'])
@@ -796,7 +811,9 @@ def run_optimize(window) -> None:
         # `running:active`, the summary banner stale from the prior run,
         # and the worker reference dangling. Mirror the success-path
         # state reset so the user can see the failure and re-launch.
-        _set_stage_pill(window, 'config',  'done')
+        # Wizard: an error sends the user back to 配置 to adjust and
+        # re-launch (config 'active' also flips the stack to page 1).
+        _set_stage_pill(window, 'config',  'active')
         _set_stage_pill(window, 'running', 'idle')
         _set_stage_pill(window, 'result',  'idle')
         try:
