@@ -147,7 +147,11 @@ def _C_from_tL(tpms_type: str, t_over_L: float) -> float:
 
 # ── Core computation ─────────────────────────────────────────────
 
-@lru_cache(maxsize=64)
+# perf-wave1 (2026-07-03): 64 → 2048. The continuous-field optimizer
+# quantizes designs to hundreds of unique (L, t) pairs per eval; at
+# maxsize=64 the 128³ voxel scan (~10–30 ms) re-ran on every eviction
+# miss. Entries are two floats — memory cost is nil.
+@lru_cache(maxsize=2048)
 def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
                  N: int = 128) -> dict:
     """
@@ -182,7 +186,7 @@ def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
     return {'epsilon': eps, 'A_0': A0}
 
 
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=4096)   # perf-wave1: 1024 → 4096, same rationale as above
 def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
                      N: int = 128) -> dict:
     """

@@ -284,10 +284,17 @@ def run_qnehvi(config: Optional[dict] = None,
         B = len(X_np)
         if n_jobs > 1 and B > 1:
             from joblib import Parallel, delayed
+            _workers = min(n_jobs, B)
+            # perf-wave1 (2026-07-03): was pinned to 1 — right for the
+            # serial 2D evaluator, but a 3D BO (q_batch=4, 12 cores) left
+            # 8 cores idle because each worker's numba pool was capped at
+            # a single thread. Share the cores across workers instead;
+            # loky propagates this to NUMBA_NUM_THREADS (joblib >= 1.5).
+            _inner = max(1, (os.cpu_count() or 4) // _workers)
             results = Parallel(
-                n_jobs=min(n_jobs, B),
+                n_jobs=_workers,
                 backend='loky',
-                inner_max_num_threads=1,
+                inner_max_num_threads=_inner,
             )(delayed(_eval_worker)(x, cfg, dp_cap, evaluator_fn) for x in X_np)
         else:
             results = [_eval_worker(x, cfg, dp_cap, evaluator_fn) for x in X_np]

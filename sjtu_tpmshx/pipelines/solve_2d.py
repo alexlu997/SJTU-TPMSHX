@@ -697,21 +697,30 @@ def _run_solvers(window, cfg, fields):
             g_u = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
             A0 = g_u['A_0']; D_h = g_u['D_h']; eps_g = g_u['epsilon']
             Re_loc = rho_scalar * (np.abs(u_mag_field) + 1e-12) * D_h / mu_scalar
-            out = np.empty((Nx_l, Ny_l), dtype=np.float64)
-            for i in range(Nx_l):
-                for j in range(Ny_l):
-                    Re_ij = max(float(Re_loc[i, j]), 1.0)
-                    if side_props is not None:
-                        nu_corr = _nu_dispatch(side_props, side_T_for_Pr,
-                                                Re_ij, eps_g / 2.0, Lcell,
-                                                D_h * 1000.0, side_P)
-                    else:
-                        nu_corr = _tc.nu_from_Re(tpms_type, Re_ij,
-                                                  eps_g / 2.0, Lcell,
-                                                  D_h * 1000.0)
-                    Nu_l = max(nu_corr, _NU_LAM_FLOOR_2D)
-                    out[i, j] = A0 * Nu_l * k_f_scalar / D_h
-            return out
+            # perf-wave1 (2026-07-03): vectorized Nu over the whole grid —
+            # the 2D port of the 3D perf-B1 transform. Mirrors the old
+            # per-cell loop element-for-element (Re pre-floor at 1.0, Pr
+            # computed ONCE from the scalar side T exactly as _nu_dispatch
+            # did per cell, Nu post-floor at _NU_LAM_FLOOR_2D, single-stream
+            # ε_f = ε/2), so it is bit-identical — just Nx·Ny× fewer Python
+            # calls per side per outer coupling iter.
+            Re_arr = np.maximum(Re_loc, 1.0)
+            if side_props is not None:
+                m = fluid_props.get(side_props['name'])
+                Pr = None
+                if side_props['name'] in ('water', 'sco2'):
+                    mu_w = float(side_props['mu'](side_T_for_Pr, side_P))
+                    k_w = float(side_props['k'](side_T_for_Pr, side_P))
+                    cp_w = float(side_props['cp'](side_T_for_Pr, side_P))
+                    Pr = mu_w * cp_w / k_w
+                Nu_arr = m.nu(tpms_type, Re_arr, eps_g / 2.0, Lcell,
+                              D_h * 1000.0, Pr)
+            else:
+                Nu_arr = _tc.nu_from_Re(tpms_type, Re_arr, eps_g / 2.0,
+                                        Lcell, D_h * 1000.0)
+            Nu_arr = np.maximum(np.asarray(Nu_arr, dtype=np.float64),
+                                _NU_LAM_FLOOR_2D)
+            return A0 * Nu_arr * k_f_scalar / D_h
         out = np.empty((Nx_l, Ny_l), dtype=np.float64)
         for i in range(Nx_l):
             for j in range(Ny_l):
@@ -871,14 +880,46 @@ def _run_solvers(window, cfg, fields):
             from df_surrogate.predict import SCO2_CF_SCALE
             _cfsA = SCO2_CF_SCALE if _pA['name'] == 'sco2' else 1.0
             _cfsB = SCO2_CF_SCALE if _pB['name'] == 'sco2' else 1.0
-            ucA, vcA, simpA = _run_simple(cfgA, rho_A_field, mu_A, T_inA, u_A,
-                                            'Fluid A', P_inA_val,
-                                            T_field_real=_Ta_for_simpA,
-                                            fluid_type=_ftA, cf_scale=_cfsA)
-            ucB, vcB, simpB = _run_simple(cfgB, rho_B_field, mu_B, T_inB, u_B,
-                                            'Fluid B', P_inB_val,
-                                            T_field_real=_Tb_for_simpB,
-                                            fluid_type=_ftB, cf_scale=_cfsB)
+            # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
+            # on two OS threads — the 2D port of run_stack_3d's
+            # _run_two_simple_parallel. njit kernels + spsolve release the
+            # GIL, the solvers share no mutable state (separate instances,
+            # per-side live-residual lists, per-label simple_warnings keys),
+            # and the outputs are the same objects the sequential calls
+            # produced — golden 2D stays bit-identical, only wall-clock
+            # changes. Errors are re-raised after BOTH threads join so a
+            # cancel/exception on one side can't orphan the other.
+            import threading as _threading
+            _res: list = [None, None]
+            _err: list = [None, None]
+
+            def _solve_side(idx, args, kwargs):
+                try:
+                    _res[idx] = _run_simple(*args, **kwargs)
+                except BaseException as e:   # incl. InterruptedError
+                    _err[idx] = e
+
+            _tA = _threading.Thread(
+                target=_solve_side,
+                args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
+                          'Fluid A', P_inA_val),
+                      dict(T_field_real=_Ta_for_simpA,
+                           fluid_type=_ftA, cf_scale=_cfsA)),
+                daemon=True)
+            _tB = _threading.Thread(
+                target=_solve_side,
+                args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
+                          'Fluid B', P_inB_val),
+                      dict(T_field_real=_Tb_for_simpB,
+                           fluid_type=_ftB, cf_scale=_cfsB)),
+                daemon=True)
+            _tA.start(); _tB.start()
+            _tA.join(); _tB.join()
+            for _e in _err:
+                if _e is not None:
+                    raise _e
+            ucA, vcA, simpA = _res[0]
+            ucB, vcB, simpB = _res[1]
         if _coup_it == 0:
             for w in _caught:
                 warnings_list.append(str(w.message))
