@@ -96,8 +96,8 @@
                 │ ComputeConfig（纯数据，无 Qt）
                 ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  3. 编排层  runs/                                              │
-│     run_calculation.py(2D) / run_calculation_3d.py(3D)         │
+│  3. 流水线层  pipelines/                                       │
+│     stages_2d.py(2D) / stages_3d.py(3D)                        │
 │     四步流水线：解析输入 → 构建网格场 → 跑求解器 → 提取 Q、dP   │
 └───────────────┬─────────────────────────────────────────────┘
                 │ 网格数组、物性场、边界
@@ -124,7 +124,7 @@
 **最重要的两条数据流**：
 
 1. **“正向计算”流**（界面点一次“计算”）：
-   `界面输入 → ComputeConfig → run_calculation(_3d) → SIMPLE 解流场 → LTNE 解温度场 →（多次外层迭代耦合可压缩密度）→ 提取 Q、dP → 画图`
+   `界面输入 → ComputeConfig → pipelines/stages_2d(_3d) → SIMPLE 解流场 → LTNE 解温度场 →（多次外层迭代耦合可压缩密度）→ 提取 Q、dP → 画图`
 
 2. **“几何 → 压降”流**（代理模型的作用）：
    `几何(类型,L,t,ε) → df_surrogate 代理模型 → 渗透率 K、惯性系数 c_F → 喂给 SIMPLE 做多孔阻力 → 影响压降`
@@ -165,12 +165,15 @@ SJTU-TPMSHX/                       ← 仓库根
 │   ├── core/                      ← 优化与验证共用的 3D 评估函数（中立层）
 │   ├── configs/                   ← 基准配置 JSON（上海 16 工况规格）
 │   │
-│   ├── controllers/               ← 界面与求解器之间的“契约层”：配置、流水线、线程、缓存、主题
+│   ├── controllers/               ← 界面与求解器之间的“契约层”：编排、流水线抽象、线程、缓存、主题
+│   ├── pipelines/                 ← 【计算主路径】2D/3D stage 函数（解析→建场→求解→组装 ComputeResult）
 │   ├── runs/                      ← 编排脚本（生产入口 + 助手 + golden gate 在根）
 │   │   ├── demos/                 ← 演示脚本（3D 空气-空气、立方体、交互式可视化）
 │   │   ├── diagnostics/           ← 诊断/探针（asym 几何扫描、收敛检查）
-│   │   ├── smokes/                ← 冒烟测试（UI 离屏、3D eval 计时）
-│   │   └── tools/                 ← 构建/导出工具（CFD xlsx、HTML 渲染、3D 出图）
+│   │   ├── smokes/                ← 冒烟测试（UI 离屏、2D/3D 管线端到端）
+│   │   ├── tools/                 ← 构建/导出工具（CFD xlsx、HTML 渲染、3D 出图）
+│   │   ├── cfd_asym/              ← asym 偏置等值面的 Fluent 交叉验证（PyFluent runner、κ 后处理、nTop 表达式）
+│   │   └── archive/               ← 冻结的一次性诊断脚本（diag_shanghai_*、D_7_6 等）
 │   ├── domain/                    ← 输入合法性校验（纯函数，无界面）
 │   │
 │   ├── optimization/              ← 多目标贝叶斯优化（qNEHVI，搜帕累托前沿）
@@ -182,7 +185,7 @@ SJTU-TPMSHX/                       ← 仓库根
 │   ├── ui/                        ← 图形界面组件（主题、画布、3D 面板、优化面板等）
 │   │   └── mixins/                ← 主窗口类按职责拆分出的若干“混入”模块
 │   │
-│   └── tests/                     ← pytest 测试套件（~68 个文件）
+│   └── tests/                     ← pytest 测试套件（~120 个文件）
 │
 ├── poc/                           ← 概念验证（1D 严格守恒小求解器）
 ├── benchmarks/                    ← 性能基准测试（仓根运行 `python -m benchmarks.profiling.xxx`）
@@ -326,6 +329,18 @@ SJTU-TPMSHX/                       ← 仓库根
 #### `_solve_common.py` — SIMPLE 外循环共享骨架（arch-b-c-e C）
 - **作用**：`LowReExit` —— 2D/3D 共用的低速/平台早退判据单一实现（速度稳定门控 + 平台失速），消灭"3D 修了 2D 漏"的双维护面。纯 Python 无 fastmath，浮点次序与原两份逐运算一致（golden bit-identical 门）。
 
+#### `envelope.py` — 可压缩有效域守卫（choke 保护）
+- **作用**：稳态低马赫求解器的有效域闸门。Forchheimer Δp 逼近入口绝压时流动壅塞、无稳态解，旧代码会静默返回 `converged=True` 的垃圾（负压、|v|~2000 m/s）。
+- **关键函数**：`check_compressible_envelope`（解前 1D `P_out²` 种子 choke 预检）、`assess_solution_validity` / `gate_solution`（解后 Mach + 正压闸门）。由 `cfg['envelope_mode']` 驱动：`'raise'`（默认 → `ChokedFlowError`）/ `'warn'`（跑完但标 `envelope_valid=False`）/ `'off'`。
+- **硬规矩**：**绝不**通过删守卫 / 放宽 `P_abs` 裁剪来“修” `ChokedFlowError` —— 那里没有稳态解，改工况（降速、缩短流向 L、提入口压力）。
+
+#### `asym_split.py` — 偏置等值面 δ 的每侧孔隙率拆分（单一真相源）
+- **作用**：非对称（offset-isosurface δ）时把总 ε 拆成 ε_A ≠ ε_B 的几何拆分比，2D/3D 管线共用。上游拆好传入（和 ≡ ε），内核**不再减半**。
+- **关键函数**：`_asym_split_A`、`_eps_sides_for_run`、`_per_side_eps_override`。δ=0 与对称 ε/2 基线位相同。
+
+#### `asym_geometry.py` — 偏置等值面几何量（marching cubes）
+- **作用**：δ≠0 时用 scikit-image marching cubes 数值算每侧 A₀/D_h/壁厚/连通性（`percolates_z`），含 Richardson 3-网格外推消薄侧分辨率偏差。依赖 `scikit-image`（requirements 已列）。
+
 #### `polygon_fvm.py` — 非结构三角网格有限体积求解器
 - **作用**：在任意多边形域（如带集管的上海换热器）上用非结构三角网格解流动+LTNE。用 Rhie-Chow 插值防止压力棋盘振荡。
 - **状态（2026-07 架构扫描，用户决策）**：polygon 链（本模块 + `unstructured_mesh` + `runs/polygon_calc`）当前只从 UI 菜单可达、生产管线未用——**有意保留**，是后续计划方向。
@@ -339,7 +354,7 @@ SJTU-TPMSHX/                       ← 仓库根
 
 #### `polygon_calc.py` — 多边形域 CFD 编排（已迁至 `runs/`）
 - **作用**：把界面输入接到 `polygon_fvm`，跑非结构网格 CFD，出温度/压力/速度三联图。四阶段：解析输入→建场→跑求解器→存结果（含单元值→节点值的体积加权、拉普拉斯平滑、百分位裁剪）。
-- **位置**：界面耦合管线（读 widget、QMessageBox、matplotlib 绘图），与 `run_calculation.py` 同层，现位于 `runs/polygon_calc.py`。
+- **位置**：界面耦合管线（读 widget、QMessageBox、matplotlib 绘图），未随 2D/3D 主路径迁入 `pipelines/`，现位于 `runs/polygon_calc.py`。
 
 ---
 
@@ -375,6 +390,13 @@ SJTU-TPMSHX/                       ← 仓库根
 
 #### `build_prebuilt_surrogate.py` — 预构建 CSV 生成器
 - **作用**：在有原始 Excel 的机器上跑一次，把标定好的 (L,t,ε_f,K,c_F) 序列化成 CSV 提交进仓库，让没有原始数据的环境也能重建模型。`python -m df_surrogate.build_prebuilt_surrogate`。
+
+#### `backend.py` / `gamma_df.py` / `smooth_df.py` — 后端注册表与实现
+- **作用**：D-F 闭包后端派发（`TPMSHX_DF_METHOD` 环境变量选择）。默认 `gamma_df`：光滑 CFD 基线 × 实验锚定的粗糙度因子 γ（`cF = cF_smooth × γ`）；`rbf`（surrogate_v3 直拟实验 Δp）为可选。**两个后端都已含 SLM 表面粗糙度——严禁再叠乘摩擦/粗糙度系数（重复计入）。**
+
+#### `kappa_asym.py` / `ingest_cfd_kappa.py` — 非对称 κ 修正（asym 家族）
+- **作用**：偏置等值面每侧闭包的相对比修正：`X_asym(ε_side) = κ_X(r)·X_sym`，`r = ε_side/ε_sym`，X∈{K, c_F}，对称锚点 `X_sym = predict_K_cF(..., ε_total/2)`。相对比消掉共享的 CFD 出处（网格/湍流模型/AM 粗糙度因子），只留几何导致的每侧偏移。`ingest_cfd_kappa` 从外部 Fluent 每侧批跑 CSV（配套 `runs/cfd_asym/`）拟合单调 κ(r) 表。
+- **恒等守卫**：默认关（环境变量 `TPMSHX_ASYM_KAPPA=1` 激活）；无 κ 表或 r≈1（δ=0）时 κ≡1 —— golden 与对称基线位相同不受影响。
 
 ---
 
@@ -538,7 +560,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | `expr_eval.py` | 输入框安全表达式求值（用户可输 `0.042/2`，基于 AST 白名单，不用 eval）。 |
 | `ui_constants.py` | 提示时长、V&V 速度/雷诺数阈值等常数。 |
 | `matplotlib_canvas.py` | matplotlib 画布，画 2D 等值线、分区热图、帕累托散点。 |
-| `panel_vis_3d.py`（~600 行） | 嵌入式 PyVista 3D 可视化面板（体渲染 + 切片平面 + 不透明度/等值面滑块）。 |
+| `panel_vis_3d.py`（~1500 行） | 嵌入式 PyVista 3D 可视化面板（体渲染 + 切片平面 + 不透明度/等值面滑块）。 |
 | `optimize_panel.py` | 优化器界面绑定（后台线程跑 qNEHVI、帕累托散点、点击载入解）。 |
 | `quick_design_panel.py` | 快速设计面板（调用 design 模块定尺，结果表格）。 |
 | `command_palette.py` | Ctrl+K 模糊搜索命令面板（仿 VSCode）。 |
@@ -562,68 +584,60 @@ SJTU-TPMSHX/                       ← 仓库根
 | 文件 | 作用 |
 |---|---|
 | `ui_builder.py` | 页面/标签/画布构建 + 状态栏/撤销栈/帮助安装。 |
-| `run_controller.py`（~980 行） | 计算运行编排：2D/3D/多边形入口、重入保护、预检、编排器信号处理、结果写回与画图。 |
+| `run_controller.py`（~1100 行） | 计算运行编排：2D/3D/多边形入口、重入保护、预检、编排器信号处理、结果写回与画图、诊断摘要（`_diag_summary` + 诊断详情对话框）。 |
 | `optimize_ui.py` | 优化 + 快速设计启动器（薄委托）。 |
 | `zone_panel.py` | 分区面板按钮处理（委托给 ui.zone_table）。 |
 | `fluid_input.py`（~450 行） | 每侧流体输入：自动填充物性、温度单位切换、流向/形状变化、布局绘制。 |
 | `run_history.py` | 最近运行菜单、会话时间线、可复现链接、预设管理。 |
-| `tab_view.py` | 标签切换、画布缩放、3D/2D 面板分离/重附。 |
-| `dialogs.py` | 只读信息对话框（总览、求解日志查看器）。 |
+| `tab_view.py` | 标签切换（三页签工作台：几何布局/结果/优化，结果页内 2D\|3D 切换）、画布缩放、3D/2D 面板分离/重附。 |
+| `dialogs.py` | 只读信息对话框（总览、求解日志查看器、快捷键速查）。 |
+| `appearance.py` | 主题/密度/强调色切换与持久化（arch-b-c-e E 拆分）。 |
+| `session_presets.py` | 会话保存/恢复 + 用户预设管理（arch-b-c-e E 拆分）。 |
 
-#### `main.py`（~2825 行） — 界面主程序入口
+#### `main.py`（~1900 行） — 界面主程序入口
 - **作用**：应用入口和主窗口类。
-- **主类**：`Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, QMainWindow)`。
+- **主类**：`Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, AppearanceMixin, SessionPresetsMixin, QMainWindow)`。
 - **职责**：窗口初始化；持有编排器/会话/缓存/主题/信号路由五大控制器；主题与样式；温度单位切换；计算状态与重入保护；会话自动恢复；快捷键（Ctrl+R 计算、Ctrl+K 命令面板、Ctrl+I 坐标检视等）。
 
 ---
 
-### 6.10 `runs/` — 编排脚本
+### 6.10 `pipelines/` — 计算主路径（原 runs/run_calculation*.py）
 
-把界面输入接到求解器的“胶水层”，以及批跑/生产/诊断/演示脚本。
+界面“计算”按钮的实际求解编排。历史上是 `runs/run_calculation.py` / `run_calculation_3d.py` 两个巨型脚本，现拆为 Qt-free 的 stage 函数，由 `controllers/compute_pipeline.py` 的 `Pipeline2D`/`Pipeline3D` 按 `build_fields() → run_solvers() → finalize()` 调用（UI 侧入口在 `ui/mixins/run_controller.py` + `controllers/compute_orchestrator.py` 后台线程）。
 
-#### `run_calculation.py`（2038 行） — 2D 计算编排（核心）
-- **作用**：界面“计算”按钮的 2D 主编排。四阶段流水线：
-  1. **解析输入** `_parse_inputs_cfg`：从 ComputeConfig 取标量参数；防“单位滑移”（L/H 米 vs L_cell/t 毫米）；代理窗口守卫；建分区配置。
-  2. **构建场** `_build_fields_cfg`：建对齐/加密网格；建 `_run_simple` 闭包（配置并跑单股 SIMPLE）；坐标变换（4 个流向）；分区/设计的 K/c_F 覆盖。
-  3. **跑求解器** `_run_solvers`：外层 LTNE 迭代耦合可压缩 SIMPLE；每股解 SIMPLE→取速度→坐标变换→解全域 LTNE；算质量加权 Q 和 dP。
-  4. **存结果** `_store_results`：填窗口属性、外推警告。
-- **关键函数**：`_enthalpy_balance_2d`（质量加权出入口温差算 Q，抗部分守恒不收敛）、`_run_simple`、`_compute_pressure_2d`（按开口比例加权提 dP）。
-- **依赖**：`simple_solver`、`ltne_energy`、`tpms_calc`、`df_projection`、`compute_config`。
+#### `stages_2d.py` — 2D 四阶段
+- **阶段**：`_parse_inputs_cfg`（从 ComputeConfig 取参；防“单位滑移”（L/H 米 vs L_cell/t 毫米，上限 10 m）；代理窗口守卫；分区配置）→ `_build_fields_cfg`（对齐/加密网格；`_run_simple` 闭包；4 流向坐标变换；分区/设计 K/c_F 覆盖）→ `_run_solvers`（外层 LTNE 迭代耦合可压缩 SIMPLE，质量加权 Q/dP）→ finalize（组装 `ComputeResult`）。
+- **关键函数**：`_enthalpy_balance_2d`、`_compute_pressure_2d`（按开口比例加权提 dP）。
+- **要点**：2D 是入口锚定（高 Δp 抬入口压力，很少 choke）；`rho_inlet_ref` 显式传参防外迭代 ratchet。
 
-#### `run_calculation_3d.py`（2891 行） — 3D 计算编排（核心）
-- **作用**：3D 版编排，调 `SIMPLESolver3D` + 3D LTNE。同样四阶段。
-- **关键加速/特性**：A、B 两股 SIMPLE **并行**（独立线程释放 GIL）；外层 ρ(T) 耦合循环（默认 max_outer=5，A、B 都收敛就早停）；可选性能剖析（`TPMSHX_PROFILE_3D=1`）；质量流加权出口温度。
-- **关键函数**：`_run_3d_stack(cfg, ...)`（核心循环，被诊断/演示/优化直接调用）、`_run_two_simple_parallel`、`_face_flux_weights`、`_mass_weighted_T_out`。
-- **要点**：ε 减半契约（调用方传完整 ε）；剖析器关闭时零开销；3D 边界层加密单元数封顶 ~5 万。
-
-#### `batch_runner.py` — 批量运行
-- **作用**：把自包含的“工况字典”批量过完整求解栈，支持串行或多进程并行。
-- **关键函数**：`run_single_case(case)`、`run_batch(cases, max_workers, progress_cb)`。无界面依赖。
-
-#### 其他 runs/ 脚本（按用途）
-
-| 文件 | 用途 |
-|---|---|
-| `run_production_qnehvi.py` | 生产级贝叶斯优化（~80 次评估，45~75 分钟），出帕累托 CSV。 |
-| `run_production_qnehvi_parallel.py` | 并行版生产优化（~2 倍加速）。 |
-| `run_3d_qnehvi_fast.py` | 3D 快速模式优化（小网格、少迭代）。 |
-| `smoke_3d_eval.py` | 测一次 3D 评估耗时，校准优化预算。 |
-| `predict_aircooler_10kw.py`（756 行）→ 已移至 `projects/704-Aircooler-10kW/` | 一次性：10kW 空冷器定尺（3 个工况）。 |
-| `aircooler_conservative_check.py` → 已移至 `projects/704-Aircooler-10kW/` | 校核 10kW 空冷器设计是否满足热约束。 |
-| `demo_3d_air_air.py` | 3D 空气-空气演示运行，画中截面。 |
-| `demo_3d_cube_air_air.py` / `demo_3d_cube_volume.py` | 单位立方体域 3D 演示 / 体加权场可视化。 |
-| `render_3d_styles.py` | 用不同配色/光照渲染 3D 场（出版图）。 |
-| `smoke_ui_offscreen.py` | 界面实例化冒烟测试（Qt 离屏）。 |
-| `smoke_ui_screenshots.py` / `smoke_ui_3d_modes.py` | 界面截图 / 3D 模式覆盖测试。 |
-| `diag_shanghai_3d_n20_case1.py` | 诊断：上海 case 1 用 Nz=20 加密，提取指标。 |
-| `diag_shanghai_3d_n20_render.py` | 渲染上海 Nz=20 的 3D 场。 |
-| `diag_shanghai_flow_topology.py` | 分析 3D 流动拓扑（分离、回流区）。 |
-| `diag_shanghai_partial_b_compare.py` | 对比满面 vs 部分进口（A/B 不平衡诊断）。 |
-| `diag_ab_imbal.py` | 4 指标能量平衡诊断（检测边界单元多/少计）。 |
+#### `stages_3d.py`（+ `stages_3d_helpers.py`） — 3D 四阶段
+- **阶段**：`_parse_inputs_3d_cfg` → 建场 → `_run_3d_stack`（核心循环，被诊断/演示/优化直接调用）→ `_finalize_3d_result`（render/export 契约锁在 `tests/test_finalize_3d_result_sync.py`）。
+- **关键加速/特性**：A、B 两股 SIMPLE **并行**（`_run_two_simple_parallel`，独立线程释放 GIL）；外层 ρ(T) 耦合循环（默认 max_outer=5，A、B 都收敛就早停）；可选剖析（`TPMSHX_PROFILE_3D=1`）；`_face_flux_weights` / `_mass_weighted_T_out` 质量流加权出口温度。
+- **要点**：ε 减半契约（调用方传完整 ε；asym 例外见 `solvers/asym_split.py`）；3D 是出口锚定 —— `solvers/envelope.py` 的 choke 守卫主要在这里生效；边界层加密单元数封顶 ~5 万。
 
 ---
 
-### 6.11 `domain/` 与仓根工具目录 `poc/`、`benchmarks/`、`examples/`
+### 6.11 `runs/` — 生产/演示/诊断脚本
+
+生产入口 + 助手脚本；golden gate（`runs/_out/_golden_2d.py`、`_golden_3d.py`，gitignored，本地）也挂在这里。计算主路径已迁往 `pipelines/`（见 6.10）；一次性诊断脚本冻结在 `runs/archive/`。
+
+| 位置 | 文件 | 用途 |
+|---|---|---|
+| 根 | `run_production_qnehvi.py` / `run_production_qnehvi_parallel.py` | 生产级贝叶斯优化（~80 次评估，45~75 分钟）/ 并行版（~2 倍加速）。 |
+| 根 | `run_3d_qnehvi_fast.py` | 3D 快速模式优化（小网格、少迭代）。 |
+| 根 | `polygon_calc.py` | 多边形域 CFD 编排（polygon 链，有意保留，见 6.2）。 |
+| 根 | `benchmark_simpler_2d.py` / `benchmark_sou_3d.py` | SIMPLER 耦合 2D / 3D SOU 动量的性能基准。 |
+| 根 | `_case_template.py` / `_smoke_boot.py` | 工况模板 / 冒烟引导助手。 |
+| `demos/` | `demo_3d_air_air.py`、`demo_3d_cube_air_air.py`、`demo_3d_cube_volume.py`、`demo_vis_3d_interactive.py` | 3D 演示与交互式可视化。 |
+| `smokes/` | `smoke_ui_offscreen.py`、`smoke_ui_screenshots.py`、`smoke_ui_3d_modes.py`、`smoke_ui_2d_pipeline.py`、`smoke_ui_3d_pipeline.py`、`smoke_3d_eval.py` | UI 离屏实例化/截图、2D/3D 管线端到端、3D 评估计时。 |
+| `diagnostics/` | `asym_geometry_scan.py`、`asym_a0_convergence.py`、`asym_target_scan.py`、`asym_porosity_preview.py`、`asym_geometry_report_html.py` | asym 几何扫描/收敛/预览/报告。 |
+| `tools/` | `asym_build_cfd_design_xlsx.py`、`asym_build_cfd_worklist_xlsx.py`、`asym_plan_to_html.py`、`render_3d_styles.py` | CFD 工况簿构建、HTML 渲染、3D 出版图。 |
+| `cfd_asym/` | `asym_pyfluent_runner.py`、`asym_postproc_kappa.py`、`asym_ntop_expressions_html.py` | Fluent 交叉验证批跑（PyFluent）、κ 后处理（喂 `df_surrogate/ingest_cfd_kappa`）、nTop 表达式。 |
+| `archive/` | `diag_shanghai_*.py`、`diag_ab_imbal.py`、`validate_d76_3d.py` 等 | 冻结的一次性诊断（见各自头注）。 |
+
+---
+
+### 6.12 `domain/` 与仓根工具目录 `poc/`、`benchmarks/`、`examples/`
 
 > 2026-06-10 Batch-5：`poc/`、`benchmarks/`、`examples/`、`opt_runs/` 从包内迁至仓库根（非库代码不再随 `import sjtu_tpmshx` 分发）；脚本自带 sys.path bootstrap，从仓根运行。
 
@@ -642,9 +656,9 @@ SJTU-TPMSHX/                       ← 仓库根
 
 ---
 
-### 6.12 `tests/` — 测试套件总览（~68 文件）
+### 6.13 `tests/` — 测试套件总览（~120 文件）
 
-用 pytest。`conftest.py` 负责：在导入 PySide6 前设 Qt 离屏平台、把包根加入 sys.path、预建 QApplication。
+用 pytest（配置在仓根 `pytest.ini`：testpaths、`slow`/`fast` 标记注册、strict-markers）。`conftest.py` 负责：在导入 PySide6 前设 Qt 离屏平台、把包根加入 sys.path、预建 QApplication。
 
 | 类别 | 守护什么 | 代表文件 |
 |---|---|---|
@@ -655,20 +669,20 @@ SJTU-TPMSHX/                       ← 仓库根
 | 界面与配置 | ComputeConfig、流水线、校验器 | `test_compute_config.py`、`test_compute_pipeline.py`、`test_domain_validator.py` |
 | 几何与场 | 分区、连续场、网格加密 | `test_continuous_field.py`、`test_sigmoid_field.py`、`test_field_factory.py` |
 | 物性与关联式 | Nu、Re、密度/黏度、流体类型 | `test_nu_correlations.py`、`test_fluid_props.py`、`test_fluid_type_validation.py` |
-| 批跑与编排 | batch_runner、编排器 | `test_batch_runner.py`、`test_compute_orchestrator.py` |
+| 流水线与编排 | stage 函数、编排器、结果契约 | `test_compute_pipeline.py`、`test_compute_orchestrator.py`、`test_finalize_3d_result_sync.py` |
 | 边界与部分流 | 部分进出口、ghost 单元 | `test_partial_bc_ghost_b.py`、`test_chi_b_reverse_mirror.py` |
 | 3D 方向与对称 | 6 个流向派发、反向镜像不变性 | `test_3d_direction_invariance.py`、`test_3d_reverse_mirror.py` |
 | 优化与代理 | 代理预测、优化器辅助、导出 | `test_predict_K_cF_vec_batch.py`、`test_optimizer_qnehvi_helpers.py`、`test_export_ntop_csv.py` |
 | 冒烟与集成 | 界面实例化、流水线端到端 | `test_main_smoke.py`、`test_pipeline_2d_smoke.py`、`test_evaluator_sanity.py` |
 | design 子模块（`tests/design/`，15 文件） | 定尺、枚举、工况读取 | `test_cases.py`、`test_sizing_inner.py`、`test_optimize.py` |
 
-运行示例：`pytest tests/ -v`（默认快测）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest tests/test_shanghai_regression.py -v`（慢回归）。
+运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。
 
 ---
 
 ## 7. 典型工作流（怎么用）
 
-1. **图形界面跑一次正向计算**：运行 `python main.py` → 填几何/流体/边界 → 点“计算”（2D 走 `run_calculation.py`，3D 走 `run_calculation_3d.py`）→ 看温度/压力/速度图。
+1. **图形界面跑一次正向计算**：运行 `python main.py` → 填几何/流体/边界 → 点“计算”（2D 走 `pipelines/stages_2d.py`，3D 走 `pipelines/stages_3d.py`，后台线程由 `controllers/compute_orchestrator.py` 管理）→ 结果页看温度/压力/速度场 + 诊断侧栏。
 
 2. **命令行快速定尺**：准备工况 Excel（照 `design/examples/quick_design_template.xlsx`）→ `python -m design.cli --xlsx cases.xlsx --arrangement cross --out out.xlsx` → 得双 sheet Excel 报告。
 

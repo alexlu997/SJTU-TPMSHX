@@ -143,7 +143,12 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 #### ✔️ Tests
 
 ```bash
-pytest sjtu_tpmshx/tests/ -v        # 67 test files
+# full suite, parallel (~4.5 min; ~120 test files). PYTHONHASHSEED must be
+# set in the shell — the 3D pipeline output is hash-seed sensitive.
+PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
+
+# fast subset (same selection CI runs)
+PYTHONHASHSEED=0 pytest -q -m "not slow" -n auto --dist loadscope
 ```
 
 ---
@@ -153,7 +158,7 @@ pytest sjtu_tpmshx/tests/ -v        # 67 test files
 ```text
 SJTU-TPMSHX/                   # repo root
 ├── sjtu_tpmshx/               # Python package
-│   ├── solvers/               # SIMPLE 2D/3D, LTNE, tpms_calc, roughness, envelope
+│   ├── solvers/               # SIMPLE 2D/3D, LTNE, tpms_calc, roughness, envelope, asym_split/asym_geometry
 │   ├── pipelines/             # stages_2d / stages_3d (+ stages_3d_helpers)
 │   ├── df_surrogate/          # Darcy–Forchheimer surrogate (gamma_df / rbf)
 │   ├── controllers/           # Qt: ComputeOrchestrator, ResultCache, pipelines
