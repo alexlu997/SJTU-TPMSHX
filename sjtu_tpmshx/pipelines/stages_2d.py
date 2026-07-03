@@ -26,6 +26,10 @@ from solvers.ltne_energy import solve_full_domain
 from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
 from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
 from solvers.envelope import gate_solution, mach_field_max
+from pipelines._stage_common import (
+    validate_domain_dims, surrogate_extrap_reasons, safe_float,
+    geometry_props,
+)
 
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
@@ -165,27 +169,7 @@ def _parse_inputs_cfg(compute_cfg):
     # values downgrade to warn and we stash the reasons in the parsed
     # dict so the UI can mark the result + watermark the plots.
     _allow_extrap = bool(compute_cfg.extrap.allow)
-    try:
-        from df_surrogate.surrogate_domain import check_surrogate_domain_at_point
-        _tpms = compute_cfg.geometry.tpms
-        _L = compute_cfg.geometry.L_cell_mm
-        _t = compute_cfg.geometry.t_wall_mm
-        _ks = compute_cfg.geometry.k_s_W_mK
-        _T_A = compute_cfg.fluid_A.T_in_K
-        _T_B = compute_cfg.fluid_B.T_in_K
-        _P_A = compute_cfg.fluid_A.P_in_Pa
-        _P_B = compute_cfg.fluid_B.P_in_Pa
-        _uA = compute_cfg.fluid_A.u_mps
-        _uB = compute_cfg.fluid_B.u_mps
-        extrap_reasons += check_surrogate_domain_at_point(
-            _tpms, _L, _t, _ks, _uA, _T_A, _P_A, side='A',
-            allow_extrap=_allow_extrap, fluid=fluid_A) or []
-        extrap_reasons += check_surrogate_domain_at_point(
-            _tpms, _L, _t, _ks, _uB, _T_B, _P_B, side='B',
-            allow_extrap=_allow_extrap, fluid=fluid_B) or []
-    except (AttributeError, ValueError) as _e:
-        if isinstance(_e, ValueError):
-            raise
+    extrap_reasons += surrogate_extrap_reasons(compute_cfg, _allow_extrap)
 
     # Scalar parameters (already cfg-sourced).
     L = compute_cfg.geometry.L_dom_m
@@ -201,16 +185,8 @@ def _parse_inputs_cfg(compute_cfg):
     # 0.5*(T_inA+T_inB) inside solve_full_domain. Not a prescribed Ts.
     T_s_init = compute_cfg.solver.T_s_init_K
 
-    # Defensive unit firewall (GUI labels L/H in METERS but L_cell/t in
-    # MM; mistyping the mm value into the metre field silently spawns a
-    # multi-metre domain). See run_calculation_3d.py for the same guard.
-    _DOMAIN_MAX_M = 10.0
-    for _name, _val in [('L', L), ('H', H)]:
-        if _val > _DOMAIN_MAX_M:
-            raise ValueError(
-                f"Domain dimension {_name!r}={_val} m exceeds {_DOMAIN_MAX_M} m. "
-                f"Likely unit slip — GUI expects meters here, while L_cell "
-                f"and t use millimeters. Re-check input.")
+    # Defensive unit firewall — shared with the 3D parse (_stage_common).
+    validate_domain_dims([('L', L), ('H', H)])
 
     dx = L / N_x
     dy = H / N_y
@@ -1949,16 +1925,12 @@ def _finalize_cfg(raw, fields):
         }
 
     # TPMS geometry derived from cfg (eps + D_h + A_0) for props slot.
-    from solvers.tpms_calc import geometry as _tpms_geom
-    g = _tpms_geom(compute_cfg.geometry.tpms,
-                   compute_cfg.geometry.L_cell_mm,
-                   compute_cfg.geometry.t_wall_mm,
-                   compute_cfg.geometry.k_s_W_mK)
+    eps_geom, D_h_m, A_0_m2 = geometry_props(compute_cfg)
 
     return ComputeResult(
-        Q_W=float(raw['Q_total']),
-        dP_A_Pa=float(raw['dP_A']),
-        dP_B_Pa=float(raw['dP_B']),
+        Q_W=safe_float(raw['Q_total']),
+        dP_A_Pa=safe_float(raw['dP_A']),
+        dP_B_Pa=safe_float(raw['dP_B']),
         T_out_A_K=T_out_A,
         T_out_B_K=T_out_B,
         fields={
@@ -1984,9 +1956,9 @@ def _finalize_cfg(raw, fields):
             'rho_B': raw.get('_shim_rho_B'),
             'mu_A': raw.get('_shim_mu_A'),
             'mu_B': raw.get('_shim_mu_B'),
-            'eps_A': g['epsilon'],
-            'D_h_m': g['D_h'],
-            'A_0_m2': g['A_0'],
+            'eps_A': eps_geom,
+            'D_h_m': D_h_m,
+            'A_0_m2': A_0_m2,
         },
         residuals={
             'r_dP_A': float('nan'),  # _run_solvers does not surface

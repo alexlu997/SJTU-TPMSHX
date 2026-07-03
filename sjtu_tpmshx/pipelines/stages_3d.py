@@ -54,6 +54,10 @@ from solvers.envelope import (check_compressible_envelope, gate_solution,
                                PRESSURE_FLOOR_PA)
 
 
+from pipelines._stage_common import (
+    validate_domain_dims, surrogate_extrap_reasons, safe_float as _safe_float,
+    geometry_props,
+)
 from pipelines.stages_3d_helpers import (  # Phase 3: extracted pure helpers
     _stream_axis, _dir_is_reverse, _inlet_index, _outlet_index,
     _face_slice, _real_outlet_slice, _dilate_one_step_3d, _box_smooth_3d,
@@ -511,14 +515,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
         if val <= 0:
             raise ValueError(
                 f"Domain dimension {name!r} must be > 0 (got {val})")
-    _DOMAIN_MAX_M = 10.0
-    for name, val in [('L', L), ('H', H), ('Lz', Lz)]:
-        if val > _DOMAIN_MAX_M:
-            raise ValueError(
-                f"Domain dimension {name!r}={val} m exceeds "
-                f"{_DOMAIN_MAX_M} m. Likely unit slip — GUI expects "
-                f"meters here, while L_cell and t use millimeters. "
-                f"Re-check input.")
+    validate_domain_dims([('L', L), ('H', H), ('Lz', Lz)])
     for name, val in [('Nx', Nx), ('Ny', Ny), ('Nz', Nz)]:
         if val < 1:
             raise ValueError(
@@ -558,26 +555,11 @@ def _parse_inputs_3d_cfg(compute_cfg):
         # bc_to_dict's documented side-B None asymmetry — are unaffected.
         fluid_B_cfg = bc_to_dict(compute_cfg.bc_B, L, H, side='A', with_z=True)
 
-    # Surrogate-domain extrap guard — cfg.extrap.allow drives it.
-    extrap_reasons = []
-    _allow_extrap = bool(compute_cfg.extrap.allow)
-    try:
-        from df_surrogate.surrogate_domain import check_surrogate_domain_at_point
-        extrap_reasons += check_surrogate_domain_at_point(
-            tpms_type, Lcell, t_wall, k_s,
-            u_A, T_inA, P_inA, side='A',
-            allow_extrap=_allow_extrap,
-            fluid=compute_cfg.fluid_A.type) or []
-        extrap_reasons += check_surrogate_domain_at_point(
-            tpms_type, Lcell, t_wall, k_s,
-            u_B, T_inB, P_inB, side='B',
-            allow_extrap=_allow_extrap,
-            fluid=compute_cfg.fluid_B.type) or []
-    except ImportError:
-        # surrogate_domain module unavailable → skip the extrap-domain check.
-        # A ValueError from the check is a real domain violation and must
-        # propagate, so it is intentionally not caught here.
-        pass
+    # Surrogate-domain extrap guard — cfg.extrap.allow drives it
+    # (shared both-side check in _stage_common; ImportError → skip,
+    # ValueError propagates).
+    extrap_reasons = surrogate_extrap_reasons(
+        compute_cfg, bool(compute_cfg.extrap.allow))
 
     from solvers.tpms_calc import validate_fluid_type
     fluid_type_A = compute_cfg.fluid_A.type
@@ -682,30 +664,14 @@ def _finalize_3d_cfg(raw, fields):
     raw['extrap_reasons'] = list(fields.get('extrap_reasons', []))
 
     # 3D solver already computed mass-weighted outlet T per side.
-    # ``raw.get(key, default)`` only returns ``default`` when ``key`` is
-    # absent — explicit ``None`` values (e.g. when fluid B is frozen)
-    # come back as ``None``, which would crash ``float(None)``. Guard
-    # via ``or`` so any None / missing value falls back to ``nan``.
-    def _safe_float(v):
-        try:
-            return float(v) if v is not None else float('nan')
-        except (TypeError, ValueError):
-            return float('nan')
-
+    # _safe_float (shared _stage_common.safe_float): None / non-numeric → nan.
     T_out_A = _safe_float(raw.get('T_out_A', raw.get('T_A_out')))
     T_out_B = _safe_float(raw.get('T_out_B', raw.get('T_B_out')))
 
     # TPMS geometry (eps + D_h + A_0) for props slot.
     eps_geom = D_h_m = A_0_m2 = float('nan')
     if compute_cfg is not None:
-        from solvers.tpms_calc import geometry as _tpms_geom
-        g = _tpms_geom(compute_cfg.geometry.tpms,
-                       compute_cfg.geometry.L_cell_mm,
-                       compute_cfg.geometry.t_wall_mm,
-                       compute_cfg.geometry.k_s_W_mK)
-        eps_geom = g['epsilon']
-        D_h_m = g['D_h']
-        A_0_m2 = g['A_0']
+        eps_geom, D_h_m, A_0_m2 = geometry_props(compute_cfg)
 
     return ComputeResult(
         Q_W=_safe_float(raw.get('Q_total', raw.get('Q'))),
