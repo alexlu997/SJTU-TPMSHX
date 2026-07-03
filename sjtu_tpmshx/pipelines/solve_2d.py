@@ -819,10 +819,10 @@ def _run_solvers(window, cfg, fields):
     # (per-fluid inlet T for Ta/Tb, 0.5*(T_inA+T_inB) for Ts).
     # Filled → only Ts is overridden with the user value; Ta/Tb stay at
     # the per-fluid inlet T to avoid the 0.5-mean energy-balance leak
-    # documented in ltne_energy_3d.py:1442-44 (mid-T value at non-pipe
-    # inlet cells diffuses back as a virtual heat source, ~20–25% on
-    # partial-inlet geometries). Ts is *not* prescribed; the solid
-    # energy equation still updates it every sweep.
+    # (2026-04-24 FV fix in solvers/ltne_energy_3d.py: mid-T value at
+    # non-pipe inlet cells diffuses back as a virtual heat source,
+    # ~20–25% on partial-inlet geometries). Ts is *not* prescribed; the
+    # solid energy equation still updates it every sweep.
     _Ts_init_user = cfg.get('T_s_init')
     if _Ts_init_user is not None:
         Ta = np.full((N_x, N_y), float(T_inA), dtype=np.float64)

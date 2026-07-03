@@ -62,19 +62,43 @@ site or one shared helper, listed here. Adding a flag = add a row.
 - ``TPMSHX_PARALLEL_THRESHOLD`` (200000) — red-black prange cell gate;
   ``solvers/simple_solver_3d.py`` (module-level, fixed at import).
 - ``TPMSHX_PHASE_A/B/C`` (1/0/0) — SIMPLE acceleration phases; single
-  helper ``pipelines.stages_3d._apply_phase_flags`` (cfg keys win).
+  helper ``pipelines.run_stack_3d._apply_phase_flags`` (cfg keys win).
 - ``TPMSHX_PREINIT_3D`` (0) — prewarm 3D panel at startup; ``main.py``.
-- ``TPMSHX_PROFILE_3D`` (0) — cProfile the 3D solve;
-  ``pipelines/stages_3d.py``.
+- ``TPMSHX_PROFILE_3D`` (0) — per-outer wall-clock profiler;
+  ``pipelines/run_stack_3d.py`` (``_prof_3d_enabled``; ``.profile_3d``
+  flag file works too).
 - ``TPMSHX_ROUGH_MODE`` (baseline; UI path defaults norris_1a) +
   ``TPMSHX_ROUGH_EPS_UM`` (100) — roughness model; single helper
   ``solvers.roughness.resolve_mode_from_env``.
 - ``TPMSHX_RUN_SHANGHAI_REGRESSION`` (0) — opt-in long validation gate;
   ``tests/test_shanghai_regression.py``.
 - ``TPMSHX_SIMPLE_TOL`` (1e-5) — SIMPLE pp tol for diagnostic sweeps;
-  single helper ``pipelines.stages_3d._simple_tol_default``.
+  single helper ``pipelines.run_stack_3d._simple_tol_default``.
 - ``TPMSHX_VAR_RHOCP`` (unset) — local-P gas density override (UI checkbox
-  is primary); ``pipelines/stages_3d.py``.
+  is primary); ``pipelines/run_stack_3d.py``.
+
+Registry sync 2026-07-03 (maintainability-closeout) — flags that existed
+but were missing above:
+
+- ``TPMSHX_DF_METHOD`` (gamma_df) — D-F closure backend selector
+  (gamma_df | rbf | cfd_refit…); ``df_surrogate/predict.py`` +
+  ``solvers/_kernels_simple_2d.py``.
+- ``TPMSHX_DF_OVERRIDES`` (unset) — JSON per-geometry (K, cF) override
+  table for the D-F prediction; ``df_surrogate/predict.py``.
+- ``TPMSHX_ASYM_KAPPA`` (0) — activate the asym per-side κ correction
+  after ``ingest_cfd_kappa``; ``df_surrogate/kappa_asym.py``.
+- ``TPMSHX_NUM_THREADS`` (unset → numba default) — headless/script numba
+  thread count; ``solvers/threads.py`` (GUI spinbox is primary).
+- ``TPMSHX_SCO2_COMPRESSIBLE`` (0, experimental) — opt-in sCO2
+  compressible path; ``pipelines/run_stack_3d.py``.
+- ``TPMSHX_MAX_CELLS_3D`` (2000000) — hard 3D cell cap;
+  ``pipelines/run_stack_3d.py`` (robustness-hardening).
+- ``TPMSHX_BUILD_S_MAX`` / ``TPMSHX_BUILD_LX_MAX`` — sizing-tool build
+  envelope caps; ``design/sizing.py``.
+- ``TPMSHX_2D_MASSFLUX`` (1) — validation-only toggle;
+  ``validation/cases/validate_shanghai_aligned.py``.
+- ``TPMSHX_LOG_LEVEL`` (INFO) / ``TPMSHX_LOG_TS`` (0) — central logging
+  level / timestamp prefix; ``logutil.py``.
 """
 from __future__ import annotations
 

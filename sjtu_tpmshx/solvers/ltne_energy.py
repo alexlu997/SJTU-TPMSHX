@@ -688,7 +688,8 @@ def solve_full_domain(L, H, Nx, Ny,
         Ts = np.ascontiguousarray(Ts_init.copy(), dtype=np.float64)
     else:
         # Per-fluid cold-start seed (Ta=T_inA, Tb=T_inB), matching the 3D kernel
-        # and the stages_2d caller's documented intent (stages_2d.py:1309-1314).
+        # and the 2D caller's documented intent (pipelines/solve_2d.py, the
+        # T_s_init warm-start block in _run_solvers).
         # The old 0.5*(T_inA+T_inB) seed for ALL THREE left partial-inlet
         # off-pipe cells (inlet frac<=0.01, never updated by a governing
         # equation — see the inlet branch above) FROZEN at the mid-T, which

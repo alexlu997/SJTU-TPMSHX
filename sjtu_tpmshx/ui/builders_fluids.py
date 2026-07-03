@@ -134,7 +134,8 @@ def build_page_fluids(window):
     # SIMPLE A path; sCO₂ needs a real-gas property table). Disabling the
     # unsupported combo entries instead of hiding them keeps the option
     # visible as a "coming soon" hint without letting users hit
-    # NotImplementedError at compute time. See run_calculation_3d.py:954-957.
+    # NotImplementedError at compute time (fluid-type gate now lives in
+    # solvers/tpms_calc.validate_fluid_type, called by both parses).
     window.combo_fluidA = QComboBox()
     window.combo_fluidA.addItems(_FLUID_TYPES)
     window.combo_fluidA.setCurrentIndex(0)
@@ -170,8 +171,8 @@ def build_page_fluids(window):
 
     # ── Fluid B (input + computed) — sits to the right of Fluid A ─────
     g2b, _ = section(window, _fluids_row_lay, "流体 B", _T_B, _F_B)
-    # Fluid B supports Air + Water (incompressible SIMPLE B path is wired,
-    # see run_calculation_3d.py:910-917). sCO₂ remains unsupported until
+    # Fluid B supports Air + Water (incompressible SIMPLE B path is wired
+    # in pipelines/run_stack_3d + solve_2d). sCO₂ remains unsupported until
     # a real-gas property table is added.
     window.combo_fluidB = QComboBox()
     window.combo_fluidB.addItems(_FLUID_TYPES)

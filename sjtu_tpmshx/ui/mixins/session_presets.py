@@ -6,9 +6,6 @@ closeEvent (which calls _save_session) stays in main.py — window lifecycle.
 """
 from __future__ import annotations
 
-import json
-import os
-
 from PySide6.QtWidgets import QMessageBox
 
 

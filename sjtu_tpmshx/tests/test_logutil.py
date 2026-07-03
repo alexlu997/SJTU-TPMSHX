@@ -63,3 +63,43 @@ def test_no_duplicate_into_stdlib_root(capfd=None):
     get_logger('tests.prop')          # ensure configured
     assert root.propagate is False
     assert any(type(h).__name__ == '_StdoutHandler' for h in root.handlers)
+
+
+def test_ts_env_adds_timestamp_prefix(monkeypatch):
+    """TPMSHX_LOG_TS=1 → 'HH:MM:SS LEVEL name: message' render.
+
+    _configure_root is once-per-process, so build the handler/formatter
+    pair the same way the module does and verify the format directly."""
+    import io as _io
+    import logutil as lu
+    monkeypatch.setenv('TPMSHX_LOG_TS', '1')
+    # Reset the module singleton in an isolated logger namespace.
+    monkeypatch.setattr(lu, '_configured', False)
+    saved_handlers = list(logging.getLogger('tpmshx').handlers)
+    logging.getLogger('tpmshx').handlers.clear()
+    try:
+        log = lu.get_logger('tests.ts')
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            log.info("[ts-check] stamped")
+        line = [l for l in buf.getvalue().splitlines() if 'ts-check' in l][0]
+        # "HH:MM:SS INFO tpmshx.tests.ts: [ts-check] stamped"
+        assert 'INFO' in line and 'tpmshx.tests.ts' in line
+        assert line.split(' ')[0].count(':') == 2
+    finally:
+        logging.getLogger('tpmshx').handlers.clear()
+        logging.getLogger('tpmshx').handlers.extend(saved_handlers)
+        monkeypatch.setattr(lu, '_configured', True)
+
+
+def test_invalid_level_env_falls_back_to_info(monkeypatch):
+    """Garbage TPMSHX_LOG_LEVEL must resolve to INFO, not crash."""
+    import logutil as lu
+    monkeypatch.setenv('TPMSHX_LOG_LEVEL', 'NOT_A_LEVEL')
+    monkeypatch.setattr(lu, '_configured', False)
+    try:
+        lu.get_logger('tests.badlevel')
+        assert logging.getLogger('tpmshx').level == logging.INFO
+    finally:
+        monkeypatch.setattr(lu, '_configured', True)
+        logging.getLogger('tpmshx').setLevel(logging.INFO)

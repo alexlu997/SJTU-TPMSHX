@@ -322,7 +322,7 @@ def evaluate_3d(x_decision: np.ndarray,
         wcB_real = np.zeros_like(vcB_real)
 
         # Full SIMPLE staggered faces → real coords, to drive the conservative
-        # kernel (B-plan; matches the production run_calculation_3d path so the
+        # kernel (B-plan; matches the production run_stack_3d path so the
         # optimizer/Pareto evaluator uses the SAME strict-conservation solver
         # as the UI). sA maps solver→real via transpose(1,0,2) (A streamwise
         # +x); sB is reverse-y, so its faces mirror along y (axis 1) with the
@@ -377,7 +377,7 @@ def evaluate_3d(x_decision: np.ndarray,
         # instead of stale T_in scalar. Without this, the manual
         # rho_field/mu_field assignment below is silently overwritten on
         # the first inner iter, breaking compressible T-ρ coupling.
-        # validate_shanghai_3d_real.py and run_calculation_3d.py have
+        # validate_shanghai_3d_real.py and pipelines/run_stack_3d.py have
         # this propagation already; the BO evaluator was missing it.
         Ta_sA = Ta.transpose(1, 0, 2).copy()  # to SIMPLE A's internal layout
         sA.update_T_field(Ta_sA)

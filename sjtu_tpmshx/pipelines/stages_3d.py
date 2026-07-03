@@ -27,6 +27,11 @@ The finished :class:`ComputeResult` carries the 3D render/export contract
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 from domain.compute_config import ComputeConfig, bc_to_dict
 from domain.compute_result import ComputeResult
 from solvers.tpms_calc import geometry as tpms_geometry
@@ -88,7 +93,7 @@ from pipelines.run_stack_3d import (  # noqa: F401
 
 # ─────────────────────────── internals ────────────────────────────
 
-def _parse_inputs_3d_cfg(compute_cfg):
+def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     """Phase 1 (Qt-free) 3D mirror of ``_parse_inputs(window, compute_cfg)``.
 
     Audit C4 (L-a-2): reads only :class:`ComputeConfig`. Returns the
@@ -190,7 +195,7 @@ def _parse_inputs_3d_cfg(compute_cfg):
     )
 
 
-def _build_fields_3d_cfg(parsed):
+def _build_fields_3d_cfg(parsed: dict[str, Any]) -> dict[str, Any]:
     """Phase 2 (Qt-free) 3D: passthrough.
 
     Audit C4 (L-a-2). The 3D stack has no separate build phase — the
@@ -201,8 +206,11 @@ def _build_fields_3d_cfg(parsed):
     return parsed
 
 
-def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
-                         cancel_token=None, iter_cb=None):
+def _run_solvers_3d_cfg(parsed: dict[str, Any], fields: dict[str, Any], *,
+                         progress_cb: Callable[[int], None] | None = None,
+                         cancel_token: Any = None,
+                         iter_cb: Callable[[int, int], None] | None = None,
+                         ) -> dict[str, Any]:
     """Phase 3 (Qt-free) 3D: drive :func:`_run_3d_stack` with the
     progress + cancel hooks read off the cfg dict.
 
@@ -232,7 +240,8 @@ def _run_solvers_3d_cfg(parsed, fields, *, progress_cb=None,
     return _run_3d_stack(cfg)
 
 
-def _finalize_3d_cfg(raw, fields):
+def _finalize_3d_cfg(raw: dict[str, Any],
+                     fields: dict[str, Any]) -> ComputeResult:
     """Phase 4 (Qt-free) 3D: assemble a :class:`ComputeResult` from the
     ``_run_3d_stack`` output.
 

@@ -10,7 +10,6 @@ on the live window through the MRO so external wiring keeps working.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QMessageBox
 
 from ui.ui_constants import TOAST_MS_SHORT

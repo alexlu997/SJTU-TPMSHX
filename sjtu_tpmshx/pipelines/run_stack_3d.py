@@ -711,7 +711,6 @@ def _run_3d_stack(cfg):
     # local (Lcell_ij, t_wall_ij) so A_0, H_sf track the design field.
     # Uniform case reduces to the old scalar path.
     from solvers.tpms_calc import compute as tpms_compute
-    from solvers.tpms_calc import nu_from_Re as _nu_from_Re
     from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
     u_B_val = cfg.get('u_B', u_A)
 
@@ -941,7 +940,7 @@ def _run_3d_stack(cfg):
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
     # Filled → only Ts is overridden with the user value; Ta/Tb stay at the
-    # per-fluid inlet T (the 2026-04-24 FV fix in ltne_energy_3d.py:1442-44
+    # per-fluid inlet T (the 2026-04-24 FV fix in solvers/ltne_energy_3d.py
     # showed that 0.5*mean for Ta/Tb leaks into non-pipe inlet cells and
     # breaks energy balance by 20–25% on partial-inlet runs). The solid
     # energy equation still updates Ts each sweep; this is *not* prescribed.

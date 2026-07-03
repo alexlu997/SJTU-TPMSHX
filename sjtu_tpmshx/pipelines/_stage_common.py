@@ -12,13 +12,20 @@ belongs in this module.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from domain.compute_config import ComputeConfig
+
 # Defensive unit firewall (GUI labels L/H in METERS but L_cell/t in MM;
 # mistyping the mm value into the metre field silently spawns a multi-metre
 # domain and an hour-long hang instead of an error).
 _DOMAIN_MAX_M = 10.0
 
 
-def validate_domain_dims(pairs):
+def validate_domain_dims(pairs: Iterable[tuple[str, float]]) -> None:
     """Raise ValueError for any (name, value-in-m) pair above _DOMAIN_MAX_M.
 
     ``pairs`` is an iterable of ``(name, val)`` — 2D passes L/H, 3D adds Lz.
@@ -32,7 +39,8 @@ def validate_domain_dims(pairs):
                 f"Re-check input.")
 
 
-def surrogate_extrap_reasons(compute_cfg, allow_extrap):
+def surrogate_extrap_reasons(compute_cfg: ComputeConfig,
+                             allow_extrap: bool) -> list[str]:
     """Both-side surrogate training-domain check → list of extrap reasons.
 
     ImportError (surrogate_domain unavailable) → skip, return []. A
@@ -55,7 +63,7 @@ def surrogate_extrap_reasons(compute_cfg, allow_extrap):
     return reasons
 
 
-def safe_float(v):
+def safe_float(v: Any) -> float:
     """float(v) with None / non-numeric → nan (headline-scalar guard).
 
     ``raw.get(key, default)`` only returns ``default`` when ``key`` is
@@ -68,7 +76,7 @@ def safe_float(v):
         return float('nan')
 
 
-def geometry_props(compute_cfg):
+def geometry_props(compute_cfg: ComputeConfig) -> tuple[float, float, float]:
     """(epsilon, D_h_m, A_0_m2) triple for the ComputeResult ``props`` slot,
     derived from cfg geometry via the closed-form tpms_calc.geometry."""
     from solvers.tpms_calc import geometry as _tpms_geom

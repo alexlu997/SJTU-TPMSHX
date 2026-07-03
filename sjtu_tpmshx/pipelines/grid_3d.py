@@ -12,7 +12,10 @@ from logutil import get_logger
 _log = get_logger(__name__)
 
 
-def _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz):
+def _resolve_axis_map(fA: dict, Nx: int, Ny: int, Nz: int,
+                      L: float, H: float, Lz: float,
+                      dx: np.ndarray, dy: np.ndarray,
+                      dz: np.ndarray) -> dict:
     """Map fluid-A direction code to SIMPLE3D solver axes + mask geometry.
 
     `dir_A`: 0=+x 1=-x 2=+y 3=-y  (matches 2D `_dir_int` convention).
@@ -73,8 +76,10 @@ def _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz):
     )
 
 
-def _build_zone_fields_3d(cells, Nx, Ny, Nz, L, H, tpms_type, k_s,
-                           default_L, default_t):
+def _build_zone_fields_3d(cells: list[dict], Nx: int, Ny: int, Nz: int,
+                           L: float, H: float, tpms_type: str, k_s: float,
+                           default_L: float, default_t: float,
+                           ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Map 2D grid zones to 3D (Nx, Ny, Nz) L/t/eps fields (z-uniform).
 
     **3D geometry is currently a z-uniform extrusion of the 2D design** —
@@ -112,7 +117,10 @@ def _build_zone_fields_3d(cells, Nx, Ny, Nz, L, H, tpms_type, k_s,
     return L_field, t_field, eps_field
 
 
-def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
+def _build_grid_3d(wall_refine: bool, L: float, H: float, Lz: float,
+                   Nx_u: int, Ny_u: int, Nz_u: int,
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray,
+                              int, int, int]:
     """Build 3D cell-spacing arrays + grid counts (extracted from _run_3d_stack,
     2026-06-09 F1). Uniform user spacing, or 6-wall boundary-layer refinement
     when ``wall_refine`` (expands user N by ~+2·n_refine per axis; first cell
@@ -148,7 +156,9 @@ def _build_grid_3d(wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u):
     return dx, dy, dz, Nx, Ny, Nz
 
 
-def _solver_spacings(dx, dy, dz, perm):
+def _solver_spacings(dx: np.ndarray, dy: np.ndarray, dz: np.ndarray,
+                     perm: tuple[int, int, int],
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Map real-coords cell-spacing arrays onto a SIMPLE solver's axis order.
 
     The solver↔real mapping is ``real = solver.transpose(perm)`` (perm =

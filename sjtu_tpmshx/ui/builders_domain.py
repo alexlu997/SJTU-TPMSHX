@@ -389,7 +389,7 @@ def build_page_domain(window):
     window._r_Q     = res_row(window, rg, 3, "<i>Q</i><sub>total</sub> [W/m]", 0)
     # Document which Q metric is shown so users don't conflate it with the
     # other diagnostics in the result dict (Q_solid_B, Q_sA, Q_sB,
-    # Q_interior). Run_calculation_3d.py:1510 sets primary Q =
+    # Q_interior). pipelines/run_stack_3d._run_3d_stack sets primary Q =
     # mean(Q_enthalpy_A, Q_enthalpy_B) when both fluids solve, else
     # Q_enthalpy_A alone.
     try:

@@ -17,6 +17,10 @@ scalar UI inputs route through ``ui.window_config.config_from_window`` rather
 than direct ``le_*`` widget reads; the window is still required for non-le
 state (zone config, _eps_A, extrap reasons, _temp_to_K hook, _DIR_MAP).
 """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 from domain.compute_config import ComputeConfig, bc_to_dict
 from domain.compute_result import ComputeResult
@@ -28,6 +32,9 @@ from pipelines._stage_common import (
     geometry_props,
 )
 from logutil import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Re-exports — external consumers (controllers/compute_pipeline, tests)
 # import these from pipelines.stages_2d; keep every moved name reachable.
@@ -46,7 +53,7 @@ _log = get_logger(__name__)
 # below) and copies the ComputeResult back via Main_Menu.write_result.
 
 
-def _check_zoned_fluid_support(compute_cfg):
+def _check_zoned_fluid_support(compute_cfg: ComputeConfig) -> None:
     """Guard: the 2D zone property builders (ZoneConfig.compute_properties /
     build_grid_arrays and sigmoid_field.build_continuous_arrays) hardcode AIR
     (they call tpms_calc.compute / air_* with no fluid_type), so a water side
@@ -68,7 +75,7 @@ def _check_zoned_fluid_support(compute_cfg):
             "(non-zoned) case for water.")
 
 
-def _parse_inputs_cfg(compute_cfg):
+def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     """Phase 1 (Qt-free): assemble the parsed-config dict from a
     :class:`ComputeConfig`.
 
@@ -234,7 +241,8 @@ def _parse_inputs_cfg(compute_cfg):
     }
 
 
-def _build_fields_cfg(cfg, *, live_residuals=None):
+def _build_fields_cfg(cfg: dict[str, Any], *,
+                      live_residuals: dict | None = None) -> dict[str, Any]:
     """Phase 2 (Qt-free): construct aligned grid arrays and SIMPLE
     helper closures.
 
@@ -595,8 +603,10 @@ def _build_fields_cfg(cfg, *, live_residuals=None):
     return fields
 
 
-def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None,
-                     ui_hooks=None):
+def _run_solvers_cfg(cfg: dict[str, Any], fields: dict[str, Any], *,
+                     progress_cb: Callable[[int], None] | None = None,
+                     cancel_token: Any = None,
+                     ui_hooks: dict | None = None) -> dict[str, Any]:
     """Phase 3 (Qt-free): drive ``_run_solvers`` via the
     :class:`_PipelineWindowShim` adapter.
 
@@ -639,7 +649,8 @@ def _run_solvers_cfg(cfg, fields, *, progress_cb=None, cancel_token=None,
     return result
 
 
-def _finalize_cfg(raw, fields):
+def _finalize_cfg(raw: dict[str, Any],
+                  fields: dict[str, Any]) -> ComputeResult:
     """Phase 4 (Qt-free): assemble a :class:`ComputeResult` from the
     raw ``_run_solvers_cfg`` output and the original ``fields`` dict.
 

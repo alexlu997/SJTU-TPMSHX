@@ -28,7 +28,6 @@ import json
 import zlib
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ui.ui_constants import TOAST_MS_SHORT

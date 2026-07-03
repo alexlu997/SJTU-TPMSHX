@@ -5,7 +5,15 @@ stages_3d.py (openspec split-pipelines, 2026-07-03); behavior bit-identical.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from solvers.simple_solver_3d import SIMPLESolver3D
 
 from solvers import fluid_props
 from solvers.roughness import (f_enhancement, nu_extra_factor,
@@ -27,7 +35,7 @@ from solvers.roughness import (f_enhancement, nu_extra_factor,
 _UI_ROUGH_MODE_DEFAULT = 'norris_1a'
 
 
-def _resolve_ui_roughness():
+def _resolve_ui_roughness() -> tuple[str, float]:
     """Read mode + ε from env; default to norris_1a so UI matches BO."""
     return resolve_mode_from_env(default=_UI_ROUGH_MODE_DEFAULT)
 
@@ -35,9 +43,12 @@ def _resolve_ui_roughness():
 # ---------------------------------------------------------------------------
 # Face-flux helpers (module-level so they can be unit-tested independently)
 # ---------------------------------------------------------------------------
-def _face_flux_weights(solver, dir_code, face='real_outlet',
-                       eps_mode='ltne', chi_face=None,
-                       eps_f_per_side=None, eps_side_override=None):
+def _face_flux_weights(solver: SIMPLESolver3D, dir_code: int,
+                       face: str = 'real_outlet',
+                       eps_mode: str = 'ltne',
+                       chi_face: np.ndarray | None = None,
+                       eps_f_per_side: float | None = None,
+                       eps_side_override: float | None = None) -> np.ndarray:
     """Unified face-flux weight array for T_out, m_dot, Q_enth.
 
     Parameters
@@ -97,8 +108,10 @@ def _face_flux_weights(solver, dir_code, face='real_outlet',
     return w
 
 
-def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
-                          chi_face=None, eps_side_override=None):
+def _mass_weighted_T_out(T_face: np.ndarray, solver: SIMPLESolver3D,
+                          dir_code: int, eps_f_scalar: float | None,
+                          chi_face: np.ndarray | None = None,
+                          eps_side_override: float | None = None) -> float:
     """Mass-flux-weighted T average at the REAL outlet face.
     Delegates to _face_flux_weights for consistent weighting.
 
@@ -126,8 +139,12 @@ def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
         return float(np.mean(T_face))
 
 
-def _mass_weighted_h_out(T_face, P_ref, enthalpy_fn, solver, dir_code,
-                          eps_f_scalar, chi_face=None, eps_side_override=None):
+def _mass_weighted_h_out(T_face: np.ndarray, P_ref: float,
+                          enthalpy_fn: Callable[[np.ndarray, float], np.ndarray],
+                          solver: SIMPLESolver3D, dir_code: int,
+                          eps_f_scalar: float | None,
+                          chi_face: np.ndarray | None = None,
+                          eps_side_override: float | None = None) -> float:
     """Mass-flux-weighted mean ENTHALPY at the real outlet face: ⟨h(T)⟩_w.
 
     For a strongly nonlinear h(T) (sCO2 across the pseudocritical cp spike)
@@ -158,7 +175,9 @@ def _mass_weighted_h_out(T_face, P_ref, enthalpy_fn, solver, dir_code,
         return float(np.mean(h_face))
 
 
-def _sco2_hv_local_field(T_field, P_Pa, u_abs, A_0, D_h_m, tpms_type):
+def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
+                         u_abs: np.ndarray | float, A_0: float,
+                         D_h_m: float, tpms_type: str) -> np.ndarray:
     """sCO2 per-cell volumetric h_v = A_0·Nu·k(T)/D_h with LOCAL-temperature
     transport properties (audit 2026-06-28 D3).
 
@@ -193,8 +212,9 @@ def _sco2_hv_local_field(T_field, P_Pa, u_abs, A_0, D_h_m, tpms_type):
 # direction cannot go inconsistent across call sites (the failure mode the
 # reverse-dir saga kept reintroducing). Forward dirs (even) inject at stream
 # index 0 and exhaust at -1; reverse dirs (odd) mirror that. 2026-06-09 A3.
-def _simple_mass_flow(solver, dir_code, eps_f_per_side=None,
-                      eps_side_override=None):
+def _simple_mass_flow(solver: SIMPLESolver3D, dir_code: int,
+                      eps_f_per_side: float | None = None,
+                      eps_side_override: float | None = None) -> float:
     """LTNE-effective m_dot at REAL inlet face via _face_flux_weights."""
     try:
         w = _face_flux_weights(solver, dir_code, face='real_inlet',
@@ -212,7 +232,9 @@ def _simple_mass_flow(solver, dir_code, eps_f_per_side=None,
         return 0.0
 
 
-def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
+def _apply_roughness_KcF(K_arr: np.ndarray, cF_arr: np.ndarray,
+                         fluid_type: str, rho: float, mu: float, u: float,
+                         D_h_m: float) -> tuple[np.ndarray, np.ndarray]:
     """Scale K/cF arrays by f_enhancement; skip fluids whose closure already
     embeds AM roughness (water: the per-topology water fit (`nu_water_topo`))
     — registry flag, B1 1.1."""
@@ -228,7 +250,9 @@ def _apply_roughness_KcF(K_arr, cF_arr, fluid_type, rho, mu, u, D_h_m):
            (cF_arr * f_gain).astype(np.float64, copy=False)
 
 
-def _apply_roughness_h_v(h_v_field, fluid_type, rho, mu, u, D_h_m):
+def _apply_roughness_h_v(h_v_field: np.ndarray, fluid_type: str,
+                         rho: float, mu: float, u: float,
+                         D_h_m: float) -> np.ndarray:
     """Multiply h_v by nu_extra_factor; skip roughness-embedding fluids
     (registry flag, B1 1.1). Norris 1a returns 1.0 (Nu unchanged ×1.28),
     so this is a no-op for the default mode; only bhatti_shah_1b actually

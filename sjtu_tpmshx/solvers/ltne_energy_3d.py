@@ -468,7 +468,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
               guarded by tests/test_eps_contract_3d.py). The explicit
               `eps_A` / `eps_B` kwargs below ARE single-channel and are
               consumed without further halving. Rationale + Shanghai
-              case-1 evidence: run_calculation_3d.py:~2009 comment.
+              case-1 evidence: the historical run_calculation_3d.py
+              comment (now the ε-contract block in pipelines/run_stack_3d).
     ucA/vcA/wcA/ucB/vcB/wcB    : (Nx, Ny, Nz) cell-centre.
     dir_A/dir_B ∈ {0=+x, 1=-x, 2=+y, 3=-y, 4=+z, 5=-z}.
     inlet_mask_*               : 2D cross-section or None.

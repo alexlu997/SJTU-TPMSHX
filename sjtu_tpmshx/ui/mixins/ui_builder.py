@@ -12,7 +12,6 @@ imports needed are PySide6 widgets and ui.theme.get_theme.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QLineEdit, QScrollArea, QWidget
 
 from ui.theme import get_theme
