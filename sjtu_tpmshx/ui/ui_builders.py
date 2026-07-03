@@ -147,8 +147,11 @@ def build_ui(window):
     btn_recent.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     btn_recent.setFixedHeight(32)
     btn_recent.setFixedWidth(84)
+    # The "▾" is part of the text; kill the NATIVE menu-indicator too, or Qt
+    # paints a second arrow bottom-right that overflows onto the next button.
     btn_recent.setStyleSheet(
-        _hdr_btn_qss.replace("QPushButton", "QToolButton"))
+        _hdr_btn_qss.replace("QPushButton", "QToolButton")
+        + "QToolButton::menu-indicator{image:none;width:0;}")
     btn_recent.setToolTip(
         "载入标准工况 / 我的预设 / 最近运行,或保存当前为预设")
     window.btn_recent = btn_recent
@@ -168,7 +171,8 @@ def build_ui(window):
     btn_ws.setFixedHeight(32)
     btn_ws.setFixedWidth(76)
     btn_ws.setStyleSheet(
-        _hdr_btn_qss.replace("QPushButton", "QToolButton"))
+        _hdr_btn_qss.replace("QPushButton", "QToolButton")
+        + "QToolButton::menu-indicator{image:none;width:0;}")
     btn_ws.setToolTip("Switch between workspace A / B / C — each has its "
                       "own persisted parameter state")
     window.btn_workspace = btn_ws

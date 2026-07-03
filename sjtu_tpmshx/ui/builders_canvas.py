@@ -227,7 +227,8 @@ def build_canvas_area(window):
     btn_export.setPopupMode(_QTB.ToolButtonPopupMode.InstantPopup)
     btn_export.setFixedHeight(28)
     btn_export.setStyleSheet(
-        t.style('BTN_SECONDARY').replace("QPushButton", "QToolButton"))
+        t.style('BTN_SECONDARY').replace("QPushButton", "QToolButton")
+        + "QToolButton::menu-indicator{image:none;width:0;}")
     btn_export.setToolTip(
         "Export results (CSV + NPZ) or the current figure (PNG / SVG / PDF)")
     btn_export.setEnabled(False)
@@ -390,7 +391,11 @@ def build_canvas_area(window):
     _btn_preset.clicked.connect(
         lambda: window._load_named_preset("Shanghai (3D Gyroid)"))
     _eb_lay.addWidget(_btn_preset, 0, Qt.AlignmentFlag.AlignHCenter)
-    canvas_lay.addWidget(_empty_box, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+    # NOTE: QGridLayout.addWidget(w, 0, <alignment>) parses the alignment
+    # enum as a COLUMN index (row=0, col=36) — pass row & col explicitly.
+    _empty_box.setMaximumWidth(640)
+    canvas_lay.addWidget(_empty_box, 0, 0,
+                         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
     window._empty_state_label = _empty_box
     window._empty_state_preset_btn = _btn_preset
 
