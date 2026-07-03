@@ -43,4 +43,9 @@ jobs:
                       scikit-learn scikit-image matplotlib openpyxl \
                       PySide6 CoolProp pytest pytest-timeout
       - name: Run fast test subset
-        run: pytest sjtu_tpmshx/tests/ -q -m "not slow" --timeout=1200
+        # timeout-method=thread: the default signal method cannot interrupt a
+        # hang inside a native Qt call (observed: UI test wedged at 97% until
+        # the 45-min job kill); thread mode dumps every stack and kills the
+        # process so the job fails fast WITH a diagnosis. -v so the hanging
+        # test is named in the log tail.
+        run: pytest sjtu_tpmshx/tests/ -v -m "not slow" --timeout=600 --timeout-method=thread
