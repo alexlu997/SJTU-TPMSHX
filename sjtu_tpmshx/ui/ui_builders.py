@@ -398,13 +398,13 @@ def build_param_tabs(window):
     # standard full-face cross-flow case; flow-direction combos live in ④).
     sec = window._ia_sections
     _GROUPS = [
-        ("Geometry & Structure", True,
+        ("几何与结构", True,
          ['domain_geometry', 'tpms_structure', 'tpms_computed']),
-        ("Fluids", True,
+        ("流体", True,
          ['fluids_row', 'preview_btn']),
-        ("Grid & Solver", False,
+        ("网格与求解器", False,
          ['grid_rect', 'mesh_poly', 'material']),
-        ("Boundary Details & Advanced", False,
+        ("边界细节与高级", False,
          ['pipe_a', 'pipe_b', 'poly_pipe_label', 'poly_pipe_frame',
           'advanced_flags']),
     ]
@@ -490,10 +490,11 @@ def build_param_tabs(window):
         f"border-top:1px solid {_ts['card_border']};")
     cta_lay = QVBoxLayout(cta_bar)
     cta_lay.setContentsMargins(10, 8, 10, 8)
-    btn_run = QPushButton("▶  &Compute")
+    # CJK mnemonics are useless — no '&'; Ctrl+R stays the shortcut.
+    btn_run = QPushButton("▶  计算")
     btn_run.setMinimumHeight(40)
     btn_run.setStyleSheet(t.style('BTN_PRIMARY'))
-    btn_run.setToolTip("Run single-point compute (Ctrl+R)")
+    btn_run.setToolTip("运行单点计算 (Ctrl+R)")
     btn_run.clicked.connect(window.run_calculation)
     window.btn_compute = btn_run
     cta_lay.addWidget(btn_run)
@@ -508,11 +509,9 @@ def switch_param_tab(window, index):
 
     Mapping (ui-ia-batch1 four-group restructure; no current callers —
     kept defensively for compat):
-      0 = Geometry & Structure, 1 = Fluids, 2 = Grid & Solver,
-      3 = Boundary Details & Advanced
+      0 = 几何与结构, 1 = 流体, 2 = 网格与求解器, 3 = 边界细节与高级
     """
-    names = ["Geometry & Structure", "Fluids", "Grid & Solver",
-             "Boundary Details & Advanced"]
+    names = ["几何与结构", "流体", "网格与求解器", "边界细节与高级"]
     groups = getattr(window, '_accordion_groups', {})
     if 0 <= index < len(names):
         grp = groups.get(names[index])
@@ -770,7 +769,7 @@ def build_page_zones(window):
     # drawing so the user actually sees the result (the canvas lives in
     # a different tab from this Zone panel, which is now embedded in
     # Optimize; clicking with no tab-switch felt like a broken button).
-    btn_preview_z = QPushButton("&Preview Layout  ↗")
+    btn_preview_z = QPushButton("预览布局  ↗")
     btn_preview_z.setFixedHeight(28)
     btn_preview_z.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_preview_z.setToolTip(

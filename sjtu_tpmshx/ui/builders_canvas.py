@@ -58,12 +58,14 @@ def build_canvas_area(window):
     window.btn_toggle_left = btn_toggle_left
     toolbar.addWidget(btn_toggle_left)
 
-    window.btn_tab_temp = _ShiftTabBtn("Temperature")
-    window.btn_tab_pres = _ShiftTabBtn("Pressure")
-    window.btn_tab_vel  = _ShiftTabBtn("Velocity")
-    window.btn_tab_layout = _ShiftTabBtn("Geometry")
-    window.btn_tab_pareto = _ShiftTabBtn("Optimize")
-    window.btn_tab_3d     = _ShiftTabBtn("3D View")
+    # Chrome text is Chinese (ui-batch4 ①); the tab KEYS ('temp'/'pres'/…)
+    # stay English — they are internal routing, not UI.
+    window.btn_tab_temp = _ShiftTabBtn("温度")
+    window.btn_tab_pres = _ShiftTabBtn("压力")
+    window.btn_tab_vel  = _ShiftTabBtn("速度")
+    window.btn_tab_layout = _ShiftTabBtn("几何布局")
+    window.btn_tab_pareto = _ShiftTabBtn("优化")
+    window.btn_tab_3d     = _ShiftTabBtn("3D 视图")
     for b, key in ((window.btn_tab_temp, 'temp'),
                     (window.btn_tab_pres, 'pres'),
                     (window.btn_tab_vel, 'vel'),
@@ -135,7 +137,7 @@ def build_canvas_area(window):
     # to the existing "3D View" tab. The legacy buttons remain in `window.*`
     # for backward compat (hotkeys, split view, _switch_tab routing) but are
     # not added to the toolbar; the combo drives the same _switch_tab calls.
-    window.btn_tab_2d_view = _ShiftTabBtn("2D View")
+    window.btn_tab_2d_view = _ShiftTabBtn("2D 视图")
     window.btn_tab_2d_view.setFixedHeight(28)
     window.btn_tab_2d_view.setStyleSheet(window._PTAB_DISABLED)
     window.btn_tab_2d_view.setEnabled(False)
@@ -169,6 +171,11 @@ def build_canvas_area(window):
     )
     window.combo_2d_field.setToolTip(
         "Select which 2D field to display when '2D View' tab is active.")
+    # ui-batch4: the combo is no longer visible UI — it stays as the FIELD
+    # STATE SOURCE (its English item strings are internal keys consumed by
+    # _resolve_2d_view_card / _switch_tab reverse-sync). The segmented
+    # buttons below drive it.
+    window.combo_2d_field.hide()
 
     def _on_2d_field_changed(_idx):
         # Re-trigger the active tab so the canvas swap honors the new combo
@@ -178,13 +185,12 @@ def build_canvas_area(window):
         if getattr(window, '_active_tab', None) in ('temp', 'pres', 'vel',
                                                      '2d_view'):
             window._switch_tab('2d_view')
+        _paint_2d_seg()
     window.combo_2d_field.currentIndexChanged.connect(_on_2d_field_changed)
 
-    # ★ fix #2 — visually group [2D View | combo] as one cluster so the combo
-    # reads as the field selector for that tab (not for Optimize on its right).
-    # We use a thin 8-px QFrame wrapper with no background; the cluster has a
-    # tighter inner gap (2 px) than the toolbar default and lives in a single
-    # addWidget call so spacers don't separate them.
+    # ★ fix #2 — visually group [2D View | field buttons] as one cluster so
+    # the selector reads as belonging to that tab (not Optimize on its
+    # right). Thin QFrame wrapper, tight 2-px inner gap, single addWidget.
     from PySide6.QtWidgets import QFrame as _QF, QHBoxLayout as _QHL
     _2d_cluster = _QF()
     _2d_cluster.setStyleSheet(
@@ -193,7 +199,46 @@ def build_canvas_area(window):
     _cl_lay.setContentsMargins(0, 0, 0, 0)
     _cl_lay.setSpacing(2)
     _cl_lay.addWidget(window.btn_tab_2d_view)
-    _cl_lay.addWidget(window.combo_2d_field)
+
+    # Segmented field switch (ui-batch4 ③): one click per field instead of
+    # the two-click dropdown. Buttons drive the hidden combo; the combo's
+    # currentIndexChanged repaints them, so hotkey / code paths that
+    # reverse-sync the combo keep the buttons honest.
+    _seg = _QF()
+    _seg.setStyleSheet(
+        "QFrame{background:transparent; border:none; padding:0px;}")
+    _seg_lay = _QHL(_seg)
+    _seg_lay.setContentsMargins(4, 0, 0, 0)
+    _seg_lay.setSpacing(0)
+    _seg_qss_on = (
+        f"QPushButton{{color:{_ct['inp_fg']}; background:transparent;"
+        f" border:1px solid {_ct['combo_hover_border']}; padding:2px 8px;"
+        f" font-size:9pt; font-weight:600;}}")
+    _seg_qss_off = (
+        f"QPushButton{{color:{_ct['tab_off_fg']}; background:transparent;"
+        f" border:1px solid {_ct['tab_off_border']}; padding:2px 8px;"
+        f" font-size:9pt; font-weight:normal;}}"
+        f"QPushButton:hover{{color:{_ct['inp_fg']};}}"
+        f"QPushButton:disabled{{color:{_ct['tab_disabled_fg']};"
+        f" border-color:{_ct['border_subtle']};}}")
+    window._2d_field_btns = []
+    for i, cap in enumerate(["温度", "速度", "压力"]):
+        b = QPushButton(cap)
+        b.setFixedHeight(28)
+        b.setToolTip("单击切换 2D 显示场")
+        b.clicked.connect(
+            lambda _c=False, idx=i: window.combo_2d_field.setCurrentIndex(idx))
+        _seg_lay.addWidget(b)
+        window._2d_field_btns.append(b)
+
+    def _paint_2d_seg():
+        cur = window.combo_2d_field.currentIndex()
+        for j, b in enumerate(window._2d_field_btns):
+            b.setStyleSheet(_seg_qss_on if j == cur else _seg_qss_off)
+    _paint_2d_seg()
+    window._2d_field_seg = _seg
+    window._paint_2d_seg = _paint_2d_seg
+    _cl_lay.addWidget(_seg)
     window._2d_view_cluster = _2d_cluster
 
     toolbar.addWidget(window.btn_tab_layout)
@@ -210,7 +255,7 @@ def build_canvas_area(window):
     # Fit View — restore the current canvas card to its default size after
     # Ctrl+Wheel zooming. (The +/- buttons were redundant with the wheel;
     # the 1↔2 column toggle was niche — both removed in the 2026-06 declutter.)
-    btn_reset_view = QPushButton("Fit View")
+    btn_reset_view = QPushButton("适应视图")
     btn_reset_view.setFixedHeight(28)
     btn_reset_view.setStyleSheet(t.style('BTN_TERTIARY'))
     btn_reset_view.setToolTip("Fit current canvas card to its default size")
@@ -222,7 +267,7 @@ def build_canvas_area(window):
     # Results" copy was easy to miss). Gated until a compute / layout fills it.
     from PySide6.QtWidgets import QToolButton as _QTB, QMenu as _QMenu
     btn_export = _QTB()
-    btn_export.setText("Export ▾")
+    btn_export.setText("导出 ▾")
     btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     btn_export.setPopupMode(_QTB.ToolButtonPopupMode.InstantPopup)
     btn_export.setFixedHeight(28)
@@ -240,8 +285,9 @@ def build_canvas_area(window):
         f"border:1px solid {_t['card_border']}; border-radius:6px; padding:4px; }}"
         f"QMenu::item {{ padding:6px 20px; border-radius:4px; }}"
         f"QMenu::item:selected {{ background:{_t['accent_primary']}; color:#ffffff; }}")
-    _ex_menu.addAction("Results — CSV + NPZ", window._export_results)
-    _ex_menu.addAction("Figure — PNG / SVG / PDF", window._export_figure)
+    _ex_menu.addAction("导出结果 — CSV + NPZ", window._export_results)
+    _ex_menu.addAction("导出图像 — PNG / SVG / PDF", window._export_figure)
+    _ex_menu.addAction("复制当前图像", window._copy_figure_clipboard)
     btn_export.setMenu(_ex_menu)
     window.btn_export = btn_export
     toolbar.addWidget(btn_export)
@@ -355,16 +401,15 @@ def build_canvas_area(window):
     _empty = QLabel(
         f"<div style='text-align:left;'>"
         f"<p style='color:{_t['fg']}; font-size:12pt; font-weight:600;"
-        f" margin:0 0 14px 0;'>Run your first case</p>"
+        f" margin:0 0 14px 0;'>运行第一个算例</p>"
         f"<p style='margin:0 0 8px 0;'><span style='color:{_acc};"
-        f" font-weight:700;'>1</span>&nbsp;&nbsp;Set the geometry and both"
-        f" fluids in the left panel</p>"
+        f" font-weight:700;'>1</span>&nbsp;&nbsp;在左侧面板设置几何与两侧流体</p>"
         f"<p style='margin:0 0 8px 0;'><span style='color:{_acc};"
-        f" font-weight:700;'>2</span>&nbsp;&nbsp;Click <b>Compute</b>"
-        f" (Ctrl+R) — progress shows on the button</p>"
+        f" font-weight:700;'>2</span>&nbsp;&nbsp;点击 <b>▶ 计算</b>"
+        f"（Ctrl+R）— 进度显示在按钮上</p>"
         f"<p style='margin:0;'><span style='color:{_acc};"
-        f" font-weight:700;'>3</span>&nbsp;&nbsp;Read T / P / velocity"
-        f" fields here; tabs appear above when ready</p>"
+        f" font-weight:700;'>3</span>&nbsp;&nbsp;在此查看温度 / 压力 / 速度场；"
+        f"就绪后上方页签自动点亮</p>"
         f"</div>")
     _empty.setTextFormat(Qt.TextFormat.RichText)
     _empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -382,12 +427,11 @@ def build_canvas_area(window):
     _eb_lay.setContentsMargins(48, 48, 48, 40)
     _eb_lay.setSpacing(18)
     _eb_lay.addWidget(_empty)
-    _btn_preset = QPushButton("⚡  Load Shanghai preset (3D Gyroid)")
+    _btn_preset = QPushButton("⚡  载入上海工况 (3D Gyroid)")
     _btn_preset.setMinimumHeight(30)
     _btn_preset.setStyleSheet(t.style('BTN_SECONDARY'))
     _btn_preset.setToolTip(
-        "Fill every field with the validated Shanghai Electric case — "
-        "ready to Compute immediately.")
+        "用已验证的上海电气算例填满全部字段 — 可立即点击计算。")
     _btn_preset.clicked.connect(
         lambda: window._load_named_preset("Shanghai (3D Gyroid)"))
     _eb_lay.addWidget(_btn_preset, 0, Qt.AlignmentFlag.AlignHCenter)

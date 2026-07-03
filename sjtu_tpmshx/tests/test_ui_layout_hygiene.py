@@ -74,7 +74,7 @@ def test_empty_state_has_three_steps_and_preset(win):
     box = getattr(win, "_empty_state_label", None)   # container since batch2
     assert box is not None and box.isVisibleTo(win)
     txt = " ".join(l.text() for l in box.findChildren(QLabel))
-    for marker in (">1<", ">2<", ">3<", "Compute"):
+    for marker in (">1<", ">2<", ">3<", "计算"):
         assert marker in txt, f"empty state missing {marker!r}"
     btn = getattr(win, "_empty_state_preset_btn", None)
     assert btn is not None and btn.isVisibleTo(win)
@@ -106,10 +106,10 @@ def test_sticky_cta_outside_scroll(win):
 # ── ui-ia-batch1: four workflow accordion groups ─────────────────────
 
 _EXPECTED_GROUPS = {
-    "Geometry & Structure": True,
-    "Fluids": True,
-    "Grid & Solver": False,
-    "Boundary Details & Advanced": False,
+    "几何与结构": True,
+    "流体": True,
+    "网格与求解器": False,
+    "边界细节与高级": False,
 }
 
 
@@ -144,12 +144,12 @@ def test_group_badge_counts_empty_field(win):
     """ui-batch3 IA-4: clearing a field inside a collapsed group surfaces
     a ⚠N badge in that group's title; fixing it clears the badge."""
     from ui.ui_builders import refresh_group_badges
-    grp = win._accordion_groups["Grid & Solver"]
+    grp = win._accordion_groups["网格与求解器"]
     old = win.le_Nx.text()
     win.le_Nx.setText("")
     refresh_group_badges(win)
     assert "⚠" in grp.title(), grp.title()
-    assert win._group_badge_counts["Grid & Solver"] >= 1
+    assert win._group_badge_counts["网格与求解器"] >= 1
     win.le_Nx.setText(old or "40")
     refresh_group_badges(win)
     assert "⚠" not in grp.title(), grp.title()
@@ -161,7 +161,7 @@ def test_group_badge_updates_via_validator_debounce(win):
     validator handler attached (positive+unit field); le_Nx does not."""
     import time
     app = QApplication.instance()
-    grp = win._accordion_groups["Geometry & Structure"]
+    grp = win._accordion_groups["几何与结构"]
     old = win.le_L.text()
     win.le_L.setText("")
     win.le_L.editingFinished.emit()
@@ -179,7 +179,7 @@ def test_group_badge_updates_via_validator_debounce(win):
 
 def test_group_badge_survives_toggle(win):
     from ui.ui_builders import refresh_group_badges
-    grp = win._accordion_groups["Grid & Solver"]
+    grp = win._accordion_groups["网格与求解器"]
     old = win.le_Nx.text()
     win.le_Nx.setText("")
     refresh_group_badges(win)
@@ -192,13 +192,34 @@ def test_group_badge_survives_toggle(win):
     refresh_group_badges(win)
 
 
+def test_2d_field_segment_drives_combo(win):
+    """ui-batch4 ③: the 温度/速度/压力 segmented buttons drive the hidden
+    combo (state source); reverse-sync repaints the buttons."""
+    btns = getattr(win, "_2d_field_btns", None)
+    assert btns and len(btns) == 3
+    assert not win.combo_2d_field.isVisible()   # demoted to state source
+    win._2d_field_seg.setEnabled(True)
+    btns[2].click()                             # 压力
+    assert win.combo_2d_field.currentIndex() == 2
+    assert win._resolve_2d_view_card() == 'pres'
+    win.combo_2d_field.setCurrentIndex(0)       # reverse path
+    assert win._resolve_2d_view_card() == 'temp'
+
+
+def test_copy_figure_clipboard_no_data_safe(win):
+    """No drawn canvas → status message, no exception, clipboard untouched."""
+    win._active_tab = 'layout'
+    win._drawn_tabs = set()
+    win._copy_figure_clipboard()                # must not raise
+
+
 def test_mode_gates_survive_group_toggle(win):
     """Expanding a collapsed group must not resurrect 3D-only widgets in
     2D mode (blanket-show + re-assert)."""
     app = QApplication.instance()
     win.combo_dim.setCurrentIndex(0)      # force 2D
     app.processEvents()
-    grp = win._accordion_groups["Grid & Solver"]
+    grp = win._accordion_groups["网格与求解器"]
     grp.setChecked(True)
     app.processEvents()
     assert not win.le_Nz.isVisibleTo(win), "3D-only Nz visible in 2D mode"

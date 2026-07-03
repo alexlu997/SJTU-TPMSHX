@@ -794,12 +794,12 @@ class RunControllerMixin:
             # (button stuck frozen after the run). The real Compute label never
             # starts with "Cancel", so this is order-independent.
             _cur_btn_text = self.btn_compute.text()
-            if not _cur_btn_text.startswith("Cancel"):
+            if not _cur_btn_text.startswith("取消"):
                 self._btn_compute_text_saved = _cur_btn_text
             # ETA text removed 2026-05-14 — median-of-history misled when
             # config changed. Live elapsed + iter counter via _tick_btn.
             self._iter_label_now = None
-            self.btn_compute.setText("Cancel  ·  0.0s")
+            self.btn_compute.setText("取消  ·  0.0s")
             self.btn_compute.setEnabled(True)
             self._begin_btn_ticker()
             # Surgical disconnect of the *exact* current handler (run_calculation
@@ -858,7 +858,7 @@ class RunControllerMixin:
         if hasattr(self, 'btn_compute'):
             self.btn_compute.setEnabled(True)
             self.btn_compute.setText(
-                getattr(self, '_btn_compute_text_saved', '▶  &Compute'))
+                getattr(self, '_btn_compute_text_saved', '▶  计算'))
             # Restore the original Compute click handler. Surgical
             # disconnect of the *exact* current handler avoids dropping
             # third-party connections (e.g. shortcut bridges).
@@ -940,7 +940,7 @@ class RunControllerMixin:
             pass
         if hasattr(self, 'btn_compute'):
             self.btn_compute.setEnabled(False)
-            self.btn_compute.setText("Cancelling…")
+            self.btn_compute.setText("正在取消…")
         self.statusBar().showMessage(
             "Cancel requested — waiting for solver to finish current sweep…",
             6000)
@@ -1067,7 +1067,7 @@ class RunControllerMixin:
         elapsed = _time.time() - t0
         label = getattr(self, '_iter_label_now', None)
         suffix = f"  ·  {label}" if label else ""
-        new_text = f"Cancel  ·  {_fmt_dur(elapsed)}{suffix}"
+        new_text = f"取消  ·  {_fmt_dur(elapsed)}{suffix}"
         # Skip setText when nothing changed — saves Qt repaint churn at
         # 500 ms tick when sub-second elapsed rounds to same string.
         if self.btn_compute.text() != new_text:

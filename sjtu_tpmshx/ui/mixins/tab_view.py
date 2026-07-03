@@ -91,6 +91,11 @@ class TabViewMixin:
         _combo = getattr(self, 'combo_2d_field', None)
         if _combo is not None:
             _combo.setEnabled(rules.get('2d_view', False))
+        # ui-batch4: the segmented 温度/速度/压力 buttons gate with the tab
+        # just like the (now hidden) combo did.
+        _seg = getattr(self, '_2d_field_seg', None)
+        if _seg is not None:
+            _seg.setEnabled(rules.get('2d_view', False))
         # Fall back to Layout if active tab just became disabled
         if not rules.get(getattr(self, '_active_tab', 'layout'), True):
             self._switch_tab('layout')

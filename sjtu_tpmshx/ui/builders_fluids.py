@@ -38,7 +38,7 @@ def _build_pipe_section(window, lay, side, *, title_style, frame_style,
     ``window._3d_only_widgets`` in (le, lbl) pairs, preserving the
     original ordering.
     """
-    gio, sec = section(window, lay, f"  Fluid {side}  Inlet / Outlet",
+    gio, sec = section(window, lay, f"  流体 {side}  进 / 出口",
                        title_style, frame_style)
     window._rect_only_widgets.append(sec)
     window._ia_sections[f'pipe_{side.lower()}'] = sec
@@ -128,7 +128,7 @@ def build_page_fluids(window):
     window._ia_sections['fluids_row'] = _fluids_row
 
     # ── Fluid A (input + computed) ────────────────────────
-    g1, _ = section(window, _fluids_row_lay, "Fluid A", _T_A, _F_A)
+    g1, _ = section(window, _fluids_row_lay, "流体 A", _T_A, _F_A)
     _FLUID_TYPES = ["Air", "Water", "sCO₂"]
     # Fluid A only supports Air right now (Water needs an incompressible
     # SIMPLE A path; sCO₂ needs a real-gas property table). Disabling the
@@ -166,10 +166,10 @@ def build_page_fluids(window):
     add_row(window, g1, 0, "Fluid type", window.combo_fluidA)
     _build_fluid_io_rows(window, g1, 'A', t,
                          u_default="20.0", T_default="422.0",
-                         P_default="192362", btn_text="Auto-&fill A")
+                         P_default="192362", btn_text="自动填充 A")
 
     # ── Fluid B (input + computed) — sits to the right of Fluid A ─────
-    g2b, _ = section(window, _fluids_row_lay, "Fluid B", _T_B, _F_B)
+    g2b, _ = section(window, _fluids_row_lay, "流体 B", _T_B, _F_B)
     # Fluid B supports Air + Water (incompressible SIMPLE B path is wired,
     # see run_calculation_3d.py:910-917). sCO₂ remains unsupported until
     # a real-gas property table is added.
@@ -207,7 +207,7 @@ def build_page_fluids(window):
     # gas-heater duty.
     _build_fluid_io_rows(window, g2b, 'B', t,
                          u_default="0.133", T_default="300.0",
-                         P_default="101973", btn_text="Auto-fill &B")
+                         P_default="101973", btn_text="自动填充 B")
 
     # ── Inlet / Outlet configuration (unified, A/B via _build_pipe_section) ──
     # A: +x default, inlet/outlet centred (0.021). B: -y crossflow default,
@@ -248,7 +248,7 @@ def build_page_fluids(window):
     window._ia_sections['poly_pipe_frame'] = window._poly_pipe_frame
 
     # Preview button
-    btn_preview = QPushButton("&Preview Layout")
+    btn_preview = QPushButton("预览布局")
     btn_preview.setFixedHeight(28); btn_preview.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_preview.setToolTip("Draw domain + inlet/outlet geometry on the canvas")
     btn_preview.clicked.connect(window._draw_layout)

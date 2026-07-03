@@ -83,7 +83,7 @@ def build_page_domain(window):
     window._ia_sections = {}
 
     # Domain Geometry
-    g, _sec_dg = section(window, lay, "  Domain Geometry", _T_NEUTRAL, _F_NEUTRAL)
+    g, _sec_dg = section(window, lay, "  域几何", _T_NEUTRAL, _F_NEUTRAL)
     window._ia_sections['domain_geometry'] = _sec_dg
     window.le_L        = row(window, g, 0, "Length <i>L</i> [m]",                     "0.182")
     window.le_H        = row(window, g, 1, "Width <i>H</i> [m]",                      "0.042")
@@ -111,7 +111,7 @@ def build_page_domain(window):
     add_row(window, g, 4, "Dimensionality", window.combo_dim)
 
     # ── TPMS Structure ──
-    g0, _sec_tp = section(window, lay, "  TPMS Structure", _T_NEUTRAL, _F_NEUTRAL)
+    g0, _sec_tp = section(window, lay, "  TPMS 结构", _T_NEUTRAL, _F_NEUTRAL)
     window._ia_sections['tpms_structure'] = _sec_tp
     window.combo_tpms = QComboBox()
     window.combo_tpms.addItems(["Diamond", "Gyroid"])
@@ -127,7 +127,7 @@ def build_page_domain(window):
     # new CFD data arrives.
     window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.6")
     window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m·K)]", "16.0")
-    btn_tpms = QPushButton("Compute TPMS &Geometry")
+    btn_tpms = QPushButton("计算 TPMS 几何")
     btn_tpms.setFixedHeight(28); btn_tpms.setStyleSheet(t.style('BTN_SECONDARY'))
     btn_tpms.setToolTip("Compute porosity, specific area, hydraulic diameter, k_ss from current L_cell / t")
     btn_tpms.clicked.connect(window.compute_tpms)
@@ -136,7 +136,7 @@ def build_page_domain(window):
     # collapsed so the input flow reads clean; compute_tpms auto-expands it
     # via container._set_expanded once values exist.
     gC, _sec_tc = collapsible_section(
-        window, lay, "Computed geometry", _T_NEUTRAL, _F_NEUTRAL,
+        window, lay, "几何计算值", _T_NEUTRAL, _F_NEUTRAL,
         expanded=False)
     window._ia_sections['tpms_computed'] = _sec_tc
     window._v_eps  = res_row(window, gC, 0, "<i>&epsilon;</i>")
@@ -151,7 +151,7 @@ def build_page_domain(window):
     # cp_s and cp_f were removed: no solver path reads them. Solid cp is a
     # per-material constant hardcoded downstream; fluid cp is computed
     # per-cell via air_cp(T) inside tpms_calc.
-    g2, _sec_mat = section(window, lay, "  Material Properties", _T_NEUTRAL, _F_NEUTRAL)
+    g2, _sec_mat = section(window, lay, "  材料属性", _T_NEUTRAL, _F_NEUTRAL)
     window._ia_sections['material'] = _sec_mat
     window.le_rho_s = row(window, g2, 0, "<i>&rho;</i><sub>s</sub> [kg/m³]", "7900")
     # rho_s is NOT consumed by the steady-state LTNE energy equation
@@ -169,7 +169,7 @@ def build_page_domain(window):
     # absent via getattr().
 
     # ── Grid Settings (rect mode) ──
-    g4, sec_solver_rect = section(window, lay, "  Grid Settings", _T_NEUTRAL, _F_NEUTRAL)
+    g4, sec_solver_rect = section(window, lay, "  网格设置", _T_NEUTRAL, _F_NEUTRAL)
     window._rect_only_widgets.append(sec_solver_rect)
     window._ia_sections['grid_rect'] = sec_solver_rect
     window.le_Nx = row(window, g4, 0, "Grid <i>N<sub>x</sub></i>", "30")
@@ -184,7 +184,7 @@ def build_page_domain(window):
     # header to expand. The 3D-only members register below exactly as before;
     # the collapse composes with `_on_dim_changed` (see collapsible_section).
     g_adv, _sec_adv = collapsible_section(
-        window, lay, "Advanced", _T_NEUTRAL, _F_NEUTRAL, expanded=False,
+        window, lay, "高级", _T_NEUTRAL, _F_NEUTRAL, expanded=False,
         on_toggle=lambda _open: _on_dim_changed(window))
     window._ia_sections['advanced_flags'] = _sec_adv
 
@@ -357,7 +357,7 @@ def build_page_domain(window):
     _on_dim_changed(window)
 
     # ── Solver Settings (polygon mode) ──
-    gp, sec_solver_poly = section(window, lay, "  Mesh Settings", _T_NEUTRAL, _F_NEUTRAL)
+    gp, sec_solver_poly = section(window, lay, "  网格划分", _T_NEUTRAL, _F_NEUTRAL)
     window._poly_only_widgets.append(sec_solver_poly)
     window._ia_sections['mesh_poly'] = sec_solver_poly
     sec_solver_poly.hide()  # hidden by default (rect mode)

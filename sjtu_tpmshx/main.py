@@ -986,14 +986,13 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             for lbl, name, val in bad[:30])
         html = (
             f"<h3 style='margin:0 0 8px 0;'>"
-            f"{len(bad)} invalid input{'s' if len(bad)!=1 else ''}</h3>"
+            f"{len(bad)} 个无效输入</h3>"
             "<p style='margin:0 0 10px 0; color:#6b7280;'>"
-            "Fix each field below before running Compute. "
-            "Hover the field to see why.</p>"
+            "运行计算前请先修正下列字段；悬停字段可查看原因。</p>"
             "<table style='border-collapse:collapse;'>"
             f"{rows}</table>")
         msg = QMessageBox(self)
-        msg.setWindowTitle("Check inputs")
+        msg.setWindowTitle("检查输入")
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setTextFormat(Qt.TextFormat.RichText)
         msg.setText(html)
@@ -1262,19 +1261,18 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             pass
         else:
             msg = QMessageBox(self)
-            msg.setWindowTitle("Welcome to SJTU-TPMSHX")
+            msg.setWindowTitle("欢迎使用 SJTU-TPMSHX")
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setText(
-                "Quick tour\n\n"
-                "1.  Left panel — configure the four workflow groups "
-                "(Geometry & Structure → Fluids → Grid & Solver → "
-                "Boundary Details).\n"
-                "2.  ▶ Compute — the blue button at the panel's bottom "
-                "(menu → Optimize for qNEHVI optimization).\n"
-                "3.  Right canvas — explore Temperature / Pressure / "
-                "Velocity / 3D View tabs once compute finishes.\n\n"
-                "Presets, theme toggle (☀/☾), and K/°C units live in the "
-                "header. This hint will not show again.")
+                "快速上手\n\n"
+                "1.  左侧面板 — 按四个工作流分组填写参数"
+                "（几何与结构 → 流体 → 网格与求解器 → 边界细节）。\n"
+                "2.  ▶ 计算 — 面板底部蓝色按钮"
+                "（优化页签内可运行 qNEHVI 多目标优化）。\n"
+                "3.  右侧画布 — 计算完成后查看温度 / 压力 / 速度 / "
+                "3D 视图页签。\n\n"
+                "预设、主题切换（☀/☾）与 K/°C 单位在顶栏。"
+                "本提示只显示一次。")
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.exec()
         try:
@@ -1807,13 +1805,34 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         c.time_text.set_text(rf"$\mathbf{{t = {t:.4f}}}$ s")
         self._update_tout(value)
 
+    def _copy_figure_clipboard(self):
+        """Copy the currently active canvas image to the system clipboard
+        (ui-batch4 ③) — one click from result plot to WeChat / PPT.
+        widget.grab() = what's on screen (theme background included); the
+        high-fidelity path stays the PNG export."""
+        tab = getattr(self, '_active_tab', None)
+        if tab == '2d_view':
+            tab = self._resolve_2d_view_card()
+        canvas = {'temp': getattr(self, 'canvas_temp', None),
+                  'pres': getattr(self, 'canvas_pres', None),
+                  'vel': getattr(self, 'canvas_vel', None),
+                  'layout': getattr(self, 'canvas_layout', None),
+                  'pareto': getattr(self, 'canvas_pareto', None)}.get(tab)
+        if canvas is None or tab not in getattr(self, '_drawn_tabs', set()):
+            self.statusBar().showMessage("当前无可复制的图像 — 请先计算或预览。",
+                                         TOAST_MS_SHORT)
+            return
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setImage(canvas.grab().toImage())
+        self.statusBar().showMessage(f"已复制 {tab} 图像到剪贴板。", TOAST_MS_SHORT)
+
     def _export_figure(self):
         """Export a chosen figure to PNG/SVG/PDF with user-selected DPI
         and embedded reproducibility metadata (preset, commit, timestamp,
         grid). Pops a 2-step picker: figure → format/DPI → save path."""
-        all_items = [("Temperature", 'temp'), ("Pressure", 'pres'),
-                     ("Velocity", 'vel'), ("Geometry", 'layout'),
-                     ("Pareto / Optimize", 'pareto')]
+        all_items = [("温度", 'temp'), ("压力", 'pres'),
+                     ("速度", 'vel'), ("几何布局", 'layout'),
+                     ("Pareto / 优化", 'pareto')]
         tab_canvas = {'temp': self.canvas_temp, 'pres': self.canvas_pres,
                       'vel': self.canvas_vel, 'layout': self.canvas_layout,
                       'pareto': self.canvas_pareto}
