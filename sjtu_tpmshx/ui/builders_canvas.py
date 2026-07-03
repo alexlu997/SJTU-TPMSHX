@@ -707,7 +707,11 @@ def build_canvas_area(window):
         # 2026-04-21). Other cards keep the coloured accent.
         card = QFrame()
         accent = _accents.get(key, _t['accent_primary'])
-        if key in ('layout', '3d'):
+        # No left accent stripe for layout/3d (arc collision, 2026-04-21)
+        # and pareto (ui-plan-b-wizard follow-up: the card's `QFrame{…}`
+        # type selector CASCADES to every unstyled descendant frame — the
+        # wizard's new frames all grew amber left bars, user report).
+        if key in ('layout', '3d', 'pareto'):
             card.setStyleSheet(
                 f"QFrame{{background:{_t['card_bg']};"
                 f"border:none; border-radius:4px;}}")
