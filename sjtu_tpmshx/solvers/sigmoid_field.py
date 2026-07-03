@@ -177,6 +177,9 @@ class GeometryLUT:
             self.A0_table = data['A0_table']
             return True
         except Exception:
+            # Deliberate (except-audit 2026-07-03): a corrupt/stale cache
+            # file must fall back to recompute (which rewrites the cache),
+            # never crash the LUT build.
             return False
 
     def query(self, L_arr, t_arr):

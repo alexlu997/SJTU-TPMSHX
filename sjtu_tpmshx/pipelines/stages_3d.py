@@ -183,7 +183,14 @@ def _mass_weighted_T_out(T_face, solver, dir_code, eps_f_scalar,
         if tot < 1e-30:
             return float(np.mean(T_face))
         return float(np.sum(T_face * w) / tot)
-    except Exception:
+    except Exception as _e:
+        # except-audit 2026-07-03: the fallback stays (a T_out is better
+        # than a crash mid-solve) but it is no longer silent — an exception
+        # here means _face_flux_weights itself broke (real bug), and the
+        # naive mean quietly changes T_out/Q.
+        import warnings as _w
+        _w.warn(f"_mass_weighted_T_out: flux weighting failed ({_e!r}); "
+                f"falling back to naive face mean — T_out/Q degraded.")
         return float(np.mean(T_face))
 
 
@@ -210,7 +217,12 @@ def _mass_weighted_h_out(T_face, P_ref, enthalpy_fn, solver, dir_code,
         if tot < 1e-30:
             return float(np.mean(h_face))
         return float(np.sum(h_face * w) / tot)
-    except Exception:
+    except Exception as _e:
+        # except-audit 2026-07-03: same rationale as _mass_weighted_T_out —
+        # keep the fallback, surface the degradation.
+        import warnings as _w
+        _w.warn(f"_mass_weighted_h_out: flux weighting failed ({_e!r}); "
+                f"falling back to naive face mean — Q (sCO2 duty) degraded.")
         return float(np.mean(h_face))
 
 
@@ -258,7 +270,13 @@ def _simple_mass_flow(solver, dir_code, eps_f_per_side=None,
                                eps_f_per_side=eps_f_per_side,
                                eps_side_override=eps_side_override)
         return float(np.sum(w))
-    except Exception:
+    except Exception as _e:
+        # except-audit 2026-07-03: a silent 0.0 here zeroes the duty of the
+        # side downstream (ṁ=0 → Q=0) with no trace. Keep the fallback,
+        # make the failure visible.
+        import warnings as _w
+        _w.warn(f"_simple_mass_flow: flux weighting failed ({_e!r}); "
+                f"returning m_dot=0 — downstream Q for this side is wrong.")
         return 0.0
 
 

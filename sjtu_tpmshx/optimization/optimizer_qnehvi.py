@@ -302,6 +302,8 @@ def run_qnehvi(config: Optional[dict] = None,
                 try:
                     progress_cb(progress['count'], progress['total'], progress)
                 except Exception:
+                    # Deliberate (except-audit 2026-07-03): a crashing UI
+                    # progress callback must never kill a 45-75 min BO run.
                     pass
         return F
 
@@ -347,8 +349,13 @@ def run_qnehvi(config: Optional[dict] = None,
             try:
                 fit_gpytorch_mll(mll)
             except Exception as e:
-                if verbose:
-                    print(f"  GP fit warning (obj {j}): {e}")
+                # except-audit 2026-07-03: was verbose-gated — a production
+                # (verbose=False) run silently continued on an UN-FIT GP
+                # (prior hyperparameters), degrading acquisition quality
+                # with no trace. Always warn; the run still continues.
+                import warnings as _w
+                _w.warn(f"GP fit failed for objective {j} ({e!r}); "
+                        f"continuing with unfit hyperparameters this iter.")
             models.append(m)
         model = ModelListGP(*models)
 
@@ -392,6 +399,7 @@ def run_qnehvi(config: Optional[dict] = None,
             try:
                 progress_cb(progress['count'], progress['total'], progress)
             except Exception:
+                # Deliberate — see _evaluate_batch's callback guard.
                 pass
         n_evals = train_X.shape[0]
         if verbose:

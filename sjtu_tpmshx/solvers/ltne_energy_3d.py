@@ -2105,7 +2105,7 @@ def _warmup_jit():
                 0, 3, TinA, TinB, fA, fB, 1, 0, 0.7, 0.7, 0.7,
                 chi, 0.5, mms, mms, mms, 1)
     except Exception:
-        pass
+        pass  # warmup is best-effort; never block import (same as ltne_energy)
 
 
 _warmup_jit()

@@ -86,7 +86,10 @@ class _ComputeRunnable(QRunnable):
         orch = self._orch
         log_buf = io.StringIO()
 
-        # Tee solver stdout: terminal + capture buffer (for solve-log viewer)
+        # Tee solver stdout: terminal + capture buffer (for solve-log viewer).
+        # The broad except/pass pairs below are DELIBERATE (except-audit
+        # 2026-07-03): a dead/closed stream during interpreter teardown must
+        # never kill the tee — losing one log line beats losing the solve.
         class _Tee:
             def __init__(self, *streams):
                 self._s = streams

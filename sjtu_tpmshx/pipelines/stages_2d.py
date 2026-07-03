@@ -1798,13 +1798,16 @@ def _run_solvers(window, cfg, fields):
     # Capture SIMPLE residual histories so the Pressure tab can render a
     # convergence mini-plot alongside the pressure fields. A copy avoids
     # holding a reference to the live solver past this function.
+    # except-audit 2026-07-03: narrowed from bare Exception — only a missing
+    # / non-iterable `residuals` attr is expected here (cosmetic mini-plot
+    # data); anything else should surface.
     try:
         resid_A = list(simpA.residuals) if simpA is not None else None
-    except Exception:
+    except (AttributeError, TypeError):
         resid_A = None
     try:
         resid_B = list(simpB.residuals) if simpB is not None else None
-    except Exception:
+    except (AttributeError, TypeError):
         resid_B = None
 
     # Conservation diagnostics — STRICT enthalpy flux at inlet / outlet.
@@ -1820,10 +1823,12 @@ def _run_solvers(window, cfg, fields):
     # Reuse fine-grid enthalpy already computed above in the Richardson block.
     Q_A = Q_A_fine
     Q_B = Q_B_fine
+    # except-audit 2026-07-03: narrowed — only a None operand (side not
+    # solved) is expected; arithmetic on floats cannot otherwise raise.
     try:
         Q_net = Q_A + Q_B
         energy_rel = abs(Q_net) / (abs(Q_A) + abs(Q_B) + 1e-30)
-    except Exception:
+    except TypeError:
         Q_net = energy_rel = float('nan')
 
     result = {
