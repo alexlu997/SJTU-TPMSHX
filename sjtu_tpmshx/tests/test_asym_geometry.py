@@ -108,6 +108,7 @@ def test_a0_sides_mc_delta0_symmetric_and_near_voxel():
     assert A0_A > 0
 
 
+@pytest.mark.slow  # ~80 s Richardson 3-grid study; cheap A0 coverage stays above
 def test_a0_richardson_thin_side_beats_coarse():
     """极端 δ：Richardson 3-网格外推消薄侧网格分辨率偏差。
 

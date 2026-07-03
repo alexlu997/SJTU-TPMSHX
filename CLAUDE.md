@@ -17,9 +17,9 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
 - **The solver has a compressible validity envelope — do not force results outside it.** This is a steady low-Mach solver; it is valid only while the Forchheimer Δp stays below the inlet absolute pressure (subsonic, P_abs>0 everywhere). Once Δp ≳ P_in the outlet goes to vacuum, the flow chokes / goes supersonic, and NO steady solution exists — the solver used to silently return `converged=True` garbage (negative P, |v|~2000 m/s). `solvers/envelope.py` guards this: a pre-solve choke check (`check_compressible_envelope` on the 1D `P_out²` seed) plus a post-solve validity gate (`assess_solution_validity` / `gate_solution`, Mach + positive-pressure), driven by `cfg['envelope_mode']` — `'raise'` (default → `ChokedFlowError`), `'warn'` (run but flag `envelope_valid=False` and collect `envelope_warnings`), or `'off'` (legacy). NEVER "fix" a `ChokedFlowError` by removing the guard, widening the `P_abs` clip, or returning a number — there is no steady solution there; change the operating point instead (lower velocity, shorter streamwise L, or higher inlet pressure). The `_update_density` pressure clip also floors the STORED gauge field (not just the ρ copy) so negative absolute pressure can't enter the momentum source — don't revert that. Note: 2D is inlet-anchored (high Δp raises the inlet pressure, rarely chokes); 3D is outlet-anchored and is where this matters.
 
 ## Before claiming "done"
-- Run the **full** pytest suite, not just the golden gate — golden configs don't cover every closure branch:
+- Run the **full** pytest suite, not just the golden gate — golden configs don't cover every closure branch. Parallel is the default (~4.5 min vs ~16 min serial); set `PYTHONHASHSEED=0` in the SHELL first (3D pipeline output is hash-seed sensitive; it cannot be pinned from pytest config):
   ```
-  pytest sjtu_tpmshx/tests/ -q
+  $env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
   ```
 - Golden gates `sjtu_tpmshx/runs/_out/_golden_2d.py` and `_golden_3d.py` (local — `runs/_out/` is gitignored) must stay bit-identical unless you intentionally re-baseline.
 - Long runs: use `python -u …` or stdout block-buffers and the run looks hung.

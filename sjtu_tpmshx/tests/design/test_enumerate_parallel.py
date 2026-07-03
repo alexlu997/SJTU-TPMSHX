@@ -3,6 +3,8 @@
 候选独立 → 并行 (n_jobs>1) 与串行 (n_jobs=1) 必须给出相同 feasible 集 + best。
 用 2 候选小网格 (逆流, 快) 实跑对比, 同时验证 loky 子进程能 import 求解器栈。
 """
+import pytest
+
 from design.cases import DesignCase
 from design.select import enumerate_select
 
@@ -13,6 +15,7 @@ def _cases():
                        0.075, 0.05, dT=100.0)]
 
 
+@pytest.mark.slow  # ~50 s parallel==serial equivalence; serial path covered elsewhere
 def test_parallel_matches_serial():
     cs = _cases()
     nodes = {"topo": ["Diamond"], "l": [5.0, 6.0], "t": [0.5]}   # 2 候选

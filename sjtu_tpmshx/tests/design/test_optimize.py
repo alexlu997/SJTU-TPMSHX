@@ -7,6 +7,7 @@ def _cases():
     return [DesignCase(1,"air",688.23,1_088_700.0,0.2855,
                        "water",320.0,200_000.0,0.5,30_000.0,0.075,0.05)]
 
+@pytest.mark.slow  # ~50 s optimizer-quality study (not a correctness gate)
 def test_warmstart_not_worse_than_baseline():
     cs = _cases()
     base = size_fixed_cell(cs, "Diamond", 6.0, 0.4, "cross")
