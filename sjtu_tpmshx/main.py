@@ -760,26 +760,45 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         """
         from ui.preflight import FluidCfg, compute_preflight
 
-        def _f(attr, default=0.0):
+        # robustness-hardening (2026-07-03): the old _f/_i fell back to
+        # 0.0/0 on unparseable text, so preflight ran its geometry checks
+        # against a phantom L=0 domain (wrong errors / silence). Core
+        # fields now abort preflight with the invalid-input modal instead.
+        _parse_fails: list = []
+
+        def _f(attr, default=0.0, core=False):
             le = getattr(self, attr, None)
             if le is None:
                 return default
             try:
                 return float(le.text())
             except (TypeError, ValueError):
+                if core:
+                    _parse_fails.append(attr)
                 return default
 
-        def _i(attr, default=0):
+        def _i(attr, default=0, core=False):
             le = getattr(self, attr, None)
             if le is None:
                 return default
             try:
                 return int(le.text())
             except (TypeError, ValueError):
+                if core:
+                    _parse_fails.append(attr)
                 return default
 
-        L = _f('le_L'); H = _f('le_H'); Lz = _f('le_Lz')
-        Nx = _i('le_Nx'); Ny = _i('le_Ny'); Nz = _i('le_Nz', 1)
+        L = _f('le_L', core=True); H = _f('le_H', core=True)
+        Lz = _f('le_Lz')
+        Nx = _i('le_Nx', core=True); Ny = _i('le_Ny', core=True)
+        Nz = _i('le_Nz', 1)
+        if _parse_fails:
+            QMessageBox.warning(
+                self, "检查输入",
+                "以下字段无法解析为数字，预检无法进行：\n  "
+                + "\n  ".join(_parse_fails)
+                + "\n\n请先修正后再计算。")
+            return False
         is_3d = (hasattr(self, 'combo_dim')
                  and self.combo_dim.currentIndex() == 1)
         wall_refine_3d = True
@@ -808,11 +827,36 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             except (TypeError, ValueError):
                 return None
 
+        # robustness-hardening (2026-07-03): wire domain.validator.
+        # validate_geometry into the run path — it was defined + tested but
+        # never called in production (t/L feasibility, cell-larger-than-
+        # domain, Shanghai-extrap reminders all dead). Hard nonsense raises
+        # → critical modal; soft findings merge into the preflight report.
+        _geom_warnings = []
+        try:
+            from domain.validator import validate_geometry as _vg
+            _geom_warnings = _vg(
+                L, H, (Lz if is_3d else None),
+                _f('le_Lcell', 7.0), _f('le_t', 0.6),
+                ks=_f('le_ks', 16.0), is_3d=is_3d)
+        except ValueError as _ge:
+            QMessageBox.critical(
+                self, "几何输入不合法", str(_ge))
+            return False
+        except Exception:
+            pass  # validator itself failing must not block a run
+
         report = compute_preflight(
             L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
             is_3d=is_3d, wall_refine_3d=wall_refine_3d,
             fluid_A=_cfg('A'), fluid_B=_cfg('B'),
             T_inA=_t_k('le_TinA'), T_inB=_t_k('le_TinB'))
+        for _w in _geom_warnings:
+            _msg = getattr(_w, 'message', None) or str(_w)
+            if getattr(_w, 'severity', 'warning') == 'error':
+                report.errors.append(_msg)
+            else:
+                report.warnings.append(_msg)
 
         if not report.errors and not report.warnings:
             # Still surface info in the status bar so the user knows the
@@ -900,6 +944,15 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         try:
             if getattr(self, 'compute', None) is not None:
                 self.compute.cancel()
+                # robustness-hardening (2026-07-03): give the worker a
+                # short bounded window to reach its cancel checkpoint and
+                # exit — an unjoined worker can still emit signals on the
+                # half-destroyed orchestrator QObject (teardown crash).
+                # 3 s covers an epoch boundary; a truly wedged JIT loop
+                # gets abandoned exactly as before (daemon semantics).
+                _pool = getattr(self.compute, '_pool', None)
+                if _pool is not None:
+                    _pool.waitForDone(3000)
         except Exception:
             pass
         # 2b. Neutralise any floating/detached canvas windows BEFORE Qt
@@ -1293,7 +1346,13 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             if is_positive:
                 try:
                     v = float(txt)
-                    if v <= 0:
+                    import math as _math
+                    # robustness-hardening: float("nan") parses fine and
+                    # `nan <= 0` is False — nan/inf sailed through here.
+                    if not _math.isfinite(v):
+                        bad = True
+                        reason = "Must be finite"
+                    elif v <= 0:
                         bad = True
                         reason = "Must be > 0"
                 except Exception:

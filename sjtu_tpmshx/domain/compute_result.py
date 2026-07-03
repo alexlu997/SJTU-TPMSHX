@@ -29,6 +29,13 @@ class ComputeResult:
     T_out_A_K: float = 0.0
     T_out_B_K: float = 0.0
 
+    # ── convergence verdict (robustness-hardening, 2026-07-03) ──
+    # False when a SIMPLE side stalled or the final LTNE/coupling pass
+    # missed its residual target. Was previously buried in warning
+    # strings, so diverged solves displayed Q/dP indistinguishably from
+    # good ones. Default True keeps old-payload round-trips permissive.
+    converged: bool = True
+
     # ── rich arrays ──
     # 2D keys: T_fA, T_fB, T_s, P_A, P_B, u_A, v_A, u_B, v_B, eps_arr,
     #          (+ axis_dir_A, axis_dir_B for plotting)

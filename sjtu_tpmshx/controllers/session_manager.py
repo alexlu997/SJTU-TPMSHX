@@ -121,7 +121,14 @@ class SessionManager(QObject):
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 payload = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except json.JSONDecodeError:
+            # robustness-hardening (2026-07-03): a corrupt session used to
+            # silently revert the workspace to defaults AND be destroyed by
+            # the next save. Quarantine it so the user's data stays
+            # recoverable and the corruption is visible on disk.
+            self._quarantine_corrupt(path)
+            return None
+        except OSError:
             return None
         if not isinstance(payload, dict):
             return None
@@ -130,6 +137,16 @@ class SessionManager(QObject):
         # Future: payload = self._migrate(payload) ...
         self.session_loaded.emit(workspace, payload)
         return payload
+
+    def _quarantine_corrupt(self, path: Path) -> None:
+        """Rename an unparseable JSON file to ``<name>.corrupt-<ts>`` —
+        best-effort, never raises (a locked file just stays in place)."""
+        try:
+            import time as _t
+            path.rename(path.with_name(
+                f"{path.name}.corrupt-{int(_t.time())}"))
+        except OSError:
+            pass
 
     def _atomic_write_json(self, path: Path, data: Any) -> bool:
         """Write JSON to ``path`` atomically.
@@ -194,7 +211,12 @@ class SessionManager(QObject):
                 return []
             presets = data.get('presets', [])
             return list(presets) if isinstance(presets, list) else []
-        except (OSError, json.JSONDecodeError):
+        except json.JSONDecodeError:
+            # Same quarantine rationale as load_session — a corrupt preset
+            # library must not be silently clobbered by the next save.
+            self._quarantine_corrupt(path)
+            return []
+        except OSError:
             return []
 
     def save_user_presets(self, presets: List[Dict[str, Any]]) -> bool:

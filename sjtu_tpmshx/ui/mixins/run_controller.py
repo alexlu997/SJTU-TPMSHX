@@ -209,9 +209,15 @@ class RunControllerMixin:
                        f"expands to ~{Nx_u+16}x{Ny_u+16}x{Nz_u+16}. "
                        if _refine_on
                        else f"User grid {Nx_u}x{Ny_u}x{Nz_u}. ")
+            # robustness-hardening (2026-07-03): give the user a RAM number
+            # before they click Yes — ~50 float64 field arrays per solve
+            # (u/v/w/P/T ×2 fluids + props + AMG hierarchies, empirical
+            # ballpark), so 8M cells ≈ 3+ GB and an OOM on a blind Yes.
+            _ram_gb = est_cells * 50 * 8 / 1e9
             reply = QMessageBox.question(
                 self, "Large 3D Grid",
-                f"Estimated cells: ~{est_cells:,}\n\n"
+                f"Estimated cells: ~{est_cells:,}"
+                f"  (≈ {_ram_gb:.1f} GB working memory)\n\n"
                 f"{_expand}This can take many minutes.\n\n"
                 "Suggested 3D defaults: Nx=30, Ny=20, Nz=5 (~30 s).\n\n"
                 "Proceed anyway?",
@@ -381,8 +387,17 @@ class RunControllerMixin:
         # ui-plan3-workbench T2: one diagnostics snapshot per run, consumed
         # by the result sidebar + the 诊断详情 dialog. Built BEFORE the 3D
         # early-return so both modes fill it.
+        # robustness-hardening (2026-07-03): surface the first-class
+        # convergence verdict — a diverged solve used to display Q/dP
+        # indistinguishably from a good one.
+        if not getattr(result, 'converged', True):
+            _nc_msg = ("求解未收敛 — Q/ΔP 来自未收敛场，仅供参考"
+                       "（提高 max_iter、放宽 tol 或加密网格后重算）。")
+            if _nc_msg not in result.warnings:
+                result.warnings.insert(0, _nc_msg)
         self._diag_summary = {
             'mode': result.diagnostics.get('mode', '2d'),
+            'converged': bool(getattr(result, 'converged', True)),
             'Q_W': result.Q_W,
             'dP_A': result.dP_A_Pa, 'dP_B': result.dP_B_Pa,
             'Q_A': result.residuals.get('Q_A'),
@@ -1095,7 +1110,8 @@ class RunControllerMixin:
             f" · ΔP_B = {_f(d.get('dP_B'))} Pa",
             f"能量对账: Q_A = {_f(d.get('Q_A'))} W · Q_B = {_f(d.get('Q_B'))} W"
             f" · 闭合 = {_f(abs(rel) * 100 if isinstance(rel, (int, float)) and rel == rel else None, '{:.2f}')} %",
-            f"包络: {'有效' if env else ('失效' if env is not None else '—')}"
+            f"收敛: {'是' if d.get('converged', True) else '否（结果仅供参考）'}"
+            f" · 包络: {'有效' if env else ('失效' if env is not None else '—')}"
             f" · 外推 {len(d.get('extrap') or [])} 项",
             f"迭代: 外循环 {it.get('iter_outer', '—')} · SIMPLE A/B"
             f" {it.get('iter_simple_A', '—')}/{it.get('iter_simple_B', '—')}"

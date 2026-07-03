@@ -333,6 +333,58 @@ class ComputeConfig:
             encoding='utf-8',
         )
 
+    def validate(self) -> 'ComputeConfig':
+        """Reject non-finite / non-physical scalars at the SCRIPT boundary
+        (robustness-hardening, 2026-07-03).
+
+        `json.loads` happily produces NaN/Infinity and negative values, and
+        the script/optimizer path bypasses every UI widget gate — so
+        ``from_dict``/``from_json`` call this. Direct dataclass construction
+        stays permissive on purpose (tests build deliberately-odd configs).
+        Returns self so call sites can chain.
+        """
+        import math
+
+        def _bad(name, v):
+            raise ValueError(
+                f"ComputeConfig.{name}={v!r} — must be finite and > 0")
+
+        ge = self.geometry
+        checks = [
+            ('geometry.L_dom_m', ge.L_dom_m),
+            ('geometry.H_dom_m', ge.H_dom_m),
+            ('geometry.L_cell_mm', ge.L_cell_mm),
+            ('geometry.t_wall_mm', ge.t_wall_mm),
+            ('geometry.k_s_W_mK', ge.k_s_W_mK),
+        ]
+        if ge.Lz_m is not None:
+            checks.append(('geometry.Lz_m', ge.Lz_m))
+        for side, fl in (('A', self.fluid_A), ('B', self.fluid_B)):
+            checks += [
+                (f'fluid_{side}.u_mps', fl.u_mps),
+                (f'fluid_{side}.T_in_K', fl.T_in_K),
+                (f'fluid_{side}.P_in_Pa', fl.P_in_Pa),
+            ]
+        for name, v in checks:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                _bad(name, v)
+            if not math.isfinite(fv) or fv <= 0.0:
+                _bad(name, v)
+        for name, n in (('solver.Nx', self.solver.Nx),
+                        ('solver.Ny', self.solver.Ny),
+                        ('solver.Nz', self.solver.Nz)):
+            try:
+                iv = int(n)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"ComputeConfig.{name}={n!r} — must be an int >= 1")
+            if iv < 1:
+                raise ValueError(
+                    f"ComputeConfig.{name}={n} — must be >= 1")
+        return self
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ComputeConfig':
         """Build a ComputeConfig from a JSON-shaped dict.
@@ -371,7 +423,7 @@ class ComputeConfig:
                 flags=FeatureFlags(**fl_d) if fl_d else FeatureFlags(),
                 extrap=ExtrapPolicy(**ex_d) if ex_d else ExtrapPolicy(),
                 envelope_mode=data.get('envelope_mode', 'raise'),
-            )
+            ).validate()
 
         # ── legacy shanghai_baseline.json layout ────────────────
         # Keys: _meta / geometry / domain / _excluded
@@ -387,7 +439,7 @@ class ComputeConfig:
             Lz_m=(float(domain_raw['Lz_m'])
                   if 'Lz_m' in domain_raw else None),
         )
-        return cls(geometry=geom)
+        return cls(geometry=geom).validate()
 
 
 __all__ = [

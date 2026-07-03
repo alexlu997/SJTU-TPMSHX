@@ -719,6 +719,7 @@ def _finalize_cfg(raw, fields):
         Q_W=safe_float(raw['Q_total']),
         dP_A_Pa=safe_float(raw['dP_A']),
         dP_B_Pa=safe_float(raw['dP_B']),
+        converged=bool(raw.get('solver_converged', True)),
         T_out_A_K=T_out_A,
         T_out_B_K=T_out_B,
         fields={

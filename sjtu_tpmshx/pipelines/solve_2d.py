@@ -1218,6 +1218,10 @@ def _run_solvers(window, cfg, fields):
         'Q_total': Q_total,
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
+        # robustness-hardening (2026-07-03): first-class convergence verdict
+        # — False when any SIMPLE side stalled or the outer coupling never
+        # met the dual ΔT+Δρ criterion. Flows into ComputeResult.converged.
+        'solver_converged': bool(coupling_converged and not simple_warnings),
         'residuals_A': resid_A, 'residuals_B': resid_B,
         # Conservation diagnostics
         'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,

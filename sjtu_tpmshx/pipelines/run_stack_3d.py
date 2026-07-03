@@ -395,6 +395,23 @@ def _run_3d_stack(cfg):
     dx, dy, dz, Nx, Ny, Nz = _build_grid_3d(
         wall_refine, L, H, Lz, Nx_u, Ny_u, Nz_u)
 
+    # robustness-hardening (2026-07-03): hard cell cap. The UI has a
+    # Yes/No dialog at >100k cells, but the script/optimizer path reached
+    # here unguarded — 200³ = 8M cells × ~50 float64 arrays + AMG
+    # hierarchies is an OOM, not a slow run. Override deliberately via
+    # TPMSHX_MAX_CELLS_3D (or cfg['max_cells_3d']) when you actually have
+    # the RAM.
+    _cell_cap = int(cfg.get('max_cells_3d',
+                            os.environ.get('TPMSHX_MAX_CELLS_3D',
+                                           '2000000')))
+    _n_cells = Nx * Ny * Nz
+    if _n_cells > _cell_cap:
+        raise ValueError(
+            f"3D grid {Nx}x{Ny}x{Nz} = {_n_cells:,} cells exceeds the "
+            f"{_cell_cap:,}-cell cap (~{_n_cells * 50 * 8 / 1e9:.1f} GB "
+            f"working memory). Reduce the grid, or raise the cap "
+            f"deliberately via TPMSHX_MAX_CELLS_3D / cfg['max_cells_3d'].")
+
     # Resolve streamwise geometry from dir_A
     axis_map = _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
     is_x_stream = axis_map['is_x_stream']
@@ -1948,6 +1965,15 @@ def _run_3d_stack(cfg):
     _result['envelope_reasons'] = _env_reasons
     _result['envelope_warnings'] = _env_warnings
     _result['p_clip_hits'] = _clip_hits
+    # robustness-hardening (2026-07-03): first-class convergence verdict —
+    # False when any SIMPLE solve stalled (init or outer re-solve) or the
+    # FINAL outer LTNE pass failed its residual target (earlier passes
+    # hitting the iteration cap is a normal warm-up, only the last one
+    # carries the result). Flows into ComputeResult.converged.
+    _result['solver_converged'] = bool(
+        (not _simple_nonconv)
+        and ((not _ltne_info)
+             or bool(_ltne_info[-1].get('converged', False))))
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B

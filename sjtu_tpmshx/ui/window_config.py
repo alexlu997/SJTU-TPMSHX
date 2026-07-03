@@ -164,8 +164,20 @@ def _validate_required_widgets(window, *, is_3d: bool) -> None:
             continue
         caster = int if fs.kind == 'int' else float
         try:
-            caster(txt)
+            v = float(caster(txt))
         except ValueError:
+            bad.append(fs.label)
+            continue
+        # robustness-hardening (2026-07-03): `float("nan")`/`float("inf")`
+        # parse successfully, so castability alone let non-finite values
+        # into ComputeConfig. All required fields are physically positive;
+        # 'temp' fields are exempt from the sign check here because the raw
+        # text may be °C (negative is legit) — their Kelvin positivity is
+        # enforced by ComputeConfig.validate() downstream.
+        import math as _math
+        if not _math.isfinite(v):
+            bad.append(fs.label)
+        elif fs.kind != 'temp' and v <= 0:
             bad.append(fs.label)
     if bad:
         raise ValueError(f"Invalid input in: {', '.join(bad)}")
@@ -383,7 +395,13 @@ def config_from_window(window, *, strict: bool = False,
     T_s_init: Optional[float] = None
     le_ts = getattr(window, 'le_TsInit', None)
     if le_ts is not None and _qt_text(le_ts).strip():
-        T_s_init = _temp_in_K(window, le_ts, default_K=0.0) or None
+        # robustness-hardening: the old `... or None` coerced a legit
+        # 0.0 K parse to None AND let absurd seeds through. Explicit
+        # None-compare + a loose physical range (anything outside is a
+        # typo, not a use case).
+        _ts = _temp_in_K(window, le_ts, default_K=0.0)
+        T_s_init = _ts if (_ts is not None and 150.0 <= _ts <= 2000.0) \
+            else None
     solver = SolverConfig(
         T_s_init_K=T_s_init,
         # remaining knobs keep dataclass defaults; UI does not surface
