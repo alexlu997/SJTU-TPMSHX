@@ -98,21 +98,18 @@ class RunHistoryMixin:
             self._rebuild_recent_menu()
 
     def _rebuild_recent_menu(self):
-        """Rebuild the header 载入 ▾ menu: built-in canonical presets, user-
-        saved presets, recent runs, and the save/clear actions. Consolidates
-        the former header preset dropdown into this single entry."""
+        """Rebuild the header 载入 ▾ menu: user-saved presets, recent runs,
+        and the save/clear actions.
+
+        2026-07-03 (user request): the 标准工况 built-in section was REMOVED
+        from this menu — the validated case loads via the empty-state
+        「载入算例工况」 button instead. The `_BUILTIN_PRESETS` machinery
+        itself stays (that button + command palette + tests depend on
+        `_load_named_preset`); only the menu listing is gone."""
         from PySide6.QtWidgets import QMenu
         if not hasattr(self, "btn_recent"):
             return
         menu = QMenu(self)
-
-        # — Built-in canonical presets —
-        hdr = menu.addAction("标准工况")
-        hdr.setEnabled(False)
-        for name in getattr(self, "_BUILTIN_PRESETS", ()):
-            act = menu.addAction(f"   {name}")
-            act.triggered.connect(
-                lambda _c=False, n=name: self._load_named_preset(n))
 
         # — User-saved presets —
         try:
@@ -120,7 +117,6 @@ class RunHistoryMixin:
         except Exception:
             user = []
         if user:
-            menu.addSeparator()
             uh = menu.addAction("我的预设")
             uh.setEnabled(False)
             for p in user:

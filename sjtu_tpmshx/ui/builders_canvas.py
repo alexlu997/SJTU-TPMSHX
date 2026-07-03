@@ -427,11 +427,11 @@ def build_canvas_area(window):
     _eb_lay.setContentsMargins(48, 48, 48, 40)
     _eb_lay.setSpacing(18)
     _eb_lay.addWidget(_empty)
-    _btn_preset = QPushButton("⚡  载入上海工况 (3D Gyroid)")
+    _btn_preset = QPushButton("⚡  载入算例工况")
     _btn_preset.setMinimumHeight(30)
     _btn_preset.setStyleSheet(t.style('BTN_SECONDARY'))
     _btn_preset.setToolTip(
-        "用已验证的上海电气算例填满全部字段 — 可立即点击计算。")
+        "用已验证的基准算例填满全部字段 — 可立即点击计算。")
     _btn_preset.clicked.connect(
         lambda: window._load_named_preset("Shanghai (3D Gyroid)"))
     _eb_lay.addWidget(_btn_preset, 0, Qt.AlignmentFlag.AlignHCenter)
