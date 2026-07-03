@@ -1,6 +1,6 @@
 ## 1. 前置
 
-- [ ] 1.1 CI Linux UI 挂死：thread 模式诊断 run 定位卡死测试 → 修复（本批推送前必须绿）
+- [x] 1.1 CI Linux UI 挂死：thread 诊断点名 `test_param_pages_have_no_horizontal_scroll`（fixture processEvents → onboarding `msg.exec()` 模态，全新 checkout 无 `.first_run_done`）；修复 = offscreen 跳过模态仍写 flag；CI 复绿 14m15s
 
 ## 2. 实施
 
