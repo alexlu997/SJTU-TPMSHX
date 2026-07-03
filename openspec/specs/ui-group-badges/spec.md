@@ -1,6 +1,9 @@
 # Spec: ui-group-badges
 
-## ADDED Requirements
+## Purpose
+左面板分组徽标：必填缺失计数、防抖校验驱动、折叠存活。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Group-title invalid-field badges
 每个手风琴组标题 SHALL 在组内存在无效或空的会话字段时显示 `⚠N` 徽标（N = 计数）；判据 SHALL 与 preflight 一致（`inpError=='true'` 或空文本）；被 2D/3D 或 rect/poly 模式门隐藏的字段 SHALL 不计；N=0 时 SHALL 无徽标。

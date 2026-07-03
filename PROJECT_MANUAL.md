@@ -595,11 +595,15 @@ SJTU-TPMSHX/                       ← 仓库根
 | `dialogs.py` | 只读信息对话框（总览、求解日志查看器、快捷键速查）。 |
 | `appearance.py` | 主题/密度/强调色切换与持久化（arch-b-c-e E 拆分）。 |
 | `session_presets.py` | 会话保存/恢复 + 用户预设管理（arch-b-c-e E 拆分）。 |
+| `shortcuts.py` | 快捷键装配 + 页签循环/最近运行滚动（split-ui-main 拆分）。 |
+| `io_actions.py` | 导出结果/图像、存取配置对话框（split-ui-main 拆分）。 |
+| `result_bridge.py` | ResultCache @property 桥（`_has_results*` 等；setter True 为 no-op 的陷阱注释在此）。 |
 
-#### `main.py`（~1900 行） — 界面主程序入口
+#### `main.py`（~1540 行） — 界面主程序入口
 - **作用**：应用入口和主窗口类。
-- **主类**：`Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, AppearanceMixin, SessionPresetsMixin, QMainWindow)`。
-- **职责**：窗口初始化；持有编排器/会话/缓存/主题/信号路由五大控制器；主题与样式；温度单位切换；计算状态与重入保护；会话自动恢复；快捷键（Ctrl+R 计算、Ctrl+K 命令面板、Ctrl+I 坐标检视等）。
+- **主类**：`Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, AppearanceMixin, SessionPresetsMixin, ShortcutsMixin, IOActionsMixin, ResultBridgeMixin, QMainWindow)`（13 mixin）。
+- **职责**：窗口初始化；持有编排器/会话/缓存/主题/信号路由五大控制器；温度单位切换；计算状态与重入保护；会话自动恢复；预检/onboarding（`__file__` 锚定，设计上留在 main）。
+- **不再拆的记录**（split-ui-main 决策）：`panel_vis_3d.py` 整体 Qt 类无非 Qt 缝；`builders_canvas.build_canvas_area` 单体构建函数嵌套闭包持 Qt 局部态，只抽出了诊断侧栏三函数（`ui/builders_sidebar.py`，builders_canvas re-export）。
 
 ---
 

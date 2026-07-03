@@ -1,6 +1,9 @@
 # Spec: ui-optimize-wizard
 
-## ADDED Requirements
+## Purpose
+优化页三页向导（配置/运行/结果）：阶段 pill 驱动翻页、内联参数、取消保样本。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Three-page wizard
 优化页 SHALL 为 QStackedWidget 三页（配置/运行/结果），阶段票据 SHALL 可点击切页；`_set_stage_pill(key,'active')` SHALL 同步翻到对应页——启动→运行页、完成→结果页、错误→配置页均由引擎既有阶段流转驱动。

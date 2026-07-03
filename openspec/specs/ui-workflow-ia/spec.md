@@ -1,6 +1,9 @@
 # Spec: ui-workflow-ia
 
-## ADDED Requirements
+## Purpose
+左面板信息架构：工作流四分组手风琴（几何→流体→网格→高级）。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Four workflow accordion groups
 左面板 SHALL 呈现四段工作流手风琴：Geometry & Structure（默认展开）、Fluids（默认展开）、Grid & Solver（默认折叠）、Boundary Details & Advanced（默认折叠）。widget 属性名、信号连接、`_3d_only_widgets`/`_rect_only_widgets` 可见性门 SHALL 不变。

@@ -1,6 +1,9 @@
 # Spec: ui-chinese-chrome
 
-## ADDED Requirements
+## Purpose
+UI 表面中文化约定：可见文案中文、内部路由键保持英文。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Chinese chrome, untouched physics labels
 界面 chrome（顶栏按钮、画布页签、手风琴组名、区块标题、空状态、导出菜单、CTA、onboarding）SHALL 为中文；物理量行标签、单位、符号（ε、D_h、ΔP、Nu、K/°C）、内部信号/属性名/key SHALL 保持原样；快捷键（Ctrl+R 等）SHALL 不变。

@@ -1,6 +1,9 @@
 # Spec: ui-result-workbench
 
-## ADDED Requirements
+## Purpose
+结果工作台：三页签工具栏、2D|3D 切换、诊断侧栏与诊断详情对话框。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Three-tab workbench
 画布工具条 SHALL 只呈现 几何布局｜结果｜优化 三个页签；温度/压力/速度/3D/2D 视图的 legacy 按钮对象 SHALL 保留（热键、分屏、路由兼容）但不上工具条；「结果」SHALL 在任一模式有结果时可用。

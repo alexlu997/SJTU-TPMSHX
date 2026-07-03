@@ -1,6 +1,9 @@
 # Spec: ui-design-tokens
 
-## ADDED Requirements
+## Purpose
+设计令牌纪律：圆角/色值单一来源于 theme.py，锁测试禁散落 hex 与私设半径。（结构修复 2026-07-03：补 Purpose 头，内容不变。）
+
+## Requirements
 
 ### Requirement: Radius two-tier policy
 UI 圆角 SHALL 只取两档：常规 6px（`RADIUS_INPUT`/`RADIUS_CARD`）与语义 pill（`RADIUS_TAB` 14 / 既有胶囊 18）；builder QSS SHALL 无 1/2/3/4/7/8/10/12px 游离取值。
