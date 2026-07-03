@@ -235,7 +235,7 @@ def build_page_domain(window):
         "ConstDF-v1 训练域: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm, Re ∈ [400, 16000].\n"
         "默认严格: 超出任一范围 Compute 拒绝运行.\n"
         "勾选后: 超出仅 warn, 结果标记为 extrapolated, 图上加水印.\n"
-        "用于 Shanghai t=0.6 mm 等近边界验证工况."
+        "用于算例工况 t=0.6 mm 等近边界验证工况."
     )
     window.chk_allow_extrap.setStyleSheet(_chk_box_qss)
     g_adv.addWidget(window.chk_allow_extrap, 0, 0, 1, 2)
@@ -266,7 +266,7 @@ def build_page_domain(window):
         "3D LTNE energy kernel: gas density ρ=P/RT from the LOCAL cell pressure "
         "(SIMPLE) instead of the inlet pressure. Conserves energy for "
         "compressible reverse-dir flow (Q_A≈Q_B). Strict conservation stays "
-        "machine-zero; Shanghai bit-identical; low-ΔP cases unchanged. "
+        "machine-zero; 算例工况 bit-identical; low-ΔP cases unchanged. "
         "ON = default; uncheck for the legacy inlet-pressure density.")
     window.chk_var_rhocp.setStyleSheet(_chk_box_qss)
     g_adv.addWidget(window.chk_var_rhocp, 2, 0, 1, 2)

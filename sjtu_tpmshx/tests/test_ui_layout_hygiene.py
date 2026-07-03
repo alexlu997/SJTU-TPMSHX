@@ -371,3 +371,92 @@ def test_mode_gates_survive_group_toggle(win):
     assert not win.le_Nz.isVisibleTo(win), "3D-only Nz visible in 2D mode"
     grp.setChecked(False)
     app.processEvents()
+
+
+# ── ui-shortcuts-persist: workbench shortcuts + session ui_state ──────
+
+def test_shortcut_cheatsheet_matches_workbench(win):
+    """Cheat sheet lists the visible 3-tab set; retired 5-tab rows gone."""
+    labels = [label for label, _key in win._SHORTCUT_ROWS]
+    joined = " | ".join(labels)
+    for want in ("几何布局", "结果", "优化"):
+        assert any(want in s for s in labels), f"missing row for {want}"
+    for stale in ("Tab — Temperature", "Tab — Pressure",
+                  "Tab — Velocity", "Tab — 3D View"):
+        assert stale not in joined, f"retired row survives: {stale}"
+
+
+def test_cycle_tab_skips_hidden_legacy(win):
+    """Ctrl+↑/↓ walks layout→result→pareto; a result-family current tab
+    maps to 'result' so cycling never lands on hidden legacy buttons."""
+    win.combo_dim.setCurrentIndex(0)
+    win.cache.set_result('2d', {'stub': True})
+    win._update_tab_visibility()
+    win._switch_tab('temp')               # result family
+    win._cycle_tab(+1)
+    assert win._active_tab == 'pareto'
+    win._cycle_tab(+1)
+    assert win._active_tab == 'layout'
+    win._has_results_2d = False
+    win._update_tab_visibility()
+
+
+def test_toggle_result_view_gated(win):
+    """Ctrl+4: in 2D mode with only-2D results the 3D side is gated —
+    toggling from a 2D field view is a no-op (stays 2D)."""
+    win.combo_dim.setCurrentIndex(0)
+    win.cache.set_result('2d', {'stub': True})
+    win._update_tab_visibility()
+    win._switch_tab('temp')
+    assert win._result_view == '2d'
+    win._toggle_result_view()
+    assert win._result_view == '2d'       # 3D gated → no flip
+    win._switch_tab('layout')
+    win._has_results_2d = False
+    win._update_tab_visibility()
+
+
+def test_no_shanghai_string_in_visible_ui_sources():
+    """De-branding lock: no user-visible 'Shanghai' literal in the UI
+    surfaces that render text (field_menu context actions / status)."""
+    import pathlib
+    ui_dir = pathlib.Path(__file__).resolve().parents[1] / 'ui'
+    src = (ui_dir / 'field_menu.py').read_text(encoding='utf-8')
+    assert 'Revert to Shanghai' not in src
+    assert 'reverted to Shanghai' not in src
+
+
+def test_session_ui_state_round_trip(win):
+    """_save_session stores ui_state (family key collapsed to 'result');
+    _restore_session re-applies result_view + active_tab."""
+    win.combo_dim.setCurrentIndex(0)
+    win.cache.set_result('2d', {'stub': True})
+    win._update_tab_visibility()
+    win._switch_tab('temp')               # result family, view '2d'
+
+    captured = {}
+    orig_save = win.sm.save_session
+    win.sm.save_session = lambda payload, ws: captured.update(payload) or True
+    try:
+        win._save_session()
+    finally:
+        win.sm.save_session = orig_save
+    ui = captured.get('ui_state')
+    assert ui is not None
+    assert ui['active_tab'] == 'result'   # family key collapsed
+    assert ui['result_view'] == '2d'
+    assert ui['left_collapsed'] in (True, False)
+
+    # Restore path: feed the captured payload back and confirm the tab
+    # resolves through 'result' (→ a 2D field card) again.
+    win._switch_tab('layout')
+    orig_load = win.sm.load_session
+    win.sm.load_session = lambda ws: dict(captured)
+    try:
+        win._restore_session()
+    finally:
+        win.sm.load_session = orig_load
+    assert win._active_tab in ('temp', 'pres', 'vel')
+    win._switch_tab('layout')
+    win._has_results_2d = False
+    win._update_tab_visibility()

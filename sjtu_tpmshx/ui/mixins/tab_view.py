@@ -186,6 +186,28 @@ class TabViewMixin:
             "Pressure":      'pres',
         }.get(sel, 'temp')
 
+    def _toggle_result_view(self):
+        """Ctrl+4 (ui-shortcuts-persist) — flip 结果 between 2D and 3D.
+
+        From outside the result family it just enters 结果 on the current
+        `_result_view`; inside, it flips to the other side unless that side
+        is gated off (no results / wrong dimensionality) — then no-op.
+        """
+        if getattr(self, '_active_tab', None) not in ('temp', 'pres',
+                                                      'vel', '3d'):
+            btn = getattr(self, 'btn_tab_result', None)
+            if btn is None or not btn.isEnabled():
+                return
+            self._switch_tab('result')
+            return
+        cur = getattr(self, '_result_view', '2d')
+        other = '3d' if cur == '2d' else '2d'
+        rv = getattr(self, '_result_view_btns', None)
+        if rv and not rv[other].isEnabled():
+            return
+        self._result_view = other
+        self._switch_tab('result')
+
     def _switch_tab(self, tab: str):
         # 2026-05-09 Phase 4 — '2d_view' is the merged Temperature/Velocity/
         # Pressure tab. Resolve to the underlying card key based on the

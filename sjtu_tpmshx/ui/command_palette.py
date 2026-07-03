@@ -351,13 +351,15 @@ def build_actions(w) -> list[Action]:
         '3d':     getattr(w, 'btn_tab_3d', None),
         'pareto': getattr(w, 'btn_tab_pareto', None),
     }
+    # ui-shortcuts-persist: labels in Chinese to match the toolbar chrome;
+    # the English keywords stay so "temp"/"pareto" still find the entries.
     for tab, key, desc in [
-        ('layout', 'layout', 'Show Layout tab'),
-        ('temp',   'temp',   'Show Temperature tab'),
-        ('pres',   'pres',   'Show Pressure tab'),
-        ('vel',    'vel',    'Show Velocity tab'),
-        ('3d',     '3d',     'Show 3D View tab'),
-        ('pareto', 'pareto', 'Show Pareto tab'),
+        ('layout', 'layout', '显示 几何布局 页签'),
+        ('temp',   'temp',   '显示 温度 视图（结果）'),
+        ('pres',   'pres',   '显示 压力 视图（结果）'),
+        ('vel',    'vel',    '显示 速度 视图（结果）'),
+        ('3d',     '3d',     '显示 3D 视图（结果）'),
+        ('pareto', 'pareto', '显示 优化 页签'),
     ]:
         _btn = _tab_btn_map.get(tab)
         # `pareto` is always-on (entry point for NSGA-II), `layout`

@@ -427,7 +427,7 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
     sp_rho.setToolTip(
         "Compressible ρ(T) outer loop iterations.\n"
         "1 = isothermal-ρ fast path (Q/dP ~10 % off)\n"
-        "3 = matches the Shanghai validation baseline (default)\n"
+        "3 = 与算例工况验证基线一致 (default)\n"
         "≥4 = tighter ρ convergence; not usually worth the cost")
     form.addRow("n_rho_loops", sp_rho)
 

@@ -354,6 +354,17 @@ class SessionPresetsMixin:
             except Exception:
                 continue
         payload['checks'] = checks
+        # Workbench UI state (ui-shortcuts-persist): last tab (result-family
+        # keys collapse to 'result' so restore re-resolves via _result_view),
+        # left-panel collapse, 2D|3D result-view choice.
+        _tab = getattr(self, '_active_tab', 'layout')
+        if _tab in ('temp', 'pres', 'vel', '3d', '2d_view'):
+            _tab = 'result'
+        payload['ui_state'] = {
+            'active_tab': _tab,
+            'left_collapsed': bool(getattr(self, '_left_collapsed', False)),
+            'result_view': getattr(self, '_result_view', '2d'),
+        }
         # Window geometry + state (maximised, size, position). Store as
         # base64 so the JSON stays readable when the rest is inspected.
         try:
@@ -521,6 +532,28 @@ class SessionPresetsMixin:
                 except Exception:
                     pass
             _QT_msg.singleShot(800, _flash)
+        # Workbench UI state (ui-shortcuts-persist) — best-effort, mirrors
+        # the save side. result_view first (so a restored 'result' tab
+        # resolves to the saved side), then the left panel, then the tab.
+        # A gated-off saved tab falls back through _switch_tab's own
+        # button-disabled path (→ layout); no new fallback logic here.
+        _ui = payload.get('ui_state') or {}
+        try:
+            _rvw = _ui.get('result_view')
+            if _rvw in ('2d', '3d'):
+                self._result_view = _rvw
+                _paint = getattr(self, '_paint_result_seg', None)
+                if _paint is not None:
+                    _paint()
+            if bool(_ui.get('left_collapsed')) != bool(
+                    getattr(self, '_left_collapsed', False)):
+                self._toggle_left_panel()
+            _tab = _ui.get('active_tab')
+            if _tab in ('layout', 'result', 'pareto') and \
+                    _tab != getattr(self, '_active_tab', 'layout'):
+                self._switch_tab(_tab)
+        except Exception:
+            pass
         # Tier 25: the restore above rewrote every field via setText with
         # no editingFinished — snap the undo baseline to the restored
         # state so the user's first manual edit undoes to what they see,

@@ -216,8 +216,7 @@ def build_canvas_area(window):
                     (window.btn_tab_pareto, 'pareto'),
                     (window.btn_tab_3d, '3d')):
         b._shift_cb = (lambda k=key: window._split_with_current(k))
-        b.setToolTip(b.toolTip() or f"{b.text()} tab "
-                      "(Shift+click to compare side-by-side)")
+        b.setToolTip(b.toolTip() or f"{b.text()} 页签（Shift+点击 并排对比）")
     for b in (window.btn_tab_temp, window.btn_tab_pres, window.btn_tab_vel,
               window.btn_tab_layout, window.btn_tab_pareto, window.btn_tab_3d):
         b.setFixedHeight(28)
@@ -398,7 +397,7 @@ def build_canvas_area(window):
     window.btn_tab_result._shift_cb = (
         lambda: window._split_with_current('result'))
     window.btn_tab_result.setToolTip(
-        "结果视图（2D 场 / 3D 体渲染，用右侧 2D|3D 切换）。"
+        "结果视图（Ctrl+2；2D 场 / 3D 体渲染，用右侧 2D|3D 切换）。"
         "Shift+点击可与其他页并排对比。")
     window.btn_tab_result.clicked.connect(
         lambda: window._switch_tab('result'))
@@ -415,7 +414,7 @@ def build_canvas_area(window):
     for key, cap in (('2d', "2D"), ('3d', "3D")):
         b = QPushButton(cap)
         b.setFixedHeight(28)
-        b.setToolTip("切换结果渲染：2D 场图 / 3D 体渲染")
+        b.setToolTip("切换结果渲染：2D 场图 / 3D 体渲染（Ctrl+4）")
         b.setEnabled(False)
         def _pick_view(_c=False, k=key):
             window._result_view = k

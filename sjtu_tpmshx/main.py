@@ -379,11 +379,15 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         ts = self._track_shortcut
         ts("Ctrl+R", self.run_calculation, tag='sc-run')
         ts("Ctrl+Shift+R", self._reset_defaults, tag='sc-reset')
-        for key, name in (('Ctrl+1', 'layout'), ('Ctrl+2', 'temp'),
-                          ('Ctrl+3', 'pres'), ('Ctrl+4', 'vel'),
-                          ('Ctrl+5', '3d')):
+        # ui-shortcuts-persist: bindings match the visible 3-tab workbench
+        # (几何布局|结果|优化); 'result' resolves via _result_view. Ctrl+4
+        # flips 2D|3D inside 结果; the retired direct temp/pres/vel/3d
+        # binds are gone.
+        for key, name in (('Ctrl+1', 'layout'), ('Ctrl+2', 'result'),
+                          ('Ctrl+3', 'pareto')):
             ts(key, (lambda n=name: self._switch_tab(n)),
                 tag=f'sc-tab-{name}')
+        ts("Ctrl+4", self._toggle_result_view, tag='sc-result-view')
         # Immersive 3D toggle (F key)
         ts("F", self._toggle_3d_immersive, tag='sc-immersive')
         ts("Ctrl+?", self._show_shortcuts, tag='sc-help-q')
@@ -1126,21 +1130,24 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         return msg.exec() == QMessageBox.StandardButton.Yes
 
     def _cycle_tab(self, step):
-        """Ctrl+↑/↓ — walk through enabled tabs in toolbar order."""
-        order = ('layout', 'temp', 'pres', 'vel', 'pareto', '3d')
+        """Ctrl+↑/↓ — walk the VISIBLE workbench tabs (几何布局|结果|优化).
+
+        The result family (temp/pres/vel/3d) collapses to 'result' so
+        cycling never lands on a hidden legacy button (ui-shortcuts-persist).
+        """
+        order = ('layout', 'result', 'pareto')
         btn_map = {
             'layout': getattr(self, 'btn_tab_layout', None),
-            'temp':   getattr(self, 'btn_tab_temp', None),
-            'pres':   getattr(self, 'btn_tab_pres', None),
-            'vel':    getattr(self, 'btn_tab_vel', None),
+            'result': getattr(self, 'btn_tab_result', None),
             'pareto': getattr(self, 'btn_tab_pareto', None),
-            '3d':     getattr(self, 'btn_tab_3d', None),
         }
         enabled = [k for k in order if btn_map.get(k) is not None
                     and btn_map[k].isEnabled()]
         if not enabled:
             return
         cur = getattr(self, '_active_tab', enabled[0])
+        if cur in ('temp', 'pres', 'vel', '3d'):
+            cur = 'result'
         try:
             i = enabled.index(cur)
         except ValueError:
