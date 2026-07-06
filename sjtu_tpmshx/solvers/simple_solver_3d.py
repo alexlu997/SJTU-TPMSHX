@@ -3,24 +3,34 @@ simple_solver_3d.py — 3D SIMPLE solver for porous-media Brinkman-Forchheimer f
 
 Extends the 2D `simple_solver.py` architecture to a full 3D staggered MAC grid
 with PyAMG-based pressure-Poisson solution. Designed for the SJTU-TPMSHX 3D
-extension (see vault/reports/2026-04-19-3D-extension-plan-CN.md).
+extension (plan archived: vault/reports/_archive/3d-solver/
+2026-04-19-3D-extension-plan-CN.md).
 
-Key design choices for this MVP (Phase 1):
+Key design choices (header re-verified against code 2026-07-06; the original
+Phase-1 "MVP" caveats are superseded):
   * Full 3D momentum: u, v, w staggered face velocities.
-  * First-order upwind for convective fluxes (SOU correction deferred).
+  * First-order upwind for momentum convective fluxes by default; a
+    deferred-correction SOU exists and is opt-in via `use_sou_momentum`
+    (default False — benefit never quantified, see research ledger idea pool).
   * PyAMG smoothed-aggregation for the pressure-Poisson solve; hierarchy
     rebuilt every `pyamg_rebuild_every` SIMPLE iterations (default 100) to
     track variable Brinkman coefficient drift.
-  * No wall refinement in this MVP (uniform dx/dy/dz); add later for
-    boundary-layer accuracy.
-  * Inlet/outlet are full-cross-section; partial inlet/outlet support is
-    deferred. Current API accepts 2D face fractions but MVP only uses the
-    uniform case.
+  * Non-uniform cell spacings accepted since E1 (2026-06-09); the default
+    path remains uniform dx/dy/dz (wall_refine=False).
+  * Partial inlet/outlet supported via `inlet_frac` / `outlet_frac`
+    (Nx, Nz) face fractions, with optional 8-cell corner taper
+    (`apply_outlet_taper`); offset-outlet asym configs rely on this.
   * D-F closure: K, c_F supplied as (Ny, Nz) arrays; uniform-geometry case
     broadcasts a single (K, c_F) pair.
 
-Physics (velocity, interstitial convention — matches 2D):
-    ∂u/∂x + ∂v/∂y + ∂w/∂z = 0                                   (continuity)
+Physics (velocity, interstitial convention — matches 2D). Production default
+is COMPRESSIBLE ideal-gas ρ=ρ(P,T) with a mass-flux inlet and the choke
+envelope guard (solvers/envelope.py); the discrete pressure-correction
+continuity operator carries ε·ρ (rho_eps_field), so per-side and spatially
+varying ε enter mass conservation. The momentum operator itself carries no
+ε weighting and no ∇ε source (uniform-ε-per-side form — see research ledger
+B5 before attempting zoned in-domain ε gradients):
+    ∂(ερu)/∂x + ∂(ερv)/∂y + ∂(ερw)/∂z = 0                       (continuity)
     ρ(u·∇)u = -∂P/∂x + μ_eff ∇²u − R·u                          (x-momentum)
     ρ(u·∇)v = -∂P/∂y + μ_eff ∇²v − R·v                          (y-momentum)
     ρ(u·∇)w = -∂P/∂z + μ_eff ∇²w − R·w                          (z-momentum)
@@ -319,7 +329,10 @@ def _build_outlet_frac_taper(Nx, Nz, n_taper=8, min_frac=0.2):
 class SIMPLESolver3D:
     """3D staggered MAC SIMPLE solver for porous-media Brinkman-Forchheimer.
 
-    MVP (Phase 1): uniform grid + PyAMG Poisson + first-order upwind.
+    PyAMG Poisson + first-order momentum upwind by default (SOU opt-in via
+    `use_sou_momentum`); non-uniform spacings accepted since E1 (2026-06-09),
+    uniform grid remains the default path. Compressible ideal-gas ρ=ρ(P,T)
+    with mass-flux inlet is the production default.
     Callers supply Darcy-Forchheimer (K, c_F) as (Ny, Nz) arrays and the
     solver never queries the surrogate directly — matches the 2D pattern.
 

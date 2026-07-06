@@ -3,14 +3,19 @@ simple_solver.py — 2D SIMPLE solver for porous-media transition zone
 
 Solves steady-state Navier-Stokes + Brinkman porous resistance,
 then frozen-velocity temperature field (LTNE: fluid + solid).
+Production default is COMPRESSIBLE ideal-gas rho=rho(P,T) with a mass-flux
+inlet (`massflux_inlet=True`) — repo hard invariants.
 
 All inner loops are Numba-compiled for speed (~50-100x vs pure Python).
 
-Physics (velocity):
+Physics (velocity; header re-verified against kernels 2026-07-06 — the old
+friction-factor resistance form and its kernel no longer exist, D-F is the
+only closure):
   du/dx + dv/dy = 0                                         (continuity)
   rho(u du/dx + v du/dy) = -dP/dx + mu_eff nabla^2 u - Rx  (x-momentum)
   rho(u dv/dx + v dv/dy) = -dP/dy + mu_eff nabla^2 v - Ry  (y-momentum)
-  Rx = f rho |U| u / (2 r_h),  Ry = f rho |U| v / (2 r_h)
+  Rx = (mu/K + rho c_F |U|) u,  Ry = (mu/K + rho c_F |U|) v
+  (Darcy-Forchheimer ConstDF-v1, interstitial form; _porous_src_df)
 
 Physics (temperature, frozen velocity):
   eps rho_cp (u dTf/dx + v dTf/dy) = K_ff nabla^2 Tf + h_v(Ts - Tf)
@@ -29,7 +34,8 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
   form when eps_f is spatially uniform (e.g. Shanghai). For spatially varying
   eps_f (future zoned-TPMS work) the convection and Laplacian operators on
   interstitial u deviate from the homogenised BFNS derivation — flag before
-  extending to non-uniform porosity.
+  extending to non-uniform porosity (verdict + per-dimension detail: vault
+  research ledger B5, code-verified 2026-07-06).
 """
 
 import numpy as np
