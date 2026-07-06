@@ -681,6 +681,11 @@ class SIMPLESolver:
         # solvers/_solve_common.LowReExit since arch-b-c-e batch C (the 2D/3D
         # copies drifted for months before R1; see that module's docstring).
         _lowre = LowReExit(self, (self.u, self.v), min_iter=20)
+        # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter';
+        # reset on every (re-)entry (the 2D pipeline rebuilds the solver per
+        # outer iteration, but direct callers may reuse one instance).
+        self.exit_reason = None
+        self.final_res = None
 
         # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
         # any pressure build-up. The `not hasattr` guard keeps it fixed across
@@ -810,6 +815,8 @@ class SIMPLESolver:
                 if verbose:
                     _log.info(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
                 self._enforce_mass_conservation(verbose=verbose)
+                self.exit_reason = 'tol'
+                self.final_res = res
                 return True, it
 
             # ── A+B early-exit — see LowReExit. Closeout mirrors the strict
@@ -822,7 +829,12 @@ class SIMPLESolver:
                     _log.info(f"  [OK] Early exit ({_label}) at "
                               f"iter {it}, |R| = {res:.3e}")
                 self._enforce_mass_conservation(verbose=verbose)
-                return True, it
+                # A2 (2026-07-06): 'velocity' (field static) = converged
+                # fixed point; 'stall' (residual plateau, still-creeping
+                # field) returns the fields but reports converged=False.
+                self.exit_reason = _reason
+                self.final_res = res
+                return (_reason == 'velocity'), it
 
         if verbose:
             _log.warning(f"  [!!] NOT converged after {max_iter} iters, |R| = {res:.3e}")
@@ -830,6 +842,8 @@ class SIMPLESolver:
         # Post-solve: enforce mass conservation at partial outlet
         self._enforce_mass_conservation(verbose=verbose)
 
+        self.exit_reason = 'max_iter'
+        self.final_res = res
         return False, max_iter
 
     def get_wall_masked_velocity(self):

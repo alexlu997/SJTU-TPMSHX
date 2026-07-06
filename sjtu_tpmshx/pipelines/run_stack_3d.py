@@ -644,9 +644,11 @@ def _run_3d_stack(cfg):
         _init_res = _run_two_simple_parallel(
             sA, sB, cancel_check=cfg.get('_cancel_check'))
         if _init_res and _init_res[0] is not None and not _init_res[0][0]:
-            _simple_nonconv.append('A@init')
+            _simple_nonconv.append(
+                f"A@init[{getattr(sA, 'exit_reason', '?')}]")
         if _init_res and _init_res[1] is not None and not _init_res[1][0]:
-            _simple_nonconv.append('B@init')
+            _simple_nonconv.append(
+                f"B@init[{getattr(sB, 'exit_reason', '?')}]")
         # LTNE fluid B velocity: full vector remapped to real coordinates.
         ucB, vcB, wcB = _solver_velocity_to_real(
             sB, axis_map_B, (Nx, Ny, Nz))
@@ -658,7 +660,8 @@ def _run_3d_stack(cfg):
                                     verbose=False,
                                     cancel_check=cfg.get('_cancel_check'))
         if not _a0_conv:
-            _simple_nonconv.append('A@init')
+            _simple_nonconv.append(
+                f"A@init[{getattr(sA, 'exit_reason', '?')}]")
         if _prof_t_a0 is not None:
             _log.info(f"[PROF] initial SIMPLE_A (serial, no-B) "
                       f"{_time.perf_counter()-_prof_t_a0:7.2f}s  "
@@ -933,9 +936,12 @@ def _run_3d_stack(cfg):
 
     # ── Outer SIMPLE ↔ LTNE coupling ──
     Ta = Tb = Ts = None
-    # Warm-start delta tracker (shared with the 2D driver) — single ΔTa < tol
-    # criterion; owns the prev-copy bookkeeping the loop did inline.
-    _outer_conv = OuterConvergence(tol_T=_OUTER_TOL, track=('Ta',))
+    # Warm-start delta tracker (shared with the 2D driver). A2 (2026-07-06):
+    # gate on ALL THREE temperature fields — the old ('Ta',)-only criterion
+    # let Tb/Ts drift unmonitored (a cross-flow B side or slow solid could
+    # still be moving when Ta settled).
+    _outer_conv = OuterConvergence(tol_T=_OUTER_TOL, track=('Ta', 'Tb', 'Ts'))
+    _outer_dT_hist = []   # per-outer-iter {field: max|Δ|} — convergence_detail
     chi_B = None         # B flow-path indicator field (χ_B), built each outer iter
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
@@ -1326,7 +1332,9 @@ def _run_3d_stack(cfg):
                       f"res={_ltne_info_d.get('residual',0.0):.2e}  "
                       f"(cap={_ltne_max_iter})")
 
-        _converged, _ = _outer_conv.check({'Ta': Ta})
+        _converged, _outer_deltas = _outer_conv.check(
+            {'Ta': Ta, 'Tb': Tb, 'Ts': Ts})
+        _outer_dT_hist.append(_outer_deltas)
         return _converged, None
 
     def _outer_post_3d(outer, _carry):
@@ -1426,7 +1434,8 @@ def _run_3d_stack(cfg):
         _sa_conv, _sa_it = sA.solve(max_iter=600, tol=_simple_tol_default(),
                                     verbose=False, cancel_check=_cancel_check)
         if not _sa_conv:
-            _simple_nonconv.append(f'A@outer{outer}')
+            _simple_nonconv.append(
+                f"A@outer{outer}[{getattr(sA, 'exit_reason', '?')}]")
         if _prof_t_sa is not None:
             _log.info(f"[PROF] outer {outer}: SIMPLE_A {_time.perf_counter()-_prof_t_sa:7.2f}s  "
                       f"iters={_sa_it}  conv={_sa_conv}  (cap=600)")
@@ -1543,7 +1552,8 @@ def _run_3d_stack(cfg):
             _sb_conv, _sb_it = sB.solve(max_iter=600, tol=_simple_tol_default(),
                                         verbose=False, cancel_check=_cancel_check)
             if not _sb_conv:
-                _simple_nonconv.append(f'B@outer{outer}')
+                _simple_nonconv.append(
+                    f"B@outer{outer}[{getattr(sB, 'exit_reason', '?')}]")
             if _prof_t_sb is not None:
                 _log.info(f"[PROF] outer {outer}: SIMPLE_B {_time.perf_counter()-_prof_t_sb:7.2f}s  "
                           f"iters={_sb_it}  conv={_sb_conv}  (cap=600)")
@@ -1973,6 +1983,30 @@ def _run_3d_stack(cfg):
         (not _simple_nonconv)
         and ((not _ltne_info)
              or bool(_ltne_info[-1].get('converged', False))))
+    # A2 (2026-07-06): structured convergence detail. Additive result keys
+    # only (the golden gate hashes fields + headline scalars, not these).
+    #   simple_*   : final SIMPLE exit per solver — reason ('tol'|'velocity'|
+    #                'stall'|'max_iter'|'cancelled'), final normalised
+    #                residual, and the kg/s normalisation reference.
+    #   outer_dT   : per-outer-iteration {Ta,Tb,Ts: max|Δ| [K]} history.
+    #   outer_converged : the tracked-field AND-gate verdict of the LAST
+    #                outer iteration (False when the loop hit _MAX_OUTER).
+    def _simple_detail(s):
+        if s is None:
+            return None
+        return dict(exit_reason=getattr(s, 'exit_reason', None),
+                    final_res=getattr(s, 'final_res', None),
+                    res_norm_ref=getattr(s, 'res_norm_ref', None))
+    _result['convergence_detail'] = dict(
+        simple_A=_simple_detail(sA),
+        simple_B=_simple_detail(sB),
+        simple_nonconv=list(_simple_nonconv),
+        outer_dT=[{k: float(v) for k, v in d.items()}
+                  for d in _outer_dT_hist],
+        outer_converged=bool(
+            _outer_dT_hist
+            and all(v < _OUTER_TOL for v in _outer_dT_hist[-1].values())),
+    )
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B

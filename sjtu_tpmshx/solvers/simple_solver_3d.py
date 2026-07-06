@@ -630,6 +630,19 @@ class SIMPLESolver3D:
         # Compressible inlet: hold the inlet MASS FLUX (ρ·v) constant, not v.
         self._apply_massflux_inlet()
 
+    def _inlet_mass_flux(self, rho_eps_field):
+        """Inlet-face mass flux Σ ε·ρ·|v|·dA at j=0 [kg/s] — normalisation
+        reference for the SIMPLE mass residual (A2, 2026-07-06). Uses the
+        same ε·ρ convention as the continuity operator so residual/ref is
+        dimensionless ("worst-cell imbalance as a fraction of throughput").
+        Returns 1.0 for a degenerate inlet (no-flow unit tests) so the
+        residual stays absolute there.
+        """
+        mdot = float(np.sum(rho_eps_field[:, 0, :]
+                            * np.abs(self.v[:, 0, :])
+                            * self.dx[:, None] * self.dz[None, :]))
+        return mdot if mdot > 1e-12 else 1.0
+
     def _apply_massflux_inlet(self):
         """Re-impose a mass-flux inlet: v_inlet = G_target / ρ_inlet.
 
@@ -779,10 +792,13 @@ class SIMPLESolver3D:
             prev_x = None
 
         # ── A+B early-exit for low-Re / low-speed solves (e.g. water Re~33) ──
-        # The mass residual is an ABSOLUTE divergence norm; for slow water it
-        # plateaus ~1e-4 and never reaches the air-tuned tol=1e-5, so the loop
-        # burns all max_iter even though the velocity field is already settled
-        # (profiled: iter~100 field == iter600 field to machine precision).
+        # Historical motivation: the mass residual used to be an ABSOLUTE
+        # divergence norm, so slow water plateaued ~1e-4 above an air-tuned
+        # tol and burned all max_iter with a settled field. A2 (2026-07-06)
+        # normalises the residual by the inlet mass flux, which removes the
+        # scale mismatch; the early-exit stays as a safety net for genuinely
+        # slow-converging cases (its criteria arithmetic is under the
+        # bit-identity contract in _solve_common.py — do not modify there).
         # Two extra convergence tests, both gated by velocity STABILITY, so a
         # still-moving field can never exit early:
         #   (A) plateau-stall : residual barely improves for K consecutive iters
@@ -792,6 +808,12 @@ class SIMPLESolver3D:
         # Criteria single-sourced in solvers/_solve_common.LowReExit since
         # arch-b-c-e batch C (shared with the 2D solver).
         _lowre = LowReExit(self, (self.u, self.v, self.w), min_iter=10)
+        # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter'
+        # | 'cancelled'; reset on every (re-)entry so warm restarts don't
+        # carry a stale reason.
+        self.exit_reason = None
+        self.final_res = None
+        self.res_norm_ref = 1.0
 
         for it in range(1, max_iter + 1):
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
@@ -865,6 +887,15 @@ class SIMPLESolver3D:
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
                                      rho_eps_field)
+            # A2 (2026-07-06): normalise the absolute cell-divergence norm by
+            # the inlet mass flux so `tol` means "worst-cell imbalance as a
+            # fraction of throughput" — scale-invariant across ṁ / fluids and
+            # aligned with the 2D relative residual semantics. Degenerate
+            # no-flow cases (unit tests, v_inlet=None) keep the absolute norm
+            # via the ref=1.0 fallback.
+            self.res_norm_ref = self._inlet_mass_flux(rho_eps_field)
+            res = res / self.res_norm_ref
+            self.final_res = res
 
             # Phase B — Anderson step (every K outer iters, after warmup).
             if acc is not None and it > 5:
@@ -923,14 +954,24 @@ class SIMPLESolver3D:
             if verbose and it % 50 == 0:
                 _log.info(f"  3D iter {it:5d}  |R| = {res:.3e}")
 
-            # Legacy strict exit (unchanged): absolute residual below tol.
+            # Strict exit: residual below tol (A2: res is now the inlet-flux-
+            # normalised relative norm, so tol means a throughput fraction).
             if res < tol and it >= 10:
+                self.exit_reason = 'tol'
                 return True, it
 
             # ── A+B early-exit (low-Re / low-speed) — see LowReExit.
-            if _lowre.check((self.u, self.v, self.w), res, it) is not None:
-                return True, it
+            _reason = _lowre.check((self.u, self.v, self.w), res, it)
+            if _reason is not None:
+                # A2 (2026-07-06): 'velocity' (field static to vtol) counts as
+                # converged — a reached fixed point. 'stall' (residual plateau
+                # with a still-creeping field) returns the fields but reports
+                # converged=False so the pipeline verdict can flag it.
+                self.exit_reason = _reason
+                return (_reason == 'velocity'), it
 
+        self.exit_reason = ('cancelled' if getattr(self, '_cancelled', False)
+                            else 'max_iter')
         return False, max_iter
 
 

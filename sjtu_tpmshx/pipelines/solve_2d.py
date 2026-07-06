@@ -819,9 +819,11 @@ def _run_solvers(window, cfg, fields):
     coupling_converged = False
     drho_A = drho_B = float('inf')
     dT_A = dT_B = float('inf')
-    # Warm-start delta tracker (shared with the 3D driver) — dual ΔTa/ΔTb < tol
+    # Warm-start delta tracker (shared with the 3D driver) — ΔTa/ΔTb/ΔTs < tol
     # AND mass-flux-weighted Δρ < tol; owns the prev-copy bookkeeping.
-    _outer_conv = OuterConvergence(tol_T=_DT_TOL_K, track=('Ta', 'Tb'))
+    # A2 (2026-07-06): Ts added — the solid field settles slowest and the old
+    # (Ta,Tb)-only gate could break while Ts was still moving.
+    _outer_conv = OuterConvergence(tol_T=_DT_TOL_K, track=('Ta', 'Tb', 'Ts'))
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
     Ta = Tb = Ts = None
     # User-provided solid warm-start seed. Empty → solver fallback
@@ -1088,15 +1090,15 @@ def _run_solvers(window, cfg, fields):
         # rho-only criterion can flag converged while the T field is still
         # drifting (rho = P / (R·T) damps temperature swings); requiring
         # both is a tighter guarantee the coupled state is stationary.
-        # Dual ΔTa/ΔTb (tol _DT_TOL_K) AND mass-flux-weighted Δρ (tol
+        # ΔTa/ΔTb/ΔTs (tol _DT_TOL_K) AND mass-flux-weighted Δρ (tol
         # _COUPLING_TOL) — the shared tracker owns the ΔT deltas + warm-start
         # prev-copy; Δρ is the 2D-specific extra criterion.
         _converged, _deltas = _outer_conv.check(
-            {'Ta': Ta, 'Tb': Tb},
+            {'Ta': Ta, 'Tb': Tb, 'Ts': Ts},
             extra=(drho_A, drho_B), extra_tol=_COUPLING_TOL)
         dT_A = _deltas['Ta']; dT_B = _deltas['Tb']
         _log.info(f"  [Coupling {_coup_it+1}] drho_A={drho_A:.4f} drho_B={drho_B:.4f} "
-                  f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K "
+                  f"dT_A={dT_A:.2f}K dT_B={dT_B:.2f}K dT_S={_deltas['Ts']:.2f}K "
                   f"T_avg_A={T_avg_A:.1f}K T_avg_B={T_avg_B:.1f}K")
 
         # Carry the under-relaxation inputs to `post` (avoids 4 more nonlocals).
