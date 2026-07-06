@@ -519,7 +519,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--runner', choices=['kernel', 'pipeline'],
                     default='kernel',
-                    help="kernel = frozen-B gate runner (headline 9.82/3.20);"
+                    help="kernel = frozen-B gate runner (gate grid 20x10x3: "
+                         "RMSRE_dP 5.28 / RMSRE_Q 3.21, post-A2 criteria);"
                          " pipeline = production Pipeline3D dual-solve path")
     ap.add_argument('--wall-refine', action='store_true', help='Enable 6-wall refinement')
     ap.add_argument('--nx', type=int, default=20)

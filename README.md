@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
-  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~12% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order 1.975." width="100%">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order 1.975." width="100%">
 </picture>
 
 <br><br>
@@ -32,31 +32,35 @@
 | Metric | Value | Where |
 |:------:|:-----:|:------|
 | **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
-| **3D pressure drop** RMSRE | **≈ 12 %** | full SIMPLE 3D, gamma_df default, grid-converged (all-axis Richardson) |
+| **3D pressure drop** RMSRE | **≈ 10 %** | full SIMPLE 3D, gamma_df default, grid-converged (per-case Richardson, A2 criteria) |
 | **3D heat duty Q** RMSRE | **≈ 3 %** | full SIMPLE 3D, gamma_df default, grid-converged |
 | **MMS** observed order `p_obs` | **1.975** | code verification, SOU 2nd-order |
 
 </div>
 
 > [!NOTE]
-> The **grid-converged** 3D Δp RMSRE vs the Shanghai cases is **≈ 12 %** (all-axis Richardson) —
-> a **geometry / closure floor**: SLM roughness is already embedded in the experiment-trained
-> Darcy–Forchheimer closure, so no extra friction multiplier (that would double-count). Two
-> things shape the *finite-grid* value: a **mass-flux** air-inlet BC (removes a compressible
-> velocity-inlet artifact) and a **2nd-order face-extrapolated** Δp reduction
-> (`extract_dP_face_extrap`, which removes the cell-centre O(h) half-cell offset and accelerates
-> convergence). At the production grid (`Nz=10`) the face-extracted Δp reads ≈ 7 %, but that grid
-> is under-resolved: refining all three axes raises the Δp RMSRE to the ≈ 12 % floor, and the
-> cell-centre and face reducers converge to the same continuous-PDE Δp. **Q** is a duty integral,
-> independent of the Δp reduction, clean 2nd-order and grid-converged at **≈ 3 %**. Δp functional
-> order is verified in `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z
-> flow axis) in `tests/test_dp_direction_invariance.py`.
+> The **grid-converged** 3D Δp RMSRE vs the Shanghai cases is **≈ 10 %** (4-grid all-axis
+> refinement 16×8×4 → 128×64×32, per-case Richardson on the finest triplet, median p ≈ 1.6,
+> under the A2 normalized-residual convergence criteria, 2026-07-06) — a **geometry / closure
+> floor**: SLM roughness is already embedded in the experiment-trained Darcy–Forchheimer
+> closure, so no extra friction multiplier (that would double-count). Two things shape the
+> *finite-grid* value: a **mass-flux** air-inlet BC (removes a compressible velocity-inlet
+> artifact) and a **2nd-order face-extrapolated** Δp reduction (`extract_dP_face_extrap`,
+> which removes the cell-centre O(h) half-cell offset and accelerates convergence). At the
+> validation-gate grid (20×10×3) the face-extracted Δp reads ≈ 5.3 %, but that grid is
+> under-resolved: refining all three axes raises the Δp RMSRE to the ≈ 10 % floor, and the
+> cell-centre and face reducers converge to the same continuous-PDE Δp. (The pre-A2 study
+> read ≈ 12 % with p_obs ≈ 0.76 — tightening the iterative convergence criteria cleaned the
+> observed order to ≈ 1.6 and lowered the floor.) **Q** is a duty integral, independent of
+> the Δp reduction, grid-converged at **≈ 3 %**. Δp functional order is verified in
+> `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z flow axis) in
+> `tests/test_dp_direction_invariance.py`.
 
 <div align="center">
 
-<img src="assets/grid-convergence.png" width="84%" alt="3D grid convergence, Shanghai 16-case: under all-axis refinement the Δp RMSRE climbs from ~5% to a ~12% geometry/closure floor while the production Nz=10 grid (~7%) is under-resolved; Q clean-converges to ~3%.">
+<img src="assets/grid-convergence.png" width="84%" alt="3D grid convergence, Shanghai 16-case: under all-axis refinement the Δp RMSRE climbs from ~5% to a ~10% geometry/closure floor while the validation-gate 20×10×3 grid (~5%) is under-resolved; Q clean-converges to ~3%.">
 
-<sub>All-axis (r=2) refinement. **Δp** RMSRE climbs to a **≈ 12 % geometry / closure floor** (Richardson, p<sub>obs</sub> ≈ 0.76) — the production `Nz=10` grid (★, ≈ 7 %) is under-resolved. **Q** is a duty integral: clean 2nd-order, grid-converged at **≈ 3 %**.</sub>
+<sub>All-axis (r=2) refinement, 16×8×4 → 128×64×32, A2 normalized-residual criteria. **Δp** RMSRE climbs to a **≈ 10 % geometry / closure floor** (per-case Richardson, median p ≈ 1.6) — the validation-gate `20×10×3` grid (★, ≈ 5.3 %) is under-resolved. **Q** is a duty integral: grid-converged at **≈ 3 %**. Regenerate: `runs/tools/plot_grid_convergence.py`.</sub>
 
 </div>
 
@@ -71,7 +75,7 @@
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈12 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 28 %** |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 28 %** |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
