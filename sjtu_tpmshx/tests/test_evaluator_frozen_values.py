@@ -106,9 +106,16 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # reproduces the old tuples. Old: (-8155.898092263062, ...), (-7725.544448374041,
 # ...), (-7847.064062565555, 18179.20973508683, ...), (-10066.289384156315,
 # 5968.569070037876, ...).
-_FROZEN_2D_UNIFORM = (-8165.653571275229, 10661.113158337937,
+# re-baselined 2026-07-06 (A3): 2D LTNE convection switched to SIGNED
+# shared-face fluxes (temperature-form consistent, Patankar; the cell-local
+# |u|-magnitude scheme mismatched fluxes across faces on non-uniform
+# eps*rho_cp*u fields). ONLY Q[0] moves (2D uniform -0.049%, nonuniform
+# -0.034%); dP[1] and mass[2] are BIT-IDENTICAL (energy solve only). 3D
+# tuples untouched (3D kernel already conservative). Old Q:
+# -8165.653571275229 / -7731.140029573464.
+_FROZEN_2D_UNIFORM = (-8161.676768977079, 10661.113158337937,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7731.140029573464, 8022.029234363068,
+_FROZEN_2D_NONUNIF = (-7728.475410596369, 8022.029234363068,
                       3.6729327392578126)
 _FROZEN_3D_UNIFORM = (-7819.313135202607, 18176.77875067786,
                       6.323593139648438)

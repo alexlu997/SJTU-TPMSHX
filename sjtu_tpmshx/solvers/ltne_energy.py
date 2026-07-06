@@ -89,9 +89,32 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                    ucA, vcA, ucB, vcB,
                    bc_A, bc_B, T_inA_arr, T_inB_arr,
                    ifrac_A, ifrac_B,
-                   n_iters, freeze_Tb):
+                   n_iters, freeze_Tb, sou_B):
     """Cell-coupled Gauss-Seidel: at each cell update Ta → Ts → Tb.
     dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
+
+    A3 (2026-07-06) — shared-face convection: the upwind base flux is now
+    the SIGNED shared-face flux Fe = 0.5*(F_P + F_E) (same face averaging
+    as the SOU correction), so the two cells sharing a face apply the
+    IDENTICAL flux — removing the cell-local |u|-magnitude mismatch that
+    leaked enthalpy on non-uniform (eps*rho_cp*u) fields. The net signed
+    outflow is deliberately NOT added to aP (Patankar mass-consistent /
+    temperature-form): the governing LTNE equation is eps*rho_cp*u·grad(T)
+    = div(F T) − T div(F), and with the 2D CELL-CENTRE interpolated
+    velocities the discrete div(F) is nonzero, so keeping net_out would
+    make a uniform temperature field a non-fixed-point (verified: it broke
+    the isothermal outer-loop consistency test). The 3D staggered kernel
+    can keep net_out because its face velocities are discretely
+    divergence-free. Uniform-flux fields reproduce the legacy scheme
+    exactly. ``sou_B`` (0/1) optionally enables the
+    face-consistent SOU for fluid B — RE-TESTED 2026-07-06 (A3): even in
+    the telescoping face-consistent form the B-side deferred correction
+    still oscillates (residual plateaus ~1 K, serial/red-black fixed
+    points differ ~0.4 K on a uniform counterflow case), confirming the
+    2026-06-24 diagnosis that the instability is the deferred-correction
+    fixed point on a near-isothermal high-rho_cp field, NOT the old
+    non-conservative flux. Default stays OFF (accuracy cost documented
+    <0.4% of Q); the conservative BASE flux above is the A3 fix.
     """
     max_chg = 0.0
 
@@ -107,16 +130,26 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     else:
         j0, j1, dj = 0, Ny, 1
 
-    # Per-cell fluid-A convective flux field for the face-consistent SOU
-    # (velocity / rho_cp / eps_f are frozen across the GS sweep). FxA[i,j] ==
-    # the scalar Fx used below for the convection coefficients — bit-identical.
-    FxA = np.empty((Nx, Ny))
-    FyA = np.empty((Nx, Ny))
+    # Per-cell convective flux fields (velocity / rho_cp / eps_f frozen
+    # across the GS sweep). SIGNED fields drive the conservative face
+    # fluxes; the SOU helpers take the ABS fields (their limiter branches
+    # on the local velocity sign).
+    FxA = np.empty((Nx, Ny)); FyA = np.empty((Nx, Ny))
+    FxAs = np.empty((Nx, Ny)); FyAs = np.empty((Nx, Ny))
+    FxB = np.empty((Nx, Ny)); FyB = np.empty((Nx, Ny))
+    FxBs = np.empty((Nx, Ny)); FyBs = np.empty((Nx, Ny))
     for _i in range(Nx):
         for _j in range(Ny):
             _efr = eps_fA_arr[_i, _j] * rho_cp_fA[_i, _j]
-            FxA[_i, _j] = _efr * abs(ucA[_i, _j]) * dy_arr[_j]
-            FyA[_i, _j] = _efr * abs(vcA[_i, _j]) * dx_arr[_i]
+            FxAs[_i, _j] = _efr * ucA[_i, _j] * dy_arr[_j]
+            FyAs[_i, _j] = _efr * vcA[_i, _j] * dx_arr[_i]
+            FxA[_i, _j] = abs(FxAs[_i, _j])
+            FyA[_i, _j] = abs(FyAs[_i, _j])
+            _efrB = eps_fB_arr[_i, _j] * rho_cp_fB[_i, _j]
+            FxBs[_i, _j] = _efrB * ucB[_i, _j] * dy_arr[_j]
+            FyBs[_i, _j] = _efrB * vcB[_i, _j] * dx_arr[_i]
+            FxB[_i, _j] = abs(FxBs[_i, _j])
+            FyB[_i, _j] = abs(FyBs[_i, _j])
 
     for _it in range(n_iters):
         max_chg = 0.0
@@ -172,13 +205,19 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
                     u_loc = ucA[i,j]; v_loc = vcA[i,j]
-                    Fx = ef * rho_cp_fA[i, j] * abs(u_loc) * dyj
-                    Fy = ef * rho_cp_fA[i, j] * abs(v_loc) * dxi
-
-                    if u_loc >= 0: aW = dW + Fx; aE = dE
-                    else:          aE = dE + Fx; aW = dW
-                    if v_loc >= 0: aS = dS + Fy; aN = dN
-                    else:          aN = dN + Fy; aS = dS
+                    # A3: signed shared-face fluxes (arithmetic mean of the
+                    # two cells' signed fluxes — identical value on both
+                    # sides of a face ⇒ globally telescoping). Domain-edge
+                    # faces fall back to the cell's own flux.
+                    FxP = FxAs[i, j]; FyP = FyAs[i, j]
+                    Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
+                    Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
+                    Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
+                    Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
+                    aE = dE + max(-Fe, 0.0)
+                    aW = dW + max(Fw, 0.0)
+                    aN = dN + max(-Fn, 0.0)
+                    aS = dS + max(Fs, 0.0)
 
                     tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
                     tW = Ta[i-1,j] if i > 0    else Ta[i,j]
@@ -263,32 +302,35 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
                         u_loc = ucB[i,j]; v_loc = vcB[i,j]
-                        Fx = ef * rho_cp_fB[i, j] * abs(u_loc) * dyj
-                        Fy = ef * rho_cp_fB[i, j] * abs(v_loc) * dxi
-
-                        if u_loc >= 0: aW = dW + Fx; aE = dE
-                        else:          aE = dE + Fx; aW = dW
-                        if v_loc >= 0: aS = dS + Fy; aN = dN
-                        else:          aN = dN + Fy; aS = dS
+                        # A3: conservative signed shared-face fluxes (see the
+                        # fluid-A block).
+                        FxP = FxBs[i, j]; FyP = FyBs[i, j]
+                        Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
+                        Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
+                        Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
+                        Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
+                        aE = dE + max(-Fe, 0.0)
+                        aW = dW + max(Fw, 0.0)
+                        aN = dN + max(-Fn, 0.0)
+                        aS = dS + max(Fs, 0.0)
 
                         tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
                         tW = Tb[i-1,j] if i > 0    else Tb[i,j]
                         tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
                         tS = Tb[i,j-1] if j > 0    else Tb[i,j]
 
-                        # FIX (2026-06-24): fluid B (coolant) uses stable 1st-order
-                        # convection, NOT SOU. Fluid B is near-isothermal in HX use
-                        # (high ρ·cp → tiny ΔT), so the SOU deferred correction is
-                        # negligible for accuracy but DESTABILISES the stiff outer
-                        # coupling at fine grids: with SOU, water dT_B oscillates
-                        # 2.4→11.5→13 K at N=80 (never reaches steady state, so Q is
-                        # grid-dependent); without it, dT_B→0.13 K in 4 iters and Q
-                        # changes <0.4%. The instability comes from the converged Tb
-                        # becoming velocity-sensitive via the ρ·cp-scaled SOU, which
-                        # iteration-path tweaks (under-relaxation, snapshotting) can't
-                        # cure — only limiting SOU's contribution to the fixed point.
-                        # Fluid A (primary, steep thermal gradients) keeps SOU above.
-                        sou = 0.0
+                        # History: fluid-B SOU was disabled 2026-06-24 — the
+                        # then NON-conservative correction injected spurious
+                        # ρcp-scaled energy and destabilised the outer
+                        # coupling at fine grids (water dT_B oscillated at
+                        # N=80). A3 (2026-07-06) re-enables it in the
+                        # face-consistent telescoping form, gated by sou_B
+                        # (kill switch: solve_full_domain(use_sou_B=False)).
+                        if sou_B == 1:
+                            sou = (_sou_corr_x(Tb, i, j, Nx, u_loc, FxB)
+                                   + _sou_corr_y(Tb, i, j, Ny, v_loc, FyB))
+                        else:
+                            sou = 0.0
 
                         aP = aE + aW + aN + aS + hvB
                         new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
@@ -331,7 +373,7 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                       ucA, vcA, ucB, vcB,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
                       ifrac_A, ifrac_B,
-                      n_iters, freeze_Tb):
+                      n_iters, freeze_Tb, sou_B):
     """Red-black `prange`-parallel twin of `_gs_full_chunk` (2D).
 
     Same construction as the 3D `_gs_full_chunk_3d_stag_rb`: cells are swept by
@@ -342,16 +384,25 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     """
     max_chg = 0.0
     ncell = Nx * Ny
-    # Per-cell fluid-A convective flux field for the face-consistent SOU
-    # (velocity / rho_cp / eps_f frozen across the sweep; == the scalar Fx
-    # used for the convection coefficients).
-    FxA = np.empty((Nx, Ny))
-    FyA = np.empty((Nx, Ny))
+    # Per-cell convective flux fields (frozen across the sweep). Signed
+    # fields drive the conservative face fluxes; abs fields feed the SOU
+    # helpers — see the serial kernel (A3 2026-07-06).
+    FxA = np.empty((Nx, Ny)); FyA = np.empty((Nx, Ny))
+    FxAs = np.empty((Nx, Ny)); FyAs = np.empty((Nx, Ny))
+    FxB = np.empty((Nx, Ny)); FyB = np.empty((Nx, Ny))
+    FxBs = np.empty((Nx, Ny)); FyBs = np.empty((Nx, Ny))
     for _ii in range(Nx):
         for _jj in range(Ny):
             _efr = eps_fA_arr[_ii, _jj] * rho_cp_fA[_ii, _jj]
-            FxA[_ii, _jj] = _efr * abs(ucA[_ii, _jj]) * dy_arr[_jj]
-            FyA[_ii, _jj] = _efr * abs(vcA[_ii, _jj]) * dx_arr[_ii]
+            FxAs[_ii, _jj] = _efr * ucA[_ii, _jj] * dy_arr[_jj]
+            FyAs[_ii, _jj] = _efr * vcA[_ii, _jj] * dx_arr[_ii]
+            FxA[_ii, _jj] = abs(FxAs[_ii, _jj])
+            FyA[_ii, _jj] = abs(FyAs[_ii, _jj])
+            _efrB = eps_fB_arr[_ii, _jj] * rho_cp_fB[_ii, _jj]
+            FxBs[_ii, _jj] = _efrB * ucB[_ii, _jj] * dy_arr[_jj]
+            FyBs[_ii, _jj] = _efrB * vcB[_ii, _jj] * dx_arr[_ii]
+            FxB[_ii, _jj] = abs(FxBs[_ii, _jj])
+            FyB[_ii, _jj] = abs(FyBs[_ii, _jj])
     for _it in range(n_iters):
         Ta_snap = Ta.copy()
         Tb_snap = Tb.copy()
@@ -398,12 +449,16 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
                     dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
                     u_loc = ucA[i,j]; v_loc = vcA[i,j]
-                    Fx = ef * rho_cp_fA[i, j] * abs(u_loc) * dyj
-                    Fy = ef * rho_cp_fA[i, j] * abs(v_loc) * dxi
-                    if u_loc >= 0: aW = dW + Fx; aE = dE
-                    else:          aE = dE + Fx; aW = dW
-                    if v_loc >= 0: aS = dS + Fy; aN = dN
-                    else:          aN = dN + Fy; aS = dS
+                    # A3: conservative signed shared-face fluxes (serial twin).
+                    FxP = FxAs[i, j]; FyP = FyAs[i, j]
+                    Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
+                    Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
+                    Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
+                    Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
+                    aE = dE + max(-Fe, 0.0)
+                    aW = dW + max(Fw, 0.0)
+                    aN = dN + max(-Fn, 0.0)
+                    aS = dS + max(Fs, 0.0)
                     tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
                     tW = Ta[i-1,j] if i > 0    else Ta[i,j]
                     tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
@@ -474,19 +529,27 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
                         dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
                         u_loc = ucB[i,j]; v_loc = vcB[i,j]
-                        Fx = ef * rho_cp_fB[i, j] * abs(u_loc) * dyj
-                        Fy = ef * rho_cp_fB[i, j] * abs(v_loc) * dxi
-                        if u_loc >= 0: aW = dW + Fx; aE = dE
-                        else:          aE = dE + Fx; aW = dW
-                        if v_loc >= 0: aS = dS + Fy; aN = dN
-                        else:          aN = dN + Fy; aS = dS
+                        # A3: conservative signed shared-face fluxes; SOU
+                        # re-enabled in face-consistent form, gated by sou_B
+                        # (see the serial kernel for the 2026-06-24 history).
+                        FxP = FxBs[i, j]; FyP = FyBs[i, j]
+                        Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
+                        Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
+                        Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
+                        Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
+                        aE = dE + max(-Fe, 0.0)
+                        aW = dW + max(Fw, 0.0)
+                        aN = dN + max(-Fn, 0.0)
+                        aS = dS + max(Fs, 0.0)
                         tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
                         tW = Tb[i-1,j] if i > 0    else Tb[i,j]
                         tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
                         tS = Tb[i,j-1] if j > 0    else Tb[i,j]
-                        # FIX (2026-06-24): fluid B 1st-order (no SOU) for outer-
-                        # coupling stability — see _gs_full_chunk for the rationale.
-                        sou = 0.0
+                        if sou_B == 1:
+                            sou = (_sou_corr_x(Tb_snap, i, j, Nx, u_loc, FxB)
+                                   + _sou_corr_y(Tb_snap, i, j, Ny, v_loc, FyB))
+                        else:
+                            sou = 0.0
                         aP = aE + aW + aN + aS + hvB
                         new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
                         c = abs(new - Tb[i,j])
@@ -558,7 +621,8 @@ def solve_full_domain(L, H, Nx, Ny,
                       inlet_mask_A=None, inlet_mask_B=None,
                       Tb_prescribed=None,
                       eps_A=None, eps_B=None,
-                      q_rel_tol=None, conv_chunk=None):
+                      q_rel_tol=None, conv_chunk=None,
+                      use_sou_B=False):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     q_rel_tol : float or None — per-chunk Q-relative convergence threshold.
@@ -773,7 +837,7 @@ def solve_full_domain(L, H, Nx, Ny,
             ucA, vcA, ucB, vcB,
             bc_A, bc_B, T_inA_arr, T_inB_arr,
             ifrac_A, ifrac_B,
-            n, freeze_Tb)
+            n, freeze_Tb, 1 if use_sou_B else 0)
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
@@ -835,20 +899,20 @@ def _warmup_jit():
         _TinB = _np.full(_Nx, 290.0, dtype=_np.float64)
         _fracA = _np.ones(_Ny, dtype=_np.float64)
         _fracB = _np.ones(_Nx, dtype=_np.float64)
-        # Compile path 1: freeze_Tb=0 (normal coupled solve)
+        # Compile path 1: freeze_Tb=0 (normal coupled solve, sou_B on)
         _gs_full_chunk(_Ta.copy(), _Tb.copy(), _Ts.copy(),
                        _Nx, _Ny, _dx, _dy,
                        _K, _K, _K, _hv, _hv, _ef, _ef, _rcp, _rcp,
                        _u, _v, _u, _v,
                        0, 3, _TinA, _TinB, _fracA, _fracB,
-                       1, 0)
+                       1, 0, 1)
         # Compile path 2: freeze_Tb=1 (C-1 prescribed-Tb path)
         _gs_full_chunk(_Ta.copy(), _Tb.copy(), _Ts.copy(),
                        _Nx, _Ny, _dx, _dy,
                        _K, _K, _K, _hv, _hv, _ef, _ef, _rcp, _rcp,
                        _u, _v, _u, _v,
                        0, 3, _TinA, _TinB, _fracA, _fracB,
-                       1, 1)
+                       1, 1, 1)
     except Exception:
         pass  # warmup is best-effort; never block import
 
