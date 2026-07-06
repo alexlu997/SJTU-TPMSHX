@@ -161,7 +161,7 @@ def _build_inlet_profile(Nx_simA, Nz_simA, u_mean, kind='uniform', eta=0.0):
 
 def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
                     profile_kind='uniform', profile_eta=0.0,
-                    max_outer=None, spec=None):
+                    max_outer=None, spec=None, disp_c=0.0):
     """Run one experimental case (index ci). Returns result dict.
 
     max_outer : override module-level MAX_OUTER (default None → use MAX_OUTER).
@@ -208,6 +208,13 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     eps_arr = np.full((Nx, Ny, Nz), EPS)
     K_ffA = np.full((Nx, Ny, Nz), EPS_A * air_conductivity(T_Ain_K))
     K_ffB = np.full((Nx, Ny, Nz), EPS_A * water_conductivity(T_Bin_K))  # ε_B = ε_A
+    # B4 step-0 sensitivity knob (--disp-c): thermal-dispersion augmentation
+    # K_disp = C·ρ·cp·|u|·D_h per side (same form as the tpms_calc C_DISP /
+    # run_stack_3d disp_C_A hooks). Default 0.0 = production behaviour.
+    if disp_c > 0.0:
+        K_ffA += disp_c * rho_A * cp_A * u_A * D_H
+        u_B_disp = m_water / (rho_B * A_FLOW)
+        K_ffB += disp_c * rho_B * float(water_cp(T_Bin_K)) * u_B_disp * D_H
     # B2 (2026-07-06): χ_s from the unit-cell homogenization fit — matches
     # the production K_ss path (run_stack_3d / tpms_calc). Was the inline
     # (1−ε)·k_s, which silently bypassed even the legacy CHI_S constant.
@@ -527,6 +534,9 @@ def main():
                          "RMSRE_dP 5.28 / RMSRE_Q 3.21, post-A2 criteria);"
                          " pipeline = production Pipeline3D dual-solve path")
     ap.add_argument('--wall-refine', action='store_true', help='Enable 6-wall refinement')
+    ap.add_argument('--disp-c', type=float, default=0.0,
+                    help='B4 thermal-dispersion coefficient C '
+                         '(K_ff += C*rho*cp*|u|*D_h per side; 0 = off)')
     ap.add_argument('--nx', type=int, default=20)
     ap.add_argument('--ny', type=int, default=10)
     ap.add_argument('--nz', type=int, default=3)
@@ -564,7 +574,8 @@ def main():
                               wall_refine=args.wall_refine,
                               profile_kind=args.profile,
                               profile_eta=args.eta,
-                              max_outer=args.max_outer)
+                              max_outer=args.max_outer,
+                              disp_c=args.disp_c)
         results.append(r)
         print(f"Case {r['case']:2d}: dP {r['dP_exp']:.0f}/{r['dP_sim']:.0f} "
               f"({r['err_dP%']:+.1f}%)  Q {r['Q_exp']:.0f}/{r['Q_sim']:.0f} "

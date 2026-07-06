@@ -181,8 +181,18 @@ _RE_FIT_RANGE_BY_FLUID = {
 # geometry() + CHI_S moved to tpms_props (leaf; re-exported above).
 
 # Fluid-phase thermal dispersion coefficient. K_ff = ε·k_f + C_DISP·ρcp·|u|·D_h.
-# Zero default = pure molecular conduction (previous behaviour). Calibrate
-# from experimental Nu–Pe data; typical range 0.05-0.3 for TPMS.
+# Zero default = pure molecular conduction. Literature range 0.05-0.3 for TPMS.
+#
+# B4 step-0 sensitivity verdict (2026-07-06) — KEEP 0.0 BY EVIDENCE:
+# sweeping C ∈ {0.05, 0.1, 0.3} (bounding value) moved the Shanghai gates by
+# sub-percent amounts and consistently DEGRADED the Q agreement (3D gate
+# RMSRE_Q 3.21→3.54%, fine 64-grid 2.94→3.20%; 2D evaluator Q +1.8% at
+# C=0.3, dP unchanged; sweep knob: validate_shanghai_3d_real --disp-c).
+# Interpretation: the fitted Nu (h_v) already absorbs the mixing the
+# experiments contain, so adding dispersion on top DOUBLE-COUNTS (boundary
+# rule R1). Do not set C_DISP > 0 unless the Nu correlations are refit
+# simultaneously against data that separates interfacial exchange from
+# macroscopic dispersion (e.g. axial-profile fits, not integral duty).
 C_DISP = 0.0
 
 
