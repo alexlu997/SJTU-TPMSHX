@@ -49,9 +49,10 @@
 > which removes the cell-centre O(h) half-cell offset and accelerates convergence). At the
 > validation-gate grid (20×10×3) the face-extracted Δp reads ≈ 5.3 %, but that grid is
 > under-resolved: refining all three axes raises the Δp RMSRE to the ≈ 10 % floor, and the
-> cell-centre and face reducers converge to the same continuous-PDE Δp. (The pre-A2 study
-> read ≈ 12 % with p_obs ≈ 0.76 — tightening the iterative convergence criteria cleaned the
-> observed order to ≈ 1.6 and lowered the floor.) **Q** is a duty integral, independent of
+> cell-centre and face reducers converge to the same continuous-PDE Δp. (The 2026-06-30
+> study read ≈ 12 % with p_obs ≈ 0.76, measured under the earlier convergence criteria and
+> an earlier K surface; the current ≈ 10 % floor and cleaner p ≈ 1.6 reflect both the A2
+> criteria and the CFD-refit K.) **Q** is a duty integral, independent of
 > the Δp reduction, grid-converged at **≈ 3 %**. Δp functional order is verified in
 > `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z flow axis) in
 > `tests/test_dp_direction_invariance.py`.
