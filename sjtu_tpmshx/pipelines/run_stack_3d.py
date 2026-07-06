@@ -706,9 +706,10 @@ def _run_3d_stack(cfg):
         D_h_B = tpms_geometry(tpms_type, Lcell, t_wall, k_s)['D_h']
         K_disp_B = disp_C_B * rho_B_ltne * cp_B * abs(cfg.get('u_B', u_A)) * D_h_B
         K_ffB = K_ffB + K_disp_B
-    # K_ss = χ_s · (1 − eps_local) · k_s, tracks zoned porosity (#3).
-    from solvers.tpms_calc import CHI_S as _CHI_S
-    K_ss = _CHI_S * (1.0 - eps_arr) * k_s
+    # K_ss = χ_s(type, ε) · (1 − eps_local) · k_s, tracks zoned porosity (#3).
+    # B2 (2026-07-06): χ_s from unit-cell homogenization fit (chi_s_eff).
+    from solvers.tpms_calc import chi_s_eff as _chi_s_eff
+    K_ss = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
     # h_v from Nu correlation. Per-cell when zoned (#4): tpms_compute uses
     # local (Lcell_ij, t_wall_ij) so A_0, H_sf track the design field.

@@ -51,6 +51,13 @@
 > water-side Δp (7-6 exp) Diamond 0.33→0.40 / Gyroid 0.62→0.68. Grid-converged ≈12% and the README
 > headline are c_F-dominated → unchanged (K is a 1–6% Darcy correction in the air window). See
 > `df_surrogate/gamma_df.py` K UPDATE + openspec/changes/df-coeffs-cfd-refit.
+> **2026-07-06 (#2) — B2 χ_s homogenization fit.** K_ss now uses
+> `chi_s_eff(type, ε)` (unit-cell periodic homogenization, ~0.65 at the
+> Shanghai point vs the uncalibrated 1.0; `validation/chi_s_homogenization.csv`).
+> The kernel gate is **insensitive** (frozen-B + convection-dominated: Q
+> shifts ≤0.0002%, RMSRE identical to 2 decimals); evaluator-level Q moves
+> 0.1–0.35%. Physical-correctness fix, not a gate-metric fix. The gate
+> script previously bypassed χ_s entirely (inline `(1−ε)k_s`) — now wired.
 > **2026-07-06 — A2 convergence criteria + A1 grid-study rerun.** The 3D SIMPLE
 > mass residual is now inlet-mass-flux-relative (was absolute kg/s), the outer
 > gate tracks Ta/Tb/Ts, and stall-exits report converged=False. Gate-grid

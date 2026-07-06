@@ -72,7 +72,7 @@
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct |
+| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct · solid-conduction tortuosity **χ_s(type, ε)** from unit-cell periodic homogenization (≈0.59–0.83; thin-sheet limit ⅔) |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |

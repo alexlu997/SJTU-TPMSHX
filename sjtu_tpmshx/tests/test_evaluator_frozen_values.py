@@ -97,13 +97,22 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # Q[0] 1.4e-4, dP[1] 6.5e-4 rel; mass[2] (geometry) bit-identical. Deterministic.
 # The UNIFORM case reaches the strict residual tol before the early-exit fires
 # and is unchanged. Old: (-7724.45529028308, 8027.234654920353).
-_FROZEN_2D_UNIFORM = (-8155.898092263062, 10661.113158337937,
+# re-baselined 2026-07-06 (B2): chi_S switched from the uncalibrated 1.0 to
+# the unit-cell homogenization fit chi_s_eff(type, eps) (~0.59-0.83 over the
+# production window) — K_ss drops ~35% at typical eps, weakening axial solid
+# conduction. Q[0] moves (2D +0.07..0.12%, 3D -0.10..-0.35%); 2D dP[1] and
+# all mass[2] are BIT-IDENTICAL (K_ss enters the energy solve only); 3D dP
+# shifts ~1e-4 rel via the rho(T) outer coupling. Env TPMSHX_CHI_S=1.0
+# reproduces the old tuples. Old: (-8155.898092263062, ...), (-7725.544448374041,
+# ...), (-7847.064062565555, 18179.20973508683, ...), (-10066.289384156315,
+# 5968.569070037876, ...).
+_FROZEN_2D_UNIFORM = (-8165.653571275229, 10661.113158337937,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7725.544448374041, 8022.029234363068,
+_FROZEN_2D_NONUNIF = (-7731.140029573464, 8022.029234363068,
                       3.6729327392578126)
-_FROZEN_3D_UNIFORM = (-7847.064062565555, 18179.20973508683,
+_FROZEN_3D_UNIFORM = (-7819.313135202607, 18176.77875067786,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10066.289384156315, 5968.569070037876,
+_FROZEN_3D_NONUNIF = (-10056.123672085494, 5968.430162466379,
                       3.675970458984375)
 
 

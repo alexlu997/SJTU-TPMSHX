@@ -208,7 +208,11 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     eps_arr = np.full((Nx, Ny, Nz), EPS)
     K_ffA = np.full((Nx, Ny, Nz), EPS_A * air_conductivity(T_Ain_K))
     K_ffB = np.full((Nx, Ny, Nz), EPS_A * water_conductivity(T_Bin_K))  # ε_B = ε_A
-    K_ss = np.full((Nx, Ny, Nz), (1.0 - EPS) * K_S)
+    # B2 (2026-07-06): χ_s from the unit-cell homogenization fit — matches
+    # the production K_ss path (run_stack_3d / tpms_calc). Was the inline
+    # (1−ε)·k_s, which silently bypassed even the legacy CHI_S constant.
+    from solvers.tpms_props import chi_s_eff as _chi_s_eff
+    K_ss = np.full((Nx, Ny, Nz), _chi_s_eff(TPMS, EPS) * (1.0 - EPS) * K_S)
 
     # D-F coeffs from surrogate (per-stream void fraction ε_A)
     K_pred, cF_pred = predict_K_cF(TPMS, L_CELL, T_WALL, EPS_A)

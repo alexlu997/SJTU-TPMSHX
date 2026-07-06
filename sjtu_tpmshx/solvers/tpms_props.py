@@ -160,15 +160,48 @@ def water_cp(T_K):
 
 # ── Geometry-only interface (no fluid needed) ─────────────────
 
-# Solid-conduction anisotropy / tortuosity correction.
-# The homogenised `K_ss = (1 - eps) * k_s` assumes parallel solid paths
-# aligned with the heat-flow direction. Real TPMS wall networks follow
-# curved wall paths, so the effective solid conductivity is reduced by
-# a chi_s ∈ (0, 1] factor. Default 1.0 preserves the historical value;
-# set via environment variable or direct assignment for calibrated runs.
-# TODO: replace with numerical homogenisation from a unit-cell simulation
-# once the data are fitted (same path as ConstDF-v1 for K_ff).
-CHI_S = float(os.environ.get('TPMSHX_CHI_S', '1.0'))
+# Solid-conduction tortuosity correction chi_s: K_ss = chi_s*(1-eps)*k_s.
+# The naive `K_ss = (1 - eps) * k_s` assumes parallel solid paths aligned
+# with the heat-flow direction; the real curved sheet network conducts less.
+#
+# B2 (2026-07-06): chi_s is now FITTED from unit-cell periodic numerical
+# homogenization (runs/tools/homogenize_chi_s.py — steady conduction on the
+# production N=128 voxel geometry, the same |phi|<=C(t/L) mask as eps/A_0;
+# per-point 3-axis isotropy 0.00% by cubic symmetry, full-solid/laminate
+# analytic checks exact; data validation/chi_s_homogenization.csv).
+# Linear fit over the production window t/L 0.03-0.20 (eps 0.27-0.91),
+# max residual ~0.012:
+#     chi_s = c0 + c1*(1-eps)
+# Thin-wall caveat: at t/L <~ 0.05 the wall spans only ~4 voxels and the
+# fit inherits a small low bias; N-refinement at the Shanghai point
+# (Gyroid, eps 0.737) extrapolates chi 0.655(N=128) -> ~0.667 (thin-sheet
+# theoretical limit 2/3), i.e. the baked values sit ~2% below continuum.
+#
+# Env var TPMSHX_CHI_S (a constant) still overrides everything — legacy
+# escape hatch; the historical default was the uncalibrated 1.0.
+_CHI_S_FIT = {
+    'Diamond': (0.5446, 0.3765),
+    'Gyroid':  (0.5630, 0.3292),
+}
+_CHI_S_ENV = os.environ.get('TPMSHX_CHI_S')
+# Legacy module constant: env value when set, else the pre-B2 default 1.0.
+# Kept for import back-compat; production K_ss paths use chi_s_eff below.
+CHI_S = float(_CHI_S_ENV) if _CHI_S_ENV is not None else 1.0
+
+
+def chi_s_eff(tpms_type: str, eps):
+    """Effective solid-conduction tortuosity chi_s(type, eps).
+
+    Vectorized over `eps` (scalar or ndarray). Priority:
+    env TPMSHX_CHI_S constant (legacy override) > per-type linear fit.
+    """
+    if _CHI_S_ENV is not None:
+        c = float(_CHI_S_ENV)
+        e = np.asarray(eps, dtype=np.float64)
+        return c if e.ndim == 0 else np.full_like(e, c)
+    c0, c1 = _CHI_S_FIT[tpms_type]
+    out = c0 + c1 * (1.0 - np.asarray(eps, dtype=np.float64))
+    return float(out) if out.ndim == 0 else out
 
 
 def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
@@ -182,8 +215,10 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
     L_cell_mm : unit cell size [mm]
     t_mm      : wall thickness [mm]
     k_s       : solid thermal conductivity [W/(m·K)]
-    chi_s     : solid tortuosity / anisotropy factor (optional, overrides the
-                module-level `CHI_S`). K_ss = chi_s * (1 - eps) * k_s.
+    chi_s     : solid tortuosity factor (optional). Explicit value wins;
+                default = `chi_s_eff(tpms_type, eps)` (B2 homogenization
+                fit; env TPMSHX_CHI_S constant overrides the fit).
+                K_ss = chi_s * (1 - eps) * k_s.
     N         : voxelisation grid resolution (default 128 as of audit M-d /
                 P3 2026-05-28; was 256). The phi grid is N^3 float64
                 (16 MiB at N=128 vs 128 MiB at N=256), so the lower default
@@ -202,7 +237,8 @@ def geometry(tpms_type: str, L_cell_mm: float, t_mm: float, k_s: float,
     D_h is the single-stream hydraulic diameter D_h = 4·epsilon_A / A_0.
     """
     g = _tpms_geom(tpms_type, L_cell_mm, t_mm, N)
-    chi = float(CHI_S if chi_s is None else chi_s)
+    chi = float(chi_s_eff(tpms_type, g['epsilon']) if chi_s is None
+                else chi_s)
     return {
         'epsilon':   g['epsilon'],
         'epsilon_A': g['epsilon_A'],

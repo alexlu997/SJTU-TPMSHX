@@ -220,10 +220,12 @@ def build_continuous_arrays_3d(x, L0, t0,
 
     K_ffA_arr = eps_arr * k_fA
     K_ffB_arr = eps_arr * k_fB
-    # CHI_S to match the main field path (stages_3d K_ss = CHI_S*(1-eps)*k_s) +
-    # tpms_calc.compute(); default CHI_S=1.0 → no-op (audit 2026-06-28, latent).
-    from solvers.tpms_calc import CHI_S as _CHI_S
-    K_ss_arr = _CHI_S * (1.0 - eps_arr) * k_s
+    # χ_s to match the main field path (run_stack_3d K_ss =
+    # chi_s_eff(type, ε)·(1−ε)·k_s) + tpms_calc.compute(). B2 (2026-07-06):
+    # per-cell fitted χ_s from unit-cell homogenization; env TPMSHX_CHI_S
+    # constant still overrides.
+    from solvers.tpms_calc import chi_s_eff as _chi_s_eff
+    K_ss_arr = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
     return {
         'zone_id': np.zeros((Nx, Ny, Nz), dtype=np.int32),

@@ -48,7 +48,7 @@ from .tpms_geometry import compute_geometry as _tpms_geom
 # df_surrogate.predict). Re-exported here so existing consumers keep their
 # `from solvers.tpms_calc import ...` paths unchanged.
 from .tpms_props import (  # noqa: F401 — re-exports
-    CHI_S, M_air, P_atm, R,
+    CHI_S, chi_s_eff, M_air, P_atm, R,
     air_conductivity, air_cp, air_density, air_viscosity,
     geometry,
     water_conductivity, water_cp, water_density, water_viscosity,
@@ -339,7 +339,7 @@ def compute(tpms_type: str,
     K_ff = eps * k_f
     if C_DISP > 0.0:
         K_ff = K_ff + C_DISP * rho * cp_f * abs(u) * D_h_m
-    K_ss = CHI_S * (1.0 - eps) * k_s
+    K_ss = chi_s_eff(tpms_type, eps) * (1.0 - eps) * k_s
 
     return {
         'epsilon':   eps,

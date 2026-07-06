@@ -344,14 +344,14 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
 
     K_ffA_arr = eps_arr * k_fA
     K_ffB_arr = eps_arr * k_fB
-    # Apply the solid-conductivity factor CHI_S to match the main field path
-    # (stages_3d.py: K_ss = CHI_S * (1-eps) * k_s) and tpms_calc.compute().
-    # Default CHI_S=1.0 → no-op (bit-identical); the zoned builder previously
-    # ignored a non-default TPMSHX_CHI_S (audit 2026-06-28, low/latent).
+    # Apply the solid-conductivity factor χ_s to match the main field path
+    # (run_stack_3d: K_ss = chi_s_eff(type, ε)·(1−ε)·k_s) and tpms_calc.
+    # B2 (2026-07-06): per-cell fitted χ_s(type, ε) from unit-cell
+    # homogenization; env TPMSHX_CHI_S constant still overrides.
     # (Thermal dispersion C_DISP is velocity-dependent and added downstream in
     #  the outer loop, not here; default C_DISP=0.0.)
-    from solvers.tpms_calc import CHI_S as _CHI_S
-    K_ss_arr = _CHI_S * (1.0 - eps_arr) * k_s
+    from solvers.tpms_calc import chi_s_eff as _chi_s_eff
+    K_ss_arr = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
     return {
         'zone_id': np.zeros((Nx, Ny), dtype=np.int32),  # continuous = single zone

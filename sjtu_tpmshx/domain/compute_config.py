@@ -50,8 +50,10 @@ site or one shared helper, listed here. Adding a flag = add a row.
   Read in ``df_surrogate/surrogate_domain.py``, ``solvers/sigmoid_field.py``,
   ``solvers/sigmoid_field_3d.py`` (3 identical 1-line parsers — kept local
   to avoid a solvers→df_surrogate dependency; keep in sync).
-- ``TPMSHX_CHI_S`` (1.0) — solid-k anisotropy χ_s; ``solvers/tpms_calc.py``
-  (module-level, fixed at import).
+- ``TPMSHX_CHI_S`` (unset) — CONSTANT χ_s override (legacy escape hatch,
+  pre-B2 default was 1.0). When unset, χ_s comes from the B2 unit-cell
+  homogenization fit ``chi_s_eff(type, ε)`` (2026-07-06);
+  ``solvers/tpms_props.py`` (read at import).
 - ``TPMSHX_DEBUG`` (unset) — debug prints; ``solvers/simple_solver_3d.py``.
 - ``TPMSHX_DF_RESIDUAL_CORR`` (0) — dP residual-learning correction;
   ``df_surrogate/predict.py``.
