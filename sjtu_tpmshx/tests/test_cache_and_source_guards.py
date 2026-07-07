@@ -1,0 +1,101 @@
+"""W6 + W7 guards (blind-spot audit, 2026-07-07).
+
+W6: SurrogateV3's two calibration sources (local Excel vs committed
+prebuilt CSV) must produce the same surrogate — the production GammaDF
+anchor derives from this instance, so a silent divergence means two
+machines compute different physics.
+
+W7: two cache-key hazards —
+  (a) get_geometry_lut's in-memory singleton ignored kwargs on a hit;
+  (b) tpms_calc.compute's lru_cache ignored the DF-backend env state and
+      returned the same mutable dict on every hit.
+"""
+import os
+import pathlib
+import sys
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ── W6: xlsx vs prebuilt-CSV source parity ──────────────────────────
+
+
+def test_df_source_parity(monkeypatch):
+    """Excel-calibrated and prebuilt-CSV surrogates must agree at the
+    Shanghai gate point (and record which source they used)."""
+    import df_surrogate.surrogate_v3 as sv3mod
+    if not sv3mod.XLSX.exists():
+        pytest.skip("experiment Excel (gitignored data/) not present")
+
+    m_xlsx = sv3mod.SurrogateV3(tpms='Gyroid')
+    assert m_xlsx._source == 'xlsx'
+
+    monkeypatch.setattr(sv3mod, 'XLSX',
+                        pathlib.Path('__nonexistent_w6_probe__.xlsx'))
+    m_csv = sv3mod.SurrogateV3(tpms='Gyroid')
+    assert m_csv._source == 'prebuilt_csv'
+
+    for (L, t) in ((7.0, 0.6), (5.0, 0.4), (6.0, 0.5)):
+        K1, cF1 = m_xlsx.predict(L, t)
+        K2, cF2 = m_csv.predict(L, t)
+        assert K1 == pytest.approx(K2, rel=1e-6), \
+            f"K diverged at (L={L}, t={t}): xlsx {K1:.6e} vs csv {K2:.6e}"
+        assert cF1 == pytest.approx(cF2, rel=1e-6), \
+            f"cF diverged at (L={L}, t={t}): xlsx {cF1:.6e} vs csv {cF2:.6e}"
+
+
+# ── W7a: geometry LUT cache honours kwargs ──────────────────────────
+
+
+@pytest.mark.slow
+def test_geometry_lut_cache_keys_on_kwargs(tmp_path):
+    from solvers.sigmoid_field import get_geometry_lut
+    lut_a = get_geometry_lut('Gyroid', n_L=3, n_t=2, N=32,
+                             cache_dir=str(tmp_path))
+    lut_b = get_geometry_lut('Gyroid', n_L=4, n_t=2, N=32,
+                             cache_dir=str(tmp_path))
+    assert lut_a is not lut_b, \
+        "different kwargs returned the same cached LUT (stale-geometry bug)"
+    assert len(lut_a.L_vals) == 3 and len(lut_b.L_vals) == 4
+    # same kwargs → same instance (the cache still caches)
+    lut_a2 = get_geometry_lut('Gyroid', n_L=3, n_t=2, N=32,
+                              cache_dir=str(tmp_path))
+    assert lut_a2 is lut_a
+
+
+# ── W7b: compute() cache — DF-env key + hit-copy poison guard ──────
+
+
+def test_compute_cache_keys_on_df_backend(monkeypatch):
+    from solvers import tpms_calc
+    args = ('Gyroid', 7.0, 0.6, 10.0, 422.0, 192362.0, 16.0)
+
+    monkeypatch.delenv('TPMSHX_DF_METHOD', raising=False)
+    tpms_calc.compute.cache_clear()
+    r_default = tpms_calc.compute(*args)
+    info_after_first = tpms_calc.compute.cache_info()
+
+    monkeypatch.setenv('TPMSHX_DF_METHOD', 'rbf')
+    r_rbf = tpms_calc.compute(*args)
+    info_after_switch = tpms_calc.compute.cache_info()
+
+    assert info_after_switch.misses == info_after_first.misses + 1, (
+        "switching TPMSHX_DF_METHOD did not miss the cache — the second "
+        "backend would silently receive the first backend's (K, cF)")
+    # gamma_df (CFD-refit K) and rbf K genuinely differ at the gate point
+    assert r_rbf['K_df'] != r_default['K_df']
+
+
+def test_compute_hit_returns_unpoisonable_copy():
+    from solvers import tpms_calc
+    args = ('Gyroid', 7.0, 0.6, 10.0, 422.0, 192362.0, 16.0)
+    tpms_calc.compute.cache_clear()
+    r1 = tpms_calc.compute(*args)
+    eps_true = r1['epsilon']
+    r1['epsilon'] = -999.0          # caller mutates its copy
+    r2 = tpms_calc.compute(*args)   # cache hit
+    assert r2['epsilon'] == eps_true, \
+        "cache hit returned the mutated object — cache poisoned"

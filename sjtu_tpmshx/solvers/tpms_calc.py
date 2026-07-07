@@ -218,14 +218,15 @@ def adaptive_grid(L_domain: float, H_domain: float,
 # ── Main interface ────────────────────────────────────────────
 
 @functools.lru_cache(maxsize=4096)
-def compute(tpms_type: str,
-            L_cell_mm: float,
-            t_mm: float,
-            u: float,
-            T_in_K: float,
-            P_in_Pa: float,
-            k_s: float,
-            fluid_type: str = 'air') -> dict:
+def _compute_cached(tpms_type: str,
+                    L_cell_mm: float,
+                    t_mm: float,
+                    u: float,
+                    T_in_K: float,
+                    P_in_Pa: float,
+                    k_s: float,
+                    fluid_type: str = 'air',
+                    _df_env: tuple = ('', '')) -> dict:
     """
     Compute all TPMS heat-transfer and fluid properties.
 
@@ -372,6 +373,38 @@ def compute(tpms_type: str,
 
 
 # ── Quick verification ────────────────────────────────────────
+def compute(tpms_type: str,
+            L_cell_mm: float,
+            t_mm: float,
+            u: float,
+            T_in_K: float,
+            P_in_Pa: float,
+            k_s: float,
+            fluid_type: str = 'air') -> dict:
+    """Public entry — see ``_compute_cached`` for the full docstring.
+
+    W7 (2026-07-07): two cache hazards fixed at this wrapper.
+    1. The lru_cache key now includes the DF-backend environment state
+       (``TPMSHX_DF_METHOD`` / ``TPMSHX_DF_OVERRIDES``): ``predict_K_cF``
+       reads those env vars per call, so an in-process backend switch
+       (A/B comparisons) used to serve the FIRST backend's cached (K, cF)
+       to the second — the same failure shape as the B4 props-cache trap.
+    2. Cache hits used to return the SAME mutable dict object; a caller
+       mutating its result would silently poison every later hit. The
+       wrapper returns a shallow copy (values are scalars).
+    """
+    _df_env = (os.environ.get('TPMSHX_DF_METHOD', ''),
+               os.environ.get('TPMSHX_DF_OVERRIDES', ''))
+    return dict(_compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
+                                P_in_Pa, k_s, fluid_type, _df_env))
+
+
+# Back-compat: tests/sweeps clear the props cache via compute.cache_clear()
+# (per-process sweep trap, see ledger CDISP notes).
+compute.cache_clear = _compute_cached.cache_clear
+compute.cache_info = _compute_cached.cache_info
+
+
 if __name__ == '__main__':
     print("=" * 60)
     for name in ('Diamond', 'Gyroid'):

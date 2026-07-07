@@ -181,10 +181,18 @@ def test_compute_returns_geometry_keys_plus_more():
 
 
 def test_compute_caches_repeated_call():
-    """lru_cache should return identical dict object for identical args."""
+    """Repeated identical calls hit the cache — but return DISTINCT dict
+    objects (W7, 2026-07-07: hits return a shallow copy so a caller
+    mutating its result cannot poison later hits; the old `a is b`
+    identity was exactly that hazard)."""
+    compute.cache_clear()
     a = compute('Diamond', 6.0, 0.4, 5.0, 350.0, 101325.0, 16.0)
+    misses_after_first = compute.cache_info().misses
     b = compute('Diamond', 6.0, 0.4, 5.0, 350.0, 101325.0, 16.0)
-    assert a is b
+    assert compute.cache_info().misses == misses_after_first  # cache HIT
+    assert compute.cache_info().hits >= 1
+    assert a is not b          # poison guard: copies, not the same object
+    assert a == b              # same values
 
 
 # ─── N5: compute() Re-range warning must be fluid-aware (audit 2026-06-28) ──

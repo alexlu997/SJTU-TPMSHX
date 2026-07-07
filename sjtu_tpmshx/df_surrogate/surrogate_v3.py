@@ -144,9 +144,25 @@ class SurrogateV3:
         if unknown:
             raise ValueError(f"unknown RBF features: {sorted(unknown)}; "
                              f"valid: {_FEATURES_ALL}")
+        # W6 (2026-07-07): the source choice is LOGGED — the two paths can
+        # silently diverge if the local Excel is edited without regenerating
+        # the committed CSV, and the production GammaDF anchor derives from
+        # this instance. test_df_source_parity pins their equivalence.
+        # NOTE: keep these log lines ASCII-only. The Excel path contains
+        # Chinese characters; on a GBK-console Windows a subprocess writes
+        # them as GBK bytes while pytest reads its capture stream as UTF-8 —
+        # one such line poisons the capture and EVERY later test teardown
+        # dies with UnicodeDecodeError (found the hard way, 2026-07-07).
         if XLSX.exists():
+            self._source = 'xlsx'
+            _log.info("[SurrogateV3 %s/%s] calibrating from local experiment"
+                      " Excel (data/raw_data)", self.tpms, self.method)
             self._build()                 # authoritative: calibrate from Excel
         else:
+            self._source = 'prebuilt_csv'
+            _log.info("[SurrogateV3 %s/%s] local Excel absent - using "
+                      "committed prebuilt CSV calibration", self.tpms,
+                      self.method)
             self._build_from_prebuilt()   # fallback: committed calibrated CSV
 
     def _build(self) -> None:

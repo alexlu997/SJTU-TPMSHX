@@ -203,10 +203,20 @@ _lut_cache = {}
 
 
 def get_geometry_lut(tpms_type, **kwargs):
-    """Get or create a cached GeometryLUT instance."""
-    if tpms_type not in _lut_cache:
-        _lut_cache[tpms_type] = GeometryLUT(tpms_type, **kwargs)
-    return _lut_cache[tpms_type]
+    """Get or create a cached GeometryLUT instance.
+
+    W7 (2026-07-07): the cache key includes the kwargs. The old
+    tpms_type-only key ignored N / L_range / t_range on a hit — after any
+    default-args call, a later ``get_geometry_lut('Diamond', N=512)``
+    silently returned the N=256 LUT (the 2026-06-28 fix keyed the DISK
+    cache correctly but left this in-memory half with the same defect).
+    """
+    key = (tpms_type,) + tuple(
+        (k, tuple(v) if isinstance(v, (list, tuple)) else v)
+        for k, v in sorted(kwargs.items()))
+    if key not in _lut_cache:
+        _lut_cache[key] = GeometryLUT(tpms_type, **kwargs)
+    return _lut_cache[key]
 
 
 # ── Vectorized property computation ──────────────────────────
