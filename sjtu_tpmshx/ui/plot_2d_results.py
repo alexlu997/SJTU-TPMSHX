@@ -136,7 +136,12 @@ def finalize_plots(window):
         window._compute_warnings = None
     r = window._compute_results
     Ta, Tb, Ts = r['Ta'], r['Tb'], r['Ts']
-    ucA, vcA, ucB, vcB = r['ucA'], r['vcA'], r['ucB'], r['vcB']
+    # N5 (2026-07-07): prefer the display-smoothed copies on partial-BC runs;
+    # the physics keys ('ucA' …) now stay raw / mass-conserving.
+    def _vel(key):
+        disp = r.get(key + '_disp')
+        return disp if disp is not None else r[key]
+    ucA, vcA, ucB, vcB = _vel('ucA'), _vel('vcA'), _vel('ucB'), _vel('vcB')
     P_fA, P_fB = r['P_fA'], r['P_fB']
     dP_A, dP_B = r['dP_A'], r['dP_B']
     N_x, N_y, L, H = r['N_x'], r['N_y'], r['L'], r['H']

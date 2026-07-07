@@ -446,6 +446,21 @@ class SIMPLESolver:
                        (i + d < Nx and inf_raw[i + d] < 0.01):
                         self.inlet_frac[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
                         break
+        # N3 (2026-07-07): the taper smooths the imposed profile but must not
+        # DELETE throughput — unrenormalised it under-delivered the imposed
+        # inlet mass flux by ~0.914 cell-widths of open area per pipe edge, a
+        # grid-dependent deficit (finer grid → smaller loss). Scale the
+        # imposed velocity so the tapered profile carries exactly the
+        # geometric open-area flux; the mass-flux-inlet target applies the
+        # same factor at capture (see solve()). The guard keeps full-face
+        # runs (taper never fires) bit-identical.
+        self._inlet_taper_flux_scale = 1.0
+        if np.any(self.inlet_frac != inf_raw):
+            _geom_flux = float(np.sum(inf_raw * self.dx_arr))
+            _eff_flux = float(np.sum(self.inlet_frac * self.dx_arr))
+            if _eff_flux > 1e-30 and _geom_flux > 0.0:
+                self._inlet_taper_flux_scale = _geom_flux / _eff_flux
+                self.v_inlet_field *= self._inlet_taper_flux_scale
         self.inlet_mask = self.inlet_frac > 0.01     # boolean for temperature BC
 
         # Outlet — partial or full-width, with smooth lateral transition
@@ -710,7 +725,14 @@ class SIMPLESolver:
                 _rho_ref_in = self._rho_inlet_ref
             else:
                 _rho_ref_in = float(self.rho_field[:, 0].mean())
-            self._massflux_target = float(self.v_inlet) * _rho_ref_in
+            # N3: the taper-renormalisation factor rides on the target too —
+            # _apply_massflux_inlet rebuilds v_inlet_field from this target
+            # every iteration, so an init-time field scaling alone would be
+            # overwritten. Σ ρ·(G/ρ)·frac·dx then equals the geometric
+            # open-area flux exactly. 1.0 unless the edge taper fired.
+            self._massflux_target = (float(self.v_inlet) * _rho_ref_in
+                                     * getattr(self, '_inlet_taper_flux_scale',
+                                               1.0))
 
         for it in range(1, max_iter + 1):
             # Effective density for continuity (#2 fix): ε·ρ. Uniform ε →

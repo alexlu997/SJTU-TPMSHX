@@ -870,6 +870,7 @@ def _run_solvers(window, cfg, fields):
     _has_partial_A = False
     _has_partial_B = False
     ucA = vcA = ucB = vcB = None
+    ucA_disp = vcA_disp = ucB_disp = vcB_disp = None   # N5 display copies
     simpA = simpB = None
 
     rho_cp_A = _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA, P_inA_val)
@@ -886,6 +887,7 @@ def _run_solvers(window, cfg, fields):
     # `nonlocal`s are the vars that persist across iters or are read afterwards.
     def _step_2d(_coup_it):
         nonlocal ucA, vcA, ucB, vcB, simpA, simpB, Ta, Tb, Ts, e_info
+        nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
         nonlocal drho_A, drho_B, dT_A, dT_B
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
@@ -963,18 +965,27 @@ def _run_solvers(window, cfg, fields):
 
         window._compute_progress = 10 + int(80 * (_coup_it + 0.3) / _MAX_COUPLING)
 
-        # Smooth velocity near partial-width wall boundaries
+        # Smooth velocity near partial-width wall boundaries — DISPLAY ONLY.
+        # N5 (2026-07-07): the smoothed fields used to OVERWRITE ucA/vcA and
+        # feed the LTNE energy solve, the local-Re h_v build and the duty
+        # extraction. Gaussian filtering breaks the discrete mass balance of
+        # the advecting field (spurious grid-dependent ∇·(ερcp·u) sources on
+        # the temperature-form kernel) — the same defect class as the
+        # 2026-06-24 temperature-smoothing fix, which kept Ta_raw for
+        # physics. Physics now consumes the raw mass-conserving fields;
+        # only the rendered copies are smoothed.
         _has_partial_A = np.any(simpA.outlet_frac < 0.99) or np.any(simpA.inlet_frac < 0.99)
         _has_partial_B = np.any(simpB.outlet_frac < 0.99) or np.any(simpB.inlet_frac < 0.99)
+        ucA_disp = vcA_disp = ucB_disp = vcB_disp = None
         if _has_partial_A or _has_partial_B:
             from scipy.ndimage import gaussian_filter
             _sv = 2.0
             if _has_partial_A:
-                ucA = gaussian_filter(ucA, sigma=_sv)
-                vcA = gaussian_filter(vcA, sigma=_sv)
+                ucA_disp = gaussian_filter(ucA, sigma=_sv)
+                vcA_disp = gaussian_filter(vcA, sigma=_sv)
             if _has_partial_B:
-                ucB = gaussian_filter(ucB, sigma=_sv)
-                vcB = gaussian_filter(vcB, sigma=_sv)
+                ucB_disp = gaussian_filter(ucB, sigma=_sv)
+                vcB_disp = gaussian_filter(vcB, sigma=_sv)
 
         # Inlet fractions for energy solver (continuous blending at wall/open edge)
         _imA = simpA.inlet_frac.astype(np.float64)  # 1D float, length = SIMPLE Nx for A
@@ -1291,6 +1302,10 @@ def _run_solvers(window, cfg, fields):
     result = {
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
+        # N5: display-smoothed copies (partial-BC runs only; None ⇒ use raw).
+        # Physics consumers ('ucA' etc.) stay raw / mass-conserving.
+        'ucA_disp': ucA_disp, 'vcA_disp': vcA_disp,
+        'ucB_disp': ucB_disp, 'vcB_disp': vcB_disp,
         'P_fA': P_fA, 'P_fB': P_fB,
         'dP_A': dP_A, 'dP_B': dP_B,
         'Q_total': Q_total,
