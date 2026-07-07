@@ -5,8 +5,10 @@ __pycache__/
 *.nbc
 .pytest_cache/
 
-# Reproducible artefacts (regenerate via runs/production_optimizer_sweep.py,
-# runs/demo_optimizer_shanghai.py, runs/overlay_fast_vs_full.py)
+# demo_output: regenerate via runs/demos/demo_3d_*.py.
+# production_output: LEGACY optimizer sweep outputs — the generator scripts
+# were retired; contents are local-only history, not regenerable (the old
+# comment named three scripts that no longer exist).
 runs/demo_output/
 runs/production_output/
 

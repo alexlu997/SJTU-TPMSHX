@@ -48,7 +48,9 @@ from solvers.df_projection import (build_master_refined_grid,  # noqa: E402
                                    extract_dP_from_simple,
                                    extract_dP_mass_flux_from_simple)
 from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE  # noqa: E402
-from validation._case_sets import d76_spec                    # noqa: E402
+# Module moved to validation/harness/ (c3635cd-era reorg); old path broke
+# this script — the calibration driver for the production SCO2_CF_SCALE.
+from validation.harness._case_sets import d76_spec             # noqa: E402
 
 XLSX = (_ROOT.parent / "data" / "raw_data" / "D-7-6-sCO2"
         / "D-7-6实验数据-V1.xlsx")

@@ -39,7 +39,9 @@ if str(_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(_PKG_DIR))
 
 from optimization.evaluator import evaluate_design, DEFAULT_CONFIG
-from solvers.field_param import (
+# field_param was renamed to continuous_field in b0822dd (Tier-1 rename);
+# the old import made this regeneration script ImportError on arrival.
+from solvers.continuous_field import (
     from_decision_vector,
     decision_bounds,
     DEFAULT_N_CTRL_X,
