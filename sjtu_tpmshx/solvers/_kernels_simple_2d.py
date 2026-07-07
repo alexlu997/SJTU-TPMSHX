@@ -207,17 +207,22 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 
                 il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
                 mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
-                De0 = mu_e * dyj / dxi
-                Dn0 = mu_e * dxi / dyj
+                # N4 (2026-07-07): diffusion conductances use the ACTUAL
+                # neighbour-node distance, not the CV width. u-nodes sit on
+                # x-interfaces: E neighbour at dx[i], W at dx[i-1]; cross-
+                # stream neighbours at 0.5*(dy[j]+dy[j±1]). Uniform grids
+                # reduce to the old dxi/dyj form bit-identically.
+                De = mu_e * dyj / dx_arr[ir_r]
+                Dw = mu_e * dyj / dx_arr[il_r]
+                Dn = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
+                      if j < Ny - 1 else 0.0)
+                Ds = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
+                      if j > 0 else 0.0)
 
                 uE = u[i + 1, j] if i + 1 < Nx else 0.0
                 uW = u[i - 1, j] if i > 1 else 0.0
                 uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
                 uS = u[i, j - 1] if j > 0 else 0.0
-
-                De = De0; Dw = De0
-                Dn = Dn0 if j < Ny - 1 else 0.0
-                Ds = Dn0 if j > 0 else 0.0
 
                 ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
                 uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
@@ -288,28 +293,32 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
                 jb = max(j - 1, 0); jt = min(j, Ny - 1)
                 mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
-                De0 = mu_e * dyj / dxi
-                Dn0 = mu_e * dxi / dyj
 
                 # No-slip at side walls (x=0, x=W): tangential velocity v=0 at
                 # wall. Distance from cell centre to wall = dxi/2, so the wall
-                # diffusion coefficient is mu_e * dyj / (0.5*dxi) = 2*De0.
+                # diffusion coefficient is mu_e * dyj / (0.5*dxi).
                 # Previously free-slip (De=0 at i=Nx-1, Dw=0 at i=0); corrected
                 # 2026-04-17 to match physical outer-housing walls in TPMS heat
                 # exchangers. For symmetry/periodic boundaries, revert to 0/0.
+                # N4 (2026-07-07): interior conductances use the ACTUAL
+                # neighbour-node distances — E/W v-neighbours sit at
+                # 0.5*(dx[i]+dx[i±1]), N/S at dy[j]/dy[j-1] (v-nodes on
+                # y-interfaces). Uniform grids reduce bit-identically.
                 if i < Nx - 1:
-                    vE = v[i + 1, j]; De = De0
+                    vE = v[i + 1, j]
+                    De = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
                 else:
-                    vE = 0.0; De = 2.0 * De0   # east wall (no-slip)
+                    vE = 0.0; De = 2.0 * mu_e * dyj / dxi   # east wall (no-slip)
                 if i > 0:
-                    vW = v[i - 1, j]; Dw = De0
+                    vW = v[i - 1, j]
+                    Dw = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
                 else:
-                    vW = 0.0; Dw = 2.0 * De0   # west wall (no-slip)
+                    vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
                 vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
                 vS = v[i, j - 1]
 
-                Dn = Dn0 if j < Ny - 1 else 0.0
-                Ds = Dn0
+                Dn = mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+                Ds = mu_e * dxi / dy_arr[jb]
 
                 ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
                 uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
@@ -392,17 +401,19 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
 
             il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
             mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
-            De0 = mu_e * dyj / dxi
-            Dn0 = mu_e * dxi / dyj
+            # N4 (2026-07-07): mirrors _sweep_u_jit_df — actual neighbour-node
+            # distances (coefficient-parity contract).
+            De = mu_e * dyj / dx_arr[ir_r]
+            Dw = mu_e * dyj / dx_arr[il_r]
+            Dn = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
+                  if j < Ny - 1 else 0.0)
+            Ds = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
+                  if j > 0 else 0.0)
 
             uE = u[i + 1, j] if i + 1 < Nx else 0.0
             uW = u[i - 1, j] if i > 1 else 0.0
             uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
             uS = u[i, j - 1] if j > 0 else 0.0
-
-            De = De0; Dw = De0
-            Dn = Dn0 if j < Ny - 1 else 0.0
-            Ds = Dn0 if j > 0 else 0.0
 
             ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
             uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
@@ -461,22 +472,24 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
             jb = max(j - 1, 0); jt = min(j, Ny - 1)
             mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
-            De0 = mu_e * dyj / dxi
-            Dn0 = mu_e * dxi / dyj
 
+            # N4 (2026-07-07): mirrors _sweep_v_jit_df — actual neighbour-node
+            # distances (coefficient-parity contract).
             if i < Nx - 1:
-                vE = v[i + 1, j]; De = De0
+                vE = v[i + 1, j]
+                De = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
             else:
-                vE = 0.0; De = 2.0 * De0   # east wall (no-slip)
+                vE = 0.0; De = 2.0 * mu_e * dyj / dxi   # east wall (no-slip)
             if i > 0:
-                vW = v[i - 1, j]; Dw = De0
+                vW = v[i - 1, j]
+                Dw = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
             else:
-                vW = 0.0; Dw = 2.0 * De0   # west wall (no-slip)
+                vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
             vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
             vS = v[i, j - 1]
 
-            Dn = Dn0 if j < Ny - 1 else 0.0
-            Ds = Dn0
+            Dn = mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+            Ds = mu_e * dxi / dy_arr[jb]
 
             ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
             uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0

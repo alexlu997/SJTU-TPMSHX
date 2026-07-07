@@ -478,13 +478,14 @@ class SIMPLESolver3D:
                  dx_arr=None, dy_arr=None, dz_arr=None):
         self.Lx, self.Ly, self.Lz = Lx, Ly, Lz
         self.Nx, self.Ny, self.Nz = Nx, Ny, Nz
-        # E1 (2026-06-09): accept non-uniform cell spacings (wall_refine). The
-        # momentum + pressure-correction kernels are ALREADY non-uniform-aware
-        # — momentum d-coeffs use face distances 0.5·(dx[i-1]+dx[i]); the PPE
-        # builds aE from those d-coeffs × the cell's own face area dx[i]·dz[k].
-        # So enabling non-uniform spacing needs only this: stop hard-coding the
-        # uniform Lx/Nx arrays. Default None → uniform (byte-identical to the
-        # prior behaviour, so the standard wall_refine=False path is unchanged).
+        # E1 (2026-06-09): accept non-uniform cell spacings (wall_refine).
+        # N4 correction (2026-07-07): the E1-era claim that the momentum
+        # kernels were "already non-uniform-aware" was wrong for DIFFUSION —
+        # the viscous conductances used the CV width instead of the actual
+        # neighbour-node distance (up to ~30% face-conductance error on
+        # growth-1.8 refined grids, non-telescoping across shared faces).
+        # Fixed in _kernels_simple_3d cell bodies (and the 2D kernels);
+        # uniform grids are bit-identical. Default None → uniform.
         self.dx = (np.full(Nx, Lx / Nx, dtype=np.float64) if dx_arr is None
                    else np.ascontiguousarray(dx_arr, dtype=np.float64))
         self.dy = (np.full(Ny, Ly / Ny, dtype=np.float64) if dy_arr is None

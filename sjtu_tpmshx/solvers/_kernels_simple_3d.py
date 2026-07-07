@@ -107,12 +107,20 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
 
     # Diffusion coefficients (6 faces). 2× at domain walls
     # (half-cell distance to wall, no-slip image point).
-    De = mu_e * dyj * dzk / dxi
-    Dw = De
-    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
+    # N4 (2026-07-07): interior conductances use the ACTUAL neighbour-node
+    # distance, not the CV width — u-nodes sit on x-interfaces (E neighbour
+    # at dx[i], W at dx[i-1]); cross-stream neighbours at 0.5*(dy[j]+dy[j±1])
+    # / 0.5*(dz[k]+dz[k±1]). Uniform grids reduce bit-identically.
+    De = mu_e * dyj * dzk / dx[ir_r]
+    Dw = mu_e * dyj * dzk / dx[il_r]
+    Dn = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j + 1]))
+          if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj)
+    Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
+          if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
+    Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
+          if k < Nz - 1 else 0.0)
+    Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
+          if k > 0 else 0.0)
 
     # Neighbour values (with wall-BC zero outside domain)
     uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
@@ -284,12 +292,19 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
     mu_e = 0.5 * (mu_eff_field[i, jb, k]
                   + mu_eff_field[i, jt, k])
 
-    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-    Dw = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 0.0
-    Ds = mu_e * dxi * dzk / dyj
-    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-    Db = mu_e * dxi * dyj / dzk if k > 0 else 0.0
+    # N4 (2026-07-07): actual neighbour-node distances — E/W v-neighbours at
+    # 0.5*(dx[i]+dx[i±1]); N/S at dy[jt]/dy[jb] (v-nodes on y-interfaces);
+    # T/B at 0.5*(dz[k]+dz[k±1]). Walls keep the half-cell 2× form.
+    De = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i + 1]))
+          if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi)
+    Dw = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i - 1]))
+          if i > 0 else 2.0 * mu_e * dyj * dzk / dxi)
+    Dn = mu_e * dxi * dzk / dy[jt] if j < Ny - 1 else 0.0
+    Ds = mu_e * dxi * dzk / dy[jb]
+    Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
+          if k < Nz - 1 else 0.0)
+    Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
+          if k > 0 else 0.0)
 
     vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
     vW = v[i - 1, j, k] if i > 0 else 0.0
@@ -483,12 +498,19 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
     mu_e = 0.5 * (mu_eff_field[i, j, kb]
                   + mu_eff_field[i, j, kt])
 
-    De = mu_e * dyj * dzk / dxi if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi
-    Dw_ = mu_e * dyj * dzk / dxi if i > 0 else 2.0 * mu_e * dyj * dzk / dxi
-    Dn = mu_e * dxi * dzk / dyj if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj
-    Ds = mu_e * dxi * dzk / dyj if j > 0 else 2.0 * mu_e * dxi * dzk / dyj
-    Dt = mu_e * dxi * dyj / dzk if k < Nz - 1 else 0.0
-    Db = mu_e * dxi * dyj / dzk
+    # N4 (2026-07-07): actual neighbour-node distances — E/W w-neighbours at
+    # 0.5*(dx[i]+dx[i±1]), N/S at 0.5*(dy[j]+dy[j±1]); T/B at dz[kt]/dz[kb]
+    # (w-nodes on z-interfaces). Walls keep the half-cell 2× form.
+    De = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i + 1]))
+          if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi)
+    Dw_ = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i - 1]))
+           if i > 0 else 2.0 * mu_e * dyj * dzk / dxi)
+    Dn = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j + 1]))
+          if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj)
+    Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
+          if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
+    Dt = mu_e * dxi * dyj / dz[kt] if k < Nz - 1 else 0.0
+    Db = mu_e * dxi * dyj / dz[kb]
 
     wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
     wW = w[i - 1, j, k] if i > 0 else 0.0

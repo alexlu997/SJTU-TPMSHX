@@ -127,12 +127,12 @@ def _build_grid_3d(wall_refine: bool, L: float, H: float, Lz: float,
     0.02 mm, growth 1.8). Returns ``(dx, dy, dz, Nx, Ny, Nz)``.
 
     2026-06-09 E1: the refined non-uniform spacing now reaches BOTH stages —
-    the LTNE energy solve AND the SIMPLE momentum/pressure solve (the latter via
-    SIMPLESolver3D's dx_arr/dy_arr/dz_arr; its kernels were already non-uniform-
-    aware). Previously SIMPLE silently ran on a uniform grid under wall_refine.
-    Velocity/pressure now resolve the boundary layer too (verified: Shanghai
-    wall_refine converges, dP within ~0.6% of the uniform-grid value, mass
-    residual ~1e-5).
+    the LTNE energy solve AND the SIMPLE momentum/pressure solve (via
+    SIMPLESolver3D's dx_arr/dy_arr/dz_arr). Previously SIMPLE silently ran on
+    a uniform grid under wall_refine. (The E1-era "kernels were already
+    non-uniform-aware" claim was wrong for the momentum DIFFUSION terms —
+    corrected 2026-07-07, N4: conductances now use actual neighbour-node
+    distances; guarded by test_wall_refine_3d.py.)
     """
     if wall_refine:
         from solvers.df_projection import build_master_refined_grid_3d
