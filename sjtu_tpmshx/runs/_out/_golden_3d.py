@@ -54,6 +54,13 @@ def _water_b_cfg(**ov):
         **ov)
 
 
+def _asym_cfg(**ov):
+    # δ≠0 offset-isosurface: ε_A ≠ ε_B via asym_split (audit T5, 2026-07-07 —
+    # the asym path previously had behavioural tests but no numeric pin; the
+    # old runs/_out/_asym_baseline_3d.json was an orphan with no checker).
+    return _air_air_cfg(delta_levelset=0.6, **ov)
+
+
 _SCALARS = ('Q', 'dP', 'dP_B', 'T_A_out', 'T_B_out',
             'Q_enthalpy_A', 'Q_enthalpy_B', 'Q_sA', 'Q_sB')
 _FIELDS = ('Ta', 'Tb', 'Ts', 'vmag', 'vmag_B', 'P_kPa', 'P_Pa_B', 'chi_B')
@@ -83,7 +90,8 @@ def main():
     args = [a for a in args if a != '--check']
     path = args[0] if args else None
 
-    cases = {'air_air': _air_air_cfg(), 'water_b': _water_b_cfg()}
+    cases = {'air_air': _air_air_cfg(), 'water_b': _water_b_cfg(),
+             'asym_b': _asym_cfg()}
     got = {name: _capture(name, cfg) for name, cfg in cases.items()}
 
     if check and path:
