@@ -13,7 +13,8 @@ _log = get_logger(__name__)
 
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
                           dx_arr, dy_arr, inlet_mask=None, outlet_mask=None,
-                          enthalpy_fn=None, rho_fn=None, P_ref=None):
+                          enthalpy_fn=None, rho_fn=None, P_ref=None,
+                          eps_side=None):
     """Mass-conserving enthalpy balance Q = ṁ_in · (T_in_avg − T_out_avg).
 
     Uses the inlet plane ρ·|u|·A·mask as ṁ·cp reference so the returned Q
@@ -24,6 +25,13 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
     Positive = fluid gives up heat (T_in > T_out).
     Optional 1D masks (length = cross-axis) gate the integral to partial
     inlet / outlet pipes; missing masks default to full face.
+
+    ``eps_side`` (N1 fix, 2026-07-07): the PER-SIDE void fraction (scalar or
+    2D field). Velocities are interstitial, so the physical face mass flux is
+    ε_side·ρ·|u|·A — without it the duty over-reads by 1/ε_side (verified
+    2.7086 vs 1/ε_A = 2.7147 against the independent Σh_vB·(Ts−Tb)·dA
+    integral on the golden air-air case). None keeps the legacy ε-less
+    arithmetic for callers that pre-scale externally.
 
     True-enthalpy mode (sCO2, audit 2026-06-28 D1): when ``enthalpy_fn`` /
     ``rho_fn`` / ``P_ref`` are supplied the duty is the physically correct
@@ -45,6 +53,12 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
         u_in_face, u_out_face = np.abs(uc[i_in, :]), np.abs(uc[i_out, :])
         rho_cp_in, rho_cp_out = rho_cp_field[i_in, :], rho_cp_field[i_out, :]
         T_in_face, T_out_face = T_field[i_in, :], T_field[i_out, :]
+        if eps_side is None:
+            eps_in = eps_out = 1.0
+        elif np.ndim(eps_side) == 0:
+            eps_in = eps_out = float(eps_side)
+        else:
+            eps_in, eps_out = eps_side[i_in, :], eps_side[i_out, :]
     else:
         j_in, j_out = (0, -1) if dir_code == 2 else (-1, 0)
         A_cell = dx_arr
@@ -56,13 +70,19 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
         u_in_face, u_out_face = np.abs(vc[:, j_in]), np.abs(vc[:, j_out])
         rho_cp_in, rho_cp_out = rho_cp_field[:, j_in], rho_cp_field[:, j_out]
         T_in_face, T_out_face = T_field[:, j_in], T_field[:, j_out]
+        if eps_side is None:
+            eps_in = eps_out = 1.0
+        elif np.ndim(eps_side) == 0:
+            eps_in = eps_out = float(eps_side)
+        else:
+            eps_in, eps_out = eps_side[:, j_in], eps_side[:, j_out]
 
     if enthalpy_fn is not None and rho_fn is not None and P_ref is not None:
         # True-enthalpy duty for strongly variable-cp fluids (sCO2).
         rho_in  = np.asarray(rho_fn(T_in_face,  P_ref), dtype=np.float64)
         rho_out = np.asarray(rho_fn(T_out_face, P_ref), dtype=np.float64)
-        w_in  = rho_in  * u_in_face  * A_cell * m_in_arr
-        w_out = rho_out * u_out_face * A_cell * m_out_arr
+        w_in  = eps_in  * rho_in  * u_in_face  * A_cell * m_in_arr
+        w_out = eps_out * rho_out * u_out_face * A_cell * m_out_arr
         m_dot = float(np.sum(w_in))
         if m_dot < 1e-30:
             return 0.0
@@ -74,8 +94,8 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
                      if m_out_tot > 1e-30 else float(np.mean(h_out)))
         return m_dot * (h_in_avg - h_out_avg)
 
-    m_in_w  = rho_cp_in  * u_in_face  * A_cell * m_in_arr
-    m_out_w = rho_cp_out * u_out_face * A_cell * m_out_arr
+    m_in_w  = eps_in  * rho_cp_in  * u_in_face  * A_cell * m_in_arr
+    m_out_w = eps_out * rho_cp_out * u_out_face * A_cell * m_out_arr
     m_dot_cp = float(np.sum(m_in_w))
     if m_dot_cp < 1e-30:
         return 0.0
@@ -458,31 +478,37 @@ def _compute_Q_richardson(
     _enth_A = _pA.get('enthalpy') if _pA.get('name') == 'sco2' else None
     _enth_B = _pB.get('enthalpy') if _pB.get('name') == 'sco2' else None
 
+    # Per-side void fraction ε_side = ε·s (N1 fix, 2026-07-07): velocities are
+    # interstitial, so the physical face mass flux is ε_side·ρ·|u|·A. The old
+    # code integrated with NO ε (duty over-read by 1/ε_side ≈ 2.7× on the
+    # golden case, self-inconsistent with Q_solid_richardson by the same
+    # factor) and applied only the asym reweight 2s/2(1−s) — i.e. the split
+    # RATIO was right but the ε/2 base factor was missing. ε_side inside the
+    # balance supersedes that reweight: ε·s = (ε/2)·2s. δ=0 → ε/2 per side;
+    # matches the 3D flux extraction convention (flux_3d eps_mode='ltne').
+    _sA_Q = float(split_A)
+    _sB_Q = 1.0 - float(split_A)
     try:
         Q_A_fine = _enthalpy_balance_2d(
             Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
             inlet_mask=mA_in, outlet_mask=mA_out,
-            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val)
+            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
+            eps_side=eps * _sA_Q)
         Q_B_fine = _enthalpy_balance_2d(
             Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
             inlet_mask=mB_in, outlet_mask=mB_out,
-            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val)
+            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
+            eps_side=eps * _sB_Q)
         Q_A_coarse = _enthalpy_balance_2d(
             Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
             inlet_mask=mA_in2, outlet_mask=mA_out2,
-            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val)
+            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
+            eps_side=eps2 * _sA_Q)
         Q_B_coarse = _enthalpy_balance_2d(
             Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
             inlet_mask=mB_in2, outlet_mask=mB_out2,
-            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val)
-        # Per-side duty weighting (offset-isosurface δ): weight each side's mass
-        # flux by its void fraction relative to the symmetric ε/2 (factor 1.0 at
-        # δ=0 → bit-identical). A signed scale preserves the gives-up/absorbs
-        # sign; the |·| below takes magnitude. Keeps ṁ_A/ṁ_B physical and the
-        # AB balance closed on the split geometry (kernel already uses ε_A/ε_B).
-        if _asymQ:
-            Q_A_fine *= _fAQ; Q_A_coarse *= _fAQ
-            Q_B_fine *= _fBQ; Q_B_coarse *= _fBQ
+            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
+            eps_side=eps2 * _sB_Q)
         # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
         # separately, THEN take max. Each Richardson acts on a smooth
         # (single-sign) function across refinement, so the formal
@@ -575,10 +601,12 @@ def _compute_Q_richardson(
             A_in_B = float(cfgB.get('in_w', L))
             m_dot_A = rho_A_in * abs(u_A) * A_in_A
             m_dot_B = rho_B_in * abs(u_B) * A_in_B
-            # Per-side void weighting (offset-isosurface δ; 1.0 at δ=0).
-            if _asymQ:
-                m_dot_A *= _fAQ
-                m_dot_B *= _fBQ
+            # Per-side void fraction ε·s (N1 fix, 2026-07-07): interstitial
+            # velocity ⇒ ṁ_phys = ε_side·ρ·u·A. Replaces the ε-less 2s/2(1−s)
+            # asym reweight (same ratio, adds the missing ε/2 base factor).
+            _eps_mean_1d = float(np.mean(eps))
+            m_dot_A *= _eps_mean_1d * float(split_A)
+            m_dot_B *= _eps_mean_1d * (1.0 - float(split_A))
             # sCO2 (D1): ṁ·Δh even in the last-resort fallback (cp_in·ΔT is
             # badly wrong near the pseudocritical line). air/water keep cp·ΔT.
             if _pA.get('name') == 'sco2':
@@ -922,9 +950,16 @@ def _run_solvers(window, cfg, fields):
                     raise _e
             ucA, vcA, simpA = _res[0]
             ucB, vcB, simpB = _res[1]
-        if _coup_it == 0:
-            for w in _caught:
-                warnings_list.append(str(w.message))
+        # Collect EVERY round's warnings (dedup by message). The old
+        # `if _coup_it == 0` gate destroyed any warning first raised on a
+        # later coupling round — e.g. Re drifting out of the Nu fit window
+        # only after the properties iterated (blind-spot audit W1a,
+        # 2026-07-07); record=True also suppresses the default stderr print,
+        # so a dropped message was lost everywhere.
+        for w in _caught:
+            _msg = str(w.message)
+            if _msg not in warnings_list:
+                warnings_list.append(_msg)
 
         window._compute_progress = 10 + int(80 * (_coup_it + 0.3) / _MAX_COUPLING)
 
