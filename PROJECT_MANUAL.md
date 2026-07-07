@@ -530,8 +530,8 @@ SJTU-TPMSHX/                       ← 仓库根
 | 文件 | 作用 | 关键指标/门槛 |
 |---|---|---|
 | `validate_shanghai_lumped_dual_nu.py` | 上海 16 工况的**集总 ε-NTU** 基准（不解流场，只用进口条件，无出口泄漏，论文级基准） | Q 误差 RMSRE **1.71%** |
-| `validate_shanghai_3d_real.py` | 上海 16 工况的 **3D SIMPLE+LTNE 生产验证**（空气可压缩，水侧温度规定为线性） | Q ~3.88% / dP ~21.49%（Nz=10，G-fix 后） |
-| `validate_shanghai_aligned.py` | 2D 验证，精确复刻界面“计算”路径，确保求解器按界面意图工作 | Q ~2-4% / dP ~35-40% |
+| `validate_shanghai_3d_real.py` | 上海 16 工况的 **3D SIMPLE+LTNE 生产验证**（空气可压缩，水侧温度规定为线性） | dP 5.28% / Q 3.21%（Nz=3 门，mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
+| `validate_shanghai_aligned.py` | 2D 验证，精确复刻界面“计算”路径，确保求解器按界面意图工作 | dP ~8.4%（mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
 | `mms_3d_air_air.py` | MMS 人造解法（用 sympy 推导解析解+源项）验证 3D LTNE 求解器离散一致性 | 单网格 rel L2<2%、Linf<3K |
 | `mms_phase_a3_h_refine.py` | 5 套网格的 MMS 阶数验证（log-log 拟合观测收敛阶 p_obs） | p_obs≥1.5~1.8、网格30的 L2<1% |
 | `mms_phase_a4_boundary.py` | 按边界区域（进口/出口/侧壁/内部）分解 MMS 误差，分别验证各边界格式 | 进口 L2<1e-12、内部阶数≥1.8 |

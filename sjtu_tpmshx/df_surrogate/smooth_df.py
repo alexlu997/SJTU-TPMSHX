@@ -50,7 +50,10 @@ _log = get_logger(__name__)
 
 PREBUILT_CSV = _THIS.parent / "_prebuilt" / "smooth_df_coeffs.csv"
 WATER_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "water-cfd-raw.xlsx"
-AIR_XLSX_DEFAULT = Path(r"D:\Postgraduate\server-pyfluent\Data_All_1,0.xlsx")
+# Relocated+renamed ~2026-07 (was server-pyfluent\Data_All_1,0.xlsx); shape
+# verified 2026-07-07: All_Cases_Combined, 840 data rows x 106 cols.
+AIR_XLSX_DEFAULT = Path(
+    r"D:\Postgraduate\server-pyfluent\Air\Cfd-air-raw-old-new.xlsx")
 
 _K_S_DEFAULT = 16.0
 

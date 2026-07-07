@@ -280,7 +280,9 @@ def _finalize_3d_cfg(raw: dict[str, Any],
         Q_W=_safe_float(raw.get('Q_total', raw.get('Q'))),
         dP_A_Pa=_safe_float(raw.get('dP_A', raw.get('dP'))),
         dP_B_Pa=_safe_float(raw.get('dP_B')),
-        converged=bool(raw.get('solver_converged', True)),
+        # Fail-safe default: a missing/renamed key must read as NOT converged,
+        # not silently report success (blind-spot audit W5, 2026-07-07).
+        converged=bool(raw.get('solver_converged', False)),
         T_out_A_K=T_out_A,
         T_out_B_K=T_out_B,
         fields={

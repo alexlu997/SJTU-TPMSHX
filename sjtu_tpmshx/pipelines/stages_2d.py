@@ -730,7 +730,9 @@ def _finalize_cfg(raw: dict[str, Any],
         Q_W=safe_float(raw['Q_total']),
         dP_A_Pa=safe_float(raw['dP_A']),
         dP_B_Pa=safe_float(raw['dP_B']),
-        converged=bool(raw.get('solver_converged', True)),
+        # Fail-safe default: a missing/renamed key must read as NOT converged,
+        # not silently report success (blind-spot audit W5, 2026-07-07).
+        converged=bool(raw.get('solver_converged', False)),
         T_out_A_K=T_out_A,
         T_out_B_K=T_out_B,
         fields={

@@ -288,7 +288,8 @@ class FeatureFlags:
     boundary-layer refinement). ``variable_rho_cp`` mirrors
     ``window.chk_var_rhocp`` (3D LTNE energy-kernel gas density from SIMPLE's
     local pressure ρ(P_local,T) instead of inlet pressure — conserves
-    compressible reverse flow; default off). ``temp_unit`` mirrors
+    compressible reverse flow; default ON since 2026-06-09, see the field
+    default below — hard invariant #1, never default this off). ``temp_unit`` mirrors
     ``window._temp_unit`` purely for round-tripping; ComputeConfig fields are
     always Kelvin so the solver itself never needs this flag.
 

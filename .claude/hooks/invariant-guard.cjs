@@ -22,13 +22,19 @@ process.stdin.on('end', () => {
 
   // file-pattern → the invariant to re-surface
   const RULES = [
-    [/solvers\/ltne_energy(_3d)?\.py$/,
+    [/solvers\/(ltne_energy(_3d)?|_kernels_ltne_3d)\.py$/,
       'ε is split in ONE place (ltne_energy halves total ε → ε/2). Callers pass FULL ε. ' +
       'Asymmetric ε_A≠ε_B (offset δ) is the ONLY exception — split upstream, summing to ε, ' +
       'passed via the eps_A/eps_B hooks; the kernel does NOT re-halve. Do not pre-divide ε.'],
-    [/solvers\/simple_solver(_3d)?\.py$/,
-      'Mass-flux inlet is the air-inlet default (massflux_inlet=True) in BOTH 2D and 3D. ' +
-      'Do not revert to a fixed-velocity inlet — it makes Δp grid-dependent.'],
+    [/solvers\/asym_split\.py$/,
+      'asym_split is the SINGLE source of the geometry split ratio (ε_A/ε_B from offset δ), ' +
+      'shared by stages_2d AND stages_3d. Sides must sum to the full ε; δ=0 must stay ' +
+      'bit-identical to the symmetric ε/2 baseline.'],
+    [/solvers\/(simple_solver(_3d)?|_kernels_simple_(2d|3d))\.py$/,
+      'Mass-flux inlet is the air-inlet default (massflux_inlet=True) in BOTH 2D and 3D — ' +
+      'do not revert to a fixed-velocity inlet (grid-dependent Δp). Kernel velocities are ' +
+      'INTERSTITIAL throughout; a superficial velocity here is a bug. Momentum kernels carry ' +
+      'no ε by design (see ledger B5) — do not add ε-weighting piecemeal.'],
     [/solvers\/envelope\.py$/,
       'The compressible validity envelope guards choke/supersonic. NEVER "fix" a ' +
       'ChokedFlowError by removing the guard, widening the P_abs clip, or returning a ' +
@@ -36,10 +42,11 @@ process.stdin.on('end', () => {
     [/solvers\/nu_correlations\.py$/,
       'Nu coefficients have a SINGLE source (NU_COEFFS / WATER_NU_COEFFS / nu_sco2_topo). ' +
       'Never duplicate or inline Nu coefficients elsewhere.'],
-    [/df_surrogate\/predict\.py$/,
-      'The DF closure already bakes in SLM surface roughness (default backend gamma_df). ' +
-      'Never add a friction/roughness multiplier on top — it double-counts.'],
-    [/controllers\/compute_config\.py$/,
+    [/df_surrogate\/(predict|gamma_df)\.py$/,
+      'The DF closure already bakes in SLM surface roughness (default backend gamma_df: ' +
+      'cF = cF_smooth x experiment-anchored gamma). Never add a friction/roughness ' +
+      'multiplier on top — it double-counts.'],
+    [/domain\/compute_config\.py$/,   // moved from controllers/ in the 2026-07-02 contracts layer
       'Compressible is required: variable_rho_cp=True / fluid_type=ideal_gas is the default. ' +
       'Never substitute isothermal as a "simplification".'],
   ];

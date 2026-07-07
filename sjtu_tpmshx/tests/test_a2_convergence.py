@@ -79,10 +79,14 @@ def test_res_norm_fallback_absolute_on_no_flow():
 
 
 def test_residual_scale_invariance():
-    """Doubling ṁ must not change the normalised residual's meaning:
-    the *relative* residual trajectories of a slow and fast inlet stay
-    within one order of magnitude at the same iteration (the old absolute
-    norm differed by exactly the throughput ratio)."""
+    """Quadrupling ṁ must not change the normalised residual's meaning.
+
+    Measured normalised ratio is ~0.35 (the two flows' physical residual
+    trajectories genuinely differ ~3x). If the normalisation regressed to
+    the old absolute norm, the ratio would gain the throughput factor 4:
+    0.35 * 4 = ~1.4. The band's upper bound must therefore sit BELOW 1.4 —
+    the original 0.1..10 band let the exact regression this test guards
+    against pass through its middle (blind-spot audit T3, 2026-07-07)."""
     hist = {}
     for v in (1.0, 4.0):
         s = _solver_3d(v_inlet=v)
@@ -90,7 +94,7 @@ def test_residual_scale_invariance():
         s.solve(max_iter=30, tol=0.0)
         hist[v] = np.asarray(s.residuals[5:30])
     ratio = np.median(hist[4.0] / hist[1.0])
-    assert 0.1 < ratio < 10.0, \
+    assert 0.12 < ratio < 1.0, \
         f"normalised residuals not scale-invariant: median ratio {ratio:.3e}"
     print(f"test_residual_scale_invariance PASS (median ratio {ratio:.2f})")
 

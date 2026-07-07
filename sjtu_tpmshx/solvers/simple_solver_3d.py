@@ -944,9 +944,12 @@ class SIMPLESolver3D:
                                          self.alpha_p, self.rho_field,
                                          self.eps_field, self.outlet_mask_ij)
                         self._update_density()
+                        # Same A2 inlet-flux normalisation as the main `res`
+                        # (line ~910) — comparing a raw kg/s norm against the
+                        # normalised one made acceptance depend on ṁ scale.
                         res_anderson = _mass_res_jit_3d(
                             self.u, self.v, self.w, Nx, Ny, Nz, dx, dy, dz,
-                            rho_eps_field2)
+                            rho_eps_field2) / self.res_norm_ref
                         if (not np.isfinite(res_anderson)
                                 or res_anderson > res):
                             # Roll back to Picard state.

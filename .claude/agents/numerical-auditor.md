@@ -20,7 +20,7 @@ edit; produce findings the main thread can act on.
 ## Hard invariants (a violation is a real regression — flag it)
 
 1. **Compressible is required.** Air uses ideal-gas ρ=ρ(P,T); the default is
-   `variable_rho_cp=True` (`controllers/compute_config.py`), `fluid_type='ideal_gas'`.
+   `variable_rho_cp=True` (`domain/compute_config.py`), `fluid_type='ideal_gas'`.
    Removing compressibility ~doubled Shanghai 3D Δp error. Isothermal is NEVER an
    allowed "simplification". Flag any path that forces constant ρ on air/sCO₂.
 

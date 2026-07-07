@@ -130,18 +130,21 @@ def test_solid_energy_balance():
     assert imbal < 0.05, f"Solid imbalance: rel={imbal:.4f}"
 
 
-# ── Enthalpy-solid gap diagnostic (xfail, known BC-layer pinning) ──
+# ── Enthalpy-solid gap guard (was xfail; closed by A3 conservative LTNE,
+#    XPASSed since 2026-07-06 — promoted to a hard guard so a regression of
+#    the gap turns the suite red; blind-spot audit T4, 2026-07-07) ──
 
-@pytest.mark.xfail(reason="Known BC-layer pinning in LTNE enthalpy vs "
-                          "solid-source balance. See P0 diag.")
 def test_enthalpy_solid_gap_diagnostic():
-    """Diagnostic: B-side Q_enth vs Q_solid gap (BC-pinning awareness)."""
+    """B-side Q_enth vs Q_solid must agree within 15% (A3 closed the gap)."""
     from pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     Qe_B = abs(r['Q_enthalpy_B']); Q_sB = abs(r.get('Q_sB', 0.0))
-    if Qe_B > 1 and Q_sB > 1:
-        rel = abs(Qe_B - Q_sB) / max(Q_sB, 1.0)
-        assert rel < 0.15, f"B enth-solid gap: {rel:.3f}"
+    # Preconditions asserted (the old `if` guard let a dead heat path pass
+    # this test vacuously).
+    assert Qe_B > 1 and Q_sB > 1, \
+        f"degenerate duties: Q_enthalpy_B={Qe_B:.3g}, Q_sB={Q_sB:.3g}"
+    rel = abs(Qe_B - Q_sB) / max(Q_sB, 1.0)
+    assert rel < 0.15, f"B enth-solid gap: {rel:.3f}"
 
 
 # ── η_B degradation: zero inlet velocity ──────────────────────────
