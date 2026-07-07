@@ -121,9 +121,12 @@ CONFIG_FIELDS: tuple = (
               special=True),   # None when the widget is absent (2D flag)
     FieldSpec('solver',   'Nz',        'le_Nz',    'int',   1,
               label="Grid Nz", required_3d_extra=True),
-    # Non-required scalars (read table-driven, no validation membership):
-    FieldSpec('fluid_A',  'P_in_Pa',   'le_PinA',  'float', 101325.0),
-    FieldSpec('fluid_B',  'P_in_Pa',   'le_PinB',  'float', 101325.0),
+    # Non-required scalars — blank keeps the default, but NON-EMPTY text
+    # must parse (W2, 2026-07-07; enforced in _validate_required_widgets):
+    FieldSpec('fluid_A',  'P_in_Pa',   'le_PinA',  'float', 101325.0,
+              label="Inlet Pressure A (P_inA)"),
+    FieldSpec('fluid_B',  'P_in_Pa',   'le_PinB',  'float', 101325.0,
+              label="Inlet Pressure B (P_inB)"),
 )
 
 
@@ -144,11 +147,19 @@ def _read_section_fields(window, section: str) -> dict:
 
 
 def _validate_required_widgets(window, *, is_3d: bool) -> None:
-    """Raise ``ValueError`` listing every blank / non-numeric required
-    widget — preserves the legacy behaviour of
-    ``pipelines.stages_2d._parse``. Membership and message order come
-    from CONFIG_FIELDS (B2 2.4).
+    """Raise ``ValueError`` listing every invalid input widget.
+
+    Required fields (CONFIG_FIELDS membership, B2 2.4): blank or
+    non-numeric raises — preserves the legacy behaviour of
+    ``pipelines.stages_2d._parse``.
+
+    Optional numeric fields (W2, 2026-07-07): NON-EMPTY text that fails to
+    parse raises too. ``_qt_float``'s silent default-fallback meant a
+    typo'd P_in ("3e5 Pa", "1,5e5") ran the whole case at 101325 Pa with
+    no indication, and a malformed partial-BC width silently degraded the
+    run to a full-face BC. Blank stays legal (= keep the default).
     """
+    import math as _math
     required = [fs for fs in CONFIG_FIELDS if fs.required_2d]
     if is_3d:
         required += [fs for fs in CONFIG_FIELDS if fs.required_3d_extra]
@@ -174,11 +185,49 @@ def _validate_required_widgets(window, *, is_3d: bool) -> None:
         # 'temp' fields are exempt from the sign check here because the raw
         # text may be °C (negative is legit) — their Kelvin positivity is
         # enforced by ComputeConfig.validate() downstream.
-        import math as _math
         if not _math.isfinite(v):
             bad.append(fs.label)
         elif fs.kind != 'temp' and v <= 0:
             bad.append(fs.label)
+    # Optional CONFIG_FIELDS rows (e.g. P_in_Pa): non-empty must parse
+    # finite. No sign check — downstream validation owns physics bounds.
+    _seen = {fs.widget for fs in required}
+    for fs in CONFIG_FIELDS:
+        if fs.widget in _seen or fs.special:
+            continue
+        widget = getattr(window, fs.widget, None)
+        if widget is None:
+            continue
+        txt = _qt_text(widget).strip()
+        if not txt:
+            continue
+        caster = int if fs.kind == 'int' else float
+        try:
+            v = float(caster(txt))
+        except ValueError:
+            bad.append(fs.label or fs.name)
+            continue
+        if not _math.isfinite(v):
+            bad.append(fs.label or fs.name)
+    # Partial-BC pipe widgets (read via _qt_float(…, 0.0) in
+    # _read_partial_bc): a parse failure there silently zeroed the pipe
+    # geometry. Non-empty must parse finite; 0.0 itself stays legal.
+    for side in ('A', 'B'):
+        for suffix in ('in_ctr', 'in_w', 'out_ctr', 'out_w',
+                       'in_z_ctr', 'in_z_w', 'out_z_ctr', 'out_z_w'):
+            w = getattr(window, f'le_pipe{side}_{suffix}', None)
+            if w is None:
+                continue
+            txt = _qt_text(w).strip()
+            if not txt:
+                continue
+            try:
+                v = float(txt)
+            except (TypeError, ValueError):
+                bad.append(f"Pipe {side} {suffix}")
+                continue
+            if not _math.isfinite(v):
+                bad.append(f"Pipe {side} {suffix}")
     if bad:
         raise ValueError(f"Invalid input in: {', '.join(bad)}")
 

@@ -105,3 +105,49 @@ def test_required_set_2d_vs_3d_parity():
     with pytest.raises(ValueError) as e:
         _validate_required_widgets(window, is_3d=True)
     assert str(e.value) == "Invalid input in: Width Lz, Grid Nz"
+
+
+# ── W2 (2026-07-07): non-empty unparseable optional fields must raise ──
+
+
+def test_optional_pin_garbage_raises():
+    """Typo'd P_in ("3e5 Pa") must raise instead of silently running the
+    whole case at the 101325 Pa default (blind-spot audit W2)."""
+    window = _StubWindow(PinA='3e5 Pa')
+    with pytest.raises(ValueError) as e:
+        _validate_required_widgets(window, is_3d=False)
+    assert "P_inA" in str(e.value)
+
+
+def test_optional_pin_comma_decimal_raises():
+    window = _StubWindow(PinB='1,5e5')
+    with pytest.raises(ValueError) as e:
+        _validate_required_widgets(window, is_3d=False)
+    assert "P_inB" in str(e.value)
+
+
+def test_optional_pin_blank_keeps_default():
+    """Blank optional field stays legal — it means 'keep the default'."""
+    window = _StubWindow(PinA='')
+    _validate_required_widgets(window, is_3d=False)   # must not raise
+    cfg = config_from_window(window)
+    assert cfg.fluid_A.P_in_Pa == 101325.0
+
+
+def test_pipe_widget_garbage_raises():
+    """Malformed partial-BC width used to silently zero the pipe geometry
+    (bc degraded to full-face). Non-empty must parse."""
+    from tests.test_compute_config import _StubLineEdit
+    window = _StubWindow()
+    window.le_pipeA_in_w = _StubLineEdit('0,042')
+    with pytest.raises(ValueError) as e:
+        _validate_required_widgets(window, is_3d=False)
+    assert "Pipe A in_w" in str(e.value)
+
+
+def test_pipe_widget_zero_and_blank_stay_legal():
+    from tests.test_compute_config import _StubLineEdit
+    window = _StubWindow()
+    window.le_pipeA_in_w = _StubLineEdit('0.0')
+    window.le_pipeA_out_w = _StubLineEdit('')
+    _validate_required_widgets(window, is_3d=False)   # must not raise
