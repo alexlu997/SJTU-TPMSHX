@@ -65,6 +65,14 @@ NU_COEFFS = {
 _EXTRAP_WARNED: set[tuple[str, str]] = set()
 
 
+def reset_extrap_warn_registry() -> None:
+    """Re-arm the one-shot extrap registry. Called at the start of each
+    pipeline run so run #2+ in a long-lived GUI session surfaces its own
+    out-of-window warnings instead of inheriting run #1's suppression
+    (blind-spot audit W3, 2026-07-07)."""
+    _EXTRAP_WARNED.clear()
+
+
 # ── Internal ─────────────────────────────────────────────────────────────
 
 def _smooth_nu(tpms_type, Re, L_mm, D_h_mm, *, Pr=Pr_AIR):

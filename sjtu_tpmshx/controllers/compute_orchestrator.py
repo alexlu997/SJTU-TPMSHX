@@ -110,7 +110,14 @@ class _ComputeRunnable(QRunnable):
 
         t0 = time.time()
         try:
-            with contextlib.redirect_stdout(_Tee(sys.__stdout__, log_buf)):
+            # stderr is tee'd too: `warnings.warn` (the degradation channel —
+            # flux-weight fallback, choke rescue, conservation-NaN notices)
+            # prints to stderr, which the stdout-only tee never captured, so
+            # those messages were invisible in the GUI solve log (blind-spot
+            # audit W1b, 2026-07-07). _Tee tolerates sys.__stderr__ = None
+            # (pythonw) via its per-stream except guards.
+            with contextlib.redirect_stdout(_Tee(sys.__stdout__, log_buf)), \
+                 contextlib.redirect_stderr(_Tee(sys.__stderr__, log_buf)):
                 result = self._worker_fn(
                     self._cfg, self._cancel,
                     progress_cb=lambda p: orch.progress.emit(int(p)))

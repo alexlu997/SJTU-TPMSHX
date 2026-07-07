@@ -107,6 +107,13 @@ class ComputePipeline(ABC):
 
     def run(self) -> ComputeResult:
         """Drive the 3 phases + cancel checks + progress ticks."""
+        # Re-arm the one-shot closure warning registries so each run's
+        # banner reflects its own extrapolation/choke events (audit W3,
+        # 2026-07-07). Local imports keep controller import time lean.
+        from solvers.nu_correlations import reset_extrap_warn_registry
+        from df_surrogate.predict import reset_choke_warn_registry
+        reset_extrap_warn_registry()
+        reset_choke_warn_registry()
         self._check_cancel()
         fields = self.build_fields()
         self.progress_cb(20)

@@ -18,8 +18,9 @@ Backends (selectable per call via ``method=`` or globally via env
                      GammaDF — multi-fidelity smooth-CFD-surface x
                      experimental roughness factor.  Trusted-anchor LOO
                      2.5%/2.6%; D7 blind 454.2 vs ~454.  Gate-point cF
-                     identical to the RBF (534.8); K is the SMOOTH D_h^2
-                     trend — Shanghai 3D Nz=3: dP 9.82% / Q 3.20%.
+                     identical to the RBF (534.8); K switched to the
+                     CFD-refit surface on 2026-06-30 (was the smooth D_h^2
+                     trend). Current gate numbers: validation/_CSV_STATUS.md.
                      See gamma_df.py.
     "rbf"            SurrogateV3 — RBF interpolation with compressible
                      calibration and boundary effect correction; the
@@ -58,6 +59,13 @@ R_AIR = 287.05
 # One-shot warning when the 1D compressible dP is infeasible (choked) and the
 # non-strict path rescues to P_in (robustness 2026-06-25).
 _CHOKE_WARNED: set = set()
+
+
+def reset_choke_warn_registry() -> None:
+    """Re-arm the one-shot choke-rescue registry. Called at the start of
+    each pipeline run so a later run's choke rescue is not silently masked
+    by an earlier run's warning (blind-spot audit W3, 2026-07-07)."""
+    _CHOKE_WARNED.clear()
 
 
 def _residual_correction_enabled() -> bool:

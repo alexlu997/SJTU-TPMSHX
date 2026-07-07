@@ -25,7 +25,13 @@ try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
-warnings.filterwarnings('ignore')
+# Targeted silencing only: deprecation-class noise is muted, but UserWarning
+# stays VISIBLE — that class carries the degradation channel (flux-weight
+# fallback "Q degraded", choke rescue, conservation-NaN notices). The old
+# blanket filterwarnings('ignore') silenced exactly the messages this gate
+# script exists to surface (blind-spot audit W4, 2026-07-07).
+for _cat in (DeprecationWarning, PendingDeprecationWarning, FutureWarning):
+    warnings.filterwarnings('ignore', category=_cat)
 
 from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
@@ -548,6 +554,19 @@ def main():
                     help='Profile amplitude [0,1]; 0=uniform baseline')
     ap.add_argument('--max-outer', type=int, default=MAX_OUTER,
                     help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
+    # Hard gate (blind-spot audit T1, 2026-07-07): this script is the
+    # CLAUDE.md-designated gate for surrogate-backend changes, yet it always
+    # exited 0 — headline accuracy could degrade with every automatic check
+    # green. Thresholds are deliberately generous (current Nz=3 gate values
+    # are RMSRE_dP 5.28% / RMSRE_Q 3.21%; the per-case grid-convergence dP
+    # floor is ~10%): they catch the historical failure class (order-of-
+    # magnitude surrogate regressions), not tuning noise.
+    ap.add_argument('--gate-dp', type=float, default=12.0,
+                    help='FAIL (exit 1) if RMSRE_dP exceeds this %% (default 12)')
+    ap.add_argument('--gate-q', type=float, default=6.0,
+                    help='FAIL (exit 1) if RMSRE_Q exceeds this %% (default 6)')
+    ap.add_argument('--no-gate', action='store_true',
+                    help='Report only; always exit 0 (legacy behaviour)')
     args = ap.parse_args()
 
     df = load_cases_df(SHANGHAI_XLSX)
@@ -636,7 +655,13 @@ def main():
     pd.DataFrame(results).to_csv(out_path, index=False, encoding='utf-8-sig')
     print(f"\nSaved: {out_path}")
 
-    return 0
+    if args.no_gate:
+        return 0
+    gate_fail = (rmsre_dP > args.gate_dp) or (rmsre_Q > args.gate_q)
+    verdict = 'FAIL' if gate_fail else 'PASS'
+    print(f"\nGATE {verdict}: RMSRE_dP {rmsre_dP:.2f}% (limit {args.gate_dp:.1f}%), "
+          f"RMSRE_Q {rmsre_Q:.2f}% (limit {args.gate_q:.1f}%)")
+    return 1 if gate_fail else 0
 
 
 if __name__ == '__main__':
