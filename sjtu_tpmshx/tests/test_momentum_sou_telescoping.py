@@ -59,10 +59,19 @@ def test_sou_corr_u_x_uniform_flux_reduces_to_legacy():
 
 
 def test_sou_corr_v_x_and_u_y_accept_two_fluxes():
-    """The cross-derivative helpers carry the same two-flux signature."""
+    """Cross-derivative helpers: bilinear in (Fe, Fw) and non-trivial on a
+    convex profile. T6 tightened (2026-07-07): the old assertion only
+    checked `isinstance(..., float)` — NaN passed, and a helper returning
+    a constant 0.0 passed."""
     Nx, Ny = 12, 12
     a = np.zeros((Nx + 1, Ny + 1))
     a[:, :] = _convex_line(Nx + 1)[:, None] + _convex_line(Ny + 1)[None, :]
-    # just exercise the signatures (telescoping covered by the streamwise pair)
-    assert isinstance(float(_sou_corr_v_x(a, 5, 5, Nx, 1.0, 0.5)), float)
-    assert isinstance(float(_sou_corr_u_y(a, 5, 5, Ny, 1.0, 0.5)), float)
+    for helper, N in ((_sou_corr_v_x, Nx), (_sou_corr_u_y, Ny)):
+        pe = float(helper(a, 5, 5, N, 1.0, 0.0))   # unit hi-face flux
+        pw = float(helper(a, 5, 5, N, 0.0, 1.0))   # unit lo-face flux
+        full = float(helper(a, 5, 5, N, 1.0, 0.5))
+        assert np.isfinite(full) and np.isfinite(pe) and np.isfinite(pw)
+        # minmod on a strictly convex profile must produce a correction
+        assert pe != 0.0 or pw != 0.0, "SOU correction vanished on convex"
+        # same bilinearity identity the streamwise pair is pinned to
+        assert full == pytest.approx(1.0 * pe + 0.5 * pw, rel=1e-12)

@@ -51,12 +51,16 @@ def test_prescribed_pins_Tb_exactly():
     max_diff = np.max(np.abs(Tb_out - Tb_expected))
     assert max_diff == 0.0, \
         f"Tb_prescribed was not preserved: max |ΔTb| = {max_diff}"
-    # Ta should still have evolved and cooled down (since Tb acts as heat sink)
-    assert Ta.min() < 399.0, \
-        f"Ta did not cool (min={Ta.min():.2f}); freeze broke coupling"
-    # Solid should equilibrate between Ta and Tb
-    assert Ts.min() > Tb_expected.min() - 1 and Ts.max() < 401.0, \
-        f"Ts out of bounds: [{Ts.min():.2f}, {Ts.max():.2f}]"
+    # Ta should still have evolved and cooled down (since Tb acts as heat
+    # sink). T6 tightened (2026-07-07): measured Ta.min = 394.90; the old
+    # "< 399" passed a coupling that barely moved 1 K.
+    assert Ta.min() < 396.0, \
+        f"Ta did not cool enough (min={Ta.min():.2f}); freeze broke coupling"
+    # Solid equilibrates between Tb (300..305) and Ta (~400): measured
+    # Ts in [321.50, 321.76]. Old bound (300..401) accepted Ts pinned at
+    # either stream's temperature.
+    assert 310.0 < Ts.min() and Ts.max() < 335.0, \
+        f"Ts out of equilibrium band: [{Ts.min():.2f}, {Ts.max():.2f}]"
     print("test_prescribed_pins_Tb_exactly PASS")
 
 def test_prescribed_shape_mismatch_raises():

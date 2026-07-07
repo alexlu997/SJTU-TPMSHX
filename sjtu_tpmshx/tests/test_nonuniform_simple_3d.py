@@ -73,4 +73,7 @@ def test_nonuniform_grid_solves_physical():
     # Darcy-Forchheimer: streamwise v stays the order of v_inlet (mass cons),
     # no blow-up / collapse from the non-uniform discretisation.
     v_mean = float(np.mean(np.abs(s.v)))
-    assert 0.3 * _VIN < v_mean < 3.0 * _VIN, f"v_mean={v_mean} off (vin={_VIN})"
+    # T6 tightened (2026-07-07): measured v_mean/v_in = 0.9915 post-N4
+    # (node-distance fix); the old 0.3..3.0 band passed a 3x regression.
+    assert 0.85 * _VIN < v_mean < 1.15 * _VIN, \
+        f"v_mean={v_mean} off (vin={_VIN})"

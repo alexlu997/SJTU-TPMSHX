@@ -129,7 +129,9 @@ def test_fine_grid_outer_coupling_stability():
     fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, L_domain=0.10, H_domain=0.05)
     got = evaluate_design(x=None, cfg=cfg, fc=fc)
     assert np.all(np.isfinite(np.asarray(got, dtype=float))), got
-    assert 2000.0 < abs(float(got[0])) < 50000.0, got
+    # T6 tightened (2026-07-07): measured |Q| = 8199 W on this exact config;
+    # the old 2000..50000 band (25x) passed a 2x duty regression. +/-33%.
+    assert 5500.0 < abs(float(got[0])) < 11000.0, got
 
 
 if __name__ == '__main__':

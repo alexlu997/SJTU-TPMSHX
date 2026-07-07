@@ -106,12 +106,15 @@ def test_pipeline2d_run_returns_compute_result():
     # Residuals contain Q breakdown.
     assert 'Q_A' in result.residuals
     assert 'Q_B' in result.residuals
-    # Energy imbalance — should be < 10% for a settled run.
+    # Energy imbalance — T6 tightened (2026-07-07): measured 1.06% on this
+    # config. The old `if eir == eir` NaN-guard SKIPPED the assertion on a
+    # NaN imbalance (a NaN run passed silently), and the 0.20 bound
+    # contradicted the "< 10%" comment.
+    import math
     eir = result.residuals['energy_imbalance_rel']
     assert eir is not None
-    if eir == eir:  # not NaN
-        assert eir < 0.20, (
-            f"Energy imbalance too large: {eir:.3f}")
+    assert math.isfinite(eir), f"energy_imbalance_rel is not finite: {eir!r}"
+    assert eir < 0.05, f"Energy imbalance too large: {eir:.3f}"
 
     # Diagnostics surface — Q_richardson is finite or NaN, no crash.
     assert 'Q_richardson_warn' in result.diagnostics
