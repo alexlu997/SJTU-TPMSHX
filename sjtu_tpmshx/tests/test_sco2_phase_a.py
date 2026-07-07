@@ -87,8 +87,10 @@ def test_gate_a_d76_gold_duty():
     15 %. Skips if the (large, un-versioned) experiment xlsx is absent."""
     from pathlib import Path
     import importlib.util
-    val = (Path(__file__).resolve().parent.parent / "validation"
-           / "validate_sco2_d76.py")
+    # Moved from sjtu_tpmshx/validation/ to projects/703-sCO2-D76/ in c3635cd
+    # (2026-06-30); the old path made this gate silently skip.
+    val = (Path(__file__).resolve().parent.parent.parent / "projects"
+           / "703-sCO2-D76" / "validate_sco2_d76.py")
     if not val.exists():
         pytest.skip("validate_sco2_d76.py not found")
     spec = importlib.util.spec_from_file_location("_val_sco2_d76", val)
