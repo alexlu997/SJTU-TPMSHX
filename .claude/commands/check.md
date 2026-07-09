@@ -10,10 +10,18 @@ All commands run from the repo root `/d/Postgraduate/Homogenize/SJTU-TPMSHX`. Us
 
 ## 1. Full pytest suite (the standing gate — always run)
 
-The golden gate alone does NOT cover every closure branch, so the full suite is mandatory:
+The golden gate alone does NOT cover every closure branch, so the full suite is mandatory.
+
+Parallel is the default (~4.5 min vs ~16 min serial). `PYTHONHASHSEED=0` must be set **in the shell**, not in pytest config — the 3D pipeline output is hash-seed sensitive and cannot be pinned from `pytest.ini`.
+
+```powershell
+$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
+```
+
+Serial equivalent (git-bash):
 
 ```bash
-cd /d/Postgraduate/Homogenize/SJTU-TPMSHX && python -u -m pytest sjtu_tpmshx/tests/ -q
+cd /d/Postgraduate/Homogenize/SJTU-TPMSHX && PYTHONHASHSEED=0 python -u -m pytest sjtu_tpmshx/tests/ -q
 ```
 
 - Expected: all pass (≈1037 passed, a few skipped). Report the exact **passed / failed / skipped** counts.
@@ -34,6 +42,15 @@ python -u sjtu_tpmshx/runs/_out/_golden_3d.py --check golden_3d.json   # → GOL
 
 - A FAIL = output fields changed. Classify it as **(a) a real regression** (fix it) or **(b) an intentional re-baseline** (state which fields moved and why). Never silently accept a FAIL.
 - If no baseline json exists, say so — a golden check with no pre-change baseline is meaningless; don't fabricate a pass.
+
+## 3. Validation cases (run when a closure / surrogate / solver path changed)
+
+```bash
+# Lumped ε-NTU dual-Nu (current paper baseline):
+python -u sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py
+# 3D real solver (SIMPLE, mass-flux inlet) — the surrogate-backend gate:
+python -u sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
+```
 
 ## Gotchas (baked in so they aren't re-derived each run)
 
