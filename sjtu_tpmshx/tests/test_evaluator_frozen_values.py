@@ -123,9 +123,16 @@ _FROZEN_2D_UNIFORM = (-8161.676768977079, 10661.113158337937,
                       3.446685791015626)
 _FROZEN_2D_NONUNIF = (-7730.600183907583, 8013.423850696896,
                       3.6729327392578126)
+# re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
+# eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the
+# guarded VANS ε-ratio factors. ONLY the NONUNIFORM 3D tuple moves — and by
+# a REAL margin (Q −3.18%, dP −1.82%, mass bit-identical): that is the
+# mean-ε approximation error the retired warning flagged, now corrected.
+# Uniform 3D is bit-identical on this case (use_eps=0 guard path). Old
+# nonuniform: (-10056.123672085494, 5968.430162466379, ...).
 _FROZEN_3D_UNIFORM = (-7819.313135202607, 18176.77875067786,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10056.123672085494, 5968.430162466379,
+_FROZEN_3D_NONUNIF = (-9736.62293019604, 5859.925022099803,
                       3.675970458984375)
 
 

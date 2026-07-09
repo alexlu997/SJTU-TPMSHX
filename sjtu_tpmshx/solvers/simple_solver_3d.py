@@ -792,6 +792,13 @@ class SIMPLESolver3D:
         # numerically identical to the pre-R4 kernels.
         _use_sou = 1 if getattr(self, 'use_sou_momentum', False) else 0
 
+        # M2b (2026-07-09, VANS ∇ε): momentum ε-ratio factors fire only for a
+        # genuinely non-uniform eps_field. Uniform (production per-side /
+        # golden) keeps use_eps=0 → the fastmath expression tree is untouched
+        # → bit-identical to pre-M2b. Computed once per solve().
+        _eps_f = self.eps_field
+        _use_eps = 1 if float(_eps_f.max()) != float(_eps_f.min()) else 0
+
         # Phase B — Anderson acceleration on SIMPLE outer Picard map.
         # Off-by-default for safety; opt-in via solver attribute set by caller.
         use_anderson = getattr(self, 'use_anderson', False)
@@ -849,9 +856,10 @@ class SIMPLESolver3D:
             _sweep_u(self.u, self.v, self.w, self.P, self.d_u,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
+                      self.eps_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner, _use_sou)
+                      self.alpha_u, n_inner, _use_sou, _use_eps)
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
                       Nx, Ny, Nz, dx, dy, dz,
@@ -859,13 +867,14 @@ class SIMPLESolver3D:
                       self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner, _use_sou)
+                      self.alpha_u, n_inner, _use_sou, _use_eps)
             _sweep_w(self.u, self.v, self.w, self.P, self.d_w,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
+                      self.eps_field,
                       self.K_arr, self.cF_arr,
                       self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner, _use_sou)
+                      self.alpha_u, n_inner, _use_sou, _use_eps)
 
             # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
             # when the hierarchy cache is COLD. On a warm restart (the 3D outer
@@ -1029,21 +1038,21 @@ def _warmup_simple_3d():
         in_frac = ones3((Nx, Nz))
         alpha_u = 0.5
         n = 1
-        # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu, K,cF, out,in,
-        #           alpha, n, use_sou)
+        # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu,eps, K,cF,
+        #           out,in, alpha, n, use_sou, use_eps)  [M2b adds eps+flag]
         for ku in (_sweep_u_jit_df_3d, _sweep_u_jit_df_3d_parallel):
             ku(u, v, w, P, d_u, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u,
-               n, 0)
+               rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               n, 0, 0)
         # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz; eps after rho.
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
                rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
-               alpha_u, n, 0)
+               alpha_u, n, 0, 0)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac, alpha_u,
-               n, 0)
+               rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               n, 0, 0)
         _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho)
     except Exception as e:
         import os

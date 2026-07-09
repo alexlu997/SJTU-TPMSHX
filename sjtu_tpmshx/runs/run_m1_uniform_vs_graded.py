@@ -238,16 +238,25 @@ def main() -> None:
                     help='disable the HV-plateau early stop (hv_tol=0)')
     ap.add_argument('--skip-uniform', action='store_true',
                     help='reuse existing uniform_all.csv (seed re-runs)')
+    ap.add_argument('--ctrl', type=int, default=4, choices=(4, 6),
+                    help='control grid per side (M3 gate-2: 6 → 36-D). '
+                         'Budget auto-scales: n_init = 2×D, n_iter 32.')
     a = ap.parse_args()
 
     global OUT_DIR
-    if a.seed != 42 or a.no_early_stop:
-        OUT_DIR = os.path.join('reports', 'm1_uniform_vs_graded',
-                               f"seed{a.seed}{'_full' if a.no_early_stop else ''}")
+    if a.seed != 42 or a.no_early_stop or a.ctrl != 4:
+        OUT_DIR = os.path.join(
+            'reports', 'm1_uniform_vs_graded',
+            f"{'ctrl%d_' % a.ctrl if a.ctrl != 4 else ''}seed{a.seed}"
+            f"{'_full' if a.no_early_stop else ''}")
     os.makedirs(OUT_DIR, exist_ok=True)
     cfg = dict(CFG_M1)
+    if a.ctrl != 4:
+        cfg['n_ctrl_x'] = a.ctrl
+        cfg['n_ctrl_y'] = a.ctrl
     t_start = time.time()
 
+    D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])
     if a.fast:
         L_vals = np.linspace(TRAIN_L[0], TRAIN_L[1], 3)
         t_vals = np.linspace(TRAIN_T[0], TRAIN_T[1], 2)
@@ -255,9 +264,9 @@ def main() -> None:
     else:
         L_vals = np.linspace(TRAIN_L[0], TRAIN_L[1], 9)
         t_vals = np.linspace(TRAIN_T[0], TRAIN_T[1], 5)
-        n_init, n_iter, q_batch = 32, 24, 2
-
-    D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])
+        # n_init = 2×D rule of thumb; 36-D (M3 gate-2) gets more BO iters too.
+        n_init = 2 * D
+        n_iter, q_batch = (32 if D > 16 else 24), 2
     print(f"[M1] cfg: {cfg['tpms_type']} D={D} "
           f"budget uniform={len(L_vals)*len(t_vals)} "
           f"graded={n_init}+{n_iter}×{q_batch}", flush=True)

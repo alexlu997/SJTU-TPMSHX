@@ -89,11 +89,19 @@ def _sou_axis(p_mm, p_m, p_c, p_p, p_pp,
 @njit(cache=True, fastmath=True, inline='always')
 def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
-                  rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
+                  rho_field, mu_eff_field, mu_field, eps_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  use_eps):
     """One Gauss-Seidel update of the u-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup; previously duplicated
-    verbatim). ``inline='always'`` so Numba fuses it into each loop."""
+    verbatim). ``inline='always'`` so Numba fuses it into each loop.
+
+    M2b (2026-07-09, VANS ∇ε): with ``use_eps == 1`` every flux face carries
+    the ratio r_f = ε_f/ε_CV on both F and D (ε-divided VANS momentum; see
+    the 2D kernels' docstring). Guarded like ``use_sou`` so the use_eps=0
+    (uniform ε) expression tree is UNTOUCHED — these kernels are fastmath
+    and an inline ×1.0 could be re-associated, breaking golden bit-identity.
+    The solver sets use_eps=1 only when eps_field is actually non-uniform."""
     # Volume + face areas
     dxi = 0.5 * (dx[i - 1] + dx[min(i, Nx - 1)])
     dyj = dy[j]
@@ -152,6 +160,28 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
     Fs = rho_loc * vs * dxi * dzk
     Ft = rho_loc * wn * dxi * dyj
     Fb = rho_loc * wb * dxi * dyj
+
+    # M2b: VANS ε-ratio factors (guarded — see docstring). u-node sits on
+    # the x-interface between cells il_r/ir_r: E/W flux faces are the cell
+    # centres, N/S/T/B faces the 4-cell corners; wall faces keep ratio 1.
+    if use_eps == 1:
+        eps_u = 0.5 * (eps_field[il_r, j, k] + eps_field[ir_r, j, k])
+        r_e = eps_field[ir_r, j, k] / eps_u
+        r_w = eps_field[il_r, j, k] / eps_u
+        r_n = (0.25 * (eps_field[il_r, j, k] + eps_field[ir_r, j, k]
+                       + eps_field[il_r, j + 1, k] + eps_field[ir_r, j + 1, k])
+               / eps_u if j < Ny - 1 else 1.0)
+        r_s = (0.25 * (eps_field[il_r, j, k] + eps_field[ir_r, j, k]
+                       + eps_field[il_r, j - 1, k] + eps_field[ir_r, j - 1, k])
+               / eps_u if j > 0 else 1.0)
+        r_t = (0.25 * (eps_field[il_r, j, k] + eps_field[ir_r, j, k]
+                       + eps_field[il_r, j, k + 1] + eps_field[ir_r, j, k + 1])
+               / eps_u if k < Nz - 1 else 1.0)
+        r_b = (0.25 * (eps_field[il_r, j, k] + eps_field[ir_r, j, k]
+                       + eps_field[il_r, j, k - 1] + eps_field[ir_r, j, k - 1])
+               / eps_u if k > 0 else 1.0)
+        De *= r_e; Dw *= r_w; Dn *= r_n; Ds *= r_s; Dt *= r_t; Db *= r_b
+        Fe *= r_e; Fw *= r_w; Fn *= r_n; Fs *= r_s; Ft *= r_t; Fb *= r_b
 
     aE = De + max(-Fe, 0.0)
     aW = Dw + max(Fw, 0.0)
@@ -214,10 +244,10 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
 def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                         Nx, Ny, Nz,
                         dx, dy, dz,
-                        rho_field, mu_eff_field, mu_field,
+                        rho_field, mu_eff_field, mu_field, eps_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps, use_sou):
+                        alpha_u, n_sweeps, use_sou, use_eps):
     """Solve the x-momentum equation on the u-staggered face.
 
     u : (Nx+1, Ny, Nz) — updated in place.
@@ -231,9 +261,9 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                 for k in range(Nz):
                     _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
-                                  rho_field, mu_eff_field, mu_field,
+                                  rho_field, mu_eff_field, mu_field, eps_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u, use_sou)
+                                  alpha_u, use_sou, use_eps)
 
     # No-slip BC at x-walls
     for j in range(Ny):
@@ -251,10 +281,10 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
 def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                  Nx, Ny, Nz,
                                  dx, dy, dz,
-                                 rho_field, mu_eff_field, mu_field,
+                                 rho_field, mu_eff_field, mu_field, eps_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps, use_sou):
+                                 alpha_u, n_sweeps, use_sou, use_eps):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(1, Nx):
@@ -264,9 +294,9 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                             continue
                         _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
-                                      rho_field, mu_eff_field, mu_field,
+                                      rho_field, mu_eff_field, mu_field, eps_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou)
+                                      inlet_frac, alpha_u, use_sou, use_eps)
     for j in range(Ny):
         for k in range(Nz):
             u[0, j, k] = 0.0
@@ -278,10 +308,13 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
 @njit(cache=True, fastmath=True, inline='always')
 def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
-                  rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
+                  rho_field, mu_eff_field, mu_field, eps_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  use_eps):
     """One Gauss-Seidel update of the v-face (i, j, k) — shared cell body
-    for the serial and parallel sweeps (B6 dedup)."""
+    for the serial and parallel sweeps (B6 dedup). M2b: guarded VANS ε-ratio
+    factors — see _u_cell_df_3d docstring; v-node on the y-interface, so N/S
+    flux faces are cell centres, E/W/T/B the 4-cell corners."""
     jc = min(j, Ny - 1)
     dxi = dx[i]
     dyj = 0.5 * (dy[j - 1] + dy[min(j, Ny - 1)])
@@ -331,6 +364,26 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
     Fs = rho_loc * vs * dxi * dzk
     Ft = rho_loc * wn * dxi * dyj
     Fb = rho_loc * wb * dxi * dyj
+
+    # M2b: VANS ε-ratio factors (guarded — see _u_cell_df_3d).
+    if use_eps == 1:
+        eps_v = 0.5 * (eps_field[i, jb, k] + eps_field[i, jt, k])
+        r_n = eps_field[i, jt, k] / eps_v
+        r_s = eps_field[i, jb, k] / eps_v
+        r_e = (0.25 * (eps_field[i, jb, k] + eps_field[i, jt, k]
+                       + eps_field[i + 1, jb, k] + eps_field[i + 1, jt, k])
+               / eps_v if i < Nx - 1 else 1.0)
+        r_w = (0.25 * (eps_field[i, jb, k] + eps_field[i, jt, k]
+                       + eps_field[i - 1, jb, k] + eps_field[i - 1, jt, k])
+               / eps_v if i > 0 else 1.0)
+        r_t = (0.25 * (eps_field[i, jb, k] + eps_field[i, jt, k]
+                       + eps_field[i, jb, k + 1] + eps_field[i, jt, k + 1])
+               / eps_v if k < Nz - 1 else 1.0)
+        r_b = (0.25 * (eps_field[i, jb, k] + eps_field[i, jt, k]
+                       + eps_field[i, jb, k - 1] + eps_field[i, jt, k - 1])
+               / eps_v if k > 0 else 1.0)
+        De *= r_e; Dw *= r_w; Dn *= r_n; Ds *= r_s; Dt *= r_t; Db *= r_b
+        Fe *= r_e; Fw *= r_w; Fn *= r_n; Fs *= r_s; Ft *= r_t; Fb *= r_b
 
     aE = De + max(-Fe, 0.0)
     aW = Dw + max(Fw, 0.0)
@@ -432,7 +485,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps, use_sou):
+                        alpha_u, n_sweeps, use_sou, use_eps):
     """Solve the y-momentum equation on the v-staggered face.
 
     Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
@@ -446,9 +499,9 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                 for k in range(Nz):
                     _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
-                                  rho_field, mu_eff_field, mu_field,
+                                  rho_field, mu_eff_field, mu_field, eps_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u, use_sou)
+                                  alpha_u, use_sou, use_eps)
 
     # Apply BCs
     _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
@@ -463,7 +516,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps, use_sou):
+                                 alpha_u, n_sweeps, use_sou, use_eps):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -473,9 +526,9 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                             continue
                         _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
-                                      rho_field, mu_eff_field, mu_field,
+                                      rho_field, mu_eff_field, mu_field, eps_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou)
+                                      inlet_frac, alpha_u, use_sou, use_eps)
     _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
 
 
@@ -484,10 +537,13 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
 @njit(cache=True, fastmath=True, inline='always')
 def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
-                  rho_field, mu_eff_field, mu_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou):
+                  rho_field, mu_eff_field, mu_field, eps_field,
+                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  use_eps):
     """One Gauss-Seidel update of the w-face (i, j, k) — shared cell body
-    for the serial and parallel sweeps (B6 dedup)."""
+    for the serial and parallel sweeps (B6 dedup). M2b: guarded VANS ε-ratio
+    factors — see _u_cell_df_3d docstring; w-node on the z-interface, so T/B
+    flux faces are cell centres, E/W/N/S the 4-cell corners."""
     kc = min(k, Nz - 1)
     dxi = dx[i]
     dyj = dy[j]
@@ -537,6 +593,26 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
     Fs = rho_loc * vs * dxi * dzk
     Ft = rho_loc * wn * dxi * dyj
     Fb = rho_loc * wb * dxi * dyj
+
+    # M2b: VANS ε-ratio factors (guarded — see _u_cell_df_3d).
+    if use_eps == 1:
+        eps_w = 0.5 * (eps_field[i, j, kb] + eps_field[i, j, kt])
+        r_t = eps_field[i, j, kt] / eps_w
+        r_b = eps_field[i, j, kb] / eps_w
+        r_e = (0.25 * (eps_field[i, j, kb] + eps_field[i, j, kt]
+                       + eps_field[i + 1, j, kb] + eps_field[i + 1, j, kt])
+               / eps_w if i < Nx - 1 else 1.0)
+        r_w = (0.25 * (eps_field[i, j, kb] + eps_field[i, j, kt]
+                       + eps_field[i - 1, j, kb] + eps_field[i - 1, j, kt])
+               / eps_w if i > 0 else 1.0)
+        r_n = (0.25 * (eps_field[i, j, kb] + eps_field[i, j, kt]
+                       + eps_field[i, j + 1, kb] + eps_field[i, j + 1, kt])
+               / eps_w if j < Ny - 1 else 1.0)
+        r_s = (0.25 * (eps_field[i, j, kb] + eps_field[i, j, kt]
+                       + eps_field[i, j - 1, kb] + eps_field[i, j - 1, kt])
+               / eps_w if j > 0 else 1.0)
+        De *= r_e; Dw_ *= r_w; Dn *= r_n; Ds *= r_s; Dt *= r_t; Db *= r_b
+        Fe *= r_e; Fw_ *= r_w; Fn *= r_n; Fs *= r_s; Ft *= r_t; Fb *= r_b
 
     aE = De + max(-Fe, 0.0)
     aW = Dw_ + max(Fw_, 0.0)
@@ -597,10 +673,10 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
 def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                         Nx, Ny, Nz,
                         dx, dy, dz,
-                        rho_field, mu_eff_field, mu_field,
+                        rho_field, mu_eff_field, mu_field, eps_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps, use_sou):
+                        alpha_u, n_sweeps, use_sou, use_eps):
     """Solve the z-momentum equation on the w-staggered face.
 
     Top/bottom z-walls (k=0, k=Nz) are no-slip by default (w=0).
@@ -612,9 +688,9 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                 for k in range(1, Nz):
                     _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
-                                  rho_field, mu_eff_field, mu_field,
+                                  rho_field, mu_eff_field, mu_field, eps_field,
                                   K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u, use_sou)
+                                  alpha_u, use_sou, use_eps)
 
     # No-slip at z-walls
     for i in range(Nx):
@@ -628,10 +704,10 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
 def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                                  Nx, Ny, Nz,
                                  dx, dy, dz,
-                                 rho_field, mu_eff_field, mu_field,
+                                 rho_field, mu_eff_field, mu_field, eps_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps, use_sou):
+                                 alpha_u, n_sweeps, use_sou, use_eps):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -641,9 +717,9 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                             continue
                         _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
-                                      rho_field, mu_eff_field, mu_field,
+                                      rho_field, mu_eff_field, mu_field, eps_field,
                                       K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou)
+                                      inlet_frac, alpha_u, use_sou, use_eps)
     for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0
