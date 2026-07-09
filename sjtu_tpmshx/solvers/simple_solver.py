@@ -761,13 +761,15 @@ class SIMPLESolver:
                                  self.inlet_frac, self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
-                                 self._K_arr, self._cF_arr, self.mu_field)
+                                 self._K_arr, self._cF_arr, self.mu_field,
+                                 self.eps_field)
                 _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
                                  self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
-                                 self._K_arr, self._cF_arr, self.mu_field)
+                                 self._K_arr, self._cF_arr, self.mu_field,
+                                 self.eps_field)
                 # ③ pressure equation from û/v̂ (same ρ·A·d stencil as p') —
                 #    P solved directly, replaced without α_p under-relaxation
                 _solve_pp_sparse_fast(self._P_hat, self._uhat, self._vhat,
@@ -785,6 +787,7 @@ class SIMPLESolver:
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
                                 self._K_arr, self._cF_arr, self.mu_field,
+                                self.eps_field,
                                 alpha_u, n_inner)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field,
@@ -792,6 +795,7 @@ class SIMPLESolver:
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
                                 self._K_arr, self._cF_arr, self.mu_field,
+                                self.eps_field,
                                 alpha_u, n_inner)
                 # ⑤ p' from u*/v*  ⑥ α_p=0.0 → P untouched, velocities only
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v,
@@ -802,17 +806,19 @@ class SIMPLESolver:
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field,
                              self.outlet_frac,
-                             Nx, Ny, 0.0, self.rho_field)
+                             Nx, Ny, 0.0, self.rho_field, self.eps_field)
             else:
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                                 self.inlet_frac, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 self._K_arr, self._cF_arr, self.mu_field,
+                                self.eps_field,
                                 alpha_u, n_inner)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 self._K_arr, self._cF_arr, self.mu_field,
+                                self.eps_field,
                                 alpha_u, n_inner)
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
                                       self.outlet_frac,
@@ -821,7 +827,7 @@ class SIMPLESolver:
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                             Nx, Ny, alpha_p, self.rho_field)
+                             Nx, Ny, alpha_p, self.rho_field, self.eps_field)
             self._update_density()  # compressible: update rho from P
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
