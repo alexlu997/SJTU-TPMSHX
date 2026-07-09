@@ -530,8 +530,10 @@ def build_page_zones(window):
     """Ex-Main_Menu._build_page_zones(self) -> QScrollArea.
 
     Note: post 2026-04-22 restructure this page hosts "Zone Layout" only
-    (config + table + Preview). NSGA-II trigger + status moved to
-    the Optimize-tab header built in builders_canvas.
+    (config + table + Preview) — it feeds the COMPUTE path's zone feature.
+    The optimizer trigger + status live in the Optimize-tab wizard built in
+    builders_canvas (M0 2026-07-09: this panel mounts there under its own
+    "分区定义 (Compute 路径)" card, separate from the optimizer 搜索空间).
     """
     # Phase 5 follow-up: styles via FieldFactory + ThemeManager DI.
     from .field_factory import default_factory

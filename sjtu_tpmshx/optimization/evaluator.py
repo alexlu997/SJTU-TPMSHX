@@ -24,9 +24,10 @@ Compared to the retired patch-zoning evaluator this module:
   * skips the SIMPLE cache (each design is unique → cache hit-rate ≈ 0);
   * skips wall-refinement (`wall_refine=False`) — refinement was a Brinkman BL
     visualisation aid that the optimization path always disabled anyway;
-  * skips the n_rho_loops > 1 outer compressibility iteration by default
-    (set ``cfg['n_rho_loops'] > 1`` to enable, matching the prior evaluator's
-    behavior; default 1 is the fast-mode preset).
+  * runs the outer SIMPLE↔energy variable-density iteration with
+    ``n_rho_loops = 3`` by default (the ConstDF-v1 / Shanghai-gate baseline;
+    set ``cfg['n_rho_loops'] = 1`` for the isothermal-ρ fast path, ~10 % off
+    on Q/dP).
 
 Public API::
 
@@ -345,6 +346,17 @@ def evaluate_design(x: np.ndarray,
         cfg_full = {**DEFAULT_CONFIG, **cc_dict, **(cfg or {})}
     else:
         cfg_full = {**DEFAULT_CONFIG, **(cfg or {})}
+
+    # M0 (2026-07-09): this evaluator runs BOTH sides as air. The UI threads
+    # the fluid combos through cfg for a future water-side dispatch; until
+    # that exists, a non-air selection must not be silently ignored.
+    for _side_key in ('fluid_type_A', 'fluid_type_B'):
+        _ft = cfg_full.get(_side_key)
+        if _ft is not None and str(_ft).lower() != 'air':
+            warnings.warn(
+                f"2D optimizer evaluator has no {_ft!r} dispatch yet — "
+                f"{_side_key} runs as AIR. Rankings for water-side cases "
+                f"are not trustworthy.", RuntimeWarning, stacklevel=2)
 
     # 1. Build / accept the field config
     if fc is None:

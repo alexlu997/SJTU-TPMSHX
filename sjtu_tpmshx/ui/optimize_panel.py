@@ -64,7 +64,8 @@ def _make_worker_class():
         hv_signal = Signal(int, float, list)        # iter_idx, hv, hv_hist
         error_signal = Signal(str)
 
-        def __init__(self, cfg, n_init, n_iter, q_batch, seed, save_dir):
+        def __init__(self, cfg, n_init, n_iter, q_batch, seed, save_dir,
+                     evaluator_fn=None):
             super().__init__()
             self.cfg = cfg
             self.n_init = n_init
@@ -72,6 +73,10 @@ def _make_worker_class():
             self.q_batch = q_batch
             self.seed = seed
             self.save_dir = save_dir
+            # M0 (2026-07-09): dimension-follows-Compute. None → 2D
+            # evaluate_design (run_qnehvi's default); the launcher passes
+            # evaluate_design_3d when the Compute page is in 3D mode.
+            self.evaluator_fn = evaluator_fn
             self._last_hv_iter = 0
 
         def run(self):
@@ -110,6 +115,7 @@ def _make_worker_class():
                         save_dir=self.save_dir,
                         progress_cb=_cb,
                         n_jobs=n_jobs_inner,
+                        evaluator_fn=self.evaluator_fn,
                     )
                 self.finished_with_result.emit(res)
             except Exception as e:
@@ -121,13 +127,34 @@ def _make_worker_class():
 # ─── Window-side helpers ────────────────────────────────────────────
 
 
-def _gather_cfg(window) -> dict:
-    """Read the cfg fields off the window into a plain dict. Falls back to
-    evaluator.DEFAULT_CONFIG keys when a widget is missing.
+def _gather_cfg(window, base: dict | None = None) -> dict:
+    """Read the cfg fields off the window into a plain dict.
+
+    ``base`` selects the dimension-specific default set (M0, 2026-07-09):
+    None → 2D ``evaluator.DEFAULT_CONFIG``; the 3D launcher passes
+    ``evaluator_3d.DEFAULT_CONFIG_3D`` so the 3D fast-mode budget is not
+    stomped by 2D defaults. Widget reads always take precedence.
     """
     from optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
 
-    cfg = dict(EVAL_DEFAULT)
+    cfg = dict(base) if base is not None else dict(EVAL_DEFAULT)
+
+    # R3 wiring (M0, 2026-07-09): a typed OptimizerConfig on the window
+    # (set by session-restore / script drivers — the UI itself keeps the
+    # dimension defaults) overrides the cheap-eval budget keys. Applied
+    # BEFORE the widget reads so explicit UI fields still win.
+    _oc = getattr(window, '_optimizer_cfg', None)
+    if _oc is not None:
+        try:
+            cfg['max_iter_simple'] = int(_oc.max_iter_simple)
+            cfg['tol_simple']      = float(_oc.tol_simple)
+            cfg['tol_energy']      = float(_oc.outer_tol_K)
+            # 3D-only keys — harmless extras on the 2D path.
+            cfg['max_outer_3d']    = int(_oc.max_outer_ltne)
+            cfg['outer_tol_K']     = float(_oc.outer_tol_K)
+            cfg['alpha_outer']     = float(_oc.alpha_T)
+        except (AttributeError, TypeError, ValueError) as _e:
+            _log.warning(f"[optimize] _optimizer_cfg ignored (bad shape): {_e}")
     # 2026-05-20 UI sweep (Tier 15, user re-audit): track which fields
     # failed to parse so we can surface them in the status bar rather
     # than silently using DEFAULT_CONFIG. Research-software anti-pattern:
@@ -188,6 +215,29 @@ def _gather_cfg(window) -> dict:
             cfg['fluid_type_B'] = window.combo_fluidB.currentText().lower()
         except Exception:
             pass
+
+    # Search space (M0, 2026-07-09): the 搜索空间 card's widgets. L/t bounds
+    # are hard-clamped to the DF/Nu training convex hull — rankings outside
+    # the hull are extrapolation and not trustworthy. Degenerate ranges
+    # (lo ≥ hi after clamping) fall back to the full hull.
+    _sp = getattr(window, '_opt_space_params', None)
+    if _sp:
+        try:
+            from df_surrogate._domain import TRAIN_L, TRAIN_T
+
+            def _clamped(lo_w, hi_w, hull):
+                lo = max(hull[0], min(float(lo_w.value()), float(hi_w.value())))
+                hi = min(hull[1], max(float(lo_w.value()), float(hi_w.value())))
+                return (lo, hi) if lo < hi else tuple(hull)
+
+            cfg['L_bounds'] = _clamped(_sp['L_min'], _sp['L_max'], TRAIN_L)
+            cfg['t_bounds'] = _clamped(_sp['t_min'], _sp['t_max'], TRAIN_T)
+            _grid = _sp['ctrl_grid'].currentData()
+            if _grid:
+                cfg['n_ctrl_x'], cfg['n_ctrl_y'] = int(_grid[0]), int(_grid[1])
+            cfg['symmetric_y'] = bool(_sp['symmetric_y'].isChecked())
+        except Exception as _e:
+            _log.warning(f"[optimize] search-space widgets ignored: {_e}")
 
     # Surrogate extrapolation toggle — the Compute path's UI checkbox. When
     # ticked the surrogate domain guard downgrades out-of-window inputs from
@@ -482,56 +532,23 @@ def _qnehvi_param_defaults(window, cfg: dict) -> dict:
     }
 
 
-# ─── P2: hide legacy patch-zoning widgets on Optimize tab ───────────
+# ─── Dimension detection (M0, 2026-07-09) ───────────────────────────
 
 
-def _hide_legacy_zone_widgets(window) -> None:
-    """The 16-D continuous-field optimizer doesn't use zones. The chk_zones
-    checkbox + zone_table + 'Preview Layout' button are still in the panel
-    from the patch-zoning era — they confuse users who expect them to feed
-    the optimizer. Hide them on first visit; idempotent.
-    """
-    if getattr(window, '_legacy_zone_hidden', False):
-        return
-    for attr in ('chk_zones', 'zone_table', 'btn_preview_z'):
-        w = getattr(window, attr, None)
-        if w is None:
-            continue
-        try:
-            w.setVisible(False)
-        except Exception:
-            pass
-    window._legacy_zone_hidden = True
+def _is_3d_mode(window) -> bool:
+    """True when the Compute page's dimensionality combo is on 3D. The
+    optimizer follows the Compute dimension: 2D compute → 2D evaluator,
+    3D compute → evaluate_design_3d (same qNEHVI machinery)."""
+    combo = getattr(window, 'combo_dim', None)
+    if combo is None:
+        return False
+    try:
+        return combo.currentIndex() == 1
+    except Exception:
+        return False
 
 
-# ─── P3: cosmetic — refresh button label + tooltips at first run ────
-
-
-def _refresh_button_text(window) -> None:
-    """Replace 'Optimize Zones (NSGA-II)' with the actual algorithm name +
-    tooltip. ui_builders constructs the widget before the rewrite landed
-    so the legacy text persists into runtime; we patch it here."""
-    btn = getattr(window, '_opt_btn', None)
-    if btn is not None:
-        try:
-            btn.setText("▶  Optimize (qNEHVI BO)")
-            btn.setToolTip(
-                "Launch qNEHVI Bayesian multi-objective Pareto search.\n"
-                "16-D continuous-field decision (4×4 control points + Y-mirror)\n"
-                "with compressible ρ(T) coupling. Runs ~30-60 min wall.")
-        except Exception:
-            pass
-    cancel = getattr(window, '_opt_cancel_btn', None)
-    if cancel is not None:
-        try:
-            cancel.setToolTip(
-                "Request graceful cancel of the running qNEHVI search\n"
-                "(stops at the next BO iteration boundary)")
-        except Exception:
-            pass
-
-
-# ─── P4: live preview of L(x,y), t(x,y) field heatmap ───────────────
+# ─── Live preview of L(x,y), t(x,y) field heatmap ───────────────────
 
 
 def show_field_preview(window, x_decision=None) -> None:
@@ -552,8 +569,6 @@ def show_field_preview(window, x_decision=None) -> None:
 
     from solvers.continuous_field import (
         from_decision_vector, encode_decision_vector, uniform_field,
-        DEFAULT_L_BOUNDS, DEFAULT_T_BOUNDS,
-        DEFAULT_N_CTRL_X, DEFAULT_N_CTRL_Y, DEFAULT_SYMMETRIC_Y,
     )
     cfg = _gather_cfg(window)
     L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
@@ -561,16 +576,20 @@ def show_field_preview(window, x_decision=None) -> None:
     k_s  = float(cfg.get('k_s', 17.0))
 
     if x_decision is None:
-        L_avg = 0.5 * sum(DEFAULT_L_BOUNDS)
-        t_avg = 0.5 * sum(DEFAULT_T_BOUNDS)
+        # cfg carries the search-space card's bounds (hull-clamped); the
+        # mid-bounds uniform field previews what the optimizer will explore.
+        L_avg = 0.5 * sum(cfg['L_bounds'])
+        t_avg = 0.5 * sum(cfg['t_bounds'])
         fc = uniform_field(L_avg, t_avg, tpms, k_s, L_dom, H_dom)
     else:
+        # M0 (2026-07-09): decode with the cfg's control grid, not the
+        # module defaults — a 6×6 run's decision vector previews correctly.
         fc = from_decision_vector(
             np.asarray(x_decision, dtype=np.float64),
             tpms_type=tpms, k_s=k_s,
             L_domain=L_dom, H_domain=H_dom,
-            n_ctrl_x=DEFAULT_N_CTRL_X, n_ctrl_y=DEFAULT_N_CTRL_Y,
-            symmetric_y=DEFAULT_SYMMETRIC_Y,
+            n_ctrl_x=int(cfg['n_ctrl_x']), n_ctrl_y=int(cfg['n_ctrl_y']),
+            symmetric_y=bool(cfg['symmetric_y']),
         )
 
     Nx_p, Ny_p = 80, 40
@@ -611,44 +630,16 @@ def show_field_preview(window, x_decision=None) -> None:
         f"t ∈ [{t_field.min():.3f}, {t_field.max():.3f}] mm")
 
 
-def _rewire_preview_button(window) -> None:
-    """Repurpose 'Preview Layout' (zone era) → 'Preview Field' (continuous
-    era). Replaces all signal handlers on btn_preview_z and updates the
-    label so it points at show_field_preview instead of the dead zone
-    layout drawer.
-    """
-    if getattr(window, '_field_preview_wired', False):
-        return
-    btn = getattr(window, 'btn_preview_z', None)
-    if btn is None:
-        return
-    try:
-        btn.clicked.disconnect()
-    except Exception:
-        pass
-    try:
-        btn.setText("&Preview Field  ↗")
-        btn.setToolTip(
-            "Render the current L(x, y) and t(x, y) field heatmaps "
-            "(or a uniform mid-bounds field if no design selected)")
-        btn.setVisible(True)            # un-hide after the legacy hide pass
-        btn.clicked.connect(lambda *_: show_field_preview(window))
-        window._field_preview_wired = True
-    except Exception as e:
-        _log.warning(f"[optimize] preview rewire failed: {e}")
-
-
 # ─── Public API (called by main.py) ─────────────────────────────────
 
 
 def run_optimize(window) -> None:
-    """Kick off a qNEHVI optimization in a background thread."""
-    # First-call cleanup of the patch-zoning era UI artifacts and label
-    # refresh. Idempotent so repeated clicks don't re-invoke them.
-    _hide_legacy_zone_widgets(window)
-    _refresh_button_text(window)
-    _rewire_preview_button(window)
+    """Kick off a qNEHVI optimization in a background thread.
 
+    Dimension follows the Compute page (M0, 2026-07-09): combo_dim on 3D
+    injects ``evaluate_design_3d`` + the 3D fast-mode default budget;
+    otherwise the 2D ``evaluate_design`` default path runs unchanged.
+    """
     # 2026-05-20 UI sweep: atomic reentrance guard. The modal qNEHVI
     # parameter dialog at `_show_qnehvi_param_dialog` runs a nested Qt
     # event loop, during which the Launch button stays enabled (its
@@ -696,8 +687,17 @@ def run_optimize(window) -> None:
             except Exception:
                 pass
 
+    is_3d = _is_3d_mode(window)
     try:
-        cfg = _gather_cfg(window)
+        if is_3d:
+            from optimization.evaluator_3d import (
+                DEFAULT_CONFIG_3D, evaluate_design_3d,
+            )
+            evaluator_fn = evaluate_design_3d
+            cfg = _gather_cfg(window, base=DEFAULT_CONFIG_3D)
+        else:
+            evaluator_fn = None          # run_qnehvi defaults to 2D
+            cfg = _gather_cfg(window)
     except Exception as _e:
         _abort_launch(f"launch aborted — _gather_cfg failed: {_e}")
         return
@@ -728,12 +728,14 @@ def run_optimize(window) -> None:
         _abort_launch(f"launch aborted — bad params payload: {_e}")
         return
 
-    save_dir = os.path.join('opt_runs',
-                             f"qnehvi_{time.strftime('%Y%m%d_%H%M%S')}")
+    save_dir = os.path.join(
+        'opt_runs',
+        f"qnehvi{'3d' if is_3d else ''}_{time.strftime('%Y%m%d_%H%M%S')}")
 
     try:
         Worker = _make_worker_class()
-        worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir)
+        worker = Worker(cfg, n_init, n_iter, q_batch, seed, save_dir,
+                        evaluator_fn=evaluator_fn)
     except Exception as _e:
         _abort_launch(f"launch aborted — worker construct failed: {_e}")
         return
@@ -876,7 +878,9 @@ def run_optimize(window) -> None:
         _set_stage_pill(window, 'result',  'idle')
         _set_summary_banner(window, "", show=False)
         _set_status(window,
-                    f'qNEHVI running … {n_init} Sobol + {n_iter}×{q_batch} BO')
+                    f"qNEHVI ({'3D' if is_3d else '2D'}) running … "
+                    f"{n_init} Sobol + {n_iter}×{q_batch} BO"
+                    + ("  [3D 单次评估约 3–5 分钟]" if is_3d else ""))
         worker.start()
     except Exception as _e:
         # Signal wiring / start failure — restore launch latch + button so
@@ -894,16 +898,8 @@ def run_optimize(window) -> None:
     # button for the duration of the run, so this does not re-open the
     # double-click window.
     window._opt_launching = False
-    _log.info(f"[optimize] worker started — {n_init + n_iter * q_batch} evals planned, "
-              f"save_dir={save_dir}")
-    # Update the button label to match the actual algorithm in case the
-    # legacy "(NSGA-II)" wording is still on screen.
-    btn = getattr(window, '_opt_btn', None)
-    if btn is not None:
-        try:
-            btn.setText("▶  Optimize (qNEHVI BO)")
-        except Exception:
-            pass
+    _log.info(f"[optimize] worker started ({'3D' if is_3d else '2D'}) — "
+              f"{n_init + n_iter * q_batch} evals planned, save_dir={save_dir}")
 
 
 def cancel_optimize(window) -> None:

@@ -309,8 +309,8 @@ def build_actions(w) -> list[Action]:
             shortcut="Ctrl+D",
             keywords=("dashboard", "overview", "summary", "home"))
     if hasattr(w, '_run_optimize'):
-        add("Optimize zones (NSGA-II)", "Compute", w._run_optimize,
-            keywords=("pareto", "nsga", "optimise", "search"))
+        add("Optimize (qNEHVI BO)", "Compute", w._run_optimize,
+            keywords=("pareto", "qnehvi", "bayesian", "optimise", "search"))
     def _open_sens():
         from ui.sensitivity import open_sensitivity
         open_sensitivity(w)
@@ -362,7 +362,7 @@ def build_actions(w) -> list[Action]:
         ('pareto', 'pareto', '显示 优化 页签'),
     ]:
         _btn = _tab_btn_map.get(tab)
-        # `pareto` is always-on (entry point for NSGA-II), `layout`
+        # `pareto` is always-on (entry point for the qNEHVI optimizer), `layout`
         # always-on (no results required). Skip the rest if disabled.
         if tab not in ('layout', 'pareto') and _btn is not None \
                 and not _btn.isEnabled():
