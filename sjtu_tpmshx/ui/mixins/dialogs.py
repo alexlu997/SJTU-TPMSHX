@@ -88,7 +88,7 @@ class DialogsMixin:
         ("Overview dashboard",     "Ctrl+D"),
         ("Coordinate inspector",   "Ctrl+I"),
         ("Filter parameters",      "Ctrl+F"),
-        ("Launch NSGA-II",         "Ctrl+Enter"),
+        ("Launch qNEHVI optimize", "Ctrl+Enter"),
         ("Cycle tabs",             "Ctrl+↑ / Ctrl+↓"),
         ("Quick fluid (A / B)",    "Alt+1/2/3  ·  Alt+Shift+1/2/3"),
         ("Cycle density",          "[  /  ]"),
@@ -107,7 +107,7 @@ class DialogsMixin:
         ("Reset button",           "Alt+R"),
         ("Export results",         "Alt+E"),
         ("Preview layout",         "Alt+P"),
-        ("Optimize (NSGA-II)",     "Alt+O"),
+        ("Optimize (qNEHVI)",      "Alt+O"),
     )
 
     def _show_shortcuts(self):

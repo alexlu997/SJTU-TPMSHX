@@ -88,7 +88,7 @@ def build_canvas_area(window):
               window.btn_tab_3d):
         b.setStyleSheet(window._PTAB_DISABLED)
         b.setEnabled(False)
-    # Optimize tab is the entry point for NSGA-II — always enabled so the
+    # Optimize tab is the entry point for the qNEHVI optimizer — always enabled so the
     # user can click through to the Launch button without first running a
     # single-point compute. The Pareto plot stays empty until a search
     # completes.
@@ -635,7 +635,7 @@ def build_canvas_area(window):
                 QWidget as _QWop, QHBoxLayout as _HBop,
                 QVBoxLayout as _VBop, QProgressBar as _PBop,
                 QFrame as _QFop, QStackedWidget as _QSWop,
-                QSpinBox as _QSBop)
+                QSpinBox as _QSBop, QDoubleSpinBox as _QDSBop)
             from .sparkline import Sparkline as _SLop
             _surface_el = _t.get('surface_elevated', _t['card_bg'])
             _surface_ra = _t.get('surface_raised', _t['card_bg'])
@@ -776,21 +776,140 @@ def build_canvas_area(window):
                 ps = window._opt_inline_params
                 total = (ps['n_init'].value()
                          + ps['n_iter'].value() * ps['q_batch'].value())
-                sec = total * (3 + 3 * ps['n_rho_loops'].value())
-                _eval_preview.setText(
-                    f"≈ {total} 次求解 · 约 {sec // 60} 分 {sec % 60} 秒")
+                # M0 (2026-07-09): dimension-aware wall estimate. 3D fast-mode
+                # evals run ~3–5 min each vs seconds for 2D.
+                _cd = getattr(window, 'combo_dim', None)
+                _is3 = False
+                try:
+                    _is3 = _cd is not None and _cd.currentIndex() == 1
+                except Exception:
+                    pass
+                if _is3:
+                    sec = total * 240
+                    _eval_preview.setText(
+                        f"≈ {total} 次 3D 求解 · 约 {sec // 3600} 时 "
+                        f"{(sec % 3600) // 60} 分（3D 评估单次 ~3–5 分钟）")
+                else:
+                    sec = total * (3 + 3 * ps['n_rho_loops'].value())
+                    _eval_preview.setText(
+                        f"≈ {total} 次求解 · 约 {sec // 60} 分 {sec % 60} 秒")
             for _sp in window._opt_inline_params.values():
                 _sp.valueChanged.connect(_refresh_eval_preview)
+            _cd0 = getattr(window, 'combo_dim', None)
+            if _cd0 is not None:
+                try:
+                    _cd0.currentIndexChanged.connect(_refresh_eval_preview)
+                except Exception:
+                    pass
             _refresh_eval_preview()
             par_lay.addWidget(_eval_preview)
             par_lay.addStretch(1)
             p1row.addWidget(par_card, 0)
 
-            # 搜索空间 — hosts the zone panel (moved from the old splitter).
-            zone_card, zone_lay = _opt_card("搜索空间")
+            # 搜索空间 — the optimizer's REAL search-space inputs (M0,
+            # 2026-07-09). Previously this card hosted the zone panel, which
+            # feeds the Compute path's zone feature and NOT the continuous-
+            # field optimizer — a decorative interface. Now: L/t bounds
+            # (spinbox ranges = the DF/Nu training hull, so out-of-hull
+            # values are unreachable; _gather_cfg clamps again defensively),
+            # control-point grid, Y-mirror toggle, field preview.
+            space_card, space_lay = _opt_card("搜索空间 (连续场)", 250)
+            from df_surrogate._domain import (
+                TRAIN_L as _hull_L, TRAIN_T as _hull_T,
+            )
+            _dspin_qss = (
+                f"QDoubleSpinBox{{background:{_t['inp_bg']};"
+                f" color:{_t['inp_fg']}; border:1px solid {_t['inp_border']};"
+                f" border-radius:6px; padding:3px 8px;"
+                f" font-family:{_mono}; font-size:9pt;}}"
+                f"QDoubleSpinBox:focus{{border-color:{_t['inp_focus']};}}")
+            window._opt_space_params = {}
+
+            def _space_row(label, tip, widgets):
+                srow = _HBop(); srow.setSpacing(8)
+                sl = QLabel(label)
+                sl.setToolTip(tip)
+                sl.setStyleSheet(f"color:{_sub_fg}; font-size:9pt;"
+                                 " background:transparent; border:none;")
+                srow.addWidget(sl); srow.addStretch(1)
+                for wdg in widgets:
+                    srow.addWidget(wdg)
+                space_lay.addLayout(srow)
+
+            def _mk_dspin(lo, hi, val, step, dec):
+                ds = _QDSBop()
+                ds.setRange(lo, hi); ds.setValue(val)
+                ds.setSingleStep(step); ds.setDecimals(dec)
+                ds.setStyleSheet(_dspin_qss)
+                ds.setAlignment(Qt.AlignmentFlag.AlignRight)
+                ds.setFixedWidth(66)
+                return ds
+
+            _sp_Lmin = _mk_dspin(_hull_L[0], _hull_L[1], _hull_L[0], 0.5, 2)
+            _sp_Lmax = _mk_dspin(_hull_L[0], _hull_L[1], _hull_L[1], 0.5, 2)
+            _space_row("胞元 L 范围 [mm]",
+                       f"决策变量 L 的上下界；代理训练凸包 {_hull_L} mm，"
+                       "超出即外推、排名不可信（自动夹持）",
+                       [_sp_Lmin, _sp_Lmax])
+            window._opt_space_params['L_min'] = _sp_Lmin
+            window._opt_space_params['L_max'] = _sp_Lmax
+
+            _sp_tmin = _mk_dspin(_hull_T[0], _hull_T[1], _hull_T[0], 0.05, 2)
+            _sp_tmax = _mk_dspin(_hull_T[0], _hull_T[1], _hull_T[1], 0.05, 2)
+            _space_row("壁厚 t 范围 [mm]",
+                       f"决策变量 t 的上下界；代理训练凸包 {_hull_T} mm（自动夹持）",
+                       [_sp_tmin, _sp_tmax])
+            window._opt_space_params['t_min'] = _sp_tmin
+            window._opt_space_params['t_max'] = _sp_tmax
+
+            _cb_grid = QComboBox()
+            _cb_grid.addItem("4 × 4（16 维）", (4, 4))
+            _cb_grid.addItem("6 × 6（36 维）", (6, 6))
+            _cb_grid.setToolTip(
+                "B-spline 控制点网格。6×6 提高空间自由度但 GP 建模更难，"
+                "建议同时加大 n_init（约 2×维数）")
+            _cb_grid.setStyleSheet(
+                f"QComboBox{{background:{_t['inp_bg']}; color:{_t['inp_fg']};"
+                f" border:1px solid {_t['inp_border']}; border-radius:6px;"
+                f" padding:3px 8px; font-family:{_mono}; font-size:9pt;}}")
+            _space_row("控制点网格", "决策向量维数 = 控制点数 × 2（L、t 两场）",
+                       [_cb_grid])
+            window._opt_space_params['ctrl_grid'] = _cb_grid
+
+            _chk_sym = QCheckBox("Y 镜像对称")
+            _chk_sym.setChecked(True)
+            _chk_sym.setToolTip(
+                "沿 y 中线镜像控制点（对称工况减半维数）；"
+                "非对称工况（两侧流体/边界不同）可关闭")
+            _chk_sym.setStyleSheet(
+                f"QCheckBox{{color:{_sub_fg}; font-size:9pt;"
+                f" background:transparent; border:none;}}")
+            space_lay.addWidget(_chk_sym)
+            window._opt_space_params['symmetric_y'] = _chk_sym
+
+            btn_field_prev = QPushButton("预览连续场  ↗")
+            btn_field_prev.setFixedHeight(26)
+            btn_field_prev.setStyleSheet(t.style('BTN_SECONDARY'))
+            btn_field_prev.setToolTip(
+                "渲染当前 L(x,y)、t(x,y) 场热图"
+                "（未选 Pareto 解时显示界中值均匀场）")
+
+            def _preview_field(*_):
+                from ui.optimize_panel import show_field_preview
+                show_field_preview(window)
+            btn_field_prev.clicked.connect(_preview_field)
+            space_lay.addWidget(btn_field_prev)
+            space_lay.addStretch(1)
+            p1row.addWidget(space_card, 0)
+
+            # 分区定义 — the zone panel serves the COMPUTE path's zone
+            # feature (zone_config.py is retained for exactly that); it is
+            # not an optimizer input. Own clearly-labelled card, no more
+            # runtime hide-and-patch.
             if getattr(window, '_zone_panel', None) is not None:
+                zone_card, zone_lay = _opt_card("分区定义 (Compute 路径)")
                 zone_lay.addWidget(window._zone_panel, 1)
-            p1row.addWidget(zone_card, 1)
+                p1row.addWidget(zone_card, 1)
             p1v.addLayout(p1row, 1)
             _stack.addWidget(p1)
 

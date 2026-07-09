@@ -226,3 +226,130 @@ def test_worker_emits_error_signal_on_exception():
     assert len(errors) == 1
     assert "RuntimeError" in errors[0]
     assert "synthetic BO crash" in errors[0]
+
+
+# ─── M0 (2026-07-09): search space, optimizer-budget hook, 3D routing ─
+
+
+def _add_space_widgets(w, L_min=4.0, L_max=8.0, t_min=0.3, t_max=0.5,
+                       grid=(4, 4), sym=True):
+    """Attach the 搜索空间 card's widget dict as _gather_cfg reads it."""
+    from PySide6.QtWidgets import QDoubleSpinBox, QCheckBox
+
+    def _ds(lo, hi, val):
+        d = QDoubleSpinBox()
+        d.setRange(lo, hi); d.setDecimals(2); d.setValue(val)
+        return d
+
+    cb = QComboBox()
+    cb.addItem("4 × 4（16 维）", (4, 4))
+    cb.addItem("6 × 6（36 维）", (6, 6))
+    cb.setCurrentIndex(0 if grid == (4, 4) else 1)
+    chk = QCheckBox(); chk.setChecked(sym)
+    w._opt_space_params = {
+        'L_min': _ds(0.0, 100.0, L_min), 'L_max': _ds(0.0, 100.0, L_max),
+        't_min': _ds(0.0, 100.0, t_min), 't_max': _ds(0.0, 100.0, t_max),
+        'ctrl_grid': cb, 'symmetric_y': chk,
+    }
+    return w
+
+
+def test_gather_cfg_reads_search_space_widgets():
+    w = _add_space_widgets(_make_window(), L_min=5.0, L_max=7.0,
+                           t_min=0.35, t_max=0.45, grid=(6, 6), sym=False)
+    cfg = _gather_cfg(w)
+    assert cfg['L_bounds'] == pytest.approx((5.0, 7.0))
+    assert cfg['t_bounds'] == pytest.approx((0.35, 0.45))
+    assert (cfg['n_ctrl_x'], cfg['n_ctrl_y']) == (6, 6)
+    assert cfg['symmetric_y'] is False
+
+
+def test_gather_cfg_clamps_bounds_to_training_hull():
+    """User-entered bounds outside the DF/Nu hull must be clamped — out-of-
+    hull rankings are extrapolation."""
+    from df_surrogate._domain import TRAIN_L, TRAIN_T
+    w = _add_space_widgets(_make_window(), L_min=1.0, L_max=50.0,
+                           t_min=0.01, t_max=5.0)
+    cfg = _gather_cfg(w)
+    assert cfg['L_bounds'] == pytest.approx(tuple(TRAIN_L))
+    assert cfg['t_bounds'] == pytest.approx(tuple(TRAIN_T))
+
+
+def test_gather_cfg_degenerate_range_falls_back_to_hull():
+    from df_surrogate._domain import TRAIN_L
+    w = _add_space_widgets(_make_window(), L_min=6.0, L_max=6.0)
+    cfg = _gather_cfg(w)
+    assert cfg['L_bounds'] == pytest.approx(tuple(TRAIN_L))
+
+
+def test_gather_cfg_optimizer_config_hook():
+    """R3 wiring: a typed OptimizerConfig on window._optimizer_cfg must reach
+    the evaluator dict; absent → dimension defaults unchanged."""
+    from domain.compute_config import OptimizerConfig
+    from optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
+
+    w = _make_window()
+    cfg_plain = _gather_cfg(w)
+    assert cfg_plain['max_iter_simple'] == EVAL_DEFAULT['max_iter_simple']
+    assert cfg_plain['tol_simple'] == EVAL_DEFAULT['tol_simple']
+
+    w._optimizer_cfg = OptimizerConfig(max_iter_simple=1234, tol_simple=5e-3,
+                                       outer_tol_K=0.25, max_outer_ltne=6,
+                                       alpha_T=0.5)
+    cfg = _gather_cfg(w)
+    assert cfg['max_iter_simple'] == 1234
+    assert cfg['tol_simple'] == pytest.approx(5e-3)
+    assert cfg['tol_energy'] == pytest.approx(0.25)
+    assert cfg['max_outer_3d'] == 6
+    assert cfg['alpha_outer'] == pytest.approx(0.5)
+
+
+def test_gather_cfg_3d_base_keeps_fast_mode_budget():
+    """3D launch passes DEFAULT_CONFIG_3D as base — the 3D fast-mode budget
+    (max_iter_simple 300 / tol 1e-2) must survive, not be stomped by the 2D
+    defaults (5000 / 1e-3)."""
+    from optimization.evaluator_3d import DEFAULT_CONFIG_3D
+    w = _make_window()
+    cfg = _gather_cfg(w, base=DEFAULT_CONFIG_3D)
+    assert cfg['max_iter_simple'] == DEFAULT_CONFIG_3D['max_iter_simple']
+    assert cfg['tol_simple'] == pytest.approx(DEFAULT_CONFIG_3D['tol_simple'])
+    assert 'Nx_3d' in cfg and 'Lz' in cfg
+    # widget reads still win: geometry came from the line-edits
+    assert cfg['L_domain'] == pytest.approx(0.182)
+
+
+def test_is_3d_mode_follows_combo_dim():
+    from ui.optimize_panel import _is_3d_mode
+    w = _make_window()
+    assert _is_3d_mode(w) is False            # no combo at all
+    w.combo_dim = _combo(['2D', '3D'], default_idx=0)
+    assert _is_3d_mode(w) is False
+    w.combo_dim.setCurrentIndex(1)
+    assert _is_3d_mode(w) is True
+
+
+def test_worker_passes_evaluator_fn_to_run_qnehvi():
+    """3D routing: the worker must forward evaluator_fn so run_qnehvi drives
+    evaluate_design_3d instead of the 2D default."""
+    w = _make_window()
+    cfg = _gather_cfg(w)
+    Worker = _make_worker_class()
+    _sentinel = object()
+    worker = Worker(cfg=cfg, n_init=2, n_iter=0, q_batch=2,
+                    seed=0, save_dir='opt_runs/_test_evalfn_smoke',
+                    evaluator_fn=_sentinel)
+
+    captured: dict = {}
+
+    def _fake_run_qnehvi(**kwargs):
+        captured.update(kwargs)
+        return {
+            'X': np.zeros((0, 16)), 'F': np.zeros((0, 2)),
+            'history_X': np.zeros((0, 16)), 'history_F': np.zeros((0, 2)),
+            'n_evals': 0, 'save_dir': worker.save_dir,
+        }
+
+    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
+        worker.run()
+
+    assert captured.get('evaluator_fn') is _sentinel
