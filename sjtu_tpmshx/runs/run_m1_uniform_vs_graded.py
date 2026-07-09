@@ -241,19 +241,25 @@ def main() -> None:
     ap.add_argument('--ctrl', type=int, default=4, choices=(4, 6),
                     help='control grid per side (M3 gate-2: 6 → 36-D). '
                          'Budget auto-scales: n_init = 2×D, n_iter 32.')
+    ap.add_argument('--saas', action='store_true',
+                    help='fully-Bayesian SAAS GP (NUTS) — the d≥30 engine; '
+                         'slow per iter but sample-efficient in high-D')
     a = ap.parse_args()
 
     global OUT_DIR
-    if a.seed != 42 or a.no_early_stop or a.ctrl != 4:
+    if a.seed != 42 or a.no_early_stop or a.ctrl != 4 or a.saas:
         OUT_DIR = os.path.join(
             'reports', 'm1_uniform_vs_graded',
-            f"{'ctrl%d_' % a.ctrl if a.ctrl != 4 else ''}seed{a.seed}"
+            f"{'ctrl%d_' % a.ctrl if a.ctrl != 4 else ''}"
+            f"{'saas_' if a.saas else ''}seed{a.seed}"
             f"{'_full' if a.no_early_stop else ''}")
     os.makedirs(OUT_DIR, exist_ok=True)
     cfg = dict(CFG_M1)
     if a.ctrl != 4:
         cfg['n_ctrl_x'] = a.ctrl
         cfg['n_ctrl_y'] = a.ctrl
+    if a.saas:
+        cfg['gp_model'] = 'saas'
     t_start = time.time()
 
     D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])

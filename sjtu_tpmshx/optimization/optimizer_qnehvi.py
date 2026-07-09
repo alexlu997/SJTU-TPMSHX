@@ -347,25 +347,54 @@ def run_qnehvi(config: Optional[dict] = None,
 
         t_iter = time.perf_counter()
 
-        # 5a. Fit one GP per objective (independent ARD lengthscales)
+        # 5a. Fit one GP per objective (independent ARD lengthscales).
+        # M3 (2026-07-09): cfg['gp_model']='saas' switches to the sparse-
+        # axis-aligned-subspace fully-Bayesian GP (NUTS) — the d≥30 option
+        # this module's docstring reserved. Slow per fit (~minutes) but
+        # sample-efficient in high-D where vanilla ARD lengthscale MLE
+        # degenerates (measured: 36-D vanilla front WORSE than 16-D).
+        _gp_kind = str(cfg.get('gp_model', 'single_task')).lower()
         models = []
         for j in range(2):
-            m = SingleTaskGP(
-                train_X, train_Y[:, j:j+1],
-                input_transform=Normalize(d=D, bounds=bounds),
-                outcome_transform=Standardize(m=1),
-            )
-            mll = ExactMarginalLogLikelihood(m.likelihood, m)
-            try:
-                fit_gpytorch_mll(mll)
-            except Exception as e:
-                # except-audit 2026-07-03: was verbose-gated — a production
-                # (verbose=False) run silently continued on an UN-FIT GP
-                # (prior hyperparameters), degrading acquisition quality
-                # with no trace. Always warn; the run still continues.
-                import warnings as _w
-                _w.warn(f"GP fit failed for objective {j} ({e!r}); "
-                        f"continuing with unfit hyperparameters this iter.")
+            if _gp_kind == 'saas':
+                from botorch.models.fully_bayesian import (
+                    SaasFullyBayesianSingleTaskGP,
+                )
+                from botorch.fit import fit_fully_bayesian_model_nuts
+                m = SaasFullyBayesianSingleTaskGP(
+                    train_X, train_Y[:, j:j+1],
+                    input_transform=Normalize(d=D, bounds=bounds),
+                    outcome_transform=Standardize(m=1),
+                )
+                try:
+                    fit_fully_bayesian_model_nuts(
+                        m,
+                        warmup_steps=int(cfg.get('saas_warmup', 128)),
+                        num_samples=int(cfg.get('saas_samples', 128)),
+                        thinning=int(cfg.get('saas_thin', 16)),
+                        disable_progbar=True,
+                    )
+                except Exception as e:
+                    import warnings as _w
+                    _w.warn(f"SAAS NUTS fit failed for objective {j} "
+                            f"({e!r}); continuing with prior samples.")
+            else:
+                m = SingleTaskGP(
+                    train_X, train_Y[:, j:j+1],
+                    input_transform=Normalize(d=D, bounds=bounds),
+                    outcome_transform=Standardize(m=1),
+                )
+                mll = ExactMarginalLogLikelihood(m.likelihood, m)
+                try:
+                    fit_gpytorch_mll(mll)
+                except Exception as e:
+                    # except-audit 2026-07-03: was verbose-gated — a production
+                    # (verbose=False) run silently continued on an UN-FIT GP
+                    # (prior hyperparameters), degrading acquisition quality
+                    # with no trace. Always warn; the run still continues.
+                    import warnings as _w
+                    _w.warn(f"GP fit failed for objective {j} ({e!r}); "
+                            f"continuing with unfit hyperparameters this iter.")
             models.append(m)
         model = ModelListGP(*models)
 
