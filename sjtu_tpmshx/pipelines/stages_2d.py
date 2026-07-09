@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import os
+
 import numpy as np
 from domain.compute_config import ComputeConfig, bc_to_dict
 from domain.compute_result import ComputeResult
@@ -545,7 +547,22 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                 override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
                                      za['grid_cells'], None, None, fluid)
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
+        # R3 (2026-07-07): production solver knobs, precedence
+        # env > SolverConfig > dim-specific auto. The autos are the
+        # long-standing hardcodes (partial 5e-4 / full 1e-5, cap 10000);
+        # a None config keeps them bit-identically. TPMSHX_SIMPLE_TOL
+        # used to be honoured by 3D only — the asymmetry is gone.
         _tol = 5e-4 if _has_partial else 1e-5
+        _max_it = 10000
+        _sol_knobs = getattr(cfg.get('compute_cfg'), 'solver', None)
+        if _sol_knobs is not None:
+            if _sol_knobs.tol_simple is not None:
+                _tol = float(_sol_knobs.tol_simple)
+            if _sol_knobs.max_iter_simple is not None:
+                _max_it = int(_sol_knobs.max_iter_simple)
+        _env_tol = os.environ.get('TPMSHX_SIMPLE_TOL')
+        if _env_tol is not None:
+            _tol = float(_env_tol)
         # Propagate Ta/Tb to SIMPLE.T_field if available (compressible coupling
         # fix; without this _update_density uses stale scalar T_in inside SIMPLE)
         if T_field_real is not None:
@@ -567,7 +584,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # partial-B inlet (e.g. user's pipeB w=0.068m of L=0.182) +
         # high-u Forchheimer-branch needs more iters to drive residual
         # below tol. 5000 left B at res~3e-3 with target 1e-3.
-        conv, n_it = s.solve(max_iter=10000, tol=_tol, verbose=False,
+        conv, n_it = s.solve(max_iter=_max_it, tol=_tol, verbose=False,
                                progress_cb=_progress_cb)
         if not conv:
             simple_warnings[label] = (

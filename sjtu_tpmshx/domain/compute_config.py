@@ -105,6 +105,7 @@ but were missing above:
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Union
@@ -153,23 +154,60 @@ class GeometryConfig:
 
 @dataclass
 class SolverConfig:
-    """LTNE outer + SIMPLE inner + grid + roughness model.
+    """Grid + PRODUCTION solver accuracy knobs (R3 rewire, 2026-07-07).
+
+    History: these fields used to carry the OPTIMIZER's cheap-eval budget
+    (tol 1e-2 / 800 iters) and were consumed by nothing else — the
+    pipelines hardcoded their own values, so a saved JSON did not
+    describe what actually ran. The optimizer budget now lives in
+    :class:`OptimizerConfig`; the four knobs below drive the production
+    pipelines, and ``None`` means "use the dimension-specific built-in":
+
+    - ``max_outer_ltne``: SIMPLE↔LTNE outer iterations.
+      Auto = 10 (2D coupling) / sweep-profile value (3D: 5, fast 3).
+    - ``outer_tol_K``: outer temperature-delta tolerance [K].
+      Auto = 1.0 (2D) / 0.5 (3D).
+    - ``max_iter_simple``: SIMPLE inner iteration cap.
+      Auto = 10000 (2D) / per-stage 600–2000 (3D).
+    - ``tol_simple``: SIMPLE mass-residual tolerance.
+      Auto = 1e-5 (2D full-face; 5e-4 partial) / 1e-5 (3D).
+      Env ``TPMSHX_SIMPLE_TOL`` still outranks the config (sweep habit):
+      precedence env > config > auto.
+
+    ``alpha_T`` (numerics-internal relaxation) and ``rough_mode`` (the
+    bhatti_shah_1b option is the ledger-ROUGH-X double-count trap) were
+    REMOVED from the user surface; ``from_dict`` drops them from legacy
+    JSONs with a notice. Roughness sweeps remain possible via the
+    ``TPMSHX_ROUGH_MODE`` env (research escape hatch).
 
     ``T_s_init_K=None`` falls back to the legacy seed
     ``0.5 * (T_inA + T_inB)`` inside ``solve_full_domain[_3d]``.
-    ``rough_mode='norris_1a'`` matches the runtime default established
-    by the 2026-05 audit (see ``feedback_dp_gap_attribution`` memory).
+    """
+    max_outer_ltne: Optional[int] = None
+    outer_tol_K: Optional[float] = None
+    max_iter_simple: Optional[int] = None
+    tol_simple: Optional[float] = None
+    Nx: int = 30
+    Ny: int = 60
+    Nz: int = 1
+    T_s_init_K: Optional[float] = None
+
+
+@dataclass
+class OptimizerConfig:
+    """Cheap-eval BUDGET for the design optimizer (R3 split, 2026-07-07).
+
+    These values control the evaluators' fast screening solves only —
+    they produce design RANKINGS, not quotable numbers. Final Pareto
+    picks must be re-solved through the production pipeline (which obeys
+    :class:`SolverConfig`). Defaults are byte-identical to the values the
+    optimizer consumed from the old SolverConfig fields.
     """
     max_outer_ltne: int = 4
     outer_tol_K: float = 0.5
     max_iter_simple: int = 800
     tol_simple: float = 1e-2
     alpha_T: float = 0.7
-    rough_mode: RoughMode = 'norris_1a'
-    Nx: int = 30
-    Ny: int = 60
-    Nz: int = 1
-    T_s_init_K: Optional[float] = None
 
 
 @dataclass
@@ -313,6 +351,11 @@ class ComputeConfig:
     fluid_B: FluidConfig = field(default_factory=FluidConfig)
     geometry: GeometryConfig = field(default_factory=GeometryConfig)
     solver: SolverConfig = field(default_factory=SolverConfig)
+    # R3 (2026-07-07): optimizer budget split out of SolverConfig — the two
+    # consumers (production pipelines vs optimizer screening) need
+    # different values for the same-named knobs; sharing fields is what
+    # made them decorative for years.
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     # ── audit C4 additions: cover the non-le_* window state that the
     # ── pipeline needs but C3 deliberately punted on.
     bc_A: PartialBCConfig = field(default_factory=PartialBCConfig)
@@ -431,7 +474,17 @@ class ComputeConfig:
             fA_d = data.get('fluid_A', {}) or {}
             fB_d = data.get('fluid_B', {}) or {}
             ge_d = data.get('geometry', {}) or {}
-            so_d = data.get('solver', {}) or {}
+            so_d = dict(data.get('solver', {}) or {})
+            # R3 legacy tolerance: alpha_T / rough_mode left SolverConfig
+            # (2026-07-07) — old JSONs still carry them; drop with a notice
+            # instead of TypeError-ing every archived config.
+            _dropped = [k for k in ('alpha_T', 'rough_mode') if so_d.pop(k, None) is not None]
+            if _dropped:
+                warnings.warn(
+                    f"solver config keys {_dropped} are retired (R3 split, "
+                    f"2026-07-07) and were ignored; optimizer budget lives "
+                    f"under the 'optimizer' section now.", stacklevel=2)
+            op_d = data.get('optimizer', {}) or {}
             # audit C4 additions — all optional, default-constructed
             # when absent so old JSON files keep round-tripping.
             bcA_d = data.get('bc_A', {}) or {}
@@ -444,6 +497,8 @@ class ComputeConfig:
                 fluid_B=FluidConfig(**fB_d) if fB_d else FluidConfig(),
                 geometry=GeometryConfig(**ge_d) if ge_d else GeometryConfig(),
                 solver=SolverConfig(**so_d) if so_d else SolverConfig(),
+                optimizer=(OptimizerConfig(**op_d) if op_d
+                           else OptimizerConfig()),
                 bc_A=PartialBCConfig(**bcA_d) if bcA_d else PartialBCConfig(),
                 bc_B=PartialBCConfig(**bcB_d) if bcB_d else PartialBCConfig(),
                 zones=ZoneInputConfig(**zn_d) if zn_d else ZoneInputConfig(),
@@ -471,7 +526,7 @@ class ComputeConfig:
 
 __all__ = [
     'FluidType', 'TPMSType', 'RoughMode', 'ZoneAxis',
-    'FluidConfig', 'GeometryConfig', 'SolverConfig',
+    'FluidConfig', 'GeometryConfig', 'SolverConfig', 'OptimizerConfig',
     'PartialBCConfig', 'ZoneInputConfig',
     'ExtrapPolicy', 'FeatureFlags',
     'ComputeConfig',

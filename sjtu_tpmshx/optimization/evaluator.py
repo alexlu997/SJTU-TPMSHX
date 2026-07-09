@@ -304,9 +304,12 @@ def _compute_cfg_to_evaluator_dict(compute_cfg) -> dict:
         'T_inB': compute_cfg.fluid_B.T_in_K,
         'P_inA': compute_cfg.fluid_A.P_in_Pa,
         'P_inB': compute_cfg.fluid_B.P_in_Pa,
-        'max_iter_simple': compute_cfg.solver.max_iter_simple,
-        'tol_simple': compute_cfg.solver.tol_simple,
-        'tol_energy': compute_cfg.solver.outer_tol_K,
+        # R3 (2026-07-07): the evaluator budget reads the OPTIMIZER block —
+        # SolverConfig now carries the production pipeline knobs (None=auto)
+        # and no longer describes the cheap screening solves.
+        'max_iter_simple': compute_cfg.optimizer.max_iter_simple,
+        'tol_simple': compute_cfg.optimizer.tol_simple,
+        'tol_energy': compute_cfg.optimizer.outer_tol_K,
     }
 
 

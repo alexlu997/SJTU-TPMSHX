@@ -66,8 +66,21 @@ def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
 
 # 2026-04-26: env var TPMSHX_SIMPLE_TOL overrides default SIMPLE pp tol for
 # diagnostic sweeps (path 0 / 0' v3 plan). Read each call to allow sweeps.
-def _simple_tol_default():
-    return float(os.environ.get('TPMSHX_SIMPLE_TOL', '1e-5'))
+# R3 (2026-07-07): SolverConfig.tol_simple slots between env and the auto —
+# precedence env > config > 1e-5. cfg-less callers keep the old behaviour.
+def _simple_tol_default(cfg=None):
+    env = os.environ.get('TPMSHX_SIMPLE_TOL')
+    if env is not None:
+        return float(env)
+    if cfg is not None and cfg.get('tol_simple') is not None:
+        return float(cfg['tol_simple'])
+    return 1e-5
+
+
+def _simple_max_iter(cfg, default):
+    """R3: SolverConfig.max_iter_simple overrides the per-stage auto."""
+    v = cfg.get('max_iter_simple') if cfg is not None else None
+    return int(v) if v is not None else int(default)
 
 
 def _apply_phase_flags(cfg):
@@ -361,6 +374,13 @@ def _run_3d_stack(cfg):
         _ltne_max_iter = 50000
         _compact_diag = False
     # else: use module-level defaults, full diagnostic
+    # R3 (2026-07-07): an explicit SolverConfig knob outranks the sweep-
+    # profile preset (a user-set value is more specific than a profile);
+    # None keeps the resolution above bit-identically.
+    if cfg.get('max_outer_ltne') is not None:
+        _max_outer = int(cfg['max_outer_ltne'])
+    _outer_tol = (float(cfg['outer_tol_K'])
+                  if cfg.get('outer_tol_K') is not None else _OUTER_TOL)
 
     # Compressible validity-envelope mode (robustness, 2026-06-25):
     #   'raise' (default) -> ChokedFlowError on a choked/supersonic case
@@ -656,7 +676,8 @@ def _run_3d_stack(cfg):
     else:
         # No B: run A alone (serial)
         _prof_t_a0 = _time.perf_counter() if _prof_3d_enabled() else None
-        _a0_conv, _a0_it = sA.solve(max_iter=2000, tol=_simple_tol_default(),
+        _a0_conv, _a0_it = sA.solve(max_iter=_simple_max_iter(cfg, 2000),
+                                    tol=_simple_tol_default(cfg),
                                     verbose=False,
                                     cancel_check=cfg.get('_cancel_check'))
         if not _a0_conv:
@@ -941,7 +962,7 @@ def _run_3d_stack(cfg):
     # gate on ALL THREE temperature fields — the old ('Ta',)-only criterion
     # let Tb/Ts drift unmonitored (a cross-flow B side or slow solid could
     # still be moving when Ta settled).
-    _outer_conv = OuterConvergence(tol_T=_OUTER_TOL, track=('Ta', 'Tb', 'Ts'))
+    _outer_conv = OuterConvergence(tol_T=_outer_tol, track=('Ta', 'Tb', 'Ts'))
     _outer_dT_hist = []   # per-outer-iter {field: max|Δ|} — convergence_detail
     chi_B = None         # B flow-path indicator field (χ_B), built each outer iter
     # Optional solid warm-start seed from the UI. Empty → solver default
@@ -1432,7 +1453,8 @@ def _run_3d_stack(cfg):
         # for the residual to re-sink to 1e-3. Saves ~50% of SIMPLE work in
         # outer iters 1-2.
         _prof_t_sa = _time.perf_counter() if _prof_3d_enabled() else None
-        _sa_conv, _sa_it = sA.solve(max_iter=600, tol=_simple_tol_default(),
+        _sa_conv, _sa_it = sA.solve(max_iter=_simple_max_iter(cfg, 600),
+                                    tol=_simple_tol_default(cfg),
                                     verbose=False, cancel_check=_cancel_check)
         if not _sa_conv:
             _simple_nonconv.append(
@@ -1550,7 +1572,8 @@ def _run_3d_stack(cfg):
 
             sB.update_T_field(Tb_sB)
             _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None
-            _sb_conv, _sb_it = sB.solve(max_iter=600, tol=_simple_tol_default(),
+            _sb_conv, _sb_it = sB.solve(max_iter=_simple_max_iter(cfg, 600),
+                                        tol=_simple_tol_default(cfg),
                                         verbose=False, cancel_check=_cancel_check)
             if not _sb_conv:
                 _simple_nonconv.append(
@@ -2006,7 +2029,7 @@ def _run_3d_stack(cfg):
                   for d in _outer_dT_hist],
         outer_converged=bool(
             _outer_dT_hist
-            and all(v < _OUTER_TOL for v in _outer_dT_hist[-1].values())),
+            and all(v < _outer_tol for v in _outer_dT_hist[-1].values())),
     )
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.

@@ -690,6 +690,15 @@ def _run_solvers(window, cfg, fields):
     _COUPLING_TOL = 0.01  # 1% relative change in rho
     _DT_TOL_K     = 1.0   # max |ΔT| between outer iterations, Kelvin
     _ALPHA_COUP = 0.7     # under-relaxation
+    # R3 (2026-07-07): SolverConfig production knobs override the autos
+    # above (None keeps them bit-identically). max_outer_ltne caps the
+    # SIMPLE↔LTNE coupling rounds; outer_tol_K replaces the ΔT criterion.
+    _sol_knobs = getattr(cfg.get('compute_cfg'), 'solver', None)
+    if _sol_knobs is not None:
+        if _sol_knobs.max_outer_ltne is not None:
+            _MAX_COUPLING = int(_sol_knobs.max_outer_ltne)
+        if _sol_knobs.outer_tol_K is not None:
+            _DT_TOL_K = float(_sol_knobs.outer_tol_K)
 
     # Local-Re Nu rescale (2D #1 fix 2026-04-25): per-cell h_v using local
     # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to the laminar

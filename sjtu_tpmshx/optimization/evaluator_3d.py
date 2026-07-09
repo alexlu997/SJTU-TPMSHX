@@ -90,10 +90,13 @@ def _compute_cfg_to_evaluator_dict_3d(compute_cfg) -> dict:
     d['Nz_3d'] = compute_cfg.solver.Nz
     if compute_cfg.geometry.Lz_m is not None:
         d['Lz'] = compute_cfg.geometry.Lz_m
-    d['max_outer_3d'] = compute_cfg.solver.max_outer_ltne
-    d['outer_tol_K'] = compute_cfg.solver.outer_tol_K
-    d['alpha_outer'] = compute_cfg.solver.alpha_T
-    d['roughness_mode'] = compute_cfg.solver.rough_mode
+    # R3 (2026-07-07): budget knobs come from the optimizer block. The old
+    # solver.rough_mode passthrough is dropped — its value always equalled
+    # the EVAL3D_DEFAULTS 'norris_1a' (both friction no-ops); roughness
+    # sweeps use the TPMSHX_ROUGH_MODE env escape hatch.
+    d['max_outer_3d'] = compute_cfg.optimizer.max_outer_ltne
+    d['outer_tol_K'] = compute_cfg.optimizer.outer_tol_K
+    d['alpha_outer'] = compute_cfg.optimizer.alpha_T
     return d
 
 

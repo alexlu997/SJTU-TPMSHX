@@ -187,6 +187,12 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         fluid_B_cfg=fluid_B_cfg,
         wall_refine_3d=wall_refine,
         variable_rho_cp=bool(compute_cfg.flags.variable_rho_cp),
+        # R3 (2026-07-07): production solver knobs (None = run_stack's
+        # dim-specific autos; see SolverConfig docstring).
+        tol_simple=compute_cfg.solver.tol_simple,
+        max_iter_simple=compute_cfg.solver.max_iter_simple,
+        max_outer_ltne=compute_cfg.solver.max_outer_ltne,
+        outer_tol_K=compute_cfg.solver.outer_tol_K,
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
