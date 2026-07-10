@@ -113,13 +113,26 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # -0.034%); dP[1] and mass[2] are BIT-IDENTICAL (energy solve only). 3D
 # tuples untouched (3D kernel already conservative). Old Q:
 # -8165.653571275229 / -7731.140029573464.
+# re-baselined 2026-07-09 (M2, VANS ∇ε momentum): 2D momentum kernels now
+# carry the ε-ratio flux factors (ε-divided VANS form; ledger B5). ONLY the
+# NONUNIFORM 2D tuple moves (Q +0.027%, dP −0.107%, mass bit-identical) —
+# uniform ε keeps r ≡ 1.0 exactly, so the uniform tuple and both goldens are
+# bit-identical to the pre-M2 baselines (verified via golden_2d/3d_preM2
+# capture). Old nonuniform: (-7728.475410596369, 8022.029234363068, ...).
 _FROZEN_2D_UNIFORM = (-8161.676768977079, 10661.113158337937,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7728.475410596369, 8022.029234363068,
+_FROZEN_2D_NONUNIF = (-7730.600183907583, 8013.423850696896,
                       3.6729327392578126)
+# re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
+# eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the
+# guarded VANS ε-ratio factors. ONLY the NONUNIFORM 3D tuple moves — and by
+# a REAL margin (Q −3.18%, dP −1.82%, mass bit-identical): that is the
+# mean-ε approximation error the retired warning flagged, now corrected.
+# Uniform 3D is bit-identical on this case (use_eps=0 guard path). Old
+# nonuniform: (-10056.123672085494, 5968.430162466379, ...).
 _FROZEN_3D_UNIFORM = (-7819.313135202607, 18176.77875067786,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10056.123672085494, 5968.430162466379,
+_FROZEN_3D_NONUNIF = (-9736.62293019604, 5859.925022099803,
                       3.675970458984375)
 
 

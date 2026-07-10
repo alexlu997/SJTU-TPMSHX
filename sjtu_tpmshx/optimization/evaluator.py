@@ -37,6 +37,14 @@ Public API::
 The returned objective is ``(-Q, dP)``: BO maximizes (so negate Q for
 minimization-form output) while dP is minimized directly. The third value
 ``mass`` is informational (kg/m of HX depth) for downstream filtering.
+
+Boundary conditions (2026-07-10): default = FULL-FACE inlet/outlet on both
+streams (``ports_A = ports_B = None``) — the M0–M3 experiment condition and
+the scope of the ADJOINT gate-2 verdict. Port-type partial BCs are wired via
+``ports_A``/``ports_B`` (see DEFAULT_CONFIG); their absolute numbers are not
+experimentally benchmarked (ledger IDEA-PORT-VALID). The resolved BC is
+logged once per process. The 3D optimizer stack (core/evaluators.py) remains
+full-face only.
 """
 
 from __future__ import annotations
@@ -70,6 +78,9 @@ from logutil import get_logger
 
 _log = get_logger(__name__)
 
+# Once-per-process flag for the resolved-BC log line (see evaluate_design).
+_BC_LOG_DONE = False
+
 
 # ─── Default cfg (continuous-field flavour) ─────────────────────────
 
@@ -99,6 +110,33 @@ DEFAULT_CONFIG: dict = {
     #   0 = +x, 1 = -x, 2 = +y, 3 = -y
     'dir_A':      0,       # fluid A flows +x  → streamwise = real x
     'dir_B':      3,       # fluid B flows -y  → streamwise = real y reversed
+
+    # Boundary openings — port-type partial BC (2026-07-10, IDEA-PORT-DIM).
+    #   None → FULL-FACE inlet/outlet. This is the M0–M3 experiment condition
+    #   and the scope of the ADJOINT gate-2 verdict; it reproduces the
+    #   pre-port evaluator bit-identically. A tuple
+    #   (in_lo, in_hi, out_lo, out_hi) [m] opens only that span of the face:
+    #   fluid A spans real y ∈ [0, H_domain]; fluid B spans real x ∈
+    #   [0, L_domain]. Partial-BC absolute numbers are NOT experimentally
+    #   benchmarked (ledger IDEA-PORT-VALID) — relative rankings only.
+    'ports_A':    None,
+    'ports_B':    None,
+    # Per-cell K/cF in the momentum drag (lateral-K, 2026-07-10). False →
+    # legacy per-row streamwise projection (laterally averaged — what M0–M3
+    # ran). True → per-cell prediction from the local (L, t) field; REQUIRED
+    # for port-BC routing studies: lateral resistance contrast is the
+    # routing lever, and the per-row projection erases it.
+    'per_cell_K': False,
+    # Oblique-flow Forchheimer direction factor (cf-aniso, 2026-07-10):
+    # cF_eff = cF·(1 + cf_aniso·4nx²ny²), the lowest cubic-symmetry
+    # invariant (0 on-axis — the calibration-anchored value — max at 45°).
+    # 0.0 = isotropic (bit-identical legacy). The closure was calibrated on
+    # axis-aligned flow only; port-BC runs turn the flow in-domain, so a
+    # non-zero value bounds that direction error. Its VALUE must come from
+    # direction-resolved unit-cell CFD (validation/cf_aniso/ worklist) —
+    # do not quote absolute numbers from a hand-picked setting; use ± sweeps
+    # for verdict-robustness checks only.
+    'cf_aniso': 0.0,
 
     # Solver knobs
     'max_iter_simple': 5000,
@@ -172,6 +210,24 @@ def _resolve_grid(cfg: dict, fc: ContinuousFieldConfig) -> tuple:
                          cfg.get('grid_alpha', 0.8))
 
 
+def _percell_K_cF(cfg: dict, arrays: dict) -> tuple:
+    """Per-cell (K, cF) in REAL coords (Nx, Ny) from the design L/t fields.
+
+    2026-07-10 lateral-K: the per-row `override_simple_K_cF` projection
+    averages (L, t) laterally BEFORE predicting — nonlinear predict means the
+    lateral resistance contrast is erased, which removes the routing lever a
+    port-BC study needs. This builds the per-cell prediction instead.
+    """
+    from df_surrogate.predict import predict_K_cF_vec
+    L_f = np.asarray(arrays['L_field'], dtype=np.float64)
+    t_f = np.asarray(arrays['t_field'], dtype=np.float64)
+    eps_f = np.asarray(arrays['eps_arr'], dtype=np.float64) * 0.5  # per-stream
+    K, cF = predict_K_cF_vec(cfg['tpms_type'],
+                             L_f.ravel(), t_f.ravel(), eps_f.ravel())
+    return (K.reshape(L_f.shape).astype(np.float64),
+            cF.reshape(L_f.shape).astype(np.float64))
+
+
 def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
                     Nx_real: int, Ny_real: int) -> SIMPLESolver:
     """Build SIMPLE for fluid A (+x streamwise; SIMPLE-internal y ↔ real x).
@@ -183,6 +239,11 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
     T_inA = float(cfg['T_inA']);   P_inA = float(cfg['P_inA'])
     u_A   = float(cfg['u_A'])
+    # Port-type partial BC (None → full-face, bit-identical legacy path).
+    # Fluid A's cross axis is real y ∈ [0, H_domain].
+    pA = cfg.get('ports_A')
+    in_lo, in_hi, out_lo, out_hi = ((float(v) for v in pA) if pA is not None
+                                    else (0.0, H_dom, 0.0, H_dom))
     rho_A = air_density(T_inA, P_inA)
     mu_A  = air_viscosity(T_inA)
     eps_mean = float(arrays['eps_arr'].mean())
@@ -193,8 +254,8 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
         eps_mean, r_h_mean,
         rho_A, mu_A, T_inA,
-        inlet_lo=0.0, inlet_hi=H_dom, v_inlet=u_A,
-        outlet_lo=0.0, outlet_hi=H_dom,
+        inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_A,
+        outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
         P_ref_abs=P_inA,
     )
@@ -210,6 +271,14 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     Ny_sim = s._K_arr.shape[0]
     override_simple_K_cF(s, cfg['tpms_type'], cfg['k_s'], Ny_sim,
                          None, arrays['L_field'], arrays['t_field'], 'A')
+    # Lateral-K (2026-07-10): per-cell drag override. SIMPLE A coords = real
+    # transposed (same mapping as the ε push above).
+    if cfg.get('per_cell_K', False):
+        K_real, cF_real = _percell_K_cF(cfg, arrays)
+        s.set_K_cF_field(K_real.T, cF_real.T)
+    # cf-aniso (2026-07-10): frame-invariant under the A/B axis swap and the
+    # B y-flip (4nx^2ny^2 depends on |components| only) - same scalar both sides.
+    s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
 
@@ -223,26 +292,44 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     mu_B  = air_viscosity(T_inB)
     eps_mean = float(arrays['eps_arr'].mean())
     r_h_mean = float(arrays['r_h_arr'].mean())
+    # Port-type partial BC (None → full-face, bit-identical legacy path).
+    # Fluid B's cross axis is real x ∈ [0, L_domain] (SIMPLE-B i = real i).
+    pB = cfg.get('ports_B')
+    in_lo, in_hi, out_lo, out_hi = ((float(v) for v in pB) if pB is not None
+                                    else (0.0, L_dom, 0.0, L_dom))
 
     s = SIMPLESolver(
         L_dom, H_dom, Nx_real, Ny_real,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
         eps_mean, r_h_mean,
         rho_B, mu_B, T_inB,
-        inlet_lo=0.0, inlet_hi=L_dom, v_inlet=u_B,
-        outlet_lo=0.0, outlet_hi=L_dom,
+        inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_B,
+        outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
         P_ref_abs=P_inB,
     )
 
     if 'eps_arr' in arrays:
-        eps_simple = arrays['eps_arr']               # SIMPLE B uses real coords directly
+        # 2026-07-10 orientation fix: dir_B = 3 (−y) means SIMPLE-B's
+        # streamwise axis j runs OPPOSITE to real y (j=0 ↔ real y=H) — see
+        # `_cellcentered_velocity_B` and `pipelines/stages_2d._to_simple_coords`
+        # (d == 3 branch), and the fluid-B flip inside
+        # `project_fields_to_streamwise_K_cF`. The previous direct push was
+        # only correct for y-symmetric fields; every M0–M3 run used
+        # symmetric_y=True, so no historical result moves. Y-asymmetric
+        # designs (port-BC studies) need the flip.
+        eps_simple = arrays['eps_arr'][:, ::-1]      # real → SIMPLE-B coords
         if eps_simple.shape == s.eps_field.shape:
             s.eps_field = np.ascontiguousarray(eps_simple, dtype=np.float64)
 
     Ny_sim = s._K_arr.shape[0]
     override_simple_K_cF(s, cfg['tpms_type'], cfg['k_s'], Ny_sim,
                          None, arrays['L_field'], arrays['t_field'], 'B')
+    # Lateral-K (2026-07-10): per-cell drag override, same y-flip as ε above.
+    if cfg.get('per_cell_K', False):
+        K_real, cF_real = _percell_K_cF(cfg, arrays)
+        s.set_K_cF_field(K_real[:, ::-1], cF_real[:, ::-1])
+    s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
 
@@ -347,6 +434,19 @@ def evaluate_design(x: np.ndarray,
     else:
         cfg_full = {**DEFAULT_CONFIG, **(cfg or {})}
 
+    # BC visibility (2026-07-10): the resolved boundary condition used to be
+    # invisible (key absence = full-face), which let "the experiment config is
+    # full-face" mutate into "the solver is full-face" unchallenged. Log it
+    # once per process so every run record states its BC explicitly.
+    global _BC_LOG_DONE
+    if not _BC_LOG_DONE:
+        _BC_LOG_DONE = True
+        _log.info(
+            "[evaluator2d] BC resolved: ports_A=%s ports_B=%s per_cell_K=%s "
+            "(None ports = full-face inlet/outlet)",
+            cfg_full.get('ports_A'), cfg_full.get('ports_B'),
+            cfg_full.get('per_cell_K', False))
+
     # M0 (2026-07-09): this evaluator runs BOTH sides as air. The UI threads
     # the fluid combos through cfg for a future water-side dispatch; until
     # that exists, a non-air selection must not be silently ignored.
@@ -444,6 +544,15 @@ def evaluate_design(x: np.ndarray,
     rcp_A = rho_A_field * air_cp(T_inA)
     rcp_B = rho_B_field * air_cp(T_inB)
 
+    # Port BC → tell the energy solver which inlet cells actually carry flow
+    # (same convention as pipelines/solve_2d.py: the SIMPLE inlet_frac, 1D
+    # along each solver's own cross axis). Full-face runs pass None — the
+    # legacy path, bit-identical.
+    _ports_on = (cfg_full.get('ports_A') is not None
+                 or cfg_full.get('ports_B') is not None)
+    _imA = sA.inlet_frac.astype(np.float64) if _ports_on else None
+    _imB = sB.inlet_frac.astype(np.float64) if _ports_on else None
+
     Ta = Tb = Ts = None
     for outer_it in range(n_rho_loops):
         ucA, vcA = _cellcentered_velocity_A(sA, Nx, Ny)
@@ -459,6 +568,7 @@ def evaluate_design(x: np.ndarray,
             tol=cfg_full['tol_energy'], max_iter=cfg_full['max_iter_energy'],
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_arr, dy_arr=dy_arr,
+            inlet_mask_A=_imA, inlet_mask_B=_imB,
         )
 
         if n_rho_loops == 1:

@@ -164,7 +164,9 @@ def _porous_src_df(umag, K, cF, mu, rho):
     K and c_F are geometry-level constants from the DF surrogate
     (df_surrogate/predict.py:predict_K_cF), default backend "gamma_df"
     (switched rbf → gamma_df 2026-06-12; RBF is opt-in via env
-    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-row.
+    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-cell (2026-07-10
+    lateral-K: kernels now consume 2D (Nx, Ny) fields; a laterally-uniform
+    field reproduces the historical per-row behaviour bit-identically).
     """
     if umag < 1e-10:
         return mu / K  # pure Darcy when velocity vanishes
@@ -191,12 +193,22 @@ def _umag_v(u, v, i, j, Nx, Ny):
 @njit(cache=True)
 def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                    K_arr, cF_arr, mu_field,
-                    alpha_u, n_sweeps):
+                    K_arr, cF_arr, mu_field, eps_field,
+                    alpha_u, n_sweeps, cf_aniso):
     """D-F variant of _sweep_u_jit: porous source uses (K, c_F) per row from
     the ConstDF-v1 surrogate, no phi_arr correction (MLP covers training range
     natively). mu_eff_field and mu_field are 2D (Nx, Ny) arrays so that
     viscosity tracks the temperature field in non-isothermal compressible flow.
+
+    M2 (2026-07-09, VANS ∇ε): momentum discretizes the ε-DIVIDED volume-
+    averaged form  (1/ε_P)∇·(ε ρ u u) = −∇p + (1/ε_P)∇·(μ ∇u) + f_DF —
+    every flux face carries the ratio r_f = ε_f / ε_CV multiplying both the
+    convective flux F_f and the diffusion conductance D_f. The pressure term
+    needs NO factor in this form (−ε∇p/ε cancels exactly) and the DF drag
+    stays untouched (experiment-anchored calibration absorbed its volume
+    convention). Uniform ε → all r ≡ 1.0 bit-exactly (arithmetic means of
+    equal values are exact; ×1.0 is an IEEE no-op), so the pre-M2 fields are
+    reproduced bit-identically — that is the regression gate.
     """
     for _ in range(n_sweeps):
         for i in range(1, Nx):
@@ -207,16 +219,33 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 
                 il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
                 mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
+
+                # M2: ε at the u-CV centre + the four flux-face ratios.
+                # u-node sits on the x-interface between cells il_r/ir_r, so
+                # its E/W flux faces are the CELL CENTRES; N/S faces are the
+                # 4-cell corners.
+                eps_u = 0.5 * (eps_field[il_r, j] + eps_field[ir_r, j])
+                r_e = eps_field[ir_r, j] / eps_u
+                r_w = eps_field[il_r, j] / eps_u
+                r_n = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                               + eps_field[il_r, j + 1]
+                               + eps_field[ir_r, j + 1]) / eps_u
+                       if j < Ny - 1 else 1.0)
+                r_s = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                               + eps_field[il_r, j - 1]
+                               + eps_field[ir_r, j - 1]) / eps_u
+                       if j > 0 else 1.0)
+
                 # N4 (2026-07-07): diffusion conductances use the ACTUAL
                 # neighbour-node distance, not the CV width. u-nodes sit on
                 # x-interfaces: E neighbour at dx[i], W at dx[i-1]; cross-
                 # stream neighbours at 0.5*(dy[j]+dy[j±1]). Uniform grids
                 # reduce to the old dxi/dyj form bit-identically.
-                De = mu_e * dyj / dx_arr[ir_r]
-                Dw = mu_e * dyj / dx_arr[il_r]
-                Dn = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
+                De = r_e * mu_e * dyj / dx_arr[ir_r]
+                Dw = r_w * mu_e * dyj / dx_arr[il_r]
+                Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
                       if j < Ny - 1 else 0.0)
-                Ds = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
+                Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
                       if j > 0 else 0.0)
 
                 uE = u[i + 1, j] if i + 1 < Nx else 0.0
@@ -233,8 +262,8 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
                 mu_loc  = 0.5 * (mu_field[il_r, j] + mu_field[ir_r, j])
 
-                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+                Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+                Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
 
                 aE = De + max(-Fe, 0.0)
                 aW = Dw + max(Fw, 0.0)
@@ -242,7 +271,27 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_u(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
+                # 2026-07-10 lateral-K: K/cF are 2D (Nx, Ny) SIMPLE-coord
+                # fields. u-node straddles cells il_r/ir_r laterally → arith
+                # mean. Laterally-uniform fields give 0.5*(a+a) = a exactly
+                # (IEEE), reproducing the old per-row K_arr[j] bit-identically.
+                K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
+                cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+                # 2026-07-10 cf-aniso: oblique-flow Forchheimer direction
+                # factor cF_eff = cF·(1 + a·ξ4), ξ4 = 4·nx²·ny² ∈ [0,1] — the
+                # lowest cubic-symmetry invariant (0 on-axis, 1 at 45°). The
+                # on-axis value stays the calibration-anchored cF exactly; a=0
+                # (default) skips the branch (bit-identical). Darcy K is left
+                # isotropic (cubic symmetry ⇒ K tensor ∝ I). Calibrate `a`
+                # from direction-resolved unit-cell CFD (validation/cf_aniso).
+                if cf_aniso != 0.0 and umag > 1e-10:
+                    va_c = 0.25 * (v[il_r, j] + v[ir_r, j]
+                                   + v[il_r, j + 1] + v[ir_r, j + 1])
+                    ux2 = u[i, j] * u[i, j]
+                    uy2 = va_c * va_c
+                    xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                    cF_u = cF_u * (1.0 + cf_aniso * xi4)
+                Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
                 # Brinkman penalty: grid-invariant via aP_natural (matches 3D
                 # convention in simple_solver_3d.py). Old form `1e8*...*vol`
@@ -279,10 +328,15 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 @njit(cache=True)
 def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                    K_arr, cF_arr, mu_field,
-                    alpha_u, n_sweeps):
+                    K_arr, cF_arr, mu_field, eps_field,
+                    alpha_u, n_sweeps, cf_aniso):
     """D-F variant of _sweep_v_jit, mirrors _sweep_u_jit_df changes.
-    mu_eff_field and mu_field are 2D (Nx, Ny) for non-isothermal coupling."""
+    mu_eff_field and mu_field are 2D (Nx, Ny) for non-isothermal coupling.
+    M2 (2026-07-09): VANS ε-ratio factors — see _sweep_u_jit_df docstring;
+    v-node sits on the y-interface between cells jb/jt, so N/S flux faces
+    are the cell centres and E/W faces are the 4-cell corners. Wall
+    branches (no-slip conductance) carry no ratio: the wall face has no
+    ε gradient across it (zero-normal-gradient ε at the housing)."""
     for _ in range(n_sweeps):
         for i in range(Nx):
             for j in range(1, Ny):
@@ -293,6 +347,18 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
                 jb = max(j - 1, 0); jt = min(j, Ny - 1)
                 mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
+
+                # M2: ε at the v-CV centre + flux-face ratios (uniform → 1.0
+                # bit-exactly).
+                eps_v = 0.5 * (eps_field[i, jb] + eps_field[i, jt])
+                r_n = eps_field[i, jt] / eps_v
+                r_s = eps_field[i, jb] / eps_v
+                r_e = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                               + eps_field[i + 1, jb] + eps_field[i + 1, jt])
+                       / eps_v if i < Nx - 1 else 1.0)
+                r_w = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                               + eps_field[i - 1, jb] + eps_field[i - 1, jt])
+                       / eps_v if i > 0 else 1.0)
 
                 # No-slip at side walls (x=0, x=W): tangential velocity v=0 at
                 # wall. Distance from cell centre to wall = dxi/2, so the wall
@@ -306,19 +372,19 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                 # y-interfaces). Uniform grids reduce bit-identically.
                 if i < Nx - 1:
                     vE = v[i + 1, j]
-                    De = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
+                    De = r_e * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
                 else:
                     vE = 0.0; De = 2.0 * mu_e * dyj / dxi   # east wall (no-slip)
                 if i > 0:
                     vW = v[i - 1, j]
-                    Dw = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
+                    Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
                 else:
                     vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
                 vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
                 vS = v[i, j - 1]
 
-                Dn = mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
-                Ds = mu_e * dxi / dy_arr[jb]
+                Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+                Ds = r_s * mu_e * dxi / dy_arr[jb]
 
                 ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
                 uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
@@ -328,8 +394,8 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                 rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
                 mu_loc  = 0.5 * (mu_field[i, jb] + mu_field[i, jt])
 
-                Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-                Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+                Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+                Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
 
                 aE = De + max(-Fe, 0.0)
                 aW = Dw + max(Fw, 0.0)
@@ -337,7 +403,19 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_v(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
+                # 2026-07-10 lateral-K: K/cF are 2D (Nx, Ny). v-node keeps the
+                # legacy streamwise pick K[jc] (a jb/jt mean would move
+                # streamwise-graded cases), extended laterally to column i.
+                cF_v = cF_arr[i, jc]
+                # 2026-07-10 cf-aniso: mirrors _sweep_u_jit_df (see there).
+                if cf_aniso != 0.0 and umag > 1e-10:
+                    ua_c = 0.25 * (u[i, jb] + u[i + 1, jb]
+                                   + u[i, jt] + u[i + 1, jt])
+                    ux2 = ua_c * ua_c
+                    uy2 = v[i, j] * v[i, j]
+                    xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                    cF_v = cF_v * (1.0 + cf_aniso * xi4)
+                Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
                 # Brinkman penalty — grid-invariant (3D parity, P1b-c)
                 aP_nat = aE + aW + aN + aS
@@ -367,9 +445,16 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
         v[i, 0] = v_inlet_field[i] * inlet_frac[i]
         if outlet_frac[i] > 0.5:
             if Ny >= 2:
+                # M2: extrapolate conserving ε·ρ·v (VANS mass flux), mirroring
+                # the 3D outlet convention. The ε ratio multiplies AFTER the
+                # legacy ρ chain so uniform ε (ratio = 1.0 exactly) reproduces
+                # the pre-M2 float sequence bit-identically.
                 rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
                 rho_outer_face = rho_field[i, Ny-1]
-                v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
+                eps_outer_face = eps_field[i, Ny-1]
+                v[i, Ny] = (v[i, Ny - 1] * rho_inner_face / rho_outer_face
+                            * (eps_inner_face / eps_outer_face))
             else:
                 v[i, Ny] = v[i, Ny - 1]
         else:
@@ -391,8 +476,10 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 @njit(cache=True)
 def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                     K_arr, cF_arr, mu_field):
-    """SIMPLER pseudo-velocity û. Writes uhat interior + fills d_u = dy/aP0."""
+                     K_arr, cF_arr, mu_field, eps_field, cf_aniso):
+    """SIMPLER pseudo-velocity û. Writes uhat interior + fills d_u = dy/aP0.
+    M2 (2026-07-09): VANS ε-ratio factors mirror _sweep_u_jit_df
+    (coefficient-parity contract)."""
     for i in range(1, Nx):
         for j in range(Ny):
             dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
@@ -401,13 +488,27 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
 
             il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
             mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
+
+            # M2: ε-ratio factors — mirrors _sweep_u_jit_df.
+            eps_u = 0.5 * (eps_field[il_r, j] + eps_field[ir_r, j])
+            r_e = eps_field[ir_r, j] / eps_u
+            r_w = eps_field[il_r, j] / eps_u
+            r_n = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                           + eps_field[il_r, j + 1]
+                           + eps_field[ir_r, j + 1]) / eps_u
+                   if j < Ny - 1 else 1.0)
+            r_s = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                           + eps_field[il_r, j - 1]
+                           + eps_field[ir_r, j - 1]) / eps_u
+                   if j > 0 else 1.0)
+
             # N4 (2026-07-07): mirrors _sweep_u_jit_df — actual neighbour-node
             # distances (coefficient-parity contract).
-            De = mu_e * dyj / dx_arr[ir_r]
-            Dw = mu_e * dyj / dx_arr[il_r]
-            Dn = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
+            De = r_e * mu_e * dyj / dx_arr[ir_r]
+            Dw = r_w * mu_e * dyj / dx_arr[il_r]
+            Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
                   if j < Ny - 1 else 0.0)
-            Ds = (mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
+            Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
                   if j > 0 else 0.0)
 
             uE = u[i + 1, j] if i + 1 < Nx else 0.0
@@ -424,8 +525,8 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
             rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
             mu_loc  = 0.5 * (mu_field[il_r, j] + mu_field[ir_r, j])
 
-            Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-            Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+            Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+            Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
 
             aE = De + max(-Fe, 0.0)
             aW = Dw + max(Fw, 0.0)
@@ -433,7 +534,18 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
             aS = Ds + max(Fs, 0.0)
 
             umag = _umag_u(u, v, i, j, Nx, Ny)
-            Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
+            # 2026-07-10 lateral-K: mirrors _sweep_u_jit_df (parity contract).
+            K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
+            cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+            # 2026-07-10 cf-aniso: mirrors _sweep_u_jit_df (parity contract).
+            if cf_aniso != 0.0 and umag > 1e-10:
+                va_c = 0.25 * (v[il_r, j] + v[ir_r, j]
+                               + v[il_r, j + 1] + v[ir_r, j + 1])
+                ux2 = u[i, j] * u[i, j]
+                uy2 = va_c * va_c
+                xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                cF_u = cF_u * (1.0 + cf_aniso * xi4)
+            Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
             il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
@@ -461,8 +573,10 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
 @njit(cache=True)
 def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                     K_arr, cF_arr, mu_field):
-    """SIMPLER pseudo-velocity v̂. Writes vhat interior + fills d_v = dx/aP0."""
+                     K_arr, cF_arr, mu_field, eps_field, cf_aniso):
+    """SIMPLER pseudo-velocity v̂. Writes vhat interior + fills d_v = dx/aP0.
+    M2 (2026-07-09): VANS ε-ratio factors mirror _sweep_v_jit_df
+    (coefficient-parity contract)."""
     for i in range(Nx):
         for j in range(1, Ny):
             jc = min(j, Ny - 1)
@@ -473,23 +587,34 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
             jb = max(j - 1, 0); jt = min(j, Ny - 1)
             mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
 
+            # M2: ε-ratio factors — mirrors _sweep_v_jit_df.
+            eps_v = 0.5 * (eps_field[i, jb] + eps_field[i, jt])
+            r_n = eps_field[i, jt] / eps_v
+            r_s = eps_field[i, jb] / eps_v
+            r_e = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                           + eps_field[i + 1, jb] + eps_field[i + 1, jt])
+                   / eps_v if i < Nx - 1 else 1.0)
+            r_w = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                           + eps_field[i - 1, jb] + eps_field[i - 1, jt])
+                   / eps_v if i > 0 else 1.0)
+
             # N4 (2026-07-07): mirrors _sweep_v_jit_df — actual neighbour-node
             # distances (coefficient-parity contract).
             if i < Nx - 1:
                 vE = v[i + 1, j]
-                De = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
+                De = r_e * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
             else:
                 vE = 0.0; De = 2.0 * mu_e * dyj / dxi   # east wall (no-slip)
             if i > 0:
                 vW = v[i - 1, j]
-                Dw = mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
+                Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
             else:
                 vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
             vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
             vS = v[i, j - 1]
 
-            Dn = mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
-            Ds = mu_e * dxi / dy_arr[jb]
+            Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+            Ds = r_s * mu_e * dxi / dy_arr[jb]
 
             ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
             uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
@@ -499,8 +624,8 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
             rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
             mu_loc  = 0.5 * (mu_field[i, jb] + mu_field[i, jt])
 
-            Fe = rho_loc * ue * dyj; Fw = rho_loc * uw * dyj
-            Fn = rho_loc * vn * dxi; Fs = rho_loc * vs * dxi
+            Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+            Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
 
             aE = De + max(-Fe, 0.0)
             aW = Dw + max(Fw, 0.0)
@@ -508,7 +633,17 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
             aS = Ds + max(Fs, 0.0)
 
             umag = _umag_v(u, v, i, j, Nx, Ny)
-            Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
+            # 2026-07-10 lateral-K: mirrors _sweep_v_jit_df (parity contract).
+            cF_v = cF_arr[i, jc]
+            # 2026-07-10 cf-aniso: mirrors _sweep_v_jit_df (parity contract).
+            if cf_aniso != 0.0 and umag > 1e-10:
+                ua_c = 0.25 * (u[i, jb] + u[i + 1, jb]
+                               + u[i, jt] + u[i + 1, jt])
+                ux2 = ua_c * ua_c
+                uy2 = v[i, j] * v[i, j]
+                xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                cF_v = cF_v * (1.0 + cf_aniso * xi4)
+            Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
             wall_out = 1.0 - outlet_frac[i]
@@ -532,9 +667,15 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
         vhat[i, 0] = v_inlet_field[i] * inlet_frac[i]
         if outlet_frac[i] > 0.5:
             if Ny >= 2:
+                # M2: ε·ρ·v-conserving extrapolation — mirrors _sweep_v_jit_df
+                # (ε ratio multiplies AFTER the legacy ρ chain for uniform-ε
+                # bit-identity).
                 rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
                 rho_outer_face = rho_field[i, Ny-1]
-                vhat[i, Ny] = vhat[i, Ny - 1] * rho_inner_face / rho_outer_face
+                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
+                eps_outer_face = eps_field[i, Ny-1]
+                vhat[i, Ny] = (vhat[i, Ny - 1] * rho_inner_face / rho_outer_face
+                               * (eps_inner_face / eps_outer_face))
             else:
                 vhat[i, Ny] = vhat[i, Ny - 1]
         else:
@@ -722,7 +863,7 @@ def _solve_pp_sparse_fast(Pp, u, v, d_u, d_v, outlet_frac,
 # ── SIMPLE Step 5: correction ─────────────────────────────────────
 @njit(cache=True)
 def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
-                 Nx, Ny, alpha_p, rho_field):
+                 Nx, Ny, alpha_p, rho_field, eps_field):
     # Pressure correction (skip only outlet cells at j=Ny-1)
     for i in range(Nx):
         for j in range(Ny):
@@ -749,9 +890,14 @@ def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
         # imbalance. Benign for full-outlet Shanghai (outlet_frac ≡ 1).
         if outlet_frac[i] > 0.5:
             if Ny >= 2:
+                # M2: ε·ρ·v-conserving — mirrors the sweep/pseudo outlet BC
+                # (ε ratio after the legacy ρ chain; uniform ε bit-identical).
                 rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
                 rho_outer_face = rho_field[i, Ny-1]
-                v[i, Ny] = v[i, Ny - 1] * rho_inner_face / rho_outer_face
+                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
+                eps_outer_face = eps_field[i, Ny-1]
+                v[i, Ny] = (v[i, Ny - 1] * rho_inner_face / rho_outer_face
+                            * (eps_inner_face / eps_outer_face))
             else:
                 v[i, Ny] = v[i, Ny - 1]
         else:

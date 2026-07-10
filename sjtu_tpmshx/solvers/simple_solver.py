@@ -421,6 +421,24 @@ class SIMPLESolver:
         if cf_scale != 1.0:
             self._cF_arr = self._cF_arr * float(cf_scale)
 
+        # 2026-07-10 lateral-K: optional per-cell (Nx, Ny) K/cF override in
+        # SIMPLE coords. None → solve() tiles the per-row _K_arr laterally
+        # (bit-identical: kernels average equal values / index the same row).
+        # Set via set_K_cF_field() by callers whose design varies K across the
+        # stream (port-BC routing studies). The 1D _K_arr stays authoritative
+        # for every other consumer (seeds, diagnostics).
+        self._K_field2d = None
+        self._cF_field2d = None
+        # 2026-07-10 cf-aniso: oblique-flow Forchheimer direction factor
+        # cF_eff = cF·(1 + cf_aniso·4nx²ny²) (lowest cubic-symmetry
+        # invariant; 0 on-axis, max at 45°). Default 0.0 = isotropic —
+        # kernels skip the branch bit-identically. On-axis flow is unchanged
+        # for ANY value (the calibration-anchored cF IS the on-axis value,
+        # so this cannot double-count the γ roughness anchor). Calibrate
+        # from direction-resolved unit-cell CFD (validation/cf_aniso/)
+        # before quoting numbers from a non-zero setting.
+        self.cf_aniso = 0.0
+
         # Inlet — use overlap fraction for exact mass conservation
         # v_inlet is the scalar reference inlet velocity (kept for the
         # mass-flux target capture + back-compat diagnostics). v_inlet_field is
@@ -663,6 +681,25 @@ class SIMPLESolver:
         self._mu_eff_field = np.ascontiguousarray(mu_new / eps_eff)
 
     # ──────────────── velocity solve ──────────────────────────────
+    def set_K_cF_field(self, K2d, cF2d):
+        """Per-cell Darcy-Forchheimer override (SIMPLE coords, shape (Nx, Ny)).
+
+        2026-07-10 lateral-K: gives the momentum drag lateral (cross-stream)
+        variation — the per-row 1D projection (`override_simple_K_cF`)
+        averages laterally before predicting, which erases the resistance
+        contrast that port-BC routing studies need. The 1D `_K_arr` stays
+        authoritative for non-kernel consumers (seeds, diagnostics); when
+        this override is set, the momentum kernels consume it instead.
+        """
+        K2d = np.ascontiguousarray(K2d, dtype=np.float64)
+        cF2d = np.ascontiguousarray(cF2d, dtype=np.float64)
+        want = (self.Nx, self.Ny)
+        if K2d.shape != want or cF2d.shape != want:
+            raise ValueError(
+                f"K/cF field shape {K2d.shape}/{cF2d.shape} != {want}")
+        self._K_field2d = K2d
+        self._cF_field2d = cF2d
+
     def solve(self, max_iter=3000, tol=1e-6,
               alpha_u=0.7, alpha_p=0.3,
               n_inner=2,
@@ -734,6 +771,18 @@ class SIMPLESolver:
                                      * getattr(self, '_inlet_taper_flux_scale',
                                                1.0))
 
+        # 2026-07-10 lateral-K: kernels consume 2D (Nx, Ny) K/cF fields. An
+        # explicit per-cell override (set_K_cF_field) wins; otherwise tile the
+        # per-row arrays — the kernels then reproduce the historical per-row
+        # drag bit-identically (equal-value averages are IEEE-exact).
+        if self._K_field2d is not None:
+            _K2d, _cF2d = self._K_field2d, self._cF_field2d
+        else:
+            _K2d = np.ascontiguousarray(
+                np.repeat(self._K_arr[None, :], Nx, axis=0))
+            _cF2d = np.ascontiguousarray(
+                np.repeat(self._cF_arr[None, :], Nx, axis=0))
+
         for it in range(1, max_iter + 1):
             # Effective density for continuity (#2 fix): ε·ρ. Uniform ε →
             # multiplicative constant (no functional change). Zoned ε →
@@ -761,13 +810,15 @@ class SIMPLESolver:
                                  self.inlet_frac, self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
-                                 self._K_arr, self._cF_arr, self.mu_field)
+                                 _K2d, _cF2d, self.mu_field,
+                                 self.eps_field, self.cf_aniso)
                 _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
                                  self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
-                                 self._K_arr, self._cF_arr, self.mu_field)
+                                 _K2d, _cF2d, self.mu_field,
+                                 self.eps_field, self.cf_aniso)
                 # ③ pressure equation from û/v̂ (same ρ·A·d stencil as p') —
                 #    P solved directly, replaced without α_p under-relaxation
                 _solve_pp_sparse_fast(self._P_hat, self._uhat, self._vhat,
@@ -784,15 +835,17 @@ class SIMPLESolver:
                                 self.inlet_frac, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
+                                _K2d, _cF2d, self.mu_field,
+                                self.eps_field,
+                                alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field,
                                 self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
+                                _K2d, _cF2d, self.mu_field,
+                                self.eps_field,
+                                alpha_u, n_inner, self.cf_aniso)
                 # ⑤ p' from u*/v*  ⑥ α_p=0.0 → P untouched, velocities only
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v,
                                       self.d_u, self.d_v, self.outlet_frac,
@@ -802,18 +855,20 @@ class SIMPLESolver:
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field,
                              self.outlet_frac,
-                             Nx, Ny, 0.0, self.rho_field)
+                             Nx, Ny, 0.0, self.rho_field, self.eps_field)
             else:
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                                 self.inlet_frac, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
+                                _K2d, _cF2d, self.mu_field,
+                                self.eps_field,
+                                alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
-                                self._K_arr, self._cF_arr, self.mu_field,
-                                alpha_u, n_inner)
+                                _K2d, _cF2d, self.mu_field,
+                                self.eps_field,
+                                alpha_u, n_inner, self.cf_aniso)
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
                                       self.outlet_frac,
                                       Nx, Ny, dx_a, dy_a, rho_eps_field,
@@ -821,7 +876,7 @@ class SIMPLESolver:
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                             Nx, Ny, alpha_p, self.rho_field)
+                             Nx, Ny, alpha_p, self.rho_field, self.eps_field)
             self._update_density()  # compressible: update rho from P
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
