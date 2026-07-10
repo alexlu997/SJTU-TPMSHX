@@ -152,3 +152,32 @@ def test_port_run_finite_and_lower_throughput():
         f"1/4-open ports must cut duty: Q_port={-Qn_p:.1f} >= "
         f"Q_fullface={-Qn_ff:.1f}")
     assert m_p == pytest.approx(m_ff), "mass must not depend on BC"
+
+
+def test_cf_aniso_penalizes_turning_flow_only():
+    """cf-aniso contract: the direction factor bites where the flow is
+    oblique (port run — in-domain turning) and is near-inert where flow is
+    axis-aligned (full-face run: ξ4 ≈ 0 everywhere)."""
+    cfg_ff = dict(_CFG_SMALL)
+    side = cfg_ff['H_domain']; port = side / 4.0
+    ports = {
+        'ports_A': (side - port, side, 0.0, port),
+        'ports_B': (side - port, side, 0.0, port),
+    }
+    ncx, ncy = cfg_ff['n_ctrl_x'], cfg_ff['n_ctrl_y']
+    x = encode_decision_vector(np.full((ncx, ncy), 5.0),
+                               np.full((ncx, ncy), 0.4),
+                               bool(cfg_ff['symmetric_y']))
+    A = 0.8  # deliberately large so the effect is unambiguous
+    # full-face: axis-aligned flow → factor ~inert (< 0.5 % on dP)
+    _, dP_ff0, _ = evaluate_design(x, cfg_ff)
+    _, dP_ffA, _ = evaluate_design(x, {**cfg_ff, 'cf_aniso': A})
+    assert abs(dP_ffA - dP_ff0) / dP_ff0 < 5e-3, (
+        f"cf_aniso leaked into axis-aligned flow: {dP_ff0:.2f} → {dP_ffA:.2f}")
+    # ports: flow turns in-domain → positive factor must RAISE dP
+    _, dP_p0, _ = evaluate_design(x, {**cfg_ff, **ports, 'per_cell_K': True})
+    _, dP_pA, _ = evaluate_design(
+        x, {**cfg_ff, **ports, 'per_cell_K': True, 'cf_aniso': A})
+    assert dP_pA > dP_p0, (
+        f"cf_aniso={A} did not penalize turning port flow: "
+        f"{dP_p0:.2f} → {dP_pA:.2f}")

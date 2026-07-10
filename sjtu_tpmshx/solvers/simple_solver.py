@@ -429,6 +429,15 @@ class SIMPLESolver:
         # for every other consumer (seeds, diagnostics).
         self._K_field2d = None
         self._cF_field2d = None
+        # 2026-07-10 cf-aniso: oblique-flow Forchheimer direction factor
+        # cF_eff = cF·(1 + cf_aniso·4nx²ny²) (lowest cubic-symmetry
+        # invariant; 0 on-axis, max at 45°). Default 0.0 = isotropic —
+        # kernels skip the branch bit-identically. On-axis flow is unchanged
+        # for ANY value (the calibration-anchored cF IS the on-axis value,
+        # so this cannot double-count the γ roughness anchor). Calibrate
+        # from direction-resolved unit-cell CFD (validation/cf_aniso/)
+        # before quoting numbers from a non-zero setting.
+        self.cf_aniso = 0.0
 
         # Inlet — use overlap fraction for exact mass conservation
         # v_inlet is the scalar reference inlet velocity (kept for the
@@ -802,14 +811,14 @@ class SIMPLESolver:
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
-                                 self.eps_field)
+                                 self.eps_field, self.cf_aniso)
                 _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
                                  self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
-                                 self.eps_field)
+                                 self.eps_field, self.cf_aniso)
                 # ③ pressure equation from û/v̂ (same ρ·A·d stencil as p') —
                 #    P solved directly, replaced without α_p under-relaxation
                 _solve_pp_sparse_fast(self._P_hat, self._uhat, self._vhat,
@@ -828,7 +837,7 @@ class SIMPLESolver:
                                 self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
-                                alpha_u, n_inner)
+                                alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field,
                                 self.outlet_frac,
@@ -836,7 +845,7 @@ class SIMPLESolver:
                                 self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
-                                alpha_u, n_inner)
+                                alpha_u, n_inner, self.cf_aniso)
                 # ⑤ p' from u*/v*  ⑥ α_p=0.0 → P untouched, velocities only
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v,
                                       self.d_u, self.d_v, self.outlet_frac,
@@ -853,13 +862,13 @@ class SIMPLESolver:
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
-                                alpha_u, n_inner)
+                                alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
-                                alpha_u, n_inner)
+                                alpha_u, n_inner, self.cf_aniso)
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
                                       self.outlet_frac,
                                       Nx, Ny, dx_a, dy_a, rho_eps_field,

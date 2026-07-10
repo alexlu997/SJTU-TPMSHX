@@ -127,6 +127,16 @@ DEFAULT_CONFIG: dict = {
     # for port-BC routing studies: lateral resistance contrast is the
     # routing lever, and the per-row projection erases it.
     'per_cell_K': False,
+    # Oblique-flow Forchheimer direction factor (cf-aniso, 2026-07-10):
+    # cF_eff = cF·(1 + cf_aniso·4nx²ny²), the lowest cubic-symmetry
+    # invariant (0 on-axis — the calibration-anchored value — max at 45°).
+    # 0.0 = isotropic (bit-identical legacy). The closure was calibrated on
+    # axis-aligned flow only; port-BC runs turn the flow in-domain, so a
+    # non-zero value bounds that direction error. Its VALUE must come from
+    # direction-resolved unit-cell CFD (validation/cf_aniso/ worklist) —
+    # do not quote absolute numbers from a hand-picked setting; use ± sweeps
+    # for verdict-robustness checks only.
+    'cf_aniso': 0.0,
 
     # Solver knobs
     'max_iter_simple': 5000,
@@ -266,6 +276,9 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real.T, cF_real.T)
+    # cf-aniso (2026-07-10): frame-invariant under the A/B axis swap and the
+    # B y-flip (4nx^2ny^2 depends on |components| only) - same scalar both sides.
+    s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
 
@@ -316,6 +329,7 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real[:, ::-1], cF_real[:, ::-1])
+    s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
 

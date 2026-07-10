@@ -194,7 +194,7 @@ def _umag_v(u, v, i, j, Nx, Ny):
 def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                     K_arr, cF_arr, mu_field, eps_field,
-                    alpha_u, n_sweeps):
+                    alpha_u, n_sweeps, cf_aniso):
     """D-F variant of _sweep_u_jit: porous source uses (K, c_F) per row from
     the ConstDF-v1 surrogate, no phi_arr correction (MLP covers training range
     natively). mu_eff_field and mu_field are 2D (Nx, Ny) arrays so that
@@ -277,6 +277,20 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 # (IEEE), reproducing the old per-row K_arr[j] bit-identically.
                 K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
                 cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+                # 2026-07-10 cf-aniso: oblique-flow Forchheimer direction
+                # factor cF_eff = cF·(1 + a·ξ4), ξ4 = 4·nx²·ny² ∈ [0,1] — the
+                # lowest cubic-symmetry invariant (0 on-axis, 1 at 45°). The
+                # on-axis value stays the calibration-anchored cF exactly; a=0
+                # (default) skips the branch (bit-identical). Darcy K is left
+                # isotropic (cubic symmetry ⇒ K tensor ∝ I). Calibrate `a`
+                # from direction-resolved unit-cell CFD (validation/cf_aniso).
+                if cf_aniso != 0.0 and umag > 1e-10:
+                    va_c = 0.25 * (v[il_r, j] + v[ir_r, j]
+                                   + v[il_r, j + 1] + v[ir_r, j + 1])
+                    ux2 = u[i, j] * u[i, j]
+                    uy2 = va_c * va_c
+                    xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                    cF_u = cF_u * (1.0 + cf_aniso * xi4)
                 Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
                 # Brinkman penalty: grid-invariant via aP_natural (matches 3D
@@ -315,7 +329,7 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                     K_arr, cF_arr, mu_field, eps_field,
-                    alpha_u, n_sweeps):
+                    alpha_u, n_sweeps, cf_aniso):
     """D-F variant of _sweep_v_jit, mirrors _sweep_u_jit_df changes.
     mu_eff_field and mu_field are 2D (Nx, Ny) for non-isothermal coupling.
     M2 (2026-07-09): VANS ε-ratio factors — see _sweep_u_jit_df docstring;
@@ -392,7 +406,16 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                 # 2026-07-10 lateral-K: K/cF are 2D (Nx, Ny). v-node keeps the
                 # legacy streamwise pick K[jc] (a jb/jt mean would move
                 # streamwise-graded cases), extended laterally to column i.
-                Sp = _porous_src_df(umag, K_arr[i, jc], cF_arr[i, jc], mu_loc, rho_loc) * vol
+                cF_v = cF_arr[i, jc]
+                # 2026-07-10 cf-aniso: mirrors _sweep_u_jit_df (see there).
+                if cf_aniso != 0.0 and umag > 1e-10:
+                    ua_c = 0.25 * (u[i, jb] + u[i + 1, jb]
+                                   + u[i, jt] + u[i + 1, jt])
+                    ux2 = ua_c * ua_c
+                    uy2 = v[i, j] * v[i, j]
+                    xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                    cF_v = cF_v * (1.0 + cf_aniso * xi4)
+                Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
                 # Brinkman penalty — grid-invariant (3D parity, P1b-c)
                 aP_nat = aE + aW + aN + aS
@@ -453,7 +476,7 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 @njit(cache=True)
 def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                     K_arr, cF_arr, mu_field, eps_field):
+                     K_arr, cF_arr, mu_field, eps_field, cf_aniso):
     """SIMPLER pseudo-velocity û. Writes uhat interior + fills d_u = dy/aP0.
     M2 (2026-07-09): VANS ε-ratio factors mirror _sweep_u_jit_df
     (coefficient-parity contract)."""
@@ -514,6 +537,14 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
             # 2026-07-10 lateral-K: mirrors _sweep_u_jit_df (parity contract).
             K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
             cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+            # 2026-07-10 cf-aniso: mirrors _sweep_u_jit_df (parity contract).
+            if cf_aniso != 0.0 and umag > 1e-10:
+                va_c = 0.25 * (v[il_r, j] + v[ir_r, j]
+                               + v[il_r, j + 1] + v[ir_r, j + 1])
+                ux2 = u[i, j] * u[i, j]
+                uy2 = va_c * va_c
+                xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                cF_u = cF_u * (1.0 + cf_aniso * xi4)
             Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
@@ -542,7 +573,7 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
 @njit(cache=True)
 def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
-                     K_arr, cF_arr, mu_field, eps_field):
+                     K_arr, cF_arr, mu_field, eps_field, cf_aniso):
     """SIMPLER pseudo-velocity v̂. Writes vhat interior + fills d_v = dx/aP0.
     M2 (2026-07-09): VANS ε-ratio factors mirror _sweep_v_jit_df
     (coefficient-parity contract)."""
@@ -603,7 +634,16 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
             umag = _umag_v(u, v, i, j, Nx, Ny)
             # 2026-07-10 lateral-K: mirrors _sweep_v_jit_df (parity contract).
-            Sp = _porous_src_df(umag, K_arr[i, jc], cF_arr[i, jc], mu_loc, rho_loc) * vol
+            cF_v = cF_arr[i, jc]
+            # 2026-07-10 cf-aniso: mirrors _sweep_v_jit_df (parity contract).
+            if cf_aniso != 0.0 and umag > 1e-10:
+                ua_c = 0.25 * (u[i, jb] + u[i + 1, jb]
+                               + u[i, jt] + u[i + 1, jt])
+                ux2 = ua_c * ua_c
+                uy2 = v[i, j] * v[i, j]
+                xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+                cF_v = cF_v * (1.0 + cf_aniso * xi4)
+            Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
             wall_out = 1.0 - outlet_frac[i]

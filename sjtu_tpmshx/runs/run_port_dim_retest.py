@@ -146,10 +146,17 @@ def main() -> None:
     ap.add_argument('--grid', type=int, default=0,
                     help='override Nx=Ny (0 = adaptive_grid default)')
     ap.add_argument('--n-iter', type=int, default=32)
+    ap.add_argument('--cf-aniso', type=float, default=0.0,
+                    help='oblique-flow Forchheimer direction factor '
+                         '(verdict-robustness sweeps only; the calibrated '
+                         'value comes from validation/cf_aniso/)')
     a = ap.parse_args()
 
-    out_dir = os.path.join(OUT_ROOT, f"ctrl{a.ctrl}_seed{a.seed}"
-                                     + ('_vanilla' if a.no_saas else ''))
+    out_dir = os.path.join(
+        OUT_ROOT,
+        f"ctrl{a.ctrl}_seed{a.seed}"
+        + ('_vanilla' if a.no_saas else '')
+        + (f"_aniso{a.cf_aniso:+.2f}" if a.cf_aniso != 0.0 else ''))
     os.makedirs(out_dir, exist_ok=True)
     cfg = dict(CFG_PORT)
     cfg['n_ctrl_x'] = a.ctrl
@@ -159,6 +166,8 @@ def main() -> None:
     if a.grid:
         cfg['Nx'] = a.grid
         cfg['Ny'] = a.grid
+    if a.cf_aniso != 0.0:
+        cfg['cf_aniso'] = a.cf_aniso
     t_start = time.time()
 
     D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])
@@ -215,7 +224,8 @@ def main() -> None:
         'config': {k: cfg[k] for k in
                    ('tpms_type', 'L_domain', 'H_domain', 'u_A', 'u_B',
                     'T_inA', 'T_inB', 'P_inA', 'P_inB', 'n_rho_loops',
-                    'ports_A', 'ports_B', 'per_cell_K', 'symmetric_y')},
+                    'ports_A', 'ports_B', 'per_cell_K', 'symmetric_y',
+                    'cf_aniso')},
         'decision_dim': int(D),
         'gp_model': cfg.get('gp_model', 'single_task'),
         'budget': {'uniform': int(len(L_vals) * len(t_vals)),

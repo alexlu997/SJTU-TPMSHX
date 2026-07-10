@@ -57,12 +57,12 @@ def _frozen_sweep_pair(eps_field_a, eps_field_b, s):
         _sweep_u_jit_df(u, v, P, d_u, s.inlet_frac, s.outlet_frac,
                         s.Nx, s.Ny, s.dx_arr, s.dy_arr,
                         s.rho_field, s._mu_eff_field,
-                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1)
+                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1, 0.0)
         _sweep_v_jit_df(u, v, P, d_v, s.inlet_frac, s.v_inlet_field,
                         s.outlet_frac,
                         s.Nx, s.Ny, s.dx_arr, s.dy_arr,
                         s.rho_field, s._mu_eff_field,
-                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1)
+                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1, 0.0)
         out.append((u, v))
     return out
 
