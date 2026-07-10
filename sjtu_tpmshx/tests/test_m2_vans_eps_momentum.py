@@ -47,18 +47,22 @@ def _frozen_sweep_pair(eps_field_a, eps_field_b, s):
     v0 = rng.normal(3.0, 0.5, s.v.shape)
     P0 = rng.normal(0.0, 10.0, s.P.shape)
     out = []
+    # 2026-07-10 lateral-K: kernels take 2D K/cF fields — tile the per-row
+    # arrays (laterally uniform → bit-identical to the old 1D path).
+    K2d = np.ascontiguousarray(np.repeat(s._K_arr[None, :], s.Nx, axis=0))
+    cF2d = np.ascontiguousarray(np.repeat(s._cF_arr[None, :], s.Nx, axis=0))
     for eps_f in (eps_field_a, eps_field_b):
         u = u0.copy(); v = v0.copy(); P = P0.copy()
         d_u = np.zeros_like(s.d_u); d_v = np.zeros_like(s.d_v)
         _sweep_u_jit_df(u, v, P, d_u, s.inlet_frac, s.outlet_frac,
                         s.Nx, s.Ny, s.dx_arr, s.dy_arr,
                         s.rho_field, s._mu_eff_field,
-                        s._K_arr, s._cF_arr, s.mu_field, eps_f, 0.7, 1)
+                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1)
         _sweep_v_jit_df(u, v, P, d_v, s.inlet_frac, s.v_inlet_field,
                         s.outlet_frac,
                         s.Nx, s.Ny, s.dx_arr, s.dy_arr,
                         s.rho_field, s._mu_eff_field,
-                        s._K_arr, s._cF_arr, s.mu_field, eps_f, 0.7, 1)
+                        K2d, cF2d, s.mu_field, eps_f, 0.7, 1)
         out.append((u, v))
     return out
 

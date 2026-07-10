@@ -61,6 +61,14 @@ def test_coupling_default_and_explicit_simple_run():
 # 2. pseudo-velocity kernel coefficient parity
 # ────────────────────────────────────────────────────────────────────
 
+def _K2d_pair(s):
+    """2026-07-10 lateral-K: kernels take 2D K/cF fields — tile the per-row
+    arrays (laterally uniform -> bit-identical to the old 1D path)."""
+    K2 = np.ascontiguousarray(np.repeat(s._K_arr[None, :], s.Nx, axis=0))
+    c2 = np.ascontiguousarray(np.repeat(s._cF_arr[None, :], s.Nx, axis=0))
+    return K2, c2
+
+
 def test_d_coefficient_parity_zero_flow():
     """On a zero-flow frozen state the GS sweep does not move u/v (rhs = 0),
     so sweep and pseudo kernels see identical fields -> d must match exactly."""
@@ -74,24 +82,24 @@ def test_d_coefficient_parity_zero_flow():
     _sweep_u_jit_df(u.copy(), v.copy(), P, d_sweep_u,
                     s.inlet_frac, s.outlet_frac,
                     Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                    s._K_arr, s._cF_arr, s.mu_field, s.eps_field, 1.0, 1)
+                    *_K2d_pair(s), s.mu_field, s.eps_field, 1.0, 1)
     uhat = u.copy()
     _pseudo_u_jit_df(u, v, uhat, d_pseudo_u,
                      s.inlet_frac, s.outlet_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                     s._K_arr, s._cF_arr, s.mu_field, s.eps_field)
+                     *_K2d_pair(s), s.mu_field, s.eps_field)
     np.testing.assert_allclose(d_pseudo_u, d_sweep_u, rtol=1e-12, atol=0.0)
 
     v_in = np.zeros(Nx)
     _sweep_v_jit_df(u.copy(), v.copy(), P, d_sweep_v,
                     s.inlet_frac, v_in, s.outlet_frac,
                     Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                    s._K_arr, s._cF_arr, s.mu_field, s.eps_field, 1.0, 1)
+                    *_K2d_pair(s), s.mu_field, s.eps_field, 1.0, 1)
     vhat = v.copy()
     _pseudo_v_jit_df(u, v, vhat, d_pseudo_v,
                      s.inlet_frac, v_in, s.outlet_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                     s._K_arr, s._cF_arr, s.mu_field, s.eps_field)
+                     *_K2d_pair(s), s.mu_field, s.eps_field)
     np.testing.assert_allclose(d_pseudo_v, d_sweep_v, rtol=1e-12, atol=0.0)
 
 
@@ -156,7 +164,7 @@ def test_pseudo_u_spot_check_nonzero_flow():
     _pseudo_u_jit_df(u, v, uhat, d_u,
                      s.inlet_frac, s.outlet_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                     s._K_arr, s._cF_arr, s.mu_field, s.eps_field)
+                     *_K2d_pair(s), s.mu_field, s.eps_field)
     for (i, j) in [(3, 5), (6, 12), (Nx - 2, Ny - 10)]:
         expected = _expected_uhat_cell(s, u, v, i, j)
         assert uhat[i, j] == pytest.approx(expected, rel=1e-12), (i, j)
@@ -174,11 +182,11 @@ def test_pseudo_boundary_faces_carry_bcs():
     d_u = np.zeros_like(s.d_u); d_v = np.zeros_like(s.d_v)
     _pseudo_u_jit_df(u, v, uhat, d_u, s.inlet_frac, s.outlet_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                     s._K_arr, s._cF_arr, s.mu_field, s.eps_field)
+                     *_K2d_pair(s), s.mu_field, s.eps_field)
     _pseudo_v_jit_df(u, v, vhat, d_v, s.inlet_frac, s.v_inlet_field,
                      s.outlet_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
-                     s._K_arr, s._cF_arr, s.mu_field, s.eps_field)
+                     *_K2d_pair(s), s.mu_field, s.eps_field)
     assert np.all(uhat[0, :] == 0.0) and np.all(uhat[Nx, :] == 0.0)
     np.testing.assert_allclose(vhat[:, 0], s.v_inlet_field * s.inlet_frac)
     rho_inner = 0.5 * (s.rho_field[:, Ny - 2] + s.rho_field[:, Ny - 1])

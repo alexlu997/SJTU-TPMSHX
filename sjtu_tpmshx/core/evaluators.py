@@ -253,6 +253,11 @@ def evaluate_3d(x_decision: np.ndarray,
     P_ref_A = float(np.sqrt(P_out_sq_A))
     P_ref_B = float(np.sqrt(P_out_sq_B))
 
+    # BC note (2026-07-10): no inlet/outlet extents are passed, so both
+    # solvers run the constructor default = FULL-FACE inlet/outlet. Port-type
+    # partial BCs are NOT wired into this 3D optimizer stack (the 2D
+    # optimization/evaluator.py has them via ports_A/ports_B); wiring them
+    # here needs the run_stack_3d mask conventions (in_mask_2d et al.).
     sA = SIMPLESolver3D(
         Lx=H_dom, Ly=L_dom, Lz=Lz, Nx=Ny, Ny=Nx, Nz=Nz,
         rho=rho_A0, mu=mu_A0, T_in=T_inA, v_inlet=u_A,

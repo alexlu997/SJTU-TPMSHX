@@ -60,6 +60,10 @@ CFG_M1: dict = {
     'P_inA':      101325.0,
     'P_inB':      101325.0,
     'n_rho_loops': 3,        # compressible baseline (hard invariant)
+    # BC: ports_A/ports_B unset → DEFAULT_CONFIG None → FULL-FACE inlet/outlet
+    # on both streams. The M1/M3 verdicts (graded +3~5 %, 36-D no gain) are
+    # scoped to this full-face counterflow condition; the port-BC re-test
+    # lives in run_port_dim_retest.py (ledger IDEA-PORT-DIM).
 }
 
 OUT_DIR = os.path.join('reports', 'm1_uniform_vs_graded')

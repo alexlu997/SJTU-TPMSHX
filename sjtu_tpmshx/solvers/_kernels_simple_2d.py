@@ -164,7 +164,9 @@ def _porous_src_df(umag, K, cF, mu, rho):
     K and c_F are geometry-level constants from the DF surrogate
     (df_surrogate/predict.py:predict_K_cF), default backend "gamma_df"
     (switched rbf → gamma_df 2026-06-12; RBF is opt-in via env
-    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-row.
+    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-cell (2026-07-10
+    lateral-K: kernels now consume 2D (Nx, Ny) fields; a laterally-uniform
+    field reproduces the historical per-row behaviour bit-identically).
     """
     if umag < 1e-10:
         return mu / K  # pure Darcy when velocity vanishes
@@ -269,7 +271,13 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_u(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
+                # 2026-07-10 lateral-K: K/cF are 2D (Nx, Ny) SIMPLE-coord
+                # fields. u-node straddles cells il_r/ir_r laterally → arith
+                # mean. Laterally-uniform fields give 0.5*(a+a) = a exactly
+                # (IEEE), reproducing the old per-row K_arr[j] bit-identically.
+                K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
+                cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+                Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
                 # Brinkman penalty: grid-invariant via aP_natural (matches 3D
                 # convention in simple_solver_3d.py). Old form `1e8*...*vol`
@@ -381,7 +389,10 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                 aS = Ds + max(Fs, 0.0)
 
                 umag = _umag_v(u, v, i, j, Nx, Ny)
-                Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
+                # 2026-07-10 lateral-K: K/cF are 2D (Nx, Ny). v-node keeps the
+                # legacy streamwise pick K[jc] (a jb/jt mean would move
+                # streamwise-graded cases), extended laterally to column i.
+                Sp = _porous_src_df(umag, K_arr[i, jc], cF_arr[i, jc], mu_loc, rho_loc) * vol
 
                 # Brinkman penalty — grid-invariant (3D parity, P1b-c)
                 aP_nat = aE + aW + aN + aS
@@ -500,7 +511,10 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
             aS = Ds + max(Fs, 0.0)
 
             umag = _umag_u(u, v, i, j, Nx, Ny)
-            Sp = _porous_src_df(umag, K_arr[j], cF_arr[j], mu_loc, rho_loc) * vol
+            # 2026-07-10 lateral-K: mirrors _sweep_u_jit_df (parity contract).
+            K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
+            cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+            Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
             il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
@@ -588,7 +602,8 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
             aS = Ds + max(Fs, 0.0)
 
             umag = _umag_v(u, v, i, j, Nx, Ny)
-            Sp = _porous_src_df(umag, K_arr[jc], cF_arr[jc], mu_loc, rho_loc) * vol
+            # 2026-07-10 lateral-K: mirrors _sweep_v_jit_df (parity contract).
+            Sp = _porous_src_df(umag, K_arr[i, jc], cF_arr[i, jc], mu_loc, rho_loc) * vol
 
             aP_nat = aE + aW + aN + aS
             wall_out = 1.0 - outlet_frac[i]
