@@ -987,6 +987,34 @@ def _run_3d_stack(cfg):
     # still be moving when Ta settled).
     _outer_conv = OuterConvergence(tol_T=_outer_tol, track=('Ta', 'Tb', 'Ts'))
     _outer_dT_hist = []   # per-outer-iter {field: max|Δ|} — convergence_detail
+
+    # ── Anderson acceleration on the OUTER coupling map (opt-in, 2026-07-12) ──
+    # The outer loop's relaxation is a fixed constant (_ALPHA_T = 0.6) applied
+    # to the property fields (rho, mu) in `_outer_post_3d`. Measured on three
+    # air cases (mild / baseline / hot+fast), the resulting Picard iteration is
+    # OSCILLATORY — the residual grows x1.36 on the 2nd iteration before
+    # collapsing — i.e. it is under-damped, and the constant alpha is leaving
+    # convergence rate on the table.
+    #
+    # `AndersonOuterCoupling` replaces the constant with a least-squares mix
+    # over the last m (x, G(x)) pairs. Distinct from the EXISTING
+    # `use_anderson` knob, which accelerates SIMPLE's INNER Picard map
+    # (momentum/pressure) inside each solver — this one accelerates the
+    # SIMPLE<->LTNE coupling BETWEEN solves. They compose; neither is on by
+    # default.
+    #
+    # OFF by default: when disabled, `_outer_post_3d` runs the original blend
+    # expression verbatim, so the production path and the golden gates are
+    # bit-identical.
+    _use_outer_and = bool(cfg.get('outer_anderson', False))
+    _and_A = _and_B = None
+    if _use_outer_and:
+        from solvers.anderson_acceleration import AndersonOuterCoupling
+        _and_kw = dict(m=int(cfg.get('outer_anderson_m', 3)),
+                       trust=float(cfg.get('outer_anderson_trust', 5.0)),
+                       patience=int(cfg.get('outer_anderson_patience', 3)))
+        _and_A = AndersonOuterCoupling(**_and_kw)
+        _and_B = AndersonOuterCoupling(**_and_kw)
     chi_B = None         # B flow-path indicator field (χ_B), built each outer iter
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
@@ -1415,12 +1443,23 @@ def _run_3d_stack(cfg):
             rho_new = sco2_props.sco2_density_field(Ta_sA, P_inA)
             mu_new_A = sco2_props.sco2_viscosity_field(Ta_sA, P_inA)
         if outer > 0:
-            sA.rho_field = np.ascontiguousarray(
-                _ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field,
-                dtype=np.float64)
-            sA.mu_field = np.ascontiguousarray(
-                _ALPHA_T * mu_new_A
-                + (1.0 - _ALPHA_T) * sA.mu_field, dtype=np.float64)
+            # Damped-Picard property update — the outer coupling's relaxation.
+            # `_and_A` (opt-in, cfg['outer_anderson'], default OFF) replaces the
+            # fixed _ALPHA_T with an Anderson least-squares mix over the last m
+            # (x, G(x)) pairs; it falls back to EXACTLY this blend whenever the
+            # candidate is inadmissible or history is short, so the disabled
+            # path — and the golden gates — are bit-identical.
+            if _and_A is not None:
+                (sA.rho_field, sA.mu_field), _ok_A = _and_A.step(
+                    [sA.rho_field, sA.mu_field], [rho_new, mu_new_A],
+                    _ALPHA_T)
+            else:
+                sA.rho_field = np.ascontiguousarray(
+                    _ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field,
+                    dtype=np.float64)
+                sA.mu_field = np.ascontiguousarray(
+                    _ALPHA_T * mu_new_A
+                    + (1.0 - _ALPHA_T) * sA.mu_field, dtype=np.float64)
         else:
             sA.rho_field = np.ascontiguousarray(rho_new, dtype=np.float64)
             sA.mu_field = np.ascontiguousarray(mu_new_A, dtype=np.float64)
@@ -1563,12 +1602,22 @@ def _run_3d_stack(cfg):
                 rho_new_B = _mB.rho(Tb_sB, P_inB)   # water ignores P; sco2 (T,P_in)
             mu_new_B = _mB.mu(Tb_sB, P_inB)          # air/water ignore P; sco2 needs P
             if outer > 0:
-                sB.rho_field = np.ascontiguousarray(
-                    _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
-                    dtype=np.float64)
-                sB.mu_field = np.ascontiguousarray(
-                    _ALPHA_T * mu_new_B + (1.0 - _ALPHA_T) * sB.mu_field,
-                    dtype=np.float64)
+                # Mirror of the fluid-A property update above (see comment
+                # there). Separate Anderson instance per side: A's blend is
+                # applied BEFORE the SIMPLE-A re-solve and B's before SIMPLE-B,
+                # so the two are sequential, not simultaneous — block-wise
+                # acceleration respects that structure.
+                if _and_B is not None:
+                    (sB.rho_field, sB.mu_field), _ok_B = _and_B.step(
+                        [sB.rho_field, sB.mu_field], [rho_new_B, mu_new_B],
+                        _ALPHA_T)
+                else:
+                    sB.rho_field = np.ascontiguousarray(
+                        _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
+                        dtype=np.float64)
+                    sB.mu_field = np.ascontiguousarray(
+                        _ALPHA_T * mu_new_B + (1.0 - _ALPHA_T) * sB.mu_field,
+                        dtype=np.float64)
             else:
                 sB.rho_field = np.ascontiguousarray(rho_new_B, dtype=np.float64)
                 sB.mu_field = np.ascontiguousarray(mu_new_B, dtype=np.float64)
@@ -2092,6 +2141,12 @@ def _run_3d_stack(cfg):
         ltne_ok=_ltne_ok,
         fields_finite=_fields_finite,
         envelope_ok=bool(_env_valid),
+        # Outer-coupling Anderson (None when the opt-in knob is off). Records
+        # how many candidates were accepted / rejected by the admissibility
+        # gate / dropped by the staleness reset, plus the fixed-point residual
+        # history — so the acceleration is auditable, never a black box.
+        outer_anderson=(None if not _use_outer_and else dict(
+            A=_and_A.stats(), B=(_and_B.stats() if sB is not None else None))),
     )
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
