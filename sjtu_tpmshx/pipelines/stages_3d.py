@@ -376,6 +376,11 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             # constant 0/valid and thereby disabled its own pressure-validity
             # filter. Informational (lifetime counter, not a validity verdict).
             'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # Per-gate breakdown behind ComputeResult.converged (SIMPLE / LTNE
+            # inner / outer coupling / finite fields / envelope), plus the
+            # outer ΔT history. Produced by _run_3d_stack but never forwarded,
+            # so a caller could see `converged=False` and not know why.
+            'convergence_detail': raw.get('convergence_detail'),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),

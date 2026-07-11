@@ -453,6 +453,57 @@ class ComputeConfig:
             if iv < 1:
                 raise ValueError(
                     f"ComputeConfig.{name}={n} — must be >= 1")
+
+        # ── Numerical solver settings (2026-07-12) ───────────────────────────
+        # These were previously UNVALIDATED: a JSON with max_outer_ltne=0,
+        # outer_tol_K=-1 or tol_simple=1e9 loaded clean and produced a result
+        # that looked like a solve. None = "use the dimension built-in" and
+        # stays legal.
+        for name, v in (('solver.outer_tol_K', self.solver.outer_tol_K),
+                        ('solver.tol_simple', self.solver.tol_simple)):
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                _bad(name, v)
+            if not math.isfinite(fv) or fv <= 0.0:
+                _bad(name, v)
+        if self.solver.max_iter_simple is not None:
+            try:
+                mi = int(self.solver.max_iter_simple)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"ComputeConfig.solver.max_iter_simple="
+                    f"{self.solver.max_iter_simple!r} — must be an int >= 1")
+            if mi < 1:
+                raise ValueError(
+                    f"ComputeConfig.solver.max_iter_simple={mi} — must be >= 1")
+        if self.solver.max_outer_ltne is not None:
+            try:
+                mo = int(self.solver.max_outer_ltne)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"ComputeConfig.solver.max_outer_ltne="
+                    f"{self.solver.max_outer_ltne!r} — must be an int >= 2")
+            # < 2 CANNOT converge: OuterConvergence needs a previous field to
+            # diff against, so the first outer iteration is never 'converged'
+            # by construction — the loop always exits on the cap and the run
+            # can only ever report converged=False. Fail loud here (the typed
+            # production boundary) rather than silently ship a result that
+            # claims nothing. The raw-cfg path (_run_3d_stack) still accepts 1
+            # as an explicit single-pass SCREENING mode — it now honestly
+            # reports solver_converged=False (see run_stack_3d.py).
+            if mo < 2:
+                raise ValueError(
+                    f"ComputeConfig.solver.max_outer_ltne={mo} — must be >= 2. "
+                    "A single outer pass can never satisfy the coupling "
+                    "criterion (it needs a previous iterate to compare "
+                    "against), so the run could only ever report "
+                    "converged=False. For a deliberate single-pass screening "
+                    "sweep, drive pipelines.stages_3d._run_3d_stack directly "
+                    "with a raw cfg dict and read convergence_detail — do not "
+                    "route it through the typed production config.")
         return self
 
     @classmethod

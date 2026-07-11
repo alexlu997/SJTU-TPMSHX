@@ -376,7 +376,13 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
             return np.ascontiguousarray(m[:, 0])
         return m
 
-    Ta2, Tb2, Ts2 = _solve_full_2d(
+    # Ask the 2D solver for its REAL verdict when the caller wants info.
+    # This used to pass return_info=False unconditionally and then hard-code
+    # {'converged': True, 'iterations': -1, 'residual': 0.0} — so every Nz==1
+    # run reported a converged LTNE inner pass no matter what the delegated 2D
+    # solve actually did, and that lie propagated straight into
+    # `solver_converged` (run_stack_3d.py). Audit 2026-07-12.
+    _d2 = _solve_full_2d(
         L, H, Nx, Ny,
         T_inA, T_inB,
         _sq3(K_ffA) if np.ndim(K_ffA) > 0 else K_ffA,
@@ -391,7 +397,7 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         dir_A, dir_B,
         T_inA_profile=T_inA_profile, T_inB_profile=T_inB_profile,
         max_iter=max_iter, tol=tol,
-        progress_cb=progress_cb, return_info=False,
+        progress_cb=progress_cb, return_info=return_info,
         Ta_init=_sq3(Ta_init), Tb_init=_sq3(Tb_init), Ts_init=_sq3(Ts_init),
         dx_arr=dx_arr, dy_arr=dy_arr,
         inlet_mask_A=_sq_mask(inlet_mask_A, dir_A),
@@ -399,12 +405,15 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         Tb_prescribed=_sq3(Tb_prescribed),
         q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
 
+    if return_info:
+        Ta2, Tb2, Ts2, _info2 = _d2
+    else:
+        Ta2, Tb2, Ts2 = _d2
     Ta3 = Ta2[..., None].copy()
     Tb3 = Tb2[..., None].copy()
     Ts3 = Ts2[..., None].copy()
     if return_info:
-        return Ta3, Tb3, Ts3, {'converged': True, 'iterations': -1, 'residual': 0.0,
-                                'delegated_to_2d': True}
+        return Ta3, Tb3, Ts3, {**_info2, 'delegated_to_2d': True}
     return Ta3, Tb3, Ts3
 
 

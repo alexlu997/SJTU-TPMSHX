@@ -804,6 +804,17 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_enthalpy_B': raw.get('Q_enthalpy_B'),
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
+            # 2026-07-12: solve_2d produced all three of these on the raw dict
+            # and none of them were forwarded — every ComputeResult consumer
+            # was blind to the 2D compressible-envelope verdict and to the
+            # P_abs-clip engagement (the 3D side had the same gap for
+            # p_clip_hits; both are closed now).
+            'envelope_valid': raw.get('envelope_valid', True),
+            'envelope_reasons': list(raw.get('envelope_reasons', [])),
+            'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # Per-gate breakdown behind ComputeResult.converged, so a caller
+            # can see WHICH gate failed (convergence truth-table).
+            'convergence_detail': raw.get('convergence_detail'),
         },
     )
 

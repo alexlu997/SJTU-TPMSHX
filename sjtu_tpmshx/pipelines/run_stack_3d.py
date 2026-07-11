@@ -379,6 +379,17 @@ def _run_3d_stack(cfg):
     # None keeps the resolution above bit-identically.
     if cfg.get('max_outer_ltne') is not None:
         _max_outer = int(cfg['max_outer_ltne'])
+        # 0 used to fall through and blow up far downstream with an opaque
+        # `TypeError: unsupported operand type(s) for -: 'NoneType' and
+        # 'NoneType'` (nothing was ever solved, so the field vars stayed None).
+        # Fail loud, here, with the reason. `1` stays legal as an explicit
+        # single-pass SCREENING mode — it cannot converge by construction and
+        # now honestly reports solver_converged=False. The typed production
+        # boundary (ComputeConfig.validate) rejects anything < 2 outright.
+        if _max_outer < 1:
+            raise ValueError(
+                f"max_outer_ltne={_max_outer} — must be >= 1. Zero outer "
+                "iterations solves nothing; the run has no result to report.")
     _outer_tol = (float(cfg['outer_tol_K'])
                   if cfg.get('outer_tol_K') is not None else _OUTER_TOL)
 
@@ -1592,7 +1603,12 @@ def _run_3d_stack(cfg):
             vcB[:] = vcB2
             wcB[:] = wcB2
 
-    run_outer_coupling(
+    # The skeleton returns (last_iter, converged). 3D used to DISCARD both, so
+    # the outer-coupling verdict never reached `solver_converged` (2D captures
+    # it — solve_2d.py:1173). A run that burned every outer iteration with ΔT
+    # still bouncing could therefore report success as long as the final LTNE
+    # inner pass and the SIMPLE solves converged. (Audit 2026-07-12.)
+    _outer_last_iter, _outer_converged = run_outer_coupling(
         max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
 
     # ── Extract metrics + fields ──
@@ -1998,15 +2014,39 @@ def _run_3d_stack(cfg):
     _result['envelope_reasons'] = _env_reasons
     _result['envelope_warnings'] = _env_warnings
     _result['p_clip_hits'] = _clip_hits
-    # robustness-hardening (2026-07-03): first-class convergence verdict —
-    # False when any SIMPLE solve stalled (init or outer re-solve) or the
-    # FINAL outer LTNE pass failed its residual target (earlier passes
-    # hitting the iteration cap is a normal warm-up, only the last one
-    # carries the result). Flows into ComputeResult.converged.
+    # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
+    # robustness-hardening (2026-07-03) introduced this key but only ANDed
+    # SIMPLE with the FINAL outer LTNE pass. Three ways a bad solve could still
+    # report success, all closed here:
+    #   (a) outer coupling never converged  — the skeleton's verdict was
+    #       discarded at the call site (see run_outer_coupling above);
+    #   (b) `max_outer_ltne=0` → zero iterations → `_ltne_info` empty → the
+    #       `not _ltne_info` short-circuit returned True on a run that solved
+    #       nothing;
+    #   (c) a non-finite (NaN/inf) temperature or velocity field — the envelope
+    #       gate flags non-finite P/Mach, but a NaN inside Ta/Tb/Ts alone did
+    #       not touch the verdict.
+    # Only the verdict changes; no numeric field is touched (golden gates hash
+    # fields + headline scalars, not this key).
+    _fields_finite = bool(
+        np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
+        and np.all(np.isfinite(Ts)) and np.all(np.isfinite(vmag))
+        and (vmag_B is None or np.all(np.isfinite(vmag_B))))
+    if not _fields_finite:
+        _env_warnings.append(
+            "Non-finite (NaN/inf) cells in the converged temperature or "
+            "velocity field — the result is not physical; solver_converged "
+            "is forced False.")
+        _env_warnings = list(dict.fromkeys(_env_warnings))
+        _result['envelope_warnings'] = _env_warnings
+    _ltne_ok = bool(_ltne_info) and bool(
+        _ltne_info[-1].get('converged', False))
     _result['solver_converged'] = bool(
-        (not _simple_nonconv)
-        and ((not _ltne_info)
-             or bool(_ltne_info[-1].get('converged', False))))
+        (not _simple_nonconv)          # every SIMPLE solve reached tol
+        and _ltne_ok                   # FINAL outer LTNE inner pass converged
+        and bool(_outer_converged)     # outer coupling converged (not capped)
+        and _fields_finite             # no NaN/inf in the reported fields
+        and bool(_env_valid))          # post-solve compressible envelope gate
     # A2 (2026-07-06): structured convergence detail. Additive result keys
     # only (the golden gate hashes fields + headline scalars, not these).
     #   simple_*   : final SIMPLE exit per solver — reason ('tol'|'velocity'|
@@ -2027,9 +2067,19 @@ def _run_3d_stack(cfg):
         simple_nonconv=list(_simple_nonconv),
         outer_dT=[{k: float(v) for k, v in d.items()}
                   for d in _outer_dT_hist],
-        outer_converged=bool(
-            _outer_dT_hist
-            and all(v < _outer_tol for v in _outer_dT_hist[-1].values())),
+        # The skeleton's OWN verdict, not a reconstruction from the ΔT history
+        # (the reconstruction could disagree with the loop that actually ran —
+        # e.g. it returned True for a converged-on-the-first-pass run whose
+        # history the skeleton never marks). Also records WHY it stopped.
+        outer_converged=bool(_outer_converged),
+        outer_iters=int(_outer_last_iter) + 1,
+        outer_hit_cap=bool(not _outer_converged),
+        # Per-gate breakdown so a caller can see WHICH gate failed rather than
+        # just that the AND is False (convergence truth-table, 2026-07-12).
+        simple_ok=bool(not _simple_nonconv),
+        ltne_ok=_ltne_ok,
+        fields_finite=_fields_finite,
+        envelope_ok=bool(_env_valid),
     )
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
