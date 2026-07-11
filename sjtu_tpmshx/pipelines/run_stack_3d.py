@@ -243,7 +243,33 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
 
 
 R_AIR = 287.05
-_MAX_OUTER = 5        # outer SIMPLE ↔ LTNE iterations
+# 2026-07-12 — bump _MAX_OUTER 5→8. This mirrors the SAME fix 2D already took
+# on 2026-05-09 (`solve_2d.py:683`: "bump _MAX_COUPLING 5→10 … cases that
+# previously hit iter 5 with dT_B still bouncing now have headroom to settle
+# without firing the 'not converged' warning") — 3D was left behind at 5.
+#
+# It is a CAP, not a budget: `run_outer_coupling` exits the moment the tracked
+# ΔT fields drop under `_OUTER_TOL`, so a bigger cap costs a converging case
+# nothing. At 5 the production Shanghai-grid case was being TRUNCATED one
+# iteration before it converged — it needs 6, and the honest verdict (2026-07-12)
+# duly reported converged=False on every such run.
+#
+# Measured outer-iteration counts to convergence (0.182×0.182×0.042, 20×10×3
+# unless noted):
+#     mild      ΔT=50 K,  u=2      → 4
+#     partial-BC air-air 8×6×6     → 5      (the cross-flow class that forced 2D)
+#     baseline  ΔT=180 K, u=6      → 6      (production Shanghai grid)
+#     partial-BC air-air 20×10×3   → 6
+#     hot+fast  ΔT=500 K, u=20     → 7
+#     golden-3D air_air            → 8
+#     golden-3D asym_b (δ=0.6)     → 9      (worst measured)
+# 8 was the first guess and is NOT enough: it truncates golden-3D's asym_b
+# (needs 9) and leaves air_air with zero spare — the exact failure mode being
+# fixed. 12 gives three iterations of headroom over the worst measured case.
+# The margin is free: the loop exits on convergence, so every case above runs
+# the same number of iterations (and returns bit-identical numbers) whether the
+# cap is 12, 20 or 100. Only a case that genuinely needs >12 would notice.
+_MAX_OUTER = 12       # outer SIMPLE ↔ LTNE iterations (cap, not a budget)
 _OUTER_TOL = 0.5      # K
 _ALPHA_T = 0.6
 
@@ -351,9 +377,11 @@ def _run_3d_stack(cfg):
     `in_z_ctr`/`in_z_w` etc. in `fluid_A_cfg`).
 
     Sweep profiles (cfg['sweep_profile']):
-      'fast_sweep'    — 15³ grid, _MAX_OUTER=3, max_iter=20000, compact diag
-      'full_validate' — cfg grid,  _MAX_OUTER=5, max_iter=50000, full diag
-      None (default)  — cfg values, _MAX_OUTER=5, full diagnostic
+      'fast_sweep'    — 15³ grid, outer cap 3 (BELOW the converging count —
+                        a screening scan, reports converged=False by design),
+                        max_iter=20000, compact diag
+      'full_validate' — cfg grid,  outer cap 12, max_iter=50000, full diag
+      None (default)  — cfg values, outer cap 12 (_MAX_OUTER), full diagnostic
     """
     # ── Sweep profile resolution ──
     _profile = cfg.get('sweep_profile', None)
@@ -361,6 +389,12 @@ def _run_3d_stack(cfg):
     _ltne_max_iter = 20000
     _compact_diag = False
     if _profile == 'fast_sweep':
+        # Deliberately BELOW the converging count (measured 4–7). This profile
+        # trades convergence for speed on purpose — it is a screening scan, and
+        # since 2026-07-12 it reports that honestly (`solver_converged=False`,
+        # `convergence_detail['outer_hit_cap']=True`). Do NOT read a fast_sweep
+        # result as a converged solve; raise it (or drop the profile) if you
+        # need one.
         _max_outer = 3
         _ltne_max_iter = 20000
         _compact_diag = True
@@ -370,7 +404,10 @@ def _run_3d_stack(cfg):
         cfg['Ny'] = min(cfg.get('Ny', 20), 15)
         cfg['Nz'] = min(cfg.get('Nz', 20), 15)
     elif _profile == 'full_validate':
-        _max_outer = 5
+        # 5→12 with _MAX_OUTER (2026-07-12). A *validation* profile truncating
+        # the coupling short of convergence was the worst instance of the bug:
+        # it is the path whose numbers get quoted.
+        _max_outer = 12
         _ltne_max_iter = 50000
         _compact_diag = False
     # else: use module-level defaults, full diagnostic
