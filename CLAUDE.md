@@ -5,6 +5,7 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
 ## Read first (canonical docs — don't duplicate them here)
 - **`PROJECT_MANUAL.md`** — start here. Glossary (名词表) + directory map + per-file API index + physics one-pager. Written for both humans and AI agents.
 - **`README.md`** — headline results, install / run commands, V&V table.
+- **`docs/atlas/`** — 17-volume full-codebase atlas (2026-07-11), file:line-cited and adversarially fact-checked, aimed at a weaker AI agent porting this repo to a server. Finer-grained than `PROJECT_MANUAL.md` §6; on conflict, atlas wins. Start with `docs/atlas/README.md`.
 - Research notes and experiment reports are kept in a **separate vault outside this repository** (this package is a sub-repo of a larger research workspace). The in-repo `reports/` holds computed CSV / figures, not the report archive.
 - **`D:\Postgraduate\vault\reports\_research-ledger-CN.md`** — 调研台账（单一真源）：证伪方案（附推翻条件）+ 搁置与已知缺陷（附重启触发）+ 想法池 + 能力（活维护）。**任何闭合标定 / 数值格式 / 物理增补类调查开工前先查它**，做完当场回写；回写结论须溯源可执行代码 file:line，注释与旧报告只作线索。数字溯源查 `sjtu_tpmshx/validation/_CSV_STATUS.md`。
 
@@ -30,3 +31,17 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
 
 ## Git
 This repo: `github.com/alexlu997/SJTU-TPMSHX`, default branch **master**. Commit / push only when asked.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (`gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
