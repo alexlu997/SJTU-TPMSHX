@@ -148,6 +148,64 @@ def test_typed_config_rejects_non_converging_outer_budget():
     _cc(None).validate()   # None = dimension built-in
 
 
+def test_typed_config_requires_explicit_lz_for_3d():
+    """Nz>=2 selects the 3D path, which must not invent a domain depth.
+
+    `stages_3d._parse_inputs_3d_cfg` silently substituted 0.042 m (the Shanghai
+    HX depth) whenever Lz_m was None — every extensive 3D scalar (Q, mass,
+    dP_B) then scaled with a constant the user never chose. The class's own
+    GeometryConfig docstring already said the 3D path *requires* Lz_m.
+    """
+    from domain.compute_config import (ComputeConfig, FluidConfig,
+                                       GeometryConfig, SolverConfig)
+
+    def _cc(Nz, Lz):
+        return ComputeConfig(
+            fluid_A=FluidConfig(type='air', u_mps=3.0, T_in_K=400.0,
+                                P_in_Pa=101325.0),
+            fluid_B=FluidConfig(type='air', u_mps=1.0, T_in_K=300.0,
+                                P_in_Pa=101325.0),
+            geometry=GeometryConfig(tpms='Gyroid', L_cell_mm=7.0,
+                                    t_wall_mm=0.6, k_s_W_mK=15.0,
+                                    L_dom_m=0.1, H_dom_m=0.1, Lz_m=Lz),
+            solver=SolverConfig(Nx=8, Ny=6, Nz=Nz))
+
+    with pytest.raises(ValueError, match='Lz_m'):
+        _cc(Nz=3, Lz=None).validate()          # 3D without a depth
+    _cc(Nz=3, Lz=0.02).validate()              # 3D with a depth
+    _cc(Nz=1, Lz=None).validate()              # 2D: Lz legitimately unused
+
+    # The pipeline entry must refuse it too (defence in depth: raw
+    # ComputeConfig construction bypasses validate()).
+    from pipelines.stages_3d import _parse_inputs_3d_cfg
+    with pytest.raises(ValueError, match='Lz_m'):
+        _parse_inputs_3d_cfg(_cc(Nz=3, Lz=None))
+
+
+def test_3d_initial_dual_fluid_simple_obeys_solver_config():
+    """The FIRST (A‖B) SIMPLE solve used to ignore SolverConfig.
+
+    `_run_two_simple_parallel` was called with neither max_iter nor tol, so it
+    fell back to its signature defaults — a user-set max_iter_simple /
+    tol_simple governed every SIMPLE solve EXCEPT the initial one. Assert the
+    call site now forwards both.
+    """
+    import inspect
+    from pipelines import run_stack_3d as _r3
+    src = inspect.getsource(_r3._run_3d_stack)
+    assert '_run_two_simple_parallel(' in src
+    # Take the call's argument region up to the terminating `cancel_check=`
+    # kwarg (the inner _simple_max_iter(...) call has its own parens, so a
+    # naive split on ')' truncates).
+    call = src.split('_run_two_simple_parallel(')[1].split('cancel_check=')[0]
+    assert 'max_iter=_simple_max_iter(cfg' in call, (
+        "the initial dual-fluid SIMPLE solve must forward SolverConfig's "
+        f"max_iter_simple (got: {call!r})")
+    assert 'tol=_simple_tol_default(cfg' in call, (
+        "the initial dual-fluid SIMPLE solve must forward SolverConfig's "
+        f"tol_simple (got: {call!r})")
+
+
 def test_typed_config_rejects_nonsense_numeric_settings():
     """validate() used to check NO solver numerical parameter at all."""
     from domain.compute_config import (ComputeConfig, FluidConfig,

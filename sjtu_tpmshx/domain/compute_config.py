@@ -454,6 +454,19 @@ class ComputeConfig:
                 raise ValueError(
                     f"ComputeConfig.{name}={n} — must be >= 1")
 
+        # ── Lz contract (2026-07-12) ─────────────────────────────────────────
+        # This class's own GeometryConfig docstring says the 3D path *requires*
+        # Lz_m, but stages_3d silently substituted 0.042 m (the Shanghai depth)
+        # when it was None — a 3D result computed against a magic constant the
+        # user never chose, with every extensive scalar (Q, mass, dP_B) scaled
+        # by it. Nz >= 2 is exactly `is_3d`, so this is a config error.
+        if self.is_3d and self.geometry.Lz_m is None:
+            raise ValueError(
+                f"ComputeConfig.geometry.Lz_m is None but solver.Nz="
+                f"{self.solver.Nz} >= 2 selects the 3D path, which requires an "
+                "explicit domain depth (it used to silently fall back to "
+                "0.042 m). Set geometry.Lz_m, or set Nz=1 for a 2D run.")
+
         # ── Numerical solver settings (2026-07-12) ───────────────────────────
         # These were previously UNVALIDATED: a JSON with max_outer_ltne=0,
         # outer_tol_K=-1 or tol_simple=1e9 loaded clean and produced a result

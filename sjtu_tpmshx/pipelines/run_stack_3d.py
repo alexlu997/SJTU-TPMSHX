@@ -672,8 +672,20 @@ def _run_3d_stack(cfg):
             G_B=G_B, T_inB=T_inB,
         )
         # ── Parallel SIMPLE A + B solve (threads, njit releases GIL) ──
+        # SolverConfig propagation (2026-07-12): this call used to pass NEITHER
+        # max_iter NOR tol, so the dual-fluid INITIAL solve silently fell back
+        # to the helper's signature defaults (max_iter=2000, tol=None →
+        # _simple_tol_default() with cfg=None, which skips the cfg['tol_simple']
+        # branch). Only the A-alone branch below and the `post` re-solves obeyed
+        # SolverConfig — i.e. a user-set max_iter_simple / tol_simple governed
+        # every SIMPLE solve EXCEPT the first one. Same resolution helpers as
+        # the A-alone branch, so a config leaving both knobs at None (and no
+        # TPMSHX_SIMPLE_TOL) is bit-identical to before.
         _init_res = _run_two_simple_parallel(
-            sA, sB, cancel_check=cfg.get('_cancel_check'))
+            sA, sB,
+            max_iter=_simple_max_iter(cfg, 2000),
+            tol=_simple_tol_default(cfg),
+            cancel_check=cfg.get('_cancel_check'))
         if _init_res and _init_res[0] is not None and not _init_res[0][0]:
             _simple_nonconv.append(
                 f"A@init[{getattr(sA, 'exit_reason', '?')}]")

@@ -104,8 +104,21 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # ── scalar geometry + grid + fluids ─────────────────────────────
     L = compute_cfg.geometry.L_dom_m
     H = compute_cfg.geometry.H_dom_m
-    Lz = (compute_cfg.geometry.Lz_m
-          if compute_cfg.geometry.Lz_m is not None else 0.042)
+    # Lz contract (2026-07-12): GeometryConfig's docstring says the 3D path
+    # *requires* Lz_m, but this line silently substituted the Shanghai depth
+    # (0.042 m) whenever it was None — so a config that never specified a depth
+    # still produced a 3D result, computed against a magic constant the user
+    # never chose, and every extensive 3D scalar (Q, mass, dP_B) scaled with it.
+    # Nz >= 2 already routes here (ComputeConfig.is_3d), so arriving with
+    # Lz_m=None is a config error, not a default. Fail loud.
+    if compute_cfg.geometry.Lz_m is None:
+        raise ValueError(
+            "GeometryConfig.Lz_m is None but the 3D path was selected "
+            f"(solver.Nz={compute_cfg.solver.Nz} >= 2). The 3D solver requires "
+            "an explicit domain depth — it used to silently fall back to "
+            "0.042 m (the Shanghai HX depth), which every extensive 3D scalar "
+            "then scaled with. Set geometry.Lz_m explicitly.")
+    Lz = float(compute_cfg.geometry.Lz_m)
     Nx = compute_cfg.solver.Nx
     Ny = compute_cfg.solver.Ny
     Nz = compute_cfg.solver.Nz
