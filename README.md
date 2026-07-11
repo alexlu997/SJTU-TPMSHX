@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
-  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order 1.975." width="100%">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order p_obs ≥ 2.07." width="100%">
 </picture>
 
 <br><br>
@@ -34,7 +34,7 @@
 | **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
 | **3D pressure drop** RMSRE | **≈ 10 %** | full SIMPLE 3D, gamma_df default, grid-converged (per-case Richardson, A2 criteria) |
 | **3D heat duty Q** RMSRE | **≈ 3 %** | full SIMPLE 3D, gamma_df default, grid-converged |
-| **MMS** observed order `p_obs` | **1.975** | code verification, SOU 2nd-order |
+| **MMS** observed order `p_obs` | **≥ 2.07** | code verification, SOU 2nd-order (gate ≥ 1.5) |
 
 </div>
 
@@ -74,10 +74,10 @@
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
 | **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct · solid-conduction tortuosity **χ_s(type, ε)** from unit-cell periodic homogenization (≈0.59–0.83; thin-sheet limit ⅔) |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
-| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
+| **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 28 %** |
-| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 8.4 %** (mass-flux inlet) |
+| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
 ---
@@ -118,8 +118,9 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate.
-The runtime path loads an exported joblib RBF model.
+GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate
+(the historical `rbf` backend; superseded by `gamma_df` as default 2026-06-12).
+The runtime path reads a CSV-based log-space TPS surface (`gamma_df`, no joblib/torch at runtime).
 
 ---
 
@@ -148,7 +149,7 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 #### ✔️ Tests
 
 ```bash
-# full suite, parallel (~4.5 min; ~120 test files). PYTHONHASHSEED must be
+# full suite, parallel (~4.5 min; ~150 test files). PYTHONHASHSEED must be
 # set in the shell — the 3D pipeline output is hash-seed sensitive.
 PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
 
@@ -203,7 +204,7 @@ ASME V&V 20 **Standard Tier** complete (single-day closure, 2026-05-04):
 | **D — Domain sweep** | **18 / 20** PASS, applicability `u ≤ 10 m/s` |
 | **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.71 %** |
 
-Streamfunction–Pressure formulation: 3D PPE Phase-A MMS `p_obs = 1.975` (SOU 2nd-order verified).
+3D PPE Phase-A MMS `p_obs ≥ 2.07` (SOU 2nd-order verified).
 
 ---
 
