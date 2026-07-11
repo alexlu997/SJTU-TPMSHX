@@ -1,7 +1,7 @@
 # solvers — 2D SIMPLE + 能量
 生成日期 2026-07-10，基于 commit f33d30e 附近的 master
 
-> 本文档所有断言均以代码为唯一真源，逐条附 file:line（行号对应上述 commit 的工作区文件）。目标读者为在 Linux 服务器上移植/改造本库的编码代理。
+> 本文档所有断言均以代码为唯一真源，逐条附 file:line（行号对应上述 commit 的工作区文件）。目标读者为在 **Windows Server 2022** 服务器上移植/改造本库的编码代理。
 
 ## 定位与功能
 
@@ -161,6 +161,6 @@
 - **线程控制**：`NUMBA_NUM_THREADS` 必须在 Numba 初始化前于 shell/launcher 设定（硬上限，`sjtu_tpmshx/solvers/threads.py:6-8`）；`TPMSHX_NUM_THREADS` 在 `solvers` 包导入时应用（`sjtu_tpmshx/solvers/__init__.py:10`）。线程数全局生效于所有 `parallel=True` 核。注意 2D 能量核默认走串行 `_gs_full_chunk`（`_RB_ENERGY_2D=False`），多核对本模块 2D 路径收益有限。
 - **导入路径假设**：`simple_solver.py` 顶层 `from df_surrogate.predict import predict_K_cF, predict_K_cF_vec`（`sjtu_tpmshx/solvers/simple_solver.py:43`）与 `from logutil import get_logger`（`:47`）都是**顶层包/模块导入**——`sjtu_tpmshx/` 目录本身必须在 sys.path 上（包内相对导入与顶层导入混用），移植时不能简单 `pip install` 成独立包而不处理该布局。
 - **依赖**：numpy、numba、scipy（`sparse` + `spsolve`，即 SuperLU；`sjtu_tpmshx/solvers/_kernels_simple_2d.py:687-688`）。压力方程是稀疏直接解，大网格内存随 Nx·Ny 增长，服务器上超大 2D 网格需留意 spsolve 填充内存。
-- **确定性/golden 门**：`_solve_common.py` 明确「纯 Python、无 numba/fastmath、位一致契约」（`sjtu_tpmshx/solvers/_solve_common.py:9-13`）；本仓库 golden 门要求 `PYTHONHASHSEED=0`（仓库约定，见 `.claude/commands/check.md`；本文件层面未验证其作用机理）。若在服务器改用不同 BLAS/CPU，`spsolve`/numba 浮点结果的跨平台位一致**未验证**——golden 位一致基线在 Windows 上建立，Linux 复跑前不要假设 bit-identical。
-- **平台无关性**：本模块 7 个文件无 Windows 专属路径、无 GUI 依赖（GUI 仅通过 `set_solver_threads` 反向调用本模块，`sjtu_tpmshx/ui/builders_domain.py:277-310`）、无文件 I/O、日志为 ASCII（经 `logutil.get_logger`）。数据文件（data/raw_data 等 gitignored 大文件）不被本模块直接读取，但上游 `df_surrogate.predict` 的标定链可能依赖（本文档未核查；worktree 缺该数据时 DF 标定可能回退 CSV，见仓库备忘）。
+- **确定性/golden 门**：`_solve_common.py` 明确「纯 Python、无 numba/fastmath、位一致契约」（`sjtu_tpmshx/solvers/_solve_common.py:9-13`）；本仓库 golden 门要求 `PYTHONHASHSEED=0`（仓库约定，见 `.claude/commands/check.md`；本文件层面未验证其作用机理）。移植目标为 Windows Server 2022（与开发机同为 Windows），但「同 OS」不等于「同二进制环境」：若服务器上的 BLAS 版本或 CPU 微架构（AVX2/AVX-512 等指令集，影响 SIMD 向量化路径）与开发机不同，`spsolve`/numba 浮点结果的位一致性**未验证**——golden 基线在 Windows 开发机上建立，跨机器复跑前不要假设逐位相同（应先用数值容差比对，必要时在服务器上重新钉基线，而非直接复用开发机的 golden CSV 做 bit-identical 断言）。
+- **无人值守 / 无显示器运行**（原「平台无关性」一条：因移植目标已从 Linux 改为同为 Windows 的 Server 2022，「无 Windows 专属路径」这类跨 OS 对比已不适用，故删除，改述服务器上实际相关的风险点）：本模块 7 个文件（Read/Grep 复核）无直接文件 I/O、代码中无 `encoding=` 假设；日志经 `logutil.get_logger`——handler 直写 `sys.stdout` 且格式串固定为纯消息文本（`sjtu_tpmshx/logutil.py:76`），7 个文件内 grep 中文字符零命中，故日志内容为 ASCII，不受 Windows Server 中文区域设置下 GBK/CP936 默认代码页影响（该编码坑在本模块范围内不成立；仓库其他模块若有中文日志/文件读写仍需按仓库备忘单独核查）。GUI 依赖仅为单向反向调用：`sjtu_tpmshx/ui/builders_domain.py:277-310` 调用本模块的 `set_solver_threads`，本模块自身不 import 任何 Qt/PySide 符号（grep 复核零命中），在 Server Core 等无交互式桌面会话的环境下可直接后台运行，无需 `QT_QPA_PLATFORM=offscreen` 之类的 Qt 平台插件配置（那是 `ui/` 模块的关注点，不在本文档范围）。数据文件（data/raw_data 等 gitignored 大文件）不被本模块直接读取，但上游 `df_surrogate.predict` 的标定链可能依赖（本文档未核查；worktree 缺该数据时 DF 标定可能回退 CSV，见仓库备忘）。
 - **测试锚点**：`sjtu_tpmshx/tests/test_invariant_negative_guards.py`（massflux 默认 ON 护栏）、`test_a3_conservative_ltne_2d.py`（GS 核）、`test_asym_porosity_2d.py`（eps_A/eps_B hook）、`test_simpler_coupling_2d.py`、`test_m2_vans_eps_momentum.py`、`test_inlet_taper_mass.py`、`test_solver_threads.py`、`test_anderson_simple.py`。

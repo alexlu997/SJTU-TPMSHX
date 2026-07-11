@@ -1,7 +1,7 @@
 # 端到端调用链与架构流
 生成日期 2026-07-11，基于 commit f33d30e 附近的 master
 
-> 本册目标读者：将在 Linux 服务器上移植/改造本库的另一个编码代理。所有断言均以代码为唯一真源，附 `file:line` 溯源（行号对应本 commit 附近的工作树，移植后可能漂移）。无法在代码中直接核实处标注「未验证」。本册不重复其他分册（`docs/atlas/controllers.md`、`pipelines.md`、`solvers-2d.md`、`solvers-3d.md`、`df-surrogate.md`、`validation.md`、`ui-core.md`、`runs.md`）的文件级细节，只画**跨模块的端到端数据流**。
+> 本册目标读者：将在 **Windows Server 2022** 服务器上移植/改造本库的另一个编码代理。所有断言均以代码为唯一真源，附 `file:line` 溯源（行号对应本 commit 附近的工作树，移植后可能漂移）。无法在代码中直接核实处标注「未验证」。本册不重复其他分册（`docs/atlas/controllers.md`、`pipelines.md`、`solvers-2d.md`、`solvers-3d.md`、`df-surrogate.md`、`validation.md`、`ui-core.md`、`runs.md`）的文件级细节，只画**跨模块的端到端数据流**。
 
 ## 定位与功能
 

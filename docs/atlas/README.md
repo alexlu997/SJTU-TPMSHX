@@ -2,7 +2,7 @@
 
 生成日期 2026-07-11，基于 commit f33d30e 附近的 `master`。
 
-本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Linux 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
+本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Windows Server 2022 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
 
 ## 与 `PROJECT_MANUAL.md` 的关系
 

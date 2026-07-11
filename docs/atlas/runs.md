@@ -173,9 +173,9 @@
 
 ## 服务器移植注意
 
-- **Windows 绝对路径写死**（详见「边界」节列出的具体文件行号）是本目录最大的移植障碍：`C:\Users\ALEX\Desktop\*.html` 输出（3 处）、`D:\Postgraduate\vault\...` 读入模板（1 处）、`D:/Postgraduate/asym-porosity-data/...` 输出（1 处）——移植前必须逐一改成 Linux 路径或改造成可配置的 CLI 参数/环境变量，否则脚本会在写文件那一步直接抛 `FileNotFoundError`（父目录不存在，Windows 盘符不存在）。
-- **PySide6 (Qt) 依赖**：`polygon_calc.py`（`from PySide6.QtWidgets import QApplication, QMessageBox`）、全部 `smokes/*.py`、`_smoke_boot.py` 都硬依赖 PySide6；无显示环境的 Linux 服务器上必须保证 `QT_QPA_PLATFORM=offscreen` 生效（`_smoke_boot.py` 已处理，但顺序敏感——必须在任何 `PySide6` import **之前** 完成，其余脚本若自行 import Qt 需照抄这个模式）。`polygon_calc.py` 本身不设置该变量（它假设由调用方/GUI 主进程已经在正常窗口环境里跑），服务器上若要单测这条链需要额外包一层类似 `_smoke_boot` 的引导。
-- **PyVista 3D 渲染依赖 VTK 的离屏/GPU 后端**：`demos/demo_3d_cube_volume.py`、`demos/demo_vis_3d_interactive.py`、`tools/render_3d_styles.py`、`archive/diag_shanghai_3d_n20_render.py` 均用 `pyvista`；Linux 服务器上离屏渲染通常需要装 `xvfb` 或 VTK 的 OSMesa 软件渲染后端，`PYVISTA_OFF_SCREEN=true` 只是告诉 PyVista 不要开真实窗口，不代表底层 OpenGL/Mesa 依赖已经满足（未验证当前 CI/Linux 环境是否已装好；`memory/ci-linux-ui-hang-onboarding.md` 提到过 offscreen guard + shiboken 生命周期坑，是相关的既有教训）。
+- **绝对路径写死**（详见「边界」节列出的具体文件行号）仍是本目录的移植障碍，但风险的形状变了：目标平台由 Linux 改回 Windows Server 2022 后，反斜杠/盘符语法本身不再是问题（两端同为 Windows，`C:\`/`D:\` 都有效，不需要转成 `/` 路径）。真正的风险是这些路径写死的是**开发者本机的用户名与目录布局**——`C:\Users\ALEX\Desktop\*.html` 输出（3 处）、`D:\Postgraduate\vault\...` 读入模板（1 处）、`D:/Postgraduate/asym-porosity-data/...` 输出（1 处，`tools/asym_build_cfd_worklist_xlsx.py:20`）——服务器上大概率没有 `ALEX` 这个用户目录，也未必有对应盘符或已挂载的 `D:\Postgraduate\vault`。移植前仍需逐一改成可配置的 CLI 参数/环境变量（或至少在服务器上准备好等价路径），否则脚本会在写文件那一步直接抛 `FileNotFoundError`（父目录不存在）。
+- **PySide6 (Qt) 依赖**：`polygon_calc.py`（`from PySide6.QtWidgets import QApplication, QMessageBox`）、全部 `smokes/*.py`、`_smoke_boot.py` 都硬依赖 PySide6。Windows Server（尤其 Server Core，或以计划任务/服务方式无人值守跑批、Session 0 隔离下）同样通常没有交互式桌面会话，所以仍必须保证 `QT_QPA_PLATFORM=offscreen` 生效——已核实 `_smoke_boot.py:13`（`os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')`）在任何 `PySide6` import 之前设置该变量。`QT_QPA_PLATFORM=offscreen` 是 Qt 自带的跨平台 QPA（Qt Platform Abstraction）离屏插件，Windows 与 Linux 走同一套机制、同一个环境变量，不依赖 X11/Wayland，也不需要因为目标从 Linux 换回 Windows Server 而改写这条建议——顺序仍然敏感，其余脚本若自行 import Qt 需照抄 `_smoke_boot.py` 的写法，必须在任何 `PySide6` import **之前** 完成。`polygon_calc.py` 本身不设置该变量（它假设由调用方/GUI 主进程已经在正常窗口环境里跑），服务器上若要单测这条链需要额外包一层类似 `_smoke_boot` 的引导。
+- **PyVista 3D 渲染依赖 VTK 的离屏/GPU 后端**：`demos/demo_3d_cube_volume.py`、`demos/demo_vis_3d_interactive.py`、`tools/render_3d_styles.py`、`archive/diag_shanghai_3d_n20_render.py` 均用 `pyvista`（`requirements.txt:19-20` 锁定 `pyvista>=0.45`、`pyvistaqt>=0.11`，未见 `vtk-osmesa` 一类离屏专用 VTK 构建）。目标从 Linux 换回 Windows Server 后风险的形状变了：Linux 的 `xvfb`/VTK-OSMesa 方案不再适用，改为 Windows Server 场景下的问题是——若服务器无独立显卡/驱动（常见于纯计算型云主机），标准 VTK wheel 依赖的硬件 OpenGL 上下文可能创建不出来；`os.environ['PYVISTA_OFF_SCREEN'] = 'true'`（`demos/demo_3d_cube_volume.py:18`、`tools/render_3d_styles.py:21`）同样只是告诉 PyVista 不开真实窗口，不代表底层 OpenGL 依赖已经满足。**未验证**：目标 Windows Server 实例是否配有 GPU/驱动，以及是否需要为 VTK 配置软件渲染的等价方案（如换装支持软件光栅化的 VTK 构建）——这与 Linux 下的 `xvfb`/OSMesa 教训（`memory/ci-linux-ui-hang-onboarding.md`）不是同一套方案，不能照搬，需要移植后专门验证。
 - **`ansys.fluent.core` (PyFluent) 依赖**：`cfd_asym/asym_pyfluent_runner.py` 顶层 `import ansys.fluent.core as pyfluent`——这个 import 本身在没装 PyFluent 的机器上会在**模块加载时**就失败（不是函数调用时才失败），所以哪怕只是想 `import` 这个文件做静态分析也需要先装或者跳过它；生产服务器按项目约定本就不装 Fluent（`CLAUDE.md`：本项目求解器与 Fluent 无关），此脚本注定只能在专门的 CFD 机器上跑，移植时应直接跳过/隔离，不必费力适配。
 - **`sys.path` 手工 bootstrap 而非包安装**：几乎每个脚本头部都有形如
   `sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
@@ -183,12 +183,27 @@
   等子目录脚本 3 层，`tools/`/`diagnostics/` 用 `Path(__file__).resolve().parents[2]` 等价写法）——
   这是 `PROJECT_MANUAL.md:654` 提到的 Batch-5（2026-06-10）重构遗留约定：`poc/`/`benchmarks/`/
   `examples/`/`opt_runs/` 迁出包外后，脚本靠自举 `sys.path` 而非 `pip install -e .` 定位
-  `sjtu_tpmshx` 包根。移植到 Linux 时目录层数不变则这些相对 `dirname`/`parents[N]` 计算应该
-  照常工作（纯路径运算，无 Windows 特定 API），但若移植时**改变了 `runs/` 相对包根的嵌套深度**
-  （例如拍平子目录），所有这些硬编码层数都要重新核对。
-- **编码**：`archive/diag_df_model_zoo.py:31` 等脚本显式 `sys.stdout.reconfigure(encoding="utf-8")`
-  以应对 Windows 控制台默认 GBK 编码打印中文/希腊字母乱码；Linux 服务器终端通常默认 UTF-8，
-  这行在 Linux 上是无害空操作，不需要删除也不会出问题。
+  `sjtu_tpmshx` 包根。目标平台仍是 Windows（Server 2022），这一层的风险不再是"Linux 路径语义
+  是否兼容"——`os.path.dirname`/`Path.resolve().parents[N]` 本来就是纯路径运算，两端同为
+  Windows 时行为完全一致，不存在需要重新核对的平台差异。唯一残留的风险是**目录嵌套深度本身**：
+  若部署时改变了 `runs/` 相对包根的嵌套层数（例如拍平子目录、或把 `runs/` 整体挪出当前位置），
+  所有这些硬编码层数仍要重新核对——这是任何一次目录结构调整都会触发的风险，与目标是否 Windows
+  Server 无关。
+- **编码（Windows Server 上不会消失，需要重点核对，方向与原判断相反）**：本目录内以下 8 个脚本
+  显式 `sys.stdout.reconfigure(encoding="utf-8")`（已用 grep 核实为完整列表，均包在
+  `try/except AttributeError` 里、不做操作系统分支）：`archive/cross_check_water_nu.py:84`、
+  `archive/diag_df_model_zoo.py:31`、`archive/diag_rbf_feature_ablation.py:46`、
+  `archive/nu_eps_vs_dhl_diag.py:54`、`archive/validate_d76_3d.py:75`、
+  `demos/demo_vis_3d_interactive.py:40`、`diagnostics/asym_a0_convergence.py:31`、
+  `diagnostics/asym_porosity_preview.py:63`。这条注意此前是按"移植到 Linux 后自然消失"写的
+  （Linux 终端通常默认 UTF-8），但目标改回 Windows Server 后方向要反过来：中文区域设置的
+  Windows Server 默认代码页仍是 GBK/CP936，这个坑不会因为"同为 Windows"而消失。上述 8 个脚本
+  主动 reconfigure 到 utf-8 正是为了绕开这一点——尤其是当 stdout 被重定向到文件/管道时
+  （本仓库长跑任务的常规用法，`python -u foo.py > log.txt`），非交互流的默认编码更容易退回到
+  系统代码页而非 UTF-8，这行不是可有可无的兼容性尾巴。**未验证**：`runs/` 共 49 个 `.py`，
+  仅上述 8 个有这行；其余脚本中有多少同样向 stdout 打印中文或希腊字母（γ/ε/χ 等本项目日志
+  常见符号）却缺少这行，是移植前需要逐一排查的实际风险，不能假设"Windows 到 Windows 没有差别"
+  ——这条恰恰是本节里换回 Windows Server 后风险不降反升的一条。
 - **并行/线程环境变量**：`run_production_qnehvi_parallel.py` 头注（第 5 行）要求
   "OMP/MKL thread caps = 1 to prevent BLAS oversubscription"；**脚本本身**确实未见对应赋值，
   但该要求由其调用的 `optimization/parallel_runner.py` 落实——`_set_thread_caps()`（约第 44

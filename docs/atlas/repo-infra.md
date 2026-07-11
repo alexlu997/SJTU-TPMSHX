@@ -6,7 +6,7 @@
 本册覆盖 SJTU-TPMSHX 仓库的"非物理内核"部分：依赖清单、测试/CI 配置、顶层辅助目录（`scripts/`
 `benchmarks/` `models/` `data/` `openspec/` `projects/` `poc/` `reports/` `opt_runs/`
 `.claude/commands/`）、环境变量旋钮，以及 Windows 相关的平台假设。目标读者是准备把该仓库搬到
-Linux 服务器上运行/改造的另一个 AI 代理——因此重点是**移植时必须知道、否则会踩坑**的事实，而不是
+**Windows Server 2022** 服务器上运行/改造的另一个 AI 代理——因此重点是**移植时必须知道、否则会踩坑**的事实，而不是
 复述 `PROJECT_MANUAL.md` 已经讲过的物理内容。
 
 仓库是研究/学位论文代码（`README.md:13` 状态徽章 `research / dissertation`），托管在
@@ -60,8 +60,10 @@ checkout `D:\Postgraduate\Homogenize\SJTU-TPMSHX`（未做任何写入）。
   优化器复测结果；期望远端路径 `${PORT_WORKDIR:-~/tpmshx-port}/SJTU-TPMSHX/reports/port_dim_retest`
   （`scripts/port_retest_pull.sh:9`）。
 - `bash scripts/port_retest_server.sh [status]` / `powershell -File scripts/port_retest_server.ps1 [status]`
-  （`scripts/port_retest_server.sh:5-6`）——服务器端一次性 clone+装依赖+四臂并行启动脚本，是本仓库
-  **目前唯一的、经过验证的 Linux 服务器部署样例**（含私有数据仓拼接、venv、torch/botorch 补装）。
+  （`scripts/port_retest_server.sh:5-6`）——服务器端一次性 clone+装依赖+四臂并行启动脚本；`.sh` 为
+  Linux 变体，`.ps1`（`56f3b9d`，2026-07-10 新增）为目标平台 **Windows Server 2022** 变体，两者
+  入口/参数一致（含私有数据仓拼接、venv、torch/botorch 补装）——**均未验证**曾在真实服务器上完整
+  跑通过一次，见「服务器移植注意」节详述。
 - `sjtu_tpmshx/df_surrogate/threads.set_solver_threads(n)` / `init_from_env()`
   （`sjtu_tpmshx/solvers/threads.py:34,43`）——运行时 Numba 线程数旋钮，GUI 的 "CPU cores" spinbox
   调用 `set_solver_threads`，无界面批跑靠 `TPMSHX_NUM_THREADS` 走 `init_from_env`。
@@ -240,38 +242,82 @@ marker 在收集期报错而非静默通过。
 
 ## 服务器移植注意
 
-- **唯一已验证的 Linux 部署路径就是 `scripts/port_retest_server.sh`**（`scripts/port_retest_server.sh`
-  全文）：clone 主仓（public）+ 私有数据仓 `SJTU-TPMSHX-data`（含 `raw_data/`）→ venv → 装
-  `requirements.txt` → 额外装 CPU 版 torch + botorch/gpytorch → 拼装 `data/raw_data` →
-  设 `PYTHONHASHSEED=0`、`PYTHONPATH=$REPO/sjtu_tpmshx`、`OMP/MKL/NUMBA_NUM_THREADS` → 后台四臂并行跑
-  `runs/run_port_dim_retest.py`。这套脚本本身对"服务器缺 gitignored 数据会怎样"有防御性检查
-  （`scripts/port_retest_server.sh:52-56`：`data/raw_data` 不存在则 `FATAL` 直接退出，而不是静默用
-  CSV 标定回退——对应用户记忆中的"worktree raw_data gate trap"）。
-- **CI（`.github/workflows/ci.yml`）是另一个已验证的 headless Linux 基线**，但只覆盖 `-m "not slow"`
-  子集，且**刻意**不装 `pyvista`、不碰任何 gitignored 资产（`.github/workflows/ci.yml:6-9` 注释 +
-  `openspec/specs/repo-ci/spec.md`）。它安装的依赖子集（`.github/workflows/ci.yml:42-44`）比
-  `requirements.txt` 更窄：明确排除了 `pyvista`/`pyvistaqt`，也不装 `pytest-xdist`（CI 单进程跑，
-  `timeout-method=thread` 用于诊断挂起）。
-- **GBK / 编码陷阱**：多个 df_surrogate 训练脚本在 `__main__` 分支显式
-  `sys.stdout.reconfigure(encoding="utf-8")`（如 `predict.py:328`、`smooth_df.py:217`、
-  `surrogate_v3.py:613`），原因见 `surrogate_v3.py:152-153` 注释——Windows 下 GBK 控制台的子进程会用
-  GBK 字节写中文，而 pytest 用 UTF-8 读捕获流，二者不一致会导致捕获乱码/编码异常。移植到 Linux（默认
-  UTF-8 locale）时这个特定问题消失，但**若服务器 locale 非 UTF-8**（少数精简容器镜像），同样的
-  `reconfigure` 调用仍是必要的防御，不应删除。
-- **Qt 离屏运行**：`sjtu_tpmshx/tests/conftest.py:33` 在会话开始时 `os.environ.setdefault('QT_QPA_PLATFORM',
-  'offscreen')`，并在 `conftest.py:50-55` 提前实例化一个进程级 `QApplication(['pytest', '-platform',
-  'offscreen'])`（`_QApp.instance() is None` 时才建），这是 2026-05-09 为解决"Windows 下无显示器时首次
-  `QApplication` 实例化以 exit code 9 崩溃"而加的修复；在无头 Linux 服务器上该逻辑同样必要（CI 已用
-  `QT_QPA_PLATFORM: offscreen`，`.github/workflows/ci.yml:27`），**不要**假设 Linux 无头环境不需要它。
-- **路径分隔符 / 大小写**：`data/raw_data` 等相对路径拼接均用 `pathlib.Path`（如 `load_data.py:45`
-  `_PROJECT_ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"`），因此**跨平台分隔符本身
-  是安全的**；真正的风险点是上面列出的两处**写死盘符路径**（`smooth_df.py:55`、`demo_vis_3d.py:62`），
-  两者都不在核心求解器/生产路径上（分别是训练脚本默认值、演示脚本兜底），但会在对应功能被触发时
-  于非 Windows 环境报路径不存在。
-- **并行度假设**：`scripts/port_retest_server.sh:60-61` 按 `nproc/4` 动态算每臂线程数（`THREADS`，夹在
-  `[1,4]`），`.ps1` 变体则硬编码 `8`（假设 64 核机器四臂并行、每臂 8 线程，`scripts/port_retest_server.ps1:65-67`
-  代码 + `:10-11` 注释）。移植到核数显著不同的服务器时，`.ps1` 的硬编码线程数不会自适应，需要人工按核数调整；
-  `.sh` 变体的 `nproc`-based 公式相对更可移植。
+**目标平台更正（2026-07-11）**：本节此前按"移植到 Linux 服务器"撰写；实际目标是 **Windows
+Server 2022**（仍是 Windows 内核，不是 Linux）。以下逐条按代码重新核实，Linux 专属论断已改写或
+标注不适用。
+
+- **部署脚本：`.sh`（Linux）与 `.ps1`（Windows Server）两个变体均已入库**（`ls scripts/` 核实）。
+  `port_retest_server.ps1` 由提交 `56f3b9d`（"chore(scripts): Windows Server variant of the
+  port-retest launcher"，2026-07-10）新增；本册旧版把 `.sh` 称作"唯一已验证的部署路径"时其实已经
+  与本节稍后的并行度条目（`.ps1` 硬编码 8 线程）自相矛盾——`.ps1` 当时就已存在。目标是 Windows
+  Server，直接用 `port_retest_server.ps1`，入口/参数与 `.sh` 版一致：
+  `powershell -ExecutionPolicy Bypass -File port_retest_server.ps1 [status]` 对应
+  `bash port_retest_server.sh [status]`；两者流程相同：clone 主仓（public）→ venv → 装
+  `requirements.txt` + CPU 版 torch/botorch/gpytorch → 设 `PYTHONHASHSEED=0`/`PYTHONPATH`/
+  `OMP·MKL·NUMBA_NUM_THREADS` → 四臂并行跑 `run_port_dim_retest.py`。两处实质差异：
+  ①标定数据装载机制不同——`.sh` 要求人工先 `scp` 好 `data/raw_data`，缺失则 `FATAL` 直接退出
+  （`scripts/port_retest_server.sh:53`，对应用户记忆中的"worktree raw_data gate trap"）；`.ps1`
+  改为脚本自己 `git clone` 私有数据仓 `SJTU-TPMSHX-data` 并 `Copy-Item` 拼装到 `data/raw_data`
+  （`scripts/port_retest_server.ps1:42-49`），`$ErrorActionPreference = "Stop"`（`:15`）下
+  clone/拷贝失败会终止而非静默回退 CSV 标定——防御效果等价，但不是同一处显式检查；②默认分支不同——
+  `.ps1` 写死 `master`（`:20`，注释注明"PR #45 合并后"的假设，未合并时需改回
+  `worktree-m0-optimizer-debt`），`.sh` 仍固定后者（`:19`）——移植前需先确认目标分支状态。
+  **未验证**：`.ps1` 目前只经过代码走查，仓库内没有 `reports/port_dim_retest/` 之类的产物能证明
+  它（或 `.sh`）曾在真实服务器上完整跑通一次；"已验证"这个措辞对两个脚本同样站不住，不应认为
+  `.sh` 比 `.ps1` 更可信。
+- **CI（`.github/workflows/ci.yml`）仍然是 Linux（`runs-on: ubuntu-latest`，`:23`），与本次服务器
+  移植目标无关**：它验证的是 GitHub Actions 上的测试执行环境——只跑 `-m "not slow"` 子集，刻意不装
+  `pyvista`、不碰任何 gitignored 资产（`:6-9` 注释 + `openspec/specs/repo-ci/spec.md`），依赖子集比
+  `requirements.txt` 更窄（`:42-44`：不装 `pyvista`/`pyvistaqt`/`pytest-xdist`，单进程跑，
+  `timeout-method=thread` 用于诊断挂起）——而不是部署环境。本册旧版把它当作"另一个已验证的 headless
+  Linux 基线"来佐证 Linux 迁移；目标改成 Windows Server 后，这条对"Windows Server 能否无头跑起来"
+  没有佐证作用，真正支撑这一点的是下一条 Qt 离屏说明（其修复动机本来就是 Windows，不是 Linux）。
+- **Qt 离屏运行——原逻辑本来就是为 Windows 写的，照搬即可，不需要改写**：
+  `sjtu_tpmshx/tests/conftest.py:33` 的 `os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')`
+  + `conftest.py:49-57` 提前实例化进程级 `QApplication`，是 2026-05-09 为解决 **Windows** 下无显示器
+  时首次 `QApplication` 实例化以 exit code 9 崩溃而加的修复（`conftest.py:16-19` 注释原文即
+  "full-suite runs on Windows would crash with exit code 9"）——这从来不是 Linux 专属问题，
+  Windows Server（尤其 Server Core 或无人值守跑批场景）同样没有交互式桌面会话，该修复原样适用。
+  `QT_QPA_PLATFORM=offscreen` 是 Qt 官方跨平台离屏插件开关，Windows/Linux 机制相同，不存在
+  X11/Wayland 特定的额外处理；`.github/workflows/ci.yml:27` 只是在 Linux CI 上用了同一个环境变量，
+  不代表这条建议"仅 Linux 有效"。
+- **GBK / 编码陷阱——这条不会随迁移消失，反而要着重提醒**：df_surrogate 下 5 个脚本的 `__main__`
+  分支显式 `sys.stdout.reconfigure(encoding="utf-8")`（`predict.py:328`、`smooth_df.py:217`、
+  `surrogate_v3.py:613`、`load_data.py:243`、`residual_correction.py:307`；同样的调用在 `ui/`、
+  `runs/`、`validation/cases/` 下还有十余处，并非 df_surrogate 独有）。根源见
+  `surrogate_v3.py:151-155` 注释：**Windows** 下 GBK 控制台的子进程会用 GBK 字节写中文，pytest 用
+  UTF-8 读捕获流，一行不一致就会导致该测试及之后**所有**测试 teardown 因 `UnicodeDecodeError` 崩溃
+  （`load_data.py:45` 的 `DATA_XLSX` 路径本身含中文文件名、`load_data.py:47` 注释"GBK 汇总"，都是
+  直接触发源）。目标是 Windows Server 而非 Linux，中文区域设置下 Windows Server 的默认代码页通常
+  仍是 GBK/CP936（**未验证**具体到 Server 2022 中文版的默认值，需在目标机器上用 `chcp` 实测确认）——
+  这个坑**不会消失**：所有 `reconfigure` 调用必须保留，不能以"移植到 UTF-8 locale 环境"为由删除
+  （本条与本册旧版方向相反：旧版把它当作"迁移到 Linux 后消失、Linux 上仍需保留只是防御非 UTF-8
+  locale 容器"的次要问题；现在目标不是 Linux，这是主线问题）。另外，子进程编码处理本身不统一：
+  `tests/test_shanghai_regression.py:59-61` 显式传了 `encoding='utf-8', errors='replace'`，但
+  `test_import_dag.py:21-22`、`test_warmup_jit_kernels.py:28-29` 只用 `text=True`（依赖
+  `locale.getpreferredencoding()`）——**未验证**这些路径当前是否已有中文输出触发过解码问题，只核实
+  到写法本身不一致，在 GBK 代码页的 Windows Server 上这是潜在风险点。
+- **写死盘符路径——这不是"跨平台分隔符"问题，是"换机器就炸"问题，Windows Server 同样会炸**：
+  `data/raw_data` 等相对路径拼接统一用 `pathlib.Path`（如 `load_data.py:45`
+  `_PROJECT_ROOT.parent / "data" / "raw_data" / "试验记录表_整理版.xlsx"`），本来就没有分隔符风险；
+  旧版"跨平台分隔符本身是安全的"这句在 Windows→Windows Server 场景下已经是同义反复，予以删除。
+  真正的风险点是两处**写死的开发机绝对路径**：`smooth_df.py:55-56` 的
+  `AIR_XLSX_DEFAULT = Path(r"D:\Postgraduate\server-pyfluent\Air\Cfd-air-raw-old-new.xlsx")`，
+  以及 `demo_vis_3d.py:62` 的兜底 `Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\...')`
+  ——两者本来就已经是 **Windows 风格路径**，失败原因从来不是"目标系统不是 Windows"，而是"目标机器
+  的 D: 盘没有这套目录结构"。Windows Server 2022 上如果不把整个 `D:\Postgraduate\...` 目录树原样
+  复制过去，这两处同样会在对应功能被触发时报路径不存在，与是否 Linux 无关（两者都不在核心求解器/
+  生产路径上：分别是训练脚本默认值、演示脚本兜底）。
+- **并行度假设——`.sh` 的 `nproc` 公式在原生 Windows Server 上根本跑不起来，不只是"不如 `.ps1`
+  可移植"**：`scripts/port_retest_server.sh:60-61` 用 `nproc/4` 动态算每臂线程数（`THREADS`，夹在
+  `[1,4]`）；`nproc` 是 Linux/coreutils 命令，原生 Windows（含未装 WSL/Git-Bash 的 Server 2022）
+  没有这个命令，`.sh` 本身在目标机器上不能直接跑——旧版"`.sh` 的 `nproc`-based 公式相对更可移植"这
+  个结论在 Windows Server 目标下连同 `.sh` 一起失去意义。真正要用的是 `.ps1` 变体：它硬编码每臂 8
+  线程（假设 64 核机器四臂并行，`scripts/port_retest_server.ps1:65-67` 代码 + `:10-11` 注释），移植
+  到核数显著不同的 Windows Server 时这个硬编码值不会自适应，需要人工按实际核数
+  （`[Environment]::ProcessorCount` 或任务管理器）手动调整 `.ps1:65-67` 的
+  `$env:OMP_NUM_THREADS`/`MKL_NUM_THREADS`/`NUMBA_NUM_THREADS` 三处赋值，**未验证**脚本后续是否
+  计划自动探测核数。
 - **`PYTHONPATH` 陷阱**：`/check` 文档（`.claude/commands/check.md`）与 `conftest.py:1-24` 都记录了
   同一个坑——直接单独跑某个 `sjtu_tpmshx/` 下的脚本/测试文件（尤其是子进程/CI runner 单独调用某个
   文件）会因 `sjtu_tpmshx/` 未加入 `sys.path` 而 `ModuleNotFoundError: solvers`；正确姿势是从仓库根
