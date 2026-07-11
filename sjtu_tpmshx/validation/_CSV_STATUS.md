@@ -87,3 +87,40 @@
 Both carry `pressure_clip_hits` + `pressure_state_valid`; Shanghai n_invalid=0.
 The SIMPLE solver's A+B low-Re early-exit (default on) makes the water-side solve
 ~24× faster with <0.01% effect on dP/Q (verified 2026-06-02).
+
+⚠️ `--runner pipeline` reported a hard-coded `pressure_clip_hits=0` /
+`pressure_state_valid=1` until 2026-07-11, which made its own `n_invalid=0`
+vacuous (the exclusion never ran). Fixed to read the real pipeline diagnostics;
+the **kernel** gate runner — the one that produced 5.28/3.21 — was always
+computing them for real, so the headline numbers are unaffected.
+
+## Environment that reproduces these numbers (2026-07-11)
+Until now this file recorded the physics provenance but **no version record**,
+so "which numpy/numba produced 5.28/3.21" was unanswerable. Snapshot below is
+the dev box; the full `pip freeze` is committed as
+`constraints-devbox-2026-07-11.txt` (repo root).
+
+- Python 3.12.10 (MSC v.1943, 64-bit), Windows
+- numpy 2.4.4 · scipy 1.17.1 · numba 0.64.0 (llvmlite 0.46.0) · pyamg 5.3.0
+- pandas 2.3.3 · joblib 1.5.3 · CoolProp 7.2.0 · PySide6 6.11.0
+- torch 2.11.0+cu128 · botorch 0.17.2 · gpytorch 1.15.2 (optimizer stack only)
+
+**Verified**, not merely captured: with `data/raw_data` present, the full suite
+is green on this combo — `PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto
+--dist loadscope` → **1187 passed, 3 skipped, 0 failed**. That run exercised the
+strictest pins: the exact-`==` DF golden gates (`test_df_backend_registry`,
+`test_df_projection_equivalence`), the `rel=1e-12` frozen evaluator tuples, and
+`test_df_source_parity` (XLSX-vs-prebuilt-CSV calibration, `rel=1e-6`) — the
+last one normally **skips** for want of the gitignored Excel, so this is the
+first recorded confirmation that the two calibration sources have not diverged.
+
+This is *an* environment that reproduces the numbers; there is **no record**
+that it is the one they were originally captured on (that record never existed).
+Install the server with `pip install -r requirements.txt -c constraints-devbox-2026-07-11.txt`
+and reproduce the gate before upgrading anything.
+
+**Porting note:** the exact-`==` DF gates skip only when `CI=true`. On a server
+running pytest by hand they *will* run, and cross-machine libm/FMA differences
+shift the last ULP (`test_df_backend_registry.py:31` measured rel ~1e-13 on
+ubuntu CI). A red there is expected drift, not a port bug — set `CI=true`, or
+re-pin on the target machine.

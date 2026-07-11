@@ -500,7 +500,15 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
                                 t_wall_mm=spec.t_wall_mm,
                                 k_s_W_mK=spec.k_s_W_mK,
                                 L_dom_m=L, H_dom_m=H, Lz_m=Lz),
-        solver=SolverConfig(Nx=Nx_u, Ny=Ny_u, Nz=Nz_u),
+        # `max_outer` was accepted here but never written into SolverConfig, so
+        # `--max-outer` was silently dropped on this branch (the pipeline ran
+        # its own built-in _MAX_OUTER=5 while the banner printed the requested
+        # value). SolverConfig.max_outer_ltne became a live knob in 8ea7ce5
+        # (R3, 2026-07-09); this call site was never back-filled. None keeps
+        # the pipeline default.
+        solver=SolverConfig(Nx=Nx_u, Ny=Ny_u, Nz=Nz_u,
+                            max_outer_ltne=(None if max_outer is None
+                                            else int(max_outer))),
         # full-face crossflow: A +x, B -y (production Shanghai topology)
         bc_A=PartialBCConfig(dir=0, in_ctr=H / 2, in_w=H,
                              out_ctr=H / 2, out_w=H,
@@ -518,16 +526,31 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
     err_dP = ((dP_sim - dP_A_exp) / dP_A_exp * 100
               if dP_A_exp != 0 else float('nan'))
     err_Q = (Q_sim - Q_exp) / Q_exp * 100 if Q_exp != 0 else float('nan')
+    # Read the REAL pipeline diagnostics. These two were hard-coded 0/1, which
+    # made `valid_mask` below (and therefore the pressure-invalid exclusion the
+    # RMSRE口径 depends on) a permanent no-op on this branch — the exact
+    # "silent exclusion" the main() comment forbids. envelope_valid is the
+    # post-solve gate verdict (Mach + positive-pressure, solvers/envelope.py);
+    # p_clip_hits is the lifetime P_abs-clip counter summed over both sides.
+    _diag = result.diagnostics or {}
+    _env_valid = bool(_diag.get('envelope_valid', True))
+    _clip_hits = int(_diag.get('p_clip_hits', 0))
+    # A non-converged SIMPLE solve is not a pressure-validity failure, but it
+    # must not vanish either — surface it the way the kernel branch surfaces
+    # its own outer-loop count.
+    if result.warnings:
+        print(f"  [case {case}] pipeline warnings: "
+              f"{'; '.join(str(w) for w in result.warnings)}")
     return {
         'case': case, 'u_air': u_A, 'u_water': u_B,
         'dP_exp': dP_A_exp, 'dP_sim': dP_sim, 'err_dP%': err_dP,
         'Q_exp': Q_exp, 'Q_sim': Q_sim, 'err_Q%': err_Q,
         'Q_sim_am': float('nan'), 'Q_mw_am_rel%': float('nan'),
-        'outer_iters': -1,
+        'outer_iters': int(_diag.get('_max_outer') or -1),
         'Qs_A': float('nan'), 'Qs_B': float('nan'),
         'Q_net_rel': float('nan'), 'mass_rel_A': float('nan'),
-        'pressure_clip_hits': 0,
-        'pressure_state_valid': 1,
+        'pressure_clip_hits': _clip_hits,
+        'pressure_state_valid': int(_env_valid),
     }
 
 

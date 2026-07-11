@@ -368,6 +368,14 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             # can flag a result the warn-mode gate marked non-physical.
             'envelope_valid': raw.get('envelope_valid', True),
             'envelope_reasons': list(raw.get('envelope_reasons', [])),
+            # Companion to envelope_valid: the SIMPLE P_abs-clip engagement
+            # count (_run_3d_stack sums A+B side `_p_clip_hits`). It was
+            # produced on the raw dict but never forwarded, so every
+            # ComputeResult consumer had to hard-code a placeholder — see
+            # validate_shanghai_3d_real.py --runner pipeline, which reported a
+            # constant 0/valid and thereby disabled its own pressure-validity
+            # filter. Informational (lifetime counter, not a validity verdict).
+            'p_clip_hits': int(raw.get('p_clip_hits', 0)),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),

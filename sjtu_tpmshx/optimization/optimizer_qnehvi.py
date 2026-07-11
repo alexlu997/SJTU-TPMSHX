@@ -290,7 +290,22 @@ def run_qnehvi(config: Optional[dict] = None,
             # 8 cores idle because each worker's numba pool was capped at
             # a single thread. Share the cores across workers instead;
             # loky propagates this to NUMBA_NUM_THREADS (joblib >= 1.5).
-            _inner = max(1, (os.cpu_count() or 4) // _workers)
+            #
+            # TPMSHX_BO_CORE_BUDGET (2026-07-11): `os.cpu_count()` reports the
+            # WHOLE machine, so the split above silently assumes this process
+            # is the only BO on it. A multi-arm launcher (scripts/
+            # port_retest_server.ps1 runs 4 arms concurrently) breaks that
+            # assumption: each arm claimed cpu_count//2 threads per worker and
+            # the arms collectively oversubscribed the box ~4x. The launcher
+            # must therefore declare THIS process's core budget; unset keeps
+            # the historical whole-machine behaviour, so single-arm runs and
+            # the golden gate are untouched.
+            _budget = os.environ.get('TPMSHX_BO_CORE_BUDGET', '').strip()
+            try:
+                _cores = int(_budget) if _budget else (os.cpu_count() or 4)
+            except ValueError:
+                _cores = os.cpu_count() or 4
+            _inner = max(1, _cores // _workers)
             results = Parallel(
                 n_jobs=_workers,
                 backend='loky',
