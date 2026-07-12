@@ -33,11 +33,18 @@ process.stdin.on('end', () => {
     [/solvers\/(simple_solver(_3d)?|_kernels_simple_(2d|3d))\.py$/,
       'Mass-flux inlet is the air-inlet default (massflux_inlet=True) in BOTH 2D and 3D — ' +
       'do not revert to a fixed-velocity inlet (grid-dependent Δp). Kernel velocities are ' +
-      'INTERSTITIAL throughout; a superficial velocity here is a bug. Since M2 (2026-07-09, ' +
-      'ledger B5) the 2D momentum kernels carry ε ONLY as face ratios r=ε_f/ε_CV on F and D ' +
-      '(ε-divided VANS; pressure term unfactored, DF drag untouched) — uniform ε must stay ' +
-      'bit-identical (r≡1.0), so never introduce an ABSOLUTE ε into momentum. 3D momentum ' +
-      'is deliberately unweighted (trigger-bound follow-up, see B5).'],
+      'INTERSTITIAL throughout; a superficial velocity here is a bug. Since M2/M2b ' +
+      '(2026-07-09, ledger B5) BOTH the 2D and the 3D momentum kernels carry ε ONLY as face ' +
+      'ratios r=ε_f/ε_CV on F and D (ε-divided VANS; pressure term unfactored, DF drag ' +
+      'untouched) — uniform ε must stay bit-identical (r≡1.0), so never introduce an ABSOLUTE ' +
+      'ε into momentum, and keep the use_eps=0 branch\'s expression tree untouched (fastmath ' +
+      'would re-associate an inline ×1.0 and break golden). [Text corrected 2026-07-12: it ' +
+      'used to say "3D momentum is deliberately unweighted", which M2b had already made false.] ' +
+      'The 3D exit is now the F2 three-gate criterion (ledger C6/C7): momentum residual + ' +
+      'solved-cell continuity + global boundary mass. The legacy mass residual is an ' +
+      'OUTLET-PIN ARTIFACT — do not restore it as a convergence gate, and never turn ' +
+      'LowReExit\'s velocity exit into converged=False (it RETURNS, so that converts a ' +
+      'premature success into a premature failure).'],
     [/solvers\/envelope\.py$/,
       'The compressible validity envelope guards choke/supersonic. NEVER "fix" a ' +
       'ChokedFlowError by removing the guard, widening the P_abs clip, or returning a ' +

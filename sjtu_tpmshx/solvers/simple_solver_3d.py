@@ -27,14 +27,38 @@ Physics (velocity, interstitial convention — matches 2D). Production default
 is COMPRESSIBLE ideal-gas ρ=ρ(P,T) with a mass-flux inlet and the choke
 envelope guard (solvers/envelope.py); the discrete pressure-correction
 continuity operator carries ε·ρ (rho_eps_field), so per-side and spatially
-varying ε enter mass conservation. The momentum operator itself carries no
-ε weighting and no ∇ε source (uniform-ε-per-side form — see research ledger
-B5 before attempting zoned in-domain ε gradients):
+varying ε enter mass conservation.
+
+ε IN THE MOMENTUM OPERATOR — corrected 2026-07-12. This docstring used to say
+"the momentum operator carries no ε weighting and no ∇ε source". THAT IS STALE:
+M2b (2026-07-09, ledger B5) added the ε-divided VANS form to all three 3D
+momentum cell bodies. Every flux face carries the ratio r_f = ε_f/ε_CV on BOTH
+the convective (F) and diffusive (D) coefficients, so a spatially varying ε does
+enter momentum. It is guarded: `_use_eps` is 1 only when `eps_field` is genuinely
+non-uniform (`solve()`, ~line 888), so the uniform-ε path keeps the pre-M2b
+expression tree bit-for-bit (these kernels are fastmath; an inline ×1.0 could be
+re-associated and break golden bit-identity). The pressure term is unfactored and
+the D-F drag is untouched — the ratio form captures ∇ε without an explicit source
+term and without double-counting the calibrated drag.
+
     ∂(ερu)/∂x + ∂(ερv)/∂y + ∂(ερw)/∂z = 0                       (continuity)
     ρ(u·∇)u = -∂P/∂x + μ_eff ∇²u − R·u                          (x-momentum)
     ρ(u·∇)v = -∂P/∂y + μ_eff ∇²v − R·v                          (y-momentum)
     ρ(u·∇)w = -∂P/∂z + μ_eff ∇²w − R·w                          (z-momentum)
   with R = μ/K + ρ·c_F·|U| (D-F closure, ConstDF-v1 interstitial form).
+
+BOUNDARY CONDITIONS (be precise — the two ends are NOT symmetric):
+  * INLET (j=0): MASS-FLUX. ρ·v is held at the physical throughput and
+    `v_inlet_field` is recomputed from the current inlet ρ every density update
+    (`_apply_massflux_inlet`). HARD INVARIANT — see CLAUDE.md.
+  * OUTLET (j=Ny-1): DIRICHLET PRESSURE. Every open outlet cell is pinned
+    `Pp = 0` and its P is never corrected (`_correct_jit_3d`), so its GAUGE
+    pressure stays 0 for the whole solve ⇒ **the outlet ABSOLUTE pressure is
+    exactly `self.P_ref_abs`**. `self.P` is a GAUGE field (init 0 everywhere,
+    line ~600); absolute pressure is always `P + P_ref_abs`.
+  ⇒ the solver solves "given the mass flow and the outlet pressure, what is Δp?"
+    Δp is an OUTPUT. Specifying BOTH end pressures and solving for the mass flow
+    is a DIFFERENT problem (pressure-driven flow) and needs a different inlet BC.
 
 Staggered grid:
     P : cell-centre (Nx, Ny, Nz)
