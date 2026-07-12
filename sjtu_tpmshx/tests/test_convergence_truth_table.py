@@ -261,6 +261,51 @@ def test_3d_nz1_delegation_reports_the_real_ltne_verdict():
     assert info['iterations'] != -1, "iterations must be the real count"
 
 
+def test_3d_verdict_judges_the_final_simple_solve_not_the_warmup():
+    """A superseded cold-start stall must not force converged=False.
+
+    Outer iteration 0 can never satisfy the coupling criterion (nothing to diff
+    against), so `post(0)` ALWAYS runs and ALWAYS re-solves SIMPLE — the
+    cold-start velocity/pressure field is therefore ALWAYS superseded before
+    anything is reported. The old verdict gated on a STICKY list of every
+    failed solve, so a run whose every reported field came from a converged
+    solve still said converged=False because a transient warm-up stalled.
+    (Shanghai's u≈22 m/s cases: `A@init[stall]`, every re-solve 'velocity'.)
+
+    The history must stay visible — it is split, not dropped.
+    """
+    r = _run_3d_stack(_cheap_3d())
+    cd = r['convergence_detail']
+    for k in ('simple_nonconv', 'simple_nonconv_final',
+              'simple_nonconv_transient', 'simple_exit_A'):
+        assert k in cd, f"convergence_detail must expose {k!r}"
+    # The split is a partition of the sticky history — nothing is lost.
+    assert (sorted(cd['simple_nonconv_final']
+                   + cd['simple_nonconv_transient'])
+            == sorted(cd['simple_nonconv']))
+    # simple_ok gates on the FINAL solve, so it must agree with exit_reason.
+    _ok = ('tol', 'velocity')
+    assert cd['simple_ok'] == (
+        (cd['simple_exit_A'] in _ok)
+        and (cd['simple_exit_B'] is None or cd['simple_exit_B'] in _ok))
+    # And an init-only stall must NOT be counted against the verdict.
+    assert not any(t.startswith(('A@init', 'B@init'))
+                   for t in cd['simple_nonconv_final'])
+
+
+def test_2d_converged_resolve_supersedes_an_earlier_failure():
+    """2D's `simple_warnings` dict was written on failure and never cleared.
+
+    Keyed by side label, so a stalled warm-up solve stuck for the whole run.
+    A later converged solve on the same side must clear it.
+    """
+    import inspect
+    from pipelines import stages_2d as _s2
+    src = inspect.getsource(_s2)
+    assert 'simple_warnings.pop(label, None)' in src, (
+        "a converged re-solve must supersede an earlier failure on that side")
+
+
 def test_3d_convergence_detail_reaches_compute_result():
     """stages_3d must forward convergence_detail into ComputeResult."""
     import inspect

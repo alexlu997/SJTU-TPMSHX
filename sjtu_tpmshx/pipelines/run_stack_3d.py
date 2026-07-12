@@ -2101,12 +2101,46 @@ def _run_3d_stack(cfg):
             ma_max=mach_field_max(vmag_B, Tb))
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
-    if _simple_nonconv:
+    # ── SIMPLE verdict: judge the FINAL solve, not the whole history ─────────
+    # `_simple_nonconv` is a STICKY list of every SIMPLE solve that failed,
+    # including the cold-start one. But outer iteration 0 can never satisfy the
+    # coupling criterion (there is no previous iterate to diff against), so
+    # `post(0)` ALWAYS runs and ALWAYS re-solves SIMPLE — the cold-start
+    # velocity/pressure field is therefore ALWAYS superseded before anything is
+    # reported. Gating the verdict on the sticky list meant a run whose every
+    # reported field came from a converged solve still said converged=False
+    # because a transient warm-up solve had stalled. (Shanghai: the u≈22 m/s
+    # cases log `A@init[stall]` while every subsequent re-solve exits
+    # 'velocity'.) The verdict now measures the state that produced the answer;
+    # the full history stays in convergence_detail for diagnosis, and a
+    # superseded stall still raises a (differently worded) warning.
+    #
+    # `SIMPLESolver3D.solve` returns converged=True for exit_reason 'tol' or
+    # 'velocity' (LowReExit's velocity-stability criterion) and False for
+    # 'stall' / 'max_iter' / 'cancelled'. `exit_reason` holds the LAST solve.
+    _OK_EXITS = ('tol', 'velocity')
+
+    def _final_ok(s):
+        return s is None or getattr(s, 'exit_reason', None) in _OK_EXITS
+    _simple_final_ok = _final_ok(sA) and _final_ok(sB)
+    _simple_nonconv_transient = [
+        t for t in _simple_nonconv if t.startswith(('A@init', 'B@init'))]
+    _simple_nonconv_final = [
+        t for t in _simple_nonconv if t not in _simple_nonconv_transient]
+
+    if not _simple_final_ok:
         _env_warnings.append(
-            "SIMPLE momentum solve did not converge to tol at: "
-            + ", ".join(_simple_nonconv)
-            + " — the velocity/pressure field may be under-resolved (raise "
+            "SIMPLE momentum solve did not converge in the FINAL solve: "
+            + ", ".join(_simple_nonconv_final or _simple_nonconv)
+            + " — the reported velocity/pressure field is not converged (raise "
               "max_iter or relax tol).")
+    elif _simple_nonconv_transient:
+        _env_warnings.append(
+            "SIMPLE momentum solve stalled in a TRANSIENT (superseded) solve: "
+            + ", ".join(_simple_nonconv_transient)
+            + " — the cold-start field was re-solved by the outer loop and the "
+              "reported field DID converge, so this is informational. It does "
+              "flag a hard cold start (typically high u).")
     _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
     _result['envelope_valid'] = _env_valid
     _result['envelope_reasons'] = _env_reasons
@@ -2140,7 +2174,7 @@ def _run_3d_stack(cfg):
     _ltne_ok = bool(_ltne_info) and bool(
         _ltne_info[-1].get('converged', False))
     _result['solver_converged'] = bool(
-        (not _simple_nonconv)          # every SIMPLE solve reached tol
+        _simple_final_ok               # the FINAL SIMPLE solve on EACH side
         and _ltne_ok                   # FINAL outer LTNE inner pass converged
         and bool(_outer_converged)     # outer coupling converged (not capped)
         and _fields_finite             # no NaN/inf in the reported fields
@@ -2174,7 +2208,16 @@ def _run_3d_stack(cfg):
         outer_hit_cap=bool(not _outer_converged),
         # Per-gate breakdown so a caller can see WHICH gate failed rather than
         # just that the AND is False (convergence truth-table, 2026-07-12).
-        simple_ok=bool(not _simple_nonconv),
+        # simple_ok gates the verdict and judges the FINAL solve on each side.
+        # simple_nonconv (above) stays the FULL sticky history; the two lists
+        # below split it, so a caller can tell "the reported field is bad" from
+        # "a superseded warm-up solve stalled" — they used to be indistinguishable
+        # and both forced converged=False.
+        simple_ok=bool(_simple_final_ok),
+        simple_nonconv_final=list(_simple_nonconv_final),
+        simple_nonconv_transient=list(_simple_nonconv_transient),
+        simple_exit_A=getattr(sA, 'exit_reason', None),
+        simple_exit_B=getattr(sB, 'exit_reason', None) if sB is not None else None,
         ltne_ok=_ltne_ok,
         fields_finite=_fields_finite,
         envelope_ok=bool(_env_valid),

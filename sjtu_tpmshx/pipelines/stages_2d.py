@@ -590,6 +590,16 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             simple_warnings[label] = (
                 f"SIMPLE ({label}): not converged after {n_it} iters "
                 f"(res={s.residuals[-1]:.2e})")
+        else:
+            # A converged re-solve SUPERSEDES an earlier failure on the same
+            # side (2026-07-12). This dict is keyed by label and was only ever
+            # WRITTEN on failure, never cleared — so one stalled warm-up solve
+            # stuck for the whole run and forced solver_converged=False even
+            # though every field the run reported came from a converged solve.
+            # The outer loop re-solves SIMPLE on every iteration, so the early
+            # ones are transient warm-starts, not the answer. Mirrors the 3D
+            # fix (judge the FINAL solve per side).
+            simple_warnings.pop(label, None)
 
         # Extract cell-centre velocities (wall-masked for energy solver)
         u_m, v_m = s.get_wall_masked_velocity()
