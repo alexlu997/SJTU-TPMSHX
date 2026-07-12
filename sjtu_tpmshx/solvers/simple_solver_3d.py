@@ -113,19 +113,23 @@ from ._kernels_simple_3d import (  # noqa: F401
     _umag_w_3d,
     _porous_src_df_3d,
     _sou_axis,
+    _u_coeffs_df_3d,
     _u_cell_df_3d,
     _sweep_u_jit_df_3d,
     _sweep_u_jit_df_3d_parallel,
+    _v_coeffs_df_3d,
     _v_cell_df_3d,
     _v_bc_3d,
     _sweep_v_jit_df_3d,
     _sweep_v_jit_df_3d_parallel,
+    _w_coeffs_df_3d,
     _w_cell_df_3d,
     _sweep_w_jit_df_3d,
     _sweep_w_jit_df_3d_parallel,
     _assemble_pp_3d,
     _correct_jit_3d,
     _mass_res_jit_3d,
+    _mom_res_jit_3d,
 )
 
 
@@ -874,6 +878,17 @@ class SIMPLESolver3D:
         self.final_res = None
         self.res_norm_ref = 1.0
 
+        # Ledger C6 — OPT-IN momentum residual. DIAGNOSTIC ONLY: it is recorded
+        # but does NOT gate the exit, so enabling it cannot change any result.
+        # Default OFF (it costs one extra full coefficient assembly per SIMPLE
+        # iteration). Enable per-solver via `track_momentum_residual = True`, or
+        # globally via env TPMSHX_MOM_RES=1 (for sweeps / V&V studies).
+        # `mom_residuals` accumulates across warm restarts, like `residuals`.
+        _track_mom = bool(getattr(self, 'track_momentum_residual', False)
+                          or os.environ.get('TPMSHX_MOM_RES', '') == '1')
+        if _track_mom and not hasattr(self, 'mom_residuals'):
+            self.mom_residuals = []
+
         for it in range(1, max_iter + 1):
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
             # fine enough that a water solve aborts in well under a second.
@@ -967,6 +982,26 @@ class SIMPLESolver3D:
             self.res_norm_ref = self._inlet_mass_flux(rho_eps_field)
             res = res / self.res_norm_ref
             self.final_res = res
+
+            # Ledger C6 — momentum residual, DIAGNOSTIC ONLY (never gates the
+            # exit; see the `_track_mom` block above and _mom_res_jit_3d's
+            # docstring). Evaluated on the POST-correction, POST-density-update
+            # (u, v, w, P) — that staleness is the whole point: unlike the mass
+            # residual it is NOT the state the solver just solved against, so it
+            # actually measures how far the momentum equation is from satisfied.
+            if _track_mom:
+                _nu, _du, _nv, _dv, _nw, _dw = _mom_res_jit_3d(
+                    self.u, self.v, self.w, self.P,
+                    Nx, Ny, Nz, dx, dy, dz,
+                    self.rho_field, self._mu_eff_field, self.mu_field,
+                    self.eps_field, self.K_arr, self.cF_arr,
+                    self.outlet_frac, self.inlet_frac, _use_sou, _use_eps)
+                _ru = _nu / _du if _du > 1e-300 else 0.0
+                _rv = _nv / _dv if _dv > 1e-300 else 0.0
+                _rw = _nw / _dw if _dw > 1e-300 else 0.0
+                self.mom_residuals.append(
+                    {'u': _ru, 'v': _rv, 'w': _rw,
+                     'max': max(_ru, _rv, _rw)})
 
             # Phase B — Anderson step (every K outer iters, after warmup).
             if acc is not None and it > 5:
