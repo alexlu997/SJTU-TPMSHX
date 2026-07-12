@@ -1,9 +1,75 @@
 """
 validate_shanghai_3d_real.py — Shanghai Electric 16-case 3D validation
 
-Port of 2D `validate_shanghai.py` to 3D. Air (Fluid A, +x, full-width) solved
-via SIMPLESolver3D + LTNE solve_full_domain_3d with outer non-iso coupling.
-Water (Fluid B, -y) is frozen via Tb_prescribed 3D (1D linear broadcast along y).
+THE GATE. The Δp / Q RMSRE numbers quoted for this solver come from here.
+
+Two runners, selected by ``--runner``:
+
+  pipeline (DEFAULT since 2026-07-12)
+      The production stack — ``controllers.compute_pipeline.Pipeline3D``, the
+      exact path the GUI, the optimizer and the server batch runs drive. BOTH
+      fluids are SOLVED (a real SIMPLE-B water solve).
+      Gate grid 20×10×3 → **RMSRE_dP 4.93 % / RMSRE_Q 2.12 %**.
+
+  kernel (legacy reference)
+      Kernel-direct: SIMPLESolver3D + solve_full_domain_3d called straight,
+      with the water side FROZEN via ``Tb_prescribed`` (a 1-D linear profile
+      broadcast along y). Gate grid → RMSRE_dP 5.28 % / RMSRE_Q 3.21 %.
+
+Why the default moved from `kernel` to `pipeline` (2026-07-12)
+--------------------------------------------------------------
+Three reasons, in ascending order of importance:
+
+1. **It is more accurate.** dP 5.28 → 4.93 %, and Q 3.21 → **2.12 %** — a 34 %
+   cut in the heat-duty error, which also puts 3D ahead of the 2D lumped
+   baseline (2.51 %) for the first time. (Max per-case error is slightly worse:
+   16.24 % dP on case 1, whose Δp is only 1149 Pa, and +7.2 % Q on case 12.)
+
+2. **The frozen-B runner is fed part of the answer.** ``Tb_prescribed`` is built
+   from the MEASURED water outlet temperature (Excel col 25):
+
+       Tb(y) = T_Bout_measured + (T_Bin − T_Bout_measured)·(y/H)
+
+   and Q is evaluated as Σ h_vB·(Ts − Tb)·dV — so Tb sets the driving force
+   directly. That measured outlet temperature already encodes the true duty via
+   the water-side enthalpy balance (0.0108 kg/s × 4180 × 5.42 K = 243.8 W, vs
+   the experimental air-side Q_exp of 248.4 W — the same number to within the
+   2 % experimental closure error). It is not a tautology (Q_exp is an
+   independent AIR-side measurement), but the water field is pinned to truth
+   rather than predicted. The pipeline runner predicts it from scratch — and
+   still does better. A method given LESS information producing a BETTER answer
+   is the load-bearing part of this decision.
+
+3. **The gate was validating a code path production never runs.** Nothing in
+   production calls ``_run_one_case``. The GUI, the optimizer and the server
+   batches all drive Pipeline3D. A gate should exercise the shipped code.
+
+Convergence status of the new default (measured, not assumed)
+-------------------------------------------------------------
+All 16 cases converge the SIMPLE↔LTNE outer coupling in **3 iterations**, none
+truncated (a `!` after ``outer=N`` in the per-case line marks a truncated run).
+
+Cases 8 and 12–16 (u_A ≈ 22 m/s) DO log ``A@init[stall]``. Investigated
+2026-07-12 — it is benign, and specifically it is NOT the known clip-stall
+mechanism (``_p_clip_hits`` is 0 on every case):
+  * only the COLD-START SIMPLE-A solve stalls; every warm-started re-solve in
+    the outer loop exits ``'velocity'`` (converged), and the reported field
+    comes from one of those;
+  * the SIMPLE mass residual has a hard FLOOR at ≈ 8e-4 (normalised by inlet
+    mass flux) on every case — including the ones that never stall. Disabling
+    the LowReExit early-exit and running 3× the iterations (6000) moves it by
+    nothing (case 16: 7.86e-4 → 7.86e-4, bit-identical). So ``tol = 1e-5`` is
+    80× below an unreachable floor: NO Shanghai case has ever exited via
+    ``'tol'`` — every one exits on LowReExit's velocity-stability criterion.
+The residual floor itself (a discrete BC mass-closure issue, most likely) is an
+open question, tracked separately. It does not invalidate these numbers.
+
+Note on the README headline
+---------------------------
+README quotes the GRID-CONVERGED Δp ≈ 10 % / Q ≈ 3 % (4-grid Richardson), not
+the gate-grid numbers above. That study was run on the `kernel` runner and has
+NOT been repeated on `pipeline` — the grid-converged figures are therefore
+still the kernel ones. Re-running it is a follow-up.
 
 Uniform Shanghai geometry (no zoning): Gyroid L=7.0, t=0.6, k_s=16.
 
@@ -596,11 +662,18 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--runner', choices=['kernel', 'pipeline'],
-                    default='kernel',
-                    help="kernel = frozen-B gate runner (gate grid 20x10x3: "
-                         "RMSRE_dP 5.28 / RMSRE_Q 3.21, post-A2 criteria);"
-                         " pipeline = production Pipeline3D dual-solve path")
+    # DEFAULT SWITCHED kernel → pipeline (2026-07-12). See the module docstring
+    # for the full rationale and evidence; in short: the pipeline runner SOLVES
+    # the water side, is more accurate against experiment, converges, and is the
+    # code path production actually runs. `kernel` stays available as the
+    # frozen-B reference.
+    ap.add_argument('--runner', choices=['pipeline', 'kernel'],
+                    default='pipeline',
+                    help="pipeline (DEFAULT) = production Pipeline3D, water "
+                         "side SOLVED (gate grid 20x10x3: RMSRE_dP 4.93 / "
+                         "RMSRE_Q 2.12); kernel = legacy frozen-B reference "
+                         "runner (Tb prescribed from the MEASURED water outlet "
+                         "temperature; RMSRE_dP 5.28 / RMSRE_Q 3.21)")
     ap.add_argument('--wall-refine', action='store_true', help='Enable 6-wall refinement')
     ap.add_argument('--disp-c', type=float, default=0.0,
                     help='B4 thermal-dispersion coefficient C '
@@ -717,7 +790,11 @@ def main():
 
     # Save CSV (pipeline runner auto-suffixes — must never overwrite the
     # kernel gate baseline CSV)
-    _suffix = args.suffix + ('_pipeline' if args.runner == 'pipeline' else '')
+    # The DEFAULT runner writes the canonical filename; the non-default one is
+    # marked. This flipped with the default on 2026-07-12 (was `_pipeline` when
+    # pipeline was the opt-in) so that `shanghai_3d_baseline*.csv` keeps meaning
+    # "the gate's output" rather than silently becoming the legacy runner's.
+    _suffix = args.suffix + ('_kernel' if args.runner == 'kernel' else '')
     csv_name = f"shanghai_3d_baseline{_suffix}.csv"
     out_path = Path(__file__).parent.parent / csv_name
     pd.DataFrame(results).to_csv(out_path, index=False, encoding='utf-8-sig')

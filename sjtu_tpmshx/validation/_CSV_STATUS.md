@@ -80,13 +80,60 @@
   convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
   see memory `feedback_dp_gap_attribution`).
 
+## ⚠️ 2026-07-12 — GATE RUNNER SWITCHED (frozen-B kernel → production pipeline)
+
+**The canonical gate-grid numbers are now `RMSRE_dP 4.93 % / RMSRE_Q 2.12 %`**
+(was 5.28 / 3.21). Nothing in the physics changed — the *gate* changed: it now
+runs the production `Pipeline3D` stack with the **water side SOLVED**, instead
+of the kernel-direct runner with the water side **frozen**.
+
+Why (full write-up in the `validate_shanghai_3d_real` module docstring):
+
+1. **More accurate.** dP 5.28 → 4.93 %; Q 3.21 → **2.12 %** (a 34 % cut, and the
+   first time 3D beats the 2D lumped baseline of 2.51 %).
+2. **The frozen-B runner was fed part of the answer.** `Tb_prescribed` is built
+   from the **measured** water outlet temperature (Excel col 25), and Q is
+   `Σ h_vB·(Ts − Tb)·dV` — so Tb sets the driving force directly. That measured
+   outlet temperature already encodes the true duty via the water enthalpy
+   balance (0.0108 kg/s × 4180 × 5.42 K = **243.8 W**, vs the experimental
+   AIR-side `Q_exp` of **248.4 W** — the same number inside the 2 % experimental
+   closure error). Not a tautology (Q_exp is an independent air-side
+   measurement), but the water field was pinned to truth rather than predicted.
+   **The pipeline runner predicts it from scratch and still does better** — a
+   method given LESS information giving a BETTER answer is the load-bearing part
+   of this decision.
+3. **The old gate validated a code path production never runs.** The GUI, the
+   optimizer and the server batches all drive `Pipeline3D`.
+
+Convergence of the new default (measured): all 16 cases converge the SIMPLE↔LTNE
+outer coupling in **3 iterations**, none truncated. Cases 8 and 12–16
+(u_A ≈ 22 m/s) log `A@init[stall]` — benign, and NOT the known clip-stall
+mechanism (`p_clip_hits` = 0 everywhere): only the cold-start solve stalls, every
+warm re-solve exits `'velocity'`, and the SIMPLE mass residual has a hard **≈8e-4
+floor on every case** (disabling the early-exit and running 3× the iterations
+moves it by nothing — case 16: 7.86e-4 → 7.86e-4, bit-identical). Consequence:
+`tol = 1e-5` is 80× below an unreachable floor and **no Shanghai case has ever
+exited via `'tol'`** — convergence is decided by the velocity-stability
+criterion. The floor's root cause (discrete BC mass closure, most likely) is an
+open item; it does not invalidate these numbers.
+
+**The README headline (grid-converged Δp ≈ 10 % / Q ≈ 3 %) is NOT updated by
+this**: that 4-grid Richardson study was run on the `kernel` runner and has not
+been repeated on `pipeline`. Re-running it is a follow-up.
+
 ## To reproduce
-- Nz=3 default (gamma_df): `validate_shanghai_3d_real.py --nz 3`  → 5.28/3.21
-- Nz=3 rbf reference:      `TPMSHX_DF_METHOD=rbf` + same command   → 7.19/3.22
-- Nz=10 rbf reference:     `TPMSHX_DF_METHOD=rbf` + `--nz 10`      → 8.69/3.33
-Both carry `pressure_clip_hits` + `pressure_state_valid`; Shanghai n_invalid=0.
+- **Nz=3 default — production pipeline, water SOLVED** (canonical gate):
+  `validate_shanghai_3d_real.py --nz 3`                              → **4.93/2.12**
+- Nz=3 legacy frozen-B kernel:  `--runner kernel --nz 3`             → 5.28/3.21
+- Nz=3 rbf reference (frozen-B): `TPMSHX_DF_METHOD=rbf --runner kernel` → 7.19/3.22
+- Nz=10 rbf reference (frozen-B): `TPMSHX_DF_METHOD=rbf --runner kernel --nz 10` → 8.69/3.33
+Both runners carry `pressure_clip_hits` + `pressure_state_valid`; Shanghai
+n_invalid=0. (Before 2026-07-12 the pipeline runner hard-coded those two fields
+to 0/1, which silently disabled its own pressure-validity exclusion — fixed.)
 The SIMPLE solver's A+B low-Re early-exit (default on) makes the water-side solve
-~24× faster with <0.01% effect on dP/Q (verified 2026-06-02).
+~24× faster with <0.01% effect on dP/Q (verified 2026-06-02; and see the residual
+floor note above — the early-exit stops exactly where the solver would stop
+anyway).
 
 ⚠️ `--runner pipeline` reported a hard-coded `pressure_clip_hits=0` /
 `pressure_state_valid=1` until 2026-07-11, which made its own `n_invalid=0`

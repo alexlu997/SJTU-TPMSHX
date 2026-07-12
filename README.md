@@ -57,6 +57,21 @@
 > `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z flow axis) in
 > `tests/test_dp_direction_invariance.py`.
 
+> [!IMPORTANT]
+> **Gate runner switched 2026-07-12 — the water side is now SOLVED, not frozen.**
+> The validation gate used to run a kernel-direct path with fluid B prescribed from the
+> **measured** water outlet temperature (`Tb_prescribed`). It now runs the production
+> `Pipeline3D` stack — the same code the GUI, the optimizer and the server batches drive —
+> with a real SIMPLE-B water solve. At the gate grid (20×10×3) that moves
+> **Δp 5.28 % → 4.93 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D lumped
+> baseline of 2.51 %). The old runner was partly *fed* the answer: the measured outlet
+> temperature already encodes the true duty via the water enthalpy balance, and Q is
+> `Σ h_vB·(Ts − Tb)·dV`, so Tb sets the driving force. The new gate predicts it from
+> scratch and is still more accurate. Legacy numbers reproduce with `--runner kernel`;
+> full rationale in `validation/_CSV_STATUS.md` and the gate script's docstring.
+> **The grid-converged ≈ 10 % / ≈ 3 % above are *not* affected** — that 4-grid study was
+> run on the old runner and has not yet been repeated on the new one.
+
 <div align="center">
 
 <img src="assets/grid-convergence.png" width="84%" alt="3D grid convergence, Shanghai 16-case: under all-axis refinement the Δp RMSRE climbs from ~5% to a ~10% geometry/closure floor while the validation-gate 20×10×3 grid (~5%) is under-resolved; Q clean-converges to ~3%.">
