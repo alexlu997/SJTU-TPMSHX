@@ -522,12 +522,7 @@ class ComputeConfig:
                     "'f2' (ledger C6/C7). 'legacy' gates on the mass residual "
                     "that C6 showed to be an outlet-pin artifact; 'f2' gates on "
                     "momentum + solved-cell mass + global mass.")
-            if self.solver.convergence_mode == 'f2' and not self.is_3d:
-                raise ValueError(
-                    "convergence_mode='f2' is 3D-only (solver.Nz >= 2). The 2D "
-                    "solver has its own residual semantics (a plane-integrated "
-                    "flux defect, not a per-cell divergence) and has not been "
-                    "priced under F2 — see ledger C7 Q4.")
+
         if self.solver.max_iter_simple is not None:
             try:
                 mi = int(self.solver.max_iter_simple)

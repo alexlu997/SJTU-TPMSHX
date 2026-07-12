@@ -38,11 +38,13 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
   research ledger B5, code-verified 2026-07-06).
 """
 
+import os
+
 import numpy as np
 from numba import njit
 from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._kernels_2d import minmod
-from ._solve_common import LowReExit
+from ._solve_common import LowReExit, F2Monitor
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 from logutil import get_logger
 
@@ -72,6 +74,12 @@ from ._kernels_simple_2d import (  # noqa: F401
     _correct_jit,
     _mass_res_jit,
     _solve_temp_jit,
+    # F2 convergence gates (ledger C6 / C7 / C9)
+    _u_coeffs_df_2d,
+    _v_coeffs_df_2d,
+    _mom_res_jit_2d,
+    _mass_res_solved_jit_2d,
+    _mass_global_jit_2d,
 )
 
 
@@ -739,6 +747,42 @@ class SIMPLESolver:
         # solvers/_solve_common.LowReExit since arch-b-c-e batch C (the 2D/3D
         # copies drifted for months before R1; see that module's docstring).
         _lowre = LowReExit(self, (self.u, self.v), min_iter=20)
+
+        # ── Ledger C9 / F2 — convergence mode (mirrors the 3D solver, C7) ──
+        # 'legacy' (default): `tol` on `_mass_res_jit` + LowReExit.
+        #     That residual is a PLANE-INTEGRATED flux defect, and the pp solve
+        #     drives the per-cell divergence to zero, so every plane's flux
+        #     telescopes to the inlet's — on a FULL-FACE outlet it is a
+        #     TAUTOLOGY (measured 1.6e-15). `tol` therefore fires at the
+        #     min-iter floor (iteration 20) and the solve stops there.
+        #     Measured cost on the production Pipeline2D: dP_A under-converged
+        #     by -3.3 %. Kept as the default until F2 is priced and re-baselined.
+        # 'f2'    : three independent gates — momentum residual + solved-cell
+        #     continuity (fresh rho, cell_kind == 0) + global boundary mass —
+        #     each with its own tolerance, confirmed over consecutive checks.
+        #     A static velocity field TRIGGERS a check; it does NOT terminate.
+        _mode = str(getattr(self, 'convergence_mode',
+                            os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
+        if _mode not in ('legacy', 'f2'):
+            raise ValueError(
+                f"convergence_mode must be 'legacy' or 'f2', got {_mode!r}")
+        _f2 = None
+        if _mode == 'f2':
+            if coupling != 'simple':
+                raise ValueError(
+                    "convergence_mode='f2' is only wired for coupling='simple'. "
+                    "SIMPLER solves the pressure directly (a different fixed "
+                    "point), so the momentum residual's SIMPLE-defect argument "
+                    "does not carry over unexamined.")
+            _f2 = F2Monitor(self, (self.u, self.v), min_iter=20)
+            for _h in ('mom_residuals', 'mass_local_residuals',
+                       'mass_global_residuals'):
+                if not hasattr(self, _h):
+                    setattr(self, _h, [])
+            self.final_res_mom = None
+            self.final_res_mass_local = None
+            self.final_res_mass_global = None
+            self.outlet_backflow_frac = 0.0
         # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter';
         # reset on every (re-)entry (the 2D pipeline rebuilds the solver per
         # outer iteration, but direct callers may reuse one instance).
@@ -892,8 +936,53 @@ class SIMPLESolver:
 
             if verbose and it % 200 == 0:
                 _log.info(f"  iter {it:5d}  |R| = {res:.3e}")
+
+            # ══ F2 path (ledger C9) — three honest gates ══════════════════
+            if _f2 is not None:
+                _vd = _f2.velocity_delta((self.u, self.v))
+
+                _rho_eps_now = np.ascontiguousarray(
+                    self.rho_field * self.eps_field, dtype=np.float64)
+                _Rml, _n_solved = _mass_res_solved_jit_2d(
+                    self.u, self.v, Nx, Ny, dx_a, dy_a,
+                    _rho_eps_now, self._pp_sparsity['cell_kind'])
+                _min, _mout, _bf = _mass_global_jit_2d(
+                    self.v, Nx, Ny, dx_a, _rho_eps_now)
+                _Rmg = (abs(_mout - _min) / abs(_min)
+                        if abs(_min) > 1e-14 else 0.0)
+                self.mass_local_residuals.append(_Rml)
+                self.mass_global_residuals.append(_Rmg)
+                self.outlet_backflow_frac = _bf
+                self.final_res_mass_local = _Rml
+                self.final_res_mass_global = _Rmg
+
+                if _f2.should_eval_momentum(it, _vd):
+                    _Rmom, _rec = self._momentum_residual(Nx, Ny, dx_a, dy_a,
+                                                          _K2d, _cF2d)
+                    _rec['iter'] = it
+                    self.mom_residuals.append(_rec)
+                    self.final_res_mom = _Rmom
+                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd)
+                    if _reason is not None:
+                        self._enforce_mass_conservation(verbose=verbose)
+                        self.exit_reason = _reason
+                        self.final_res = res
+                        return (_reason == 'tol'), it
+                # NOTE: no `velocity` exit. A static field only TRIGGERS a check
+                # (F2Monitor.should_eval_momentum); it never terminates.
+                continue
+
+            # ── LEGACY path ──────────────────────────────────────────────
             # Require minimum iterations for pressure field to develop
-            # (exact PP gives mass convergence in 1 iter, but P needs more)
+            # (exact PP gives mass convergence in 1 iter, but P needs more).
+            #
+            # ⚠️ Ledger C9: on a FULL-FACE outlet `res` is a TAUTOLOGY. The pp
+            # solve drives the per-cell divergence to zero, so every plane's flux
+            # telescopes to the inlet's and this plane-integrated defect reaches
+            # ~1e-15. `tol` therefore fires at THIS `it >= 20` floor, and the
+            # solve stops at iteration 20 — measured cost on the production
+            # Pipeline2D: dP_A under-converged by -3.3 %. Use convergence_mode
+            # ='f2' for a criterion that means something.
             if res < tol and it >= 20:
                 if verbose:
                     _log.info(f"  [OK] Converged at iter {it}, |R| = {res:.3e}")
@@ -954,6 +1043,39 @@ class SIMPLESolver:
         _taper(self.inlet_frac, lambda Ny: [(j, j + 1) for j in range(min(8, Ny))])
 
         return u_masked, v_masked
+
+    # ── ledger C9 — momentum residual, balanced normalisation (mirrors 3D) ──
+    _MOM_FLOOR_FRAC = 1e-3
+
+    def _momentum_residual(self, Nx, Ny, dx_a, dy_a, K2d, cF2d):
+        """(R_max, record) on the solver's CURRENT state.
+
+        Balanced denominator (see `_mom_res_jit_2d` / `_mom_res_jit_3d`):
+        den_c = Σ½(|lhs| + |rhs|), so `num > 0 ⟹ den > 0` and a false zero is
+        structurally impossible; the ratio is bounded by 2.
+
+        COMMON FLOOR: each component is divided by `max(den_c, floor)` with
+        `floor = _MOM_FLOOR_FRAC * max(den_u, den_v)`, so a physically negligible
+        component cannot hold the gate open on numerical noise.
+
+        Raw num/den are kept in the record so the normalisation can be revisited
+        without re-running.
+        """
+        nu_, du_, nv_, dv_ = _mom_res_jit_2d(
+            self.u, self.v, self.P, Nx, Ny, dx_a, dy_a,
+            self.rho_field, self._mu_eff_field, K2d, cF2d, self.mu_field,
+            self.eps_field, self.inlet_frac, self.outlet_frac, self.cf_aniso)
+        d_ref = max(du_, dv_)
+        floor = self._MOM_FLOOR_FRAC * d_ref
+
+        def _r(n, d):
+            den = max(d, floor)
+            return (n / den) if den > 0.0 else 0.0
+
+        ru, rv = _r(nu_, du_), _r(nv_, dv_)
+        rmax = max(ru, rv)
+        return rmax, {'u': ru, 'v': rv, 'max': rmax,
+                      'num': (nu_, nv_), 'den': (du_, dv_)}
 
     def _enforce_mass_conservation(self, verbose=True):
         """Scale outlet velocities to enforce global MASS conservation

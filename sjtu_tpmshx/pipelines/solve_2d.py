@@ -1351,6 +1351,12 @@ def _run_solvers(window, cfg, fields):
             and bool(_env_valid)),                   # envelope gate
         'convergence_detail': {
             'outer_converged': bool(coupling_converged),
+            # The ACTUAL outer-iteration count (3D parity). `_last_coup` is the
+            # 0-based index the skeleton stopped at, so +1 is the count of passes
+            # actually run — NOT the cap. Absent before 2026-07-12, so callers
+            # reading `outer_iters` (e.g. the Shanghai 2D gate) silently got -1.
+            'outer_iters': int(_last_coup) + 1,
+            'outer_hit_cap': bool(not coupling_converged),
             'simple_ok': bool(not simple_warnings),
             'ltne_ok': bool(e_info.get('converged', False)),
             'ltne_iterations': int(e_info.get('iterations', 0)),

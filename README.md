@@ -94,7 +94,17 @@
 > the AMG path (40×40×20). **The optimizer deliberately stays on the legacy criterion** —
 > it produces rankings only, and Pareto picks are re-solved through this pipeline. Reproduce
 > the pricing: `validation/cases/price_f2_convergence_3d.py` → `reports/f2_pricing_3d.csv`.
-> Revert with `TPMSHX_CONV_MODE=legacy`. **2D is unchanged and stays bit-identical.**
+> Revert with `TPMSHX_CONV_MODE=legacy`.
+>
+> **2D got the same treatment (ledger C9) — and needed it MORE.** 2D's legacy `tol`
+> gated a PLANE-INTEGRATED flux defect, which the pp solve makes **tautologically
+> zero** on a full-face outlet (measured 1.6e-15). It therefore fired at the
+> minimum-iteration floor and **stopped the solve after 20 iterations**, leaving Δp
+> under-converged by **3.3 %**. Going to 50 iterations removes that for **1.24× wall**
+> — a far better trade than 3D's. (The old 2D gate could not see it: it was
+> kernel-direct and did not run the production pipeline.) golden-2D compressible Δp
+> re-baselines **+3.9…4.0 %**; the partial-BC side barely moves, because it exited on
+> the velocity criterion rather than the tautological `tol`.
 
 <div align="center">
 
@@ -115,7 +125,7 @@
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.61 %** / Q **2.49 %** (production pipeline, water solved) |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 

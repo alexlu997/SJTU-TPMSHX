@@ -151,7 +151,21 @@
 5. **SIMPLER 实验性**：partial-BC 配置未基准（`sjtu_tpmshx/solvers/simple_solver.py:716-718`）。
 6. **`_enforce_mass_conservation` 属事后重标，且它【在退出决定之后】才跑**（`sjtu_tpmshx/solvers/simple_solver.py:958`）。其 docstring 建议 "|scale−1| > 1e-3 → 收紧 tol 而非依赖重标"（`:973-976`），**但这条建议本身不成立**（codex 审计 2026-07-12）：调用顺序是 `:897` 先判 `res < tol` → `:900` 才调重标；LowRe 退出 `:907` → `:914` 才调；max_iter `:922` → `:926` 才调。**循环里根本不跑**，所以"收紧 tol"既不能让重标提前介入，重标也从来没帮任何一次 tol 触发过。它唯一的作用是**改写返回给调用方的出口速度**。
 7. **`final_res` 与返回的场对不上**（同上审计）：`:900` 重标改了 `self.v[i, Ny]`，但 `:902` 的 `self.final_res = res` 报的是**重标之前**算出的残差。低危（重标在全断面出口上 `scale≈1`），但它是个真实的状态不一致，别拿 `final_res` 当返回场的证书。
-8. **2D 的残差口径比 3D 弱**：`_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`，逐格横向失衡在面内互相抵消（`u=0` 壁面使 x 通量在面内 telescoping）、**看不见**；3D `_mass_res_jit_3d` 量的是**逐格散度**，严格更强。**两者却被喂同一个 `tol`** —— 这就是 2D 的 `tol` 够得着、3D 够不着的全部原因（台账 C6）。2D 同样用**更新前**的 `rho_eps` 算残差（`:880-882`），staleness 与 3D 同构。**2D 尚未上 F2 动量残差**（3D 已上，台账 C7）：2D 的 LowRe 早退有 164× 的历史收益（commit `9a01766`，10000→26 步 / 47.6 s→0.29 s），直接扶正动量门可能撤销大部分收益，**必须独立定价，不得照搬 3D 的 tolerance**。
+8. **【① 已知错，已修】2D 的 `tol` 是【纯恒等式】，求解在第 20 步就停 —— F2 已接管（台账 C9）**
+   - **机制**：`_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`。pp 求解让**逐格散度精确为零** ⇒ 截面通量**逐层望远镜** ⇒ `Q_j = Q_in` 对**所有** j 成立（出口面由 ε·ρ·v 守恒外推给出，也相等）⇒ **全断面出口下残差恒等于零**（实测 **1.6e-15**）。3D 至少还有出口 pin 行的横向散度这个"真信号"（虽是伪的）；**2D 字面上零信息**。
+   - **后果**：`tol` 在 `it >= 20` 这个**最小迭代数**门槛上触发，**求解器在第 20 步就停**（3D 是 92 步）。实测代价：**dP_A 欠收敛 −3.3%**（随速度非单调，峰值在 u≈5~10 m/s）。参考解硬：500 步到不动点，之后到 20000 步一分不差。
+   - **partial 打破恒等式**：被堵死的出口格 `v=0`，但最后一层内部面 `v[i,Ny-1]` 在那些列上不为零 → 望远镜在最后一步断了。所以 `both_full` 两侧都 `tol`@20 退出；`both_partial` 两侧都走 `velocity`。**golden 的 `air_air` 是 A 全断面 + B partial**（B 的进口面只占 23%）。
+   - **修法极便宜**：每次 SIMPLE 预算 20→**50** 步，误差 −3.38% → −0.007%，wall 只 **1.24×**。（3D 是 2× wall 换 0.2%。）
+   - **⚠️ "164× LowRe 收益会被撤销"这个顾虑不成立**：**全断面 2D 根本不是 LowReExit 停的，是 `tol` 在 20 步停的**，LowReExit 压根没开火；164× 那个数（`9a01766`）是对 **10000 步**基线说的。
+   - **⚠️ 旧 2D 门抓不到这个缺陷**：强制打开退出，门的 RMSRE 只动 0.03pp（8.76→8.79），而同样的强制在生产 Pipeline2D 上动 **3.4%** —— 因为旧门是 **kernel-direct 独立脚本，不走 `Pipeline2D`**。已在 C8 同批换成生产管线 runner。
+
+9. **F2 三门 —— 2D 生产管线的现行收敛判据（台账 C9，2026-07-12）**
+   - **开关**：`solver.convergence_mode ∈ {'legacy','f2'}`。**生产 Pipeline2D 默认 `'f2'`**（`stages_2d`，env `TPMSHX_CONV_MODE` 可覆盖）；**求解器类默认仍 `'legacy'`**；**2D 优化器**（`optimization/evaluator.py`）走求解器默认 → **legacy**（吞吐考虑，同 3D 的约定：只出排名，Pareto 经生产管线重解）。
+   - **三门**（须连续 `f2_n_confirm`(=2) 次同时满足）：`_mom_res_jit_2d`（`R = aP0·φ − (Σaₙᵦ·φₙᵦ + p_src + SOU)`，**balanced 分母** `D=Σ½(|lhs|+|rhs|)` ⇒ `num>0 ⟹ D>0`，**假零结构性不可能**，`R≤2` 有界，默认 `mom_tol=1e-4`）+ `_mass_res_solved_jit_2d`（按 **`cell_kind==0`** 选、用**更新后的 ρ**、**逐格**归一化 `|net|/Σ|face|`，默认 `1e-6`）+ `_mass_global_jit_2d`（`|ṁ_out−ṁ_in|/ṁ_in` + **`outlet_backflow_frac`**，默认 `1e-6`）。**velocity 静止只触发检查、不终止**（`F2Monitor`，2D/3D 共用）。
+   - **F2 拒绝 `coupling='simpler'`**（SIMPLER 直接解压力，是另一个不动点，"SIMPLE 扔掉的量 ∝ Pp"的论证不能不加检验地搬过去）。
+   - **⚠️ 两个 2D-vs-3D 易错点**：2D 的 **SOU 永远开**（无 `use_sou` 旗标）、**ε 比值因子永远算**（无 `use_eps` 旗标）。抄 3D 的代码时必踩。
+   - **系数块是有意的平行副本**（`_{u,v}_coeffs_df_2d`，理由同 3D：抽共享 helper 会因 fastmath 重结合动 golden）。**漂移用测试守住而非信任**：`test_f2_convergence_2d.py` 断言残差必须在**扫掠核自己的动量不动点上归零**（<1e-12），并**把缺陷本身钉住**（legacy 必须在第 20 步、res<1e-12 退出）—— 防止有人退回一个从没测过任何东西的判据。
+   - **重基线**：golden-2D 可压缩 dP_A **+3.9~4.0%**；**partial 侧 dP_B 几乎不动**（+0.002% —— 它 legacy 走 velocity 判据，本就不算差，自洽）；上海 2D 门 8.61%→**8.62%**（门的工况恰好不敏感）。
 7. **partial-outlet 0.01<frac≤0.5 胞元语义不一致**（已审计为良性）：pp 方程钉压而 v 扫掠视为墙，靠 `_correct_jit` 无条件重写 v[i,Ny] 兜底（`sjtu_tpmshx/solvers/_kernels_simple_2d.py:721-733`）。
 8. **Anderson 未接入 2D**：仅 3D 且默认关闭（`sjtu_tpmshx/solvers/simple_solver_3d.py:804-809`）。
 9. **legacy `closure` kwarg** 被静默吞掉（`sjtu_tpmshx/solvers/simple_solver.py:277-279`）——移植时不要依赖它。

@@ -80,6 +80,52 @@
   convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
   see memory `feedback_dp_gap_attribution`).
 
+## ⚠️ 2026-07-12 (d) — 2D CONVERGENCE CRITERION REPLACED (legacy → F2), ledger C9
+
+**2D's legacy `tol` was worse than 3D's — it was a TAUTOLOGY.**
+
+`_mass_res_jit` is a PLANE-INTEGRATED flux defect. The pp solve drives the
+per-cell divergence to zero, so every plane's mass flux telescopes to the inlet's,
+and on a full-face outlet `max_j |Q_j − Q_in| / Q_in` has **nothing left to
+measure**. Measured: **1.6e-15**. `tol` therefore fired at the `it >= 20`
+minimum-iteration floor and **the solve stopped after 20 iterations** (3D ran 92).
+
+Cost, on the production Pipeline2D (reference is hard: converged by 500 iterations
+and then bit-stable out to 20 000):
+
+```
+dP_A:  production (20 iters/call)  -3.31 %   |  50 iters/call  -0.007 %  (1.24x wall)
+```
+
+Non-monotonic in velocity: −1.3 % at u = 1 m/s, peak **−3.4 %** at u ≈ 5–10, −0.2 %
+at u = 40.
+
+**2D needs F2 MORE than 3D did, and it is far cheaper** (3D: 2× wall for 0.2 %).
+
+**The "164× LowRe speed-up would be undone" worry does not apply.** On a full-face
+outlet the solve is not stopped by LowReExit at all — it is stopped by `tol` at
+iteration 20; LowReExit never fires. The 164× (commit `9a01766`) was measured
+against a **10 000**-iteration baseline; 20 → 50 is nowhere near it.
+
+**The old 2D gate could not see this** — forcing its SIMPLE exit open moved its dP
+RMSRE by 0.03 pp, while the same forcing on the production Pipeline2D moves dP by
+3.4 %. It was kernel-direct and did not run `Pipeline2D`. Fixed in (c) below.
+
+Same three gates as 3D (momentum + solved-cell continuity + global boundary mass);
+`convergence_mode='f2'` is now the Pipeline2D default. F2 **rejects
+`coupling='simpler'`** (SIMPLER solves the pressure directly — a different fixed
+point; the "what SIMPLE drops is ∝ Pp" argument does not carry over unexamined).
+
+**Re-baselined:** golden-2D compressible dP_A **+3.9…4.0 %** (air_air 14171 → 14722;
+water_b 11990 → 12470). The PARTIAL side's dP_B barely moves (+0.002 %) — it exited
+on the velocity criterion, not the tautological `tol`, so it was never badly
+under-converged. Shanghai 2D gate **8.61 % → 8.62 %** (its cases happen to be
+insensitive — which is exactly why it could not catch the defect).
+
+Revert with `TPMSHX_CONV_MODE=legacy`.
+
+---
+
 ## 🔴 2026-07-12 (c) — 2D PRODUCTION BUG: the outlet was anchored at the INLET pressure (ledger C8)
 
 **A real bug in the shipped 2D code, not a scheme change.** `P_ref_abs` is the
