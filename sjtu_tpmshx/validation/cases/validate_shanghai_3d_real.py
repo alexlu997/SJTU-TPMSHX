@@ -69,7 +69,22 @@ LZ = SPEC.Lz_m  # arbitrary 3D depth (water uniform along z)
 A_FLOW = SPEC.a_flow_m2
 
 # Outer coupling parameters (mirror 2D)
-MAX_OUTER = 4          # fewer than 2D's 8 for 3D speed; P1b exit OK
+# 2026-07-12 — 4→12, and the exit criterion below now tracks Ts as well as Ta.
+# BOTH are PROVEN no-ops on this gate: re-running the 16 Shanghai cases with
+# max_outer=12 (criterion unchanged), and again with the Ts-augmented criterion,
+# reproduces 5.28% / 3.21% and every per-case value bit-identically, with the
+# same per-case outer counts (3,3,4,4,4,4,4,4,4,4,4,3,3,3,3,3). So:
+#   * the old cap of 4 was never binding — the loop already exits on the
+#     criterion at 3–4, so the "fewer than 2D's 8 for 3D speed" rationale it
+#     carried was buying nothing;
+#   * the Ta-only criterion was not hiding a lagging Ts on THESE cases.
+# Both are kept as hardening for the other specimens this runner drives (d76,
+# future ones), where a slower solid field would otherwise exit early or a
+# harder case would truncate silently — the failure mode the production
+# pipeline's A2 fix (2026-07-06) closed by tracking all three fields.
+# `Tb` is deliberately NOT tracked: this is the frozen-B runner
+# (`Tb_prescribed` linear profile), so Tb does not evolve here.
+MAX_OUTER = 12         # cap, not a budget — the loop exits on the criterion
 OUTER_TOL = 0.5        # K
 ALPHA_T = 0.6
 
@@ -319,6 +334,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     # ── Outer SIMPLE ↔ LTNE coupling loop ──
     Ta = Tb = Ts = None
     Ta_prev = None
+    Ts_prev = None
     outer_iters = 0
 
     for outer in range(max_outer_local):
@@ -352,11 +368,24 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             alpha_T=0.7)
 
+        # Outer exit criterion. Ts joined Ta on 2026-07-12: the production
+        # pipeline's A2 fix (2026-07-06) had already widened its own gate from
+        # ('Ta',) to ('Ta','Tb','Ts') because "the old ('Ta',)-only criterion
+        # let Tb/Ts drift unmonitored" (run_stack_3d.py) — this runner was never
+        # brought along. Tb is NOT tracked here and must not be: this is the
+        # frozen-B runner, Tb is prescribed and does not evolve.
+        # Measured: on the 16 Shanghai cases this changes nothing (identical
+        # per-case outer counts and identical 5.28%/3.21%) — Ts is already
+        # inside tol whenever Ta is. It is defence for the harder specimens.
         if Ta_prev is not None:
-            dT_max = float(np.max(np.abs(Ta - Ta_prev)))
+            _dTa = float(np.max(np.abs(Ta - Ta_prev)))
+            _dTs = (float(np.max(np.abs(Ts - Ts_prev)))
+                    if Ts_prev is not None else float('inf'))
+            dT_max = max(_dTa, _dTs)
             if dT_max < OUTER_TOL:
                 break
         Ta_prev = Ta.copy()
+        Ts_prev = Ts.copy()
 
         # Update SIMPLE A T_field/rho/mu/mu_eff from new Ta.
         # Critical: SIMPLE _update_density() uses sA.T_field — must propagate
