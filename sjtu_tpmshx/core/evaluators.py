@@ -283,6 +283,24 @@ def evaluate_3d(x_decision: np.ndarray,
     # M2b: per-cell ε (SIMPLE-B indices = real coords).
     sB.eps_field = np.ascontiguousarray(arrays['eps_arr'], dtype=np.float64)
 
+    # ── Convergence mode: LEGACY, deliberately (ledger C6/C7) ────────────
+    # The production pipeline (`run_stack_3d._apply_accel_flags`) now defaults to
+    # 'f2' — the honest three-gate criterion. This optimizer evaluator does NOT,
+    # and the choice is explicit rather than inherited so it cannot rot into an
+    # accident:
+    #   * F2 costs a measured ~2x SIMPLE wall time (reports/f2_pricing_3d.csv).
+    #     This evaluator is called thousands of times per BO run; the pipeline is
+    #     called once per reported result.
+    #   * The standing convention (ledger O2 / audit R3) is that the optimizer
+    #     produces RANKINGS ONLY, and every Pareto pick is re-solved through the
+    #     production pipeline before any physical number is reported. Under that
+    #     rule a cheaper, less-converged screening criterion is legitimate.
+    # The cost of switching this path to f2 @ mom_tol=1e-3 is a measured 1.74x —
+    # a separate decision, tracked in ledger C7. Until then: DO NOT quote this
+    # evaluator's dP/Q as physical results.
+    for _s in (sA, sB):
+        _s.convergence_mode = 'legacy'
+
     # 4. Initial SIMPLE solves
     if verbose:
         _log.info(f"[3D] Solving SIMPLE A (cold) … ")

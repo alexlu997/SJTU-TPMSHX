@@ -149,7 +149,9 @@
 3. **partial-inlet 温度 BC 是数值正则化**：部分开口胞元 T 由线性混合给出，带内邻点小偏差；注释给出了改写为严格面通量 BC 的路线（`sjtu_tpmshx/solvers/ltne_energy.py:163-171`）。
 4. **空间变 ε 的 interstitial 形式偏差**（B5）：对流与 Laplacian 算子在非均匀 ε_f 下偏离均质化 BFNS 推导，扩展 zoned-TPMS 前须复核（`sjtu_tpmshx/solvers/simple_solver.py:34-38`）。
 5. **SIMPLER 实验性**：partial-BC 配置未基准（`sjtu_tpmshx/solvers/simple_solver.py:716-718`）。
-6. **`_enforce_mass_conservation` 属事后重标**：|scale−1| > 1e-3 提示 pp 方程出口面残差偏松，应收紧 tol 而非依赖重标（`sjtu_tpmshx/solvers/simple_solver.py:973-976`）。
+6. **`_enforce_mass_conservation` 属事后重标，且它【在退出决定之后】才跑**（`sjtu_tpmshx/solvers/simple_solver.py:958`）。其 docstring 建议 "|scale−1| > 1e-3 → 收紧 tol 而非依赖重标"（`:973-976`），**但这条建议本身不成立**（codex 审计 2026-07-12）：调用顺序是 `:897` 先判 `res < tol` → `:900` 才调重标；LowRe 退出 `:907` → `:914` 才调；max_iter `:922` → `:926` 才调。**循环里根本不跑**，所以"收紧 tol"既不能让重标提前介入，重标也从来没帮任何一次 tol 触发过。它唯一的作用是**改写返回给调用方的出口速度**。
+7. **`final_res` 与返回的场对不上**（同上审计）：`:900` 重标改了 `self.v[i, Ny]`，但 `:902` 的 `self.final_res = res` 报的是**重标之前**算出的残差。低危（重标在全断面出口上 `scale≈1`），但它是个真实的状态不一致，别拿 `final_res` 当返回场的证书。
+8. **2D 的残差口径比 3D 弱**：`_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`，逐格横向失衡在面内互相抵消（`u=0` 壁面使 x 通量在面内 telescoping）、**看不见**；3D `_mass_res_jit_3d` 量的是**逐格散度**，严格更强。**两者却被喂同一个 `tol`** —— 这就是 2D 的 `tol` 够得着、3D 够不着的全部原因（台账 C6）。2D 同样用**更新前**的 `rho_eps` 算残差（`:880-882`），staleness 与 3D 同构。**2D 尚未上 F2 动量残差**（3D 已上，台账 C7）：2D 的 LowRe 早退有 164× 的历史收益（commit `9a01766`，10000→26 步 / 47.6 s→0.29 s），直接扶正动量门可能撤销大部分收益，**必须独立定价，不得照搬 3D 的 tolerance**。
 7. **partial-outlet 0.01<frac≤0.5 胞元语义不一致**（已审计为良性）：pp 方程钉压而 v 扫掠视为墙，靠 `_correct_jit` 无条件重写 v[i,Ny] 兜底（`sjtu_tpmshx/solvers/_kernels_simple_2d.py:721-733`）。
 8. **Anderson 未接入 2D**：仅 3D 且默认关闭（`sjtu_tpmshx/solvers/simple_solver_3d.py:804-809`）。
 9. **legacy `closure` kwarg** 被静默吞掉（`sjtu_tpmshx/solvers/simple_solver.py:277-279`）——移植时不要依赖它。

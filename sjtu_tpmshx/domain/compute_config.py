@@ -182,6 +182,26 @@ class SolverConfig:
 
     ``T_s_init_K=None`` falls back to the legacy seed
     ``0.5 * (T_inA + T_inB)`` inside ``solve_full_domain[_3d]``.
+
+    F2 CONVERGENCE GATES (3D only, ledger C6/C7 — added 2026-07-12)
+    ---------------------------------------------------------------
+    - ``convergence_mode``: ``'legacy'`` (default) or ``'f2'``.
+      ``'legacy'`` gates on ``tol_simple`` — which ledger C6 showed to be an
+      OUTLET-PIN ARTIFACT that never reaches its tolerance, so what actually
+      decides is LowReExit's velocity criterion (measured: it declares converged
+      at a momentum residual of 1.8e-3 .. 1.5e-2, still falling).
+      ``'f2'`` gates on three independent residuals instead — see below.
+    - ``mom_tol`` / ``mass_local_tol`` / ``mass_global_tol``: the F2 gates
+      (momentum residual / solved-cell continuity / global boundary mass). All
+      three must hold for ``f2_n_confirm`` consecutive checks.
+
+    These are DELIBERATELY separate names, not a redefinition of ``tol_simple``.
+    ``tol_simple`` already means five different numbers across the codebase
+    (``solve()`` default 1e-6, this pipeline 1e-5, the Shanghai kernel runner
+    1e-3, coarse bootstrap 1e-3, the 3D optimizer 1e-2). Re-pointing it at the
+    momentum residual would silently fork every one of them (codex review P0-4).
+    ``tol_simple`` keeps its legacy meaning and keeps driving the legacy path and
+    the adaptive-AMG scheduler.
     """
     max_outer_ltne: Optional[int] = None
     outer_tol_K: Optional[float] = None
@@ -191,6 +211,10 @@ class SolverConfig:
     Ny: int = 60
     Nz: int = 1
     T_s_init_K: Optional[float] = None
+    convergence_mode: Optional[str] = None      # None -> 'legacy' (or env)
+    mom_tol: Optional[float] = None
+    mass_local_tol: Optional[float] = None
+    mass_global_tol: Optional[float] = None
 
 
 @dataclass
@@ -473,7 +497,15 @@ class ComputeConfig:
         # that looked like a solve. None = "use the dimension built-in" and
         # stays legal.
         for name, v in (('solver.outer_tol_K', self.solver.outer_tol_K),
-                        ('solver.tol_simple', self.solver.tol_simple)):
+                        ('solver.tol_simple', self.solver.tol_simple),
+                        # F2 gates (ledger C7). Same rule: positive and finite.
+                        # A zero or negative gate is strictly unreachable (all
+                        # three residuals are >= 0), so the solve could only ever
+                        # burn max_iter and report converged=False.
+                        ('solver.mom_tol', self.solver.mom_tol),
+                        ('solver.mass_local_tol', self.solver.mass_local_tol),
+                        ('solver.mass_global_tol',
+                         self.solver.mass_global_tol)):
             if v is None:
                 continue
             try:
@@ -482,6 +514,20 @@ class ComputeConfig:
                 _bad(name, v)
             if not math.isfinite(fv) or fv <= 0.0:
                 _bad(name, v)
+        if self.solver.convergence_mode is not None:
+            if self.solver.convergence_mode not in ('legacy', 'f2'):
+                raise ValueError(
+                    f"ComputeConfig.solver.convergence_mode="
+                    f"{self.solver.convergence_mode!r} — must be 'legacy' or "
+                    "'f2' (ledger C6/C7). 'legacy' gates on the mass residual "
+                    "that C6 showed to be an outlet-pin artifact; 'f2' gates on "
+                    "momentum + solved-cell mass + global mass.")
+            if self.solver.convergence_mode == 'f2' and not self.is_3d:
+                raise ValueError(
+                    "convergence_mode='f2' is 3D-only (solver.Nz >= 2). The 2D "
+                    "solver has its own residual semantics (a plane-integrated "
+                    "flux defect, not a per-cell divergence) and has not been "
+                    "priced under F2 — see ledger C7 Q4.")
         if self.solver.max_iter_simple is not None:
             try:
                 mi = int(self.solver.max_iter_simple)

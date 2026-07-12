@@ -897,11 +897,22 @@ def _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_field):
     Q_in| / Q_in`. Transverse per-cell imbalances cancel within a plane and are
     invisible to the 2D metric; this one sees them. The two solvers are handed
     the SAME `tol`, so the 3D target is strictly the harder one — and on the
-    pressure-pinned outlet row it is unreachable by construction. See
+    Dirichlet-pressure-outlet row (whose continuity equation `_assemble_pp_3d`
+    REPLACES with `Pp = 0`) it is unreachable by construction. See
     `simple_solver_3d.solve()`'s docstring and ledger C6 before using this
-    number as a convergence measure, and before "porting" 2D's
-    `_enforce_mass_conservation` rescale (measured no-op here: it removes 0.03%
-    of the outlet-row imbalance — that band-aid is tailored to the 2D metric).
+    number as a convergence measure.
+
+    Do NOT "port" 2D's `_enforce_mass_conservation` rescale here. Measured no-op:
+    3D's scale would be 1.000194 (below 2D's own 1e-3 warn threshold), and the
+    outlet-row residual is 99.97 % scattered / cancelling (|sum| / sum|.| = 0.03 %),
+    so a global rescale removes 0.03 % of the imbalance and leaves the per-cell
+    floor untouched.
+
+    (CORRECTION 2026-07-12, codex review: an earlier revision explained the above
+    by saying the 2D rescale "zeroes the 2D metric, which is why 2D's tol fires".
+    That mechanism claim is FALSE — the rescale runs only AFTER the exit decision,
+    never inside the loop (`simple_solver.py:897` vs `:900`). The real reason 2D
+    reaches tol is simply that its metric is weaker. The no-port verdict stands.)
     """
     r_max = 0.0
     for i in range(Nx):
@@ -942,6 +953,139 @@ def _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_field):
                 if d > r_max:
                     r_max = d
     return r_max
+
+
+# ── Honest continuity residuals (ledger C7 / F2) ──────────────────
+
+@njit(cache=True, fastmath=True)
+def _mass_res_solved_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz,
+                            rho_eps_field, cell_kind):
+    """LOCAL continuity residual over the cells the pp equation ACTUALLY SOLVES.
+
+    Two deliberate differences from `_mass_res_jit_3d`, both required for the
+    number to mean anything (ledger C6/C7):
+
+      1. `cell_kind` (from `_pp_sparsity`) selects `== 0` cells. The outlet row
+         is `cell_kind == 1`: its continuity equation was REPLACED by `Pp = 0`
+         (a Dirichlet pressure outlet), so it has no continuity residual to
+         converge and must not be counted. Select by cell_kind, NOT by row index
+         — a partial / tapered outlet pins only some cells of the row.
+      2. The CALLER must pass a rho_eps rebuilt from the CURRENT (post-
+         `_update_density`) rho. `_mass_res_jit_3d` is handed the pre-update
+         array the pp solve already zeroed itself against, which is why it reads
+         ~0 by construction on exactly these cells.
+
+    NORMALISATION is per-cell and grid-scale invariant:
+
+        R_cell = |net flux| / Σ|face fluxes|          (dimensionless, ∈ [0, 1])
+
+    NOT `max|net| / mdot_inlet` — that ratio shrinks as the mesh refines (a
+    finer cell simply carries less flux), so a fixed tolerance on it silently
+    becomes easier on finer grids. Dividing by the cell's OWN throughput removes
+    the mesh-scale dependence, which is what a grid-independent `tol` needs.
+
+    Returns (max_local, n_cells_counted). A cell with no flux at all (Σ|face| =
+    0) has no continuity equation to violate and is skipped.
+    """
+    r_max = 0.0
+    n_cnt = 0
+    for i in range(Nx):
+        for j in range(Ny):
+            for k in range(Nz):
+                flat = (i * Ny + j) * Nz + k
+                if cell_kind[flat] != 0:
+                    continue                       # Dirichlet outlet: not solved
+                dxi = dx[i]; dyj = dy[j]; dzk = dz[k]
+                Ae = dyj * dzk
+                Ax = dxi * dzk
+                Az = dxi * dyj
+
+                if i < Nx - 1:
+                    re_ = 0.5 * (rho_eps_field[i, j, k]
+                                 + rho_eps_field[i + 1, j, k])
+                else:
+                    re_ = rho_eps_field[i, j, k]
+                if i > 0:
+                    rw_ = 0.5 * (rho_eps_field[i - 1, j, k]
+                                 + rho_eps_field[i, j, k])
+                else:
+                    rw_ = rho_eps_field[i, j, k]
+                if j < Ny - 1:
+                    rn_ = 0.5 * (rho_eps_field[i, j, k]
+                                 + rho_eps_field[i, j + 1, k])
+                else:
+                    rn_ = rho_eps_field[i, j, k]
+                if j > 0:
+                    rs_ = 0.5 * (rho_eps_field[i, j - 1, k]
+                                 + rho_eps_field[i, j, k])
+                else:
+                    rs_ = rho_eps_field[i, j, k]
+                if k < Nz - 1:
+                    rt_ = 0.5 * (rho_eps_field[i, j, k]
+                                 + rho_eps_field[i, j, k + 1])
+                else:
+                    rt_ = rho_eps_field[i, j, k]
+                if k > 0:
+                    rb_ = 0.5 * (rho_eps_field[i, j, k - 1]
+                                 + rho_eps_field[i, j, k])
+                else:
+                    rb_ = rho_eps_field[i, j, k]
+
+                fe = re_ * u[i + 1, j, k] * Ae
+                fw = rw_ * u[i, j, k] * Ae
+                fn = rn_ * v[i, j + 1, k] * Ax
+                fs = rs_ * v[i, j, k] * Ax
+                ft = rt_ * w[i, j, k + 1] * Az
+                fb = rb_ * w[i, j, k] * Az
+
+                net = (fe - fw) + (fn - fs) + (ft - fb)
+                thru = (abs(fe) + abs(fw) + abs(fn)
+                        + abs(fs) + abs(ft) + abs(fb))
+                if thru <= 0.0:
+                    continue                       # no flux -> nothing to violate
+                n_cnt += 1
+                r = abs(net) / thru
+                if r > r_max:
+                    r_max = r
+    return r_max, n_cnt
+
+
+@njit(cache=True, fastmath=True)
+def _mass_global_jit_3d(v, Nx, Ny, Nz, dx, dz, rho_eps_field):
+    """GLOBAL boundary mass balance on the streamwise (j) faces.
+
+    Returns (mdot_in, mdot_out, backflow_frac_out).
+
+    Signed, not absolute: `mdot_out` is the NET outflow, so a cell with
+    reversed flow subtracts. That is the physically right global balance, but it
+    also means positive and negative outlet fluxes can cancel and hide a
+    recirculating outlet — so `backflow_frac_out` is reported alongside:
+
+        backflow_frac_out = Σ|negative outlet flux| / Σ|outlet flux|
+
+    A healthy outflow has backflow_frac ≈ 0. A nonzero value means the global
+    balance is being satisfied by cancellation and must not be trusted on its
+    own. (The solver has no outlet backflow clamp in either dimension — ledger
+    C2, still open.)
+    """
+    mdot_in = 0.0
+    mdot_out = 0.0
+    out_pos = 0.0
+    out_neg = 0.0
+    for i in range(Nx):
+        for k in range(Nz):
+            A = dx[i] * dz[k]
+            fin = rho_eps_field[i, 0, k] * v[i, 0, k] * A
+            fout = rho_eps_field[i, Ny - 1, k] * v[i, Ny, k] * A
+            mdot_in += fin
+            mdot_out += fout
+            if fout >= 0.0:
+                out_pos += fout
+            else:
+                out_neg += -fout
+    tot = out_pos + out_neg
+    bf = (out_neg / tot) if tot > 0.0 else 0.0
+    return mdot_in, mdot_out, bf
 
 
 # ── Momentum residual (ledger C6) ─────────────────────────────────
@@ -1391,11 +1535,14 @@ def _mom_res_jit_3d(u, v, w, P,
     Why this exists (ledger C6, 2026-07-12) — the mass residual cannot serve as
     a convergence measure on this solver:
 
-      * The pressure-correction equation is solved EXACTLY each iteration
-        (direct LU / BiCGStab to 1e-7) against the very `rho_eps_field` the
-        mass residual is then evaluated with, so the mass residual is ~0 by
-        construction on every cell it solved (measured 2.9e-17), and the
-        reported number is entirely the pressure-pinned outlet row's artifact.
+      * The pressure-correction equation is solved to the accuracy of the pp
+        solve each iteration (direct LU below `_AMG_GATE`; AMG-BiCGStab with an
+        adaptive rtol above it) against the very `rho_eps_field` the mass
+        residual is then evaluated with. So on the direct-solve path the mass
+        residual is ~0 by construction on every cell it solved (measured
+        2.9e-17) and the reported number is entirely the outlet row's artifact.
+        Above the AMG gate it additionally carries the pp linear-solve error —
+        still not a SIMPLE fixed-point residual. (Scope corrected 2026-07-12.)
       * The MOMENTUM equation, by contrast, gets ONE Gauss-Seidel sweep per
         iteration (`n_inner=1`) on a NONLINEAR system (Forchheimer drag +
         convection), using the PREVIOUS pressure — and is then further violated
@@ -1415,8 +1562,29 @@ def _mom_res_jit_3d(u, v, w, P,
     deliberately NOT included: aP0 and rhs here are the UNRELAXED equation,
     whose residual vanishes at the fixed point for any alpha_u.
 
-    Returns (num_u, den_u, num_v, den_v, num_w, den_w) — L1 sums of |R| and of
-    the scale |aP0·φ|. Caller forms R_rel = num/den (Patankar normalisation).
+    NORMALISATION — BALANCED denominator (fixed 2026-07-12, codex review).
+    Returns (num_c, den_c) per component with
+
+        num_c = Σ |aP0·φ − rhs|                     (the residual)
+        den_c = Σ ½·(|aP0·φ| + |rhs|)               (the BALANCED scale)
+
+    The first draft used `den_c = Σ|aP0·φ|` alone. That has a silent false zero:
+    a component whose velocity is identically zero but whose pressure source is
+    not (φ ≡ 0, rhs ≠ 0) gives den = 0 with num > 0, and the caller's
+    `num/den if den > 0 else 0.0` guard reported CONVERGED. Harmless while the
+    metric was diagnostic-only; a silent false convergence once it gates.
+
+    The balanced form removes the failure mode structurally, not by a guard:
+    the triangle inequality gives num_c ≤ |aP0·φ| + |rhs| summed = 2·den_c, so
+        num_c > 0  ⟹  den_c > 0        (a false zero is IMPOSSIBLE)
+        R_c = num_c / den_c  ∈  [0, 2]  (bounded — no blow-up on a small den)
+    The quiescent-component case now reports R_c = 2 (maximally unconverged),
+    which is the right answer. The caller still applies a common-scale floor so a
+    physically negligible component cannot gate convergence on its own — see
+    `simple_solver_3d.solve()`.
+
+    RAW num/den are returned (not the ratio) so the normalisation can be changed
+    post-hoc without re-running: the caller stores both.
     """
     nu_ = 0.0; du_ = 0.0
     for i in range(1, Nx):
@@ -1426,9 +1594,9 @@ def _mom_res_jit_3d(u, v, w, P,
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
                     K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
-                scale = aP0 * u[i, j, k]
-                nu_ += abs(scale - rhs)
-                du_ += abs(scale)
+                lhs = aP0 * u[i, j, k]
+                nu_ += abs(lhs - rhs)
+                du_ += 0.5 * (abs(lhs) + abs(rhs))
 
     nv_ = 0.0; dv_ = 0.0
     for i in range(Nx):
@@ -1438,9 +1606,9 @@ def _mom_res_jit_3d(u, v, w, P,
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
                     K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
-                scale = aP0 * v[i, j, k]
-                nv_ += abs(scale - rhs)
-                dv_ += abs(scale)
+                lhs = aP0 * v[i, j, k]
+                nv_ += abs(lhs - rhs)
+                dv_ += 0.5 * (abs(lhs) + abs(rhs))
 
     nw_ = 0.0; dw_ = 0.0
     for i in range(Nx):
@@ -1450,8 +1618,8 @@ def _mom_res_jit_3d(u, v, w, P,
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
                     K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
-                scale = aP0 * w[i, j, k]
-                nw_ += abs(scale - rhs)
-                dw_ += abs(scale)
+                lhs = aP0 * w[i, j, k]
+                nw_ += abs(lhs - rhs)
+                dw_ += 0.5 * (abs(lhs) + abs(rhs))
 
     return nu_, du_, nv_, dv_, nw_, dw_

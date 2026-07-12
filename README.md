@@ -63,7 +63,7 @@
 > **measured** water outlet temperature (`Tb_prescribed`). It now runs the production
 > `Pipeline3D` stack — the same code the GUI, the optimizer and the server batches drive —
 > with a real SIMPLE-B water solve. At the gate grid (20×10×3) that moves
-> **Δp 5.28 % → 4.93 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D lumped
+> **Δp 5.28 % → 4.88 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D lumped
 > baseline of 2.51 %). The old runner was partly *fed* the answer: the measured outlet
 > temperature already encodes the true duty via the water enthalpy balance, and Q is
 > `Σ h_vB·(Ts − Tb)·dV`, so Tb sets the driving force. The new gate predicts it from
@@ -71,6 +71,30 @@
 > full rationale in `validation/_CSV_STATUS.md` and the gate script's docstring.
 > **The grid-converged ≈ 10 % / ≈ 3 % above are *not* affected** — that 4-grid study was
 > run on the old runner and has not yet been repeated on the new one.
+
+> [!IMPORTANT]
+> **3D convergence criterion replaced 2026-07-12 (ledger C6/C7) — `f2` is now the
+> production default.** The old exit gated `tol` on a mass residual that turned out to be
+> a **boundary artifact**: the pressure-correction equation *replaces* the continuity
+> equation on the whole outlet face with a Dirichlet `Pp = 0`, and the residual was then
+> evaluated against the very density array the pp solve had just zeroed itself against. So
+> it never reached its tolerance (measured floor 7.9e-4 … 9.4e-4 on **all 16** Shanghai
+> cases) and what actually decided convergence was a *velocity-went-static* heuristic —
+> which declares success while the momentum equation is still violated by 0.2–1.5 %.
+>
+> The pipeline now gates on three independent residuals — **momentum**
+> (`aP0·φ − Σa_nb·φ_nb − p_src`, the SIMPLE fixed-point defect), **solved-cell continuity**
+> (fresh ρ, Dirichlet cells excluded), and **global boundary mass** (plus a backflow
+> fraction) — each with its own tolerance, held for consecutive checks. `exit_reason ==
+> 'tol'` now means the equations are satisfied, not that the field stopped moving.
+>
+> Measured cost: **≈ 2.0× SIMPLE wall time** at `mom_tol=1e-4`, for **Δp RMSRE 4.93 % →
+> 4.88 %** (Q unchanged at 2.12 %). Verified on the full Shanghai 16, on all three golden
+> configs (air-air partial-BC / water-B / asym offset — every scalar moves < 0.1 %) and on
+> the AMG path (40×40×20). **The optimizer deliberately stays on the legacy criterion** —
+> it produces rankings only, and Pareto picks are re-solved through this pipeline. Reproduce
+> the pricing: `validation/cases/price_f2_convergence_3d.py` → `reports/f2_pricing_3d.csv`.
+> Revert with `TPMSHX_CONV_MODE=legacy`. **2D is unchanged and stays bit-identical.**
 
 <div align="center">
 

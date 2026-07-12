@@ -162,12 +162,25 @@
 7. **`_is_bc_face_inlet`/`_is_bc_face_outlet`/`_ifrac_at_face`/`_Tin_at_face`**（`sjtu_tpmshx/solvers/_kernels_ltne_3d.py:873-923`）标注为 "2026-04-26 strict-conservation refactor" 遗产，在当前内核中未被调用，仅经 re-export 保留。
 8. **red-black 能量内核与串行收敛到同一不动点**为注释断言（"verified"，`sjtu_tpmshx/solvers/_kernels_ltne_3d.py:606-614`），本文未独立复核（Q/dP 一致性有 golden gate 侧面保证，位级 field 一致性无保证——两者迭代路径不同）。
 9. Anderson 加速（Phase B）自述 "Off-by-default for safety... until full-sweep validated"（`sjtu_tpmshx/solvers/simple_solver_3d.py:803-804`；`sjtu_tpmshx/pipelines/run_stack_3d.py:90-91`）。
-10. **`self.final_res` 是出口 pin 伪迹，零收敛信息；`tol=1e-5` 是死钮（实测，2026-07-12，台账 C6）。改它之前必读。**
-    - **机制**：`_build_pp_sparsity_3d:158` 把出口整行标 `cell_kind=1`，`_assemble_pp_3d:750` 据此把这些格的**连续性方程替换成 `Pp=0`** —— 从未被求解（标准 SIMPLE 压力基准做法，2D `_kernels_simple_2d.py:735` 同构，本身不是 bug）。而 `:910` 算残差用的 `rho_eps_field` 正是 `:897` 的 `_solve_pp_amg` 刚刚**精确求解过** `div(ρε·u)=0` 的那份数组（`:908` 的 `_update_density` 之前），**故在所有被求解的格上残差按构造 ≈0**（实测剔掉出口行后 `final_res = 2.9e-17`）。两者相加 ⇒ **报出来的数 100% 是出口行未被修正的横向散度**。
-    - **实测印证**（上海生产管线，20×10×3）：① 任何工况从未以 `'tol'` 退出，全走 velocity 判据；② `max_iter` 2000→6000（×3）残差**逐位不动**（7.86e-4→7.86e-4）；③ 地板只随 **Nz** 变，Nx/Ny ×4 无变化（Nz 决定出口面横向网格）；④ 方向分解：主流向 `Σ|Fy|/ṁ=4.6e-6`（被出口 v-BC 外推 `_kernels_simple_3d.py:870` 精确望远镜掉），横向 `Σ|Fx|/ṁ=4.2e-3`、`Σ|Fz|/ṁ=1.3e-2`。
-    - **不要这样"修"**：单纯在 `_mass_res_jit_3d` 里跳过出口行 → 残差变成恒等 0，`tol` 在最小迭代数处即触发，**动量场未收敛就退出**（实测上海 case 1 的 dP 偏 −2.1%）。**连续性比动量收敛得快**，而本求解器**不跟踪动量残差**，故 mass-`tol` 只可能提前退出。
-    - **两条被认可的路**（均需 V&V + golden 重基线）：(F1) 把口径改成「更新后的 ρ + 只统计被求解的格」，**仅作诊断**，退出仍由 velocity 判据主导；(F2) 补一个动量残差，两者 AND（正统 SIMPLE）。
-    - **与 2D 的口径差**：2D `_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`，逐格横向失衡在面内互相抵消、看不见；3D 量的是**逐格散度**，严格更强。**两者被喂同一个 `tol`。** 这也是为什么 2D 的 `_enforce_mass_conservation`（`simple_solver.py:958`）移植到 3D 是**实测无效**的：它恰好把 2D 那个积分量掐到零，是给那个口径量身定做的（3D 实测 `scale=1.000194`，且出口面残差 99.97% 是散乱抵消，`|Σ|/Σ|·| = 0.03%`）。
+10. **`self.final_res`（legacy 质量残差）是出口 pin 伪迹，零收敛信息；`tol_simple` 是死钮（台账 C6）。生产管线已改由 F2 三门接管（台账 C7）。改它之前必读。**
+    - **机制**：`_build_pp_sparsity_3d` 把**每一个开放出口格**标 `cell_kind=1`，`_assemble_pp_3d` 据此把这些格的**连续性方程替换成 `Pp=0`** —— 从未被求解。**准确说法：这是整个出口面上的 Dirichlet 压力出口边界条件，不只是给奇异系统选个 gauge 基准点**（两者是不同的东西；本条初版把它们混为一谈，2026-07-12 修正）。2D 同构（`_kernels_simple_2d.py:735`）。而算残差用的 `rho_eps_field` 正是 `_solve_pp_amg` 刚刚求解过 `div(ρε·u)=0` 的那份数组（`_update_density` 之前），**故在所有被求解的格上残差按构造 ≈0**。两者相加 ⇒ **报出来的数 100% 是出口行未被修正的横向散度**。
+    - **范围限定（2026-07-12 补）**："按构造恒等零" **只在直接解路径上精确**：`N ≤ _AMG_GATE`（30000 格）走 `spsolve`，实测剔掉出口行后 `final_res = 2.9e-17`。**超过该门走 AMG-BiCGStab，`rtol_dyn` 最松到 1e-3**，此时旧 mass 残差**还含 pp 线性求解误差**——仍不是 SIMPLE 不动点残差，但**不要在小网格之外引用 "2.9e-17"**。
+    - **实测印证**（上海生产管线，20×10×3）：① 任何工况从未以 `'tol'` 退出，全走 velocity 判据；② `max_iter` 2000→6000（×3）残差**逐位不动**（7.86e-4→7.86e-4）；③ 地板只随 **Nz** 变，Nx/Ny ×4 无变化（Nz 决定出口面横向网格）；④ 方向分解：主流向 `Σ|Fy|/ṁ=4.6e-6`（被出口 v-BC 外推 `_kernels_simple_3d.py:870` 精确望远镜掉），横向 `Σ|Fx|/ṁ=4.2e-3`、`Σ|Fz|/ṁ=1.3e-2`；⑤ 全 16 工况的 legacy 残差全部卡在 **7.9e-4 ~ 9.4e-4**。
+    - **不要这样"修"**：单纯在 `_mass_res_jit_3d` 里跳过出口行 → 残差变成恒等 0，`tol` 在最小迭代数处即触发，**动量场未收敛就退出**（实测上海 case 1 的 dP 偏 −2.1%）。**连续性比动量收敛得快**，而 legacy 路径**不跟踪动量残差**，故 mass-`tol` 只可能提前退出。
+    - **⚠️ 也不要把 LowReExit 的 velocity 退出翻成 `converged=False`**：它一触发就 `return`（`simple_solver_3d.py:1073-1080`），那样做只会把"过早成功"变成"**过早失败**"——求解仍停在 ~90 步，够不到 ~250 步的真门。**velocity 静止只应【触发一次立即残差检查】，不得终止。**
+    - **与 2D 的口径差**：2D `_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`，逐格横向失衡在面内互相抵消、看不见（横向 x 通量因 `u=0` 壁面在面内 telescoping 掉）；3D 量的是**逐格散度**，严格更强。**两者被喂同一个 `tol`。** 这就是 2D 的 tol 够得着、3D 够不着的全部原因。**移植 2D 的 `_enforce_mass_conservation` 到 3D 实测无效**（3D `scale=1.000194`，低于 2D 自己的 1e-3 告警阈值；出口面残差 99.97% 是散乱抵消，`|Σ|/Σ|·| = 0.03%`）。**注意：本条初版曾把"2D 的 rescale 把积分量掐到零"当作"2D 的 tol 为何可达"的解释——那是错的（codex 审计发现）。调用顺序证伪：`simple_solver.py:897` 先判 tol，`_enforce_mass_conservation` 只在退出点之后调（`:900`/`:914`/`:926`），循环里根本不跑。不移植的裁决不受影响。**
+
+11. **F2 收敛三门 —— 生产 3D 管线的现行收敛判据（台账 C7，2026-07-12）**
+    - **开关**：`solver.convergence_mode ∈ {'legacy', 'f2'}`。**生产管线默认 `'f2'`**（`run_stack_3d._apply_accel_flags`，env `TPMSHX_CONV_MODE` 可覆盖）；**求解器类默认仍是 `'legacy'`**；**优化器（`core/evaluators.py`）显式保持 `'legacy'`**（它直接 new solver、不走 `_apply_accel_flags`，吞吐不受影响；依据台账 O2/R3：优化器只出排名，Pareto 选点必须经生产管线重解）。
+    - **三门**（须**连续 `f2_n_confirm`(=2) 次**同时满足）：
+      - `R_mom` — `_mom_res_jit_3d`：`R = aP0·φ − (Σaₙᵦ·φₙᵦ + p_src [+SOU])`，在**修正后 + 密度更新后 + Anderson 之后**求值。**balanced 分母 `D=Σ½(|lhs|+|rhs|)`** —— 由三角不等式 `num ≤ 2D`，故 `num>0 ⟹ D>0`，**假零结构性不可能**，`R∈[0,2]` 有界。另有共同 floor `max(D_c, 1e-3·max_c D_c)`。默认 `mom_tol=1e-4`。
+      - `R_mass_local` — `_mass_res_solved_jit_3d`：**只统计 pp 真正求解的格**（按 `cell_kind==0` 选，**不是按行号** —— partial/taper 出口只 pin 部分格），用**更新后的 ρ**，逐格归一化 `|net|/Σ|face|`（**不是** `max|net|/ṁ_in` —— 后者随网格加密自动变小，固定 tol 会悄悄变松）。默认 `1e-6`。
+      - `R_mass_global` — `_mass_global_jit_3d`：`|ṁ_out−ṁ_in|/ṁ_in`，**另报 `outlet_backflow_frac`**（全局是有符号标量，正负出口通量可互相抵消、掩盖回流）。默认 `1e-6`。
+    - **`F2Monitor`（`_solve_common.py`）**：velocity 静止**只触发检查、不终止**；动量残差每 `f2_mom_every`(=5) 步算一次（**只读，不改数值轨迹**，最坏晚退出 4 步）；`'stall'` 只在**动量残差**在窗口内不再下降且场近静止时才报（不再是伪迹平台的假告警）。**`LowReExit` 未被修改**（2D/3D 共用、位同契约）。
+    - **F2 与 Anderson 不兼容，直接 raise**（Anderson 的接受门仍用 C6 已证伪的质量伪迹，且回滚不精确恢复 `rho_field`/`v_inlet_field`）。
+    - **实测定价**（复现：`validation/cases/price_f2_convergence_3d.py` → `reports/f2_pricing_3d.csv`；上海全 16 例 @20×10×3，wall 剔除首例 JIT 预热）：`legacy` 92 步 / 0.217 s / exit=**velocity** / RMSRE dP **4.93%**；`f2@1e-3` 206 步 / 0.377 s（**1.74×**）/ exit=**tol** / **4.87%**；`f2@1e-4` 234 步 / 0.440 s（**2.03×**）/ exit=**tol** / **4.88%**；`f2@1e-5` 298 步 / 0.557 s（**2.57×**）/ **4.88%**。Q 的 RMSRE 全部 2.12%，不动。**注意 2.5× 的迭代只换来 2.0× 的 wall —— 按 wall time 判优，不要按迭代数。**
+    - **覆盖矩阵**：Shanghai 全断面 16 例 ✓；golden 三构型（air-air partial-BC 15³ / water-B / asym 偏置等值面）全部 exit=tol、标量全动 <0.1% ✓；**AMG 大网格 40×40×20 = 32000 格** exit=tol、`R_mom`=8.8e-5、wall 2.10× ✓。**未测：sCO2。**
+    - **F3（未做）**：出口边界面 `Pp=0` + **保留末层 CV 的连续性方程**。这是**边界条件重构，不是加速补丁**，须独立分支 + 独立 V&V，**不得与 F2 共用一次重基线**。
 
 ## 服务器移植注意
 

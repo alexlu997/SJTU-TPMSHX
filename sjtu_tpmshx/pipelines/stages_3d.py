@@ -206,6 +206,14 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         max_iter_simple=compute_cfg.solver.max_iter_simple,
         max_outer_ltne=compute_cfg.solver.max_outer_ltne,
         outer_tol_K=compute_cfg.solver.outer_tol_K,
+        # F2 convergence gates (ledger C6/C7). None -> _apply_accel_flags'
+        # defaults ('legacy' unless TPMSHX_CONV_MODE says otherwise).
+        **{k: v for k, v in (
+            ('convergence_mode', compute_cfg.solver.convergence_mode),
+            ('mom_tol', compute_cfg.solver.mom_tol),
+            ('mass_local_tol', compute_cfg.solver.mass_local_tol),
+            ('mass_global_tol', compute_cfg.solver.mass_global_tol),
+        ) if v is not None},
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,

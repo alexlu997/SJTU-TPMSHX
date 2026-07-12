@@ -112,6 +112,52 @@ def _apply_accel_flags(solver, cfg):
     solver.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
     solver.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
     solver.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
+    # ── Ledger C7 / F2 convergence gates — DEFAULT ON in the pipeline ─
+    # The production pipeline is the AUTHORITATIVE path, so it gets the honest
+    # convergence criterion. Ledger C6: the legacy `tol` gates a mass residual
+    # that is the Dirichlet-outlet-row artifact — it never reaches its tolerance
+    # (measured floor 7.9e-4 .. 9.4e-4 across all 16 Shanghai cases), so what
+    # actually decided was LowReExit's velocity criterion, which declares
+    # converged while the momentum residual is still 1.8e-3 .. 1.5e-2 and falling.
+    #
+    # Measured cost of the switch (validation/cases/price_f2_convergence_3d.py,
+    # reports/f2_pricing_3d.csv, Shanghai 16 @ 20x10x3):
+    #   legacy    92 SIMPLE iters, 0.22 s/case, exit='velocity', RMSRE dP 4.93 %
+    #   f2 1e-4  234 SIMPLE iters, 0.44 s/case, exit='tol',      RMSRE dP 4.88 %
+    # i.e. ~2.0x wall for a slightly BETTER gate and a criterion that means what
+    # it says. Also verified on the AMG path (40x40x20 = 32 000 cells: exit='tol'
+    # at R_mom = 8.8e-5, 2.1x wall) and on all three golden configs (air-air
+    # partial-BC, water-B, asym offset — every scalar moves < 0.1 %).
+    #
+    # NOT `tol_simple`. That one name already means five different numbers
+    # (solve() default 1e-6, this pipeline 1e-5, the Shanghai kernel runner 1e-3,
+    # coarse bootstrap 1e-3, the 3D optimizer 1e-2) and it still gates the legacy
+    # artifact + the adaptive-AMG scheduler. Silently re-pointing it at the
+    # momentum residual would fork all five (codex review P0-4).
+    #
+    # The OPTIMIZER is deliberately NOT switched: `core/evaluators.py` builds
+    # SIMPLESolver3D directly and never reaches this function, so it keeps the
+    # solver-level default ('legacy') and its throughput is unchanged. That is
+    # the standing convention (ledger O2 / audit R3): the optimizer produces
+    # RANKINGS only, and Pareto picks are re-solved through this pipeline before
+    # any number is reported. Switching it to f2 @ 1e-3 costs a measured 1.74x —
+    # a separate decision, recorded in ledger C7.
+    solver.convergence_mode = str(cfg.get(
+        'convergence_mode', os.getenv('TPMSHX_CONV_MODE', 'f2')))
+    solver.mom_tol = float(cfg.get('mom_tol', 1e-4))
+    solver.mass_local_tol = float(cfg.get('mass_local_tol', 1e-6))
+    solver.mass_global_tol = float(cfg.get('mass_global_tol', 1e-6))
+    if cfg.get('track_momentum_residual'):
+        solver.track_momentum_residual = True
+    # Anderson (Phase B) is incompatible with a residual-gated exit until its
+    # acceptance gate stops using the C6-falsified mass artifact and its rollback
+    # restores rho_field exactly (ledger C7 P0-3). solve() raises on the
+    # combination; make the pipeline's default coherent rather than explosive.
+    if solver.convergence_mode == 'f2' and solver.use_anderson:
+        raise ValueError(
+            "convergence_mode='f2' with use_anderson=True (TPMSHX_PHASE_B=1) is "
+            "not supported — see ledger C7 P0-3. Set TPMSHX_CONV_MODE=legacy or "
+            "TPMSHX_PHASE_B=0.")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -2191,8 +2237,23 @@ def _run_3d_stack(cfg):
         if s is None:
             return None
         return dict(exit_reason=getattr(s, 'exit_reason', None),
+                    # LEGACY mass residual. Ledger C6: on 3D this is the
+                    # Dirichlet-outlet-row artifact, NOT a convergence measure.
+                    # Kept because it still drives the adaptive-AMG scheduler and
+                    # every historical number was produced against it.
                     final_res=getattr(s, 'final_res', None),
-                    res_norm_ref=getattr(s, 'res_norm_ref', None))
+                    res_norm_ref=getattr(s, 'res_norm_ref', None),
+                    iterations=len(getattr(s, 'residuals', []) or []),
+                    # F2 gates (ledger C7). None in convergence_mode='legacy'
+                    # unless track_momentum_residual was set.
+                    convergence_mode=getattr(s, 'convergence_mode', 'legacy'),
+                    final_res_mom=getattr(s, 'final_res_mom', None),
+                    final_res_mass_local=getattr(
+                        s, 'final_res_mass_local', None),
+                    final_res_mass_global=getattr(
+                        s, 'final_res_mass_global', None),
+                    outlet_backflow_frac=getattr(
+                        s, 'outlet_backflow_frac', None))
     _result['convergence_detail'] = dict(
         simple_A=_simple_detail(sA),
         simple_B=_simple_detail(sB),

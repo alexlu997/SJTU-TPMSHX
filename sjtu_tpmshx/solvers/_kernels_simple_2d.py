@@ -913,13 +913,24 @@ def _mass_res_jit(u, v, Nx, Ny, dx_arr, dy_arr, rho_field):
     is the cross-sectional MASS flux (not volumetric).
 
     This is a PLANE-INTEGRATED defect, NOT a per-cell divergence — transverse
-    per-cell imbalances cancel within a plane and are invisible here. The 3D
-    `_mass_res_jit_3d` returns the per-cell divergence instead, i.e. a strictly
-    stronger quantity, even though both solvers are handed the same `tol`.
-    Note also that `_enforce_mass_conservation` (`simple_solver.py:958`) snaps
-    exactly THIS quantity to zero at the outlet plane — the rescale is tailored
-    to this metric, which is why porting it to 3D is a measured no-op (ledger
-    C2 / C6, 2026-07-12).
+    per-cell imbalances cancel within a plane (u = 0 at the i = 0 / i = Nx walls
+    makes the x-flux telescope to zero over any j-plane) and are invisible here.
+    The 3D `_mass_res_jit_3d` returns the per-cell divergence instead, i.e. a
+    strictly stronger quantity — yet both solvers are handed the same `tol`.
+    THAT mismatch, not any 2D band-aid, is why 2D's `tol` is reachable and 3D's
+    is not (ledger C6).
+
+    CORRECTION (2026-07-12, codex review). An earlier revision of this docstring
+    claimed `_enforce_mass_conservation` (`simple_solver.py:958`) "snaps exactly
+    this quantity to zero, which is why 2D's tol fires". THAT IS WRONG, and the
+    call order disproves it: the tol test runs FIRST (`simple_solver.py:897`) and
+    the rescale is invoked only on the way OUT (`:900`, `:914`, `:926`) — never
+    inside the loop. It cannot help any tol check fire. What it DOES do is change
+    the RETURNED outlet velocity while `final_res` (`:902`) still reports the
+    pre-rescale value — a real (minor) state inconsistency, logged in ledger C2.
+
+    Like 3D, this residual is evaluated against the PRE-`_update_density`
+    rho_eps (`simple_solver.py:880-882`), so it shares 3D's staleness too.
     """
     # Inlet mass flux (j=0): rho at face = rho at cell j=0 (boundary)
     Q_in = 0.0

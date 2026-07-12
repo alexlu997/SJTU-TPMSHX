@@ -80,16 +80,79 @@
   convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
   see memory `feedback_dp_gap_attribution`).
 
-## ⚠️ 2026-07-12 — GATE RUNNER SWITCHED (frozen-B kernel → production pipeline)
+## ⚠️ 2026-07-12 (b) — 3D CONVERGENCE CRITERION REPLACED (legacy → F2), ledger C6/C7
 
-**The canonical gate-grid numbers are now `RMSRE_dP 4.93 % / RMSRE_Q 2.12 %`**
-(was 5.28 / 3.21). Nothing in the physics changed — the *gate* changed: it now
-runs the production `Pipeline3D` stack with the **water side SOLVED**, instead
-of the kernel-direct runner with the water side **frozen**.
+**`RMSRE_dP 4.93 % → 4.88 %`; `RMSRE_Q 2.12 %` unchanged.** Physics unchanged; the
+*convergence criterion* changed, so the solve now stops later and closer to the
+fixed point.
+
+**What was wrong.** The legacy exit gated `tol` on `_mass_res_jit_3d`. That number
+is a **boundary artifact**, not a convergence measure:
+
+* `_build_pp_sparsity_3d` marks every open outlet cell `cell_kind = 1`, and
+  `_assemble_pp_3d` **replaces** those cells' continuity equation with `Pp = 0` —
+  a Dirichlet pressure-outlet BC over the whole face. Those cells are never solved.
+* The residual is then evaluated against `rho_eps_field` — the *same array* the pp
+  solve had just driven `div(rho_eps·u) = 0` against, before `_update_density`
+  refreshed rho. So on every cell the pp equation *did* solve, it is ~0 by
+  construction (measured 2.9e-17 with the outlet row excluded, direct-solve path).
+
+⇒ the reported number was 100 % the outlet row's uncorrected transverse divergence.
+It never reached `tol` on **any** of the 16 Shanghai cases (floor 7.9e-4 … 9.4e-4),
+tripling `max_iter` moved it by **zero to the last bit**, and it scaled only with
+`Nz`. What actually decided convergence was `LowReExit`'s *velocity-went-static*
+heuristic — which fires while the momentum equation is still violated by 0.2–1.5 %.
+
+**What replaced it (`convergence_mode='f2'`, the pipeline default).** Three
+independent gates, each with its own tolerance, held for consecutive checks:
+
+| gate | what it measures | default |
+|---|---|---|
+| `mom_tol` | `aP0·φ − (Σ a_nb·φ_nb + p_src)` — the SIMPLE fixed-point defect | `1e-4` |
+| `mass_local_tol` | continuity over the cells the pp equation **solves** (`cell_kind == 0`), fresh rho, per-cell normalised | `1e-6` |
+| `mass_global_tol` | `\|mdot_out − mdot_in\| / mdot_in` (+ `outlet_backflow_frac`) | `1e-6` |
+
+A static velocity field now only **triggers a check**; it does not terminate.
+
+**Measured cost** (`validation/cases/price_f2_convergence_3d.py` →
+`reports/f2_pricing_3d.csv`; Shanghai 16 @ 20×10×3, wall excludes the JIT warm-up):
+
+```
+legacy     92 SIMPLE iters   0.217 s/case   exit=velocity   RMSRE dP 4.93 %  Q 2.12 %
+f2 @1e-3  206 iters (1.74x)  0.377 s/case   exit=tol        RMSRE dP 4.87 %  Q 2.12 %
+f2 @1e-4  234 iters (2.03x)  0.440 s/case   exit=tol        RMSRE dP 4.88 %  Q 2.12 %
+f2 @1e-5  298 iters (2.57x)  0.557 s/case   exit=tol        RMSRE dP 4.88 %  Q 2.12 %
+```
+
+Judge by **wall time, not iteration count** — 2.5× the iterations is only 2.0× the wall.
+
+**Coverage.** Shanghai 16 ✓ · golden air-air partial-BC 15³ / water-B / asym offset
+(all `exit=tol`, every scalar moves **< 0.1 %** — an intentional golden-3D re-baseline)
+✓ · AMG path 40×40×20 = 32 000 cells (`exit=tol`, `R_mom` = 8.8e-5, 2.10× wall) ✓ ·
+**sCO2 not tested**.
+
+**Scope.** 2D is untouched and stays **bit-identical** (its residual is a weaker,
+plane-integrated metric and its LowRe early-exit has a 164× historical speed-up —
+it needs its own pricing, ledger C7-Q4). The **optimizer deliberately stays on
+`legacy`** (`core/evaluators.py` builds solvers directly and never sees this switch):
+it produces rankings only, and Pareto picks are re-solved through the production
+pipeline before any number is reported (ledger O2 / audit R3).
+
+Revert with `TPMSHX_CONV_MODE=legacy` (reproduces 4.93 / 2.12 exactly).
+
+---
+
+## ⚠️ 2026-07-12 (a) — GATE RUNNER SWITCHED (frozen-B kernel → production pipeline)
+
+**The canonical gate-grid numbers are now `RMSRE_dP 4.88 % / RMSRE_Q 2.12 %`**
+(this section's switch produced 4.93 / 2.12; the F2 criterion above then moved dP to
+4.88 %). Both were `5.28 / 3.21` before. Nothing in the physics changed — the *gate*
+changed: it now runs the production `Pipeline3D` stack with the **water side SOLVED**,
+instead of the kernel-direct runner with the water side **frozen**.
 
 Why (full write-up in the `validate_shanghai_3d_real` module docstring):
 
-1. **More accurate.** dP 5.28 → 4.93 %; Q 3.21 → **2.12 %** (a 34 % cut, and the
+1. **More accurate.** dP 5.28 → 4.88 %; Q 3.21 → **2.12 %** (a 34 % cut, and the
    first time 3D beats the 2D lumped baseline of 2.51 %).
 2. **The frozen-B runner was fed part of the answer.** `Tb_prescribed` is built
    from the **measured** water outlet temperature (Excel col 25), and Q is
@@ -123,7 +186,7 @@ been repeated on `pipeline`. Re-running it is a follow-up.
 
 ## To reproduce
 - **Nz=3 default — production pipeline, water SOLVED** (canonical gate):
-  `validate_shanghai_3d_real.py --nz 3`                              → **4.93/2.12**
+  `validate_shanghai_3d_real.py --nz 3`                              → **4.88/2.12**
 - Nz=3 legacy frozen-B kernel:  `--runner kernel --nz 3`             → 5.28/3.21
 - Nz=3 rbf reference (frozen-B): `TPMSHX_DF_METHOD=rbf --runner kernel` → 7.19/3.22
 - Nz=10 rbf reference (frozen-B): `TPMSHX_DF_METHOD=rbf --runner kernel --nz 10` → 8.69/3.33

@@ -9,7 +9,9 @@ Two runners, selected by ``--runner``:
       The production stack — ``controllers.compute_pipeline.Pipeline3D``, the
       exact path the GUI, the optimizer and the server batch runs drive. BOTH
       fluids are SOLVED (a real SIMPLE-B water solve).
-      Gate grid 20×10×3 → **RMSRE_dP 4.93 % / RMSRE_Q 2.12 %**.
+      Gate grid 20×10×3 → **RMSRE_dP 4.88 % / RMSRE_Q 2.12 %**
+      (4.93 → 4.88 on 2026-07-12: the F2 convergence criterion replaced the
+      legacy exit — ledger C6/C7. `TPMSHX_CONV_MODE=legacy` reproduces 4.93.)
 
   kernel (legacy reference)
       Kernel-direct: SIMPLESolver3D + solve_full_domain_3d called straight,
@@ -20,7 +22,7 @@ Why the default moved from `kernel` to `pipeline` (2026-07-12)
 --------------------------------------------------------------
 Three reasons, in ascending order of importance:
 
-1. **It is more accurate.** dP 5.28 → 4.93 %, and Q 3.21 → **2.12 %** — a 34 %
+1. **It is more accurate.** dP 5.28 → 4.88 %, and Q 3.21 → **2.12 %** — a 34 %
    cut in the heat-duty error, which also puts 3D ahead of the 2D lumped
    baseline (2.51 %) for the first time. (Max per-case error is slightly worse:
    16.24 % dP on case 1, whose Δp is only 1149 Pa, and +7.2 % Q on case 12.)
@@ -670,7 +672,7 @@ def main():
     ap.add_argument('--runner', choices=['pipeline', 'kernel'],
                     default='pipeline',
                     help="pipeline (DEFAULT) = production Pipeline3D, water "
-                         "side SOLVED (gate grid 20x10x3: RMSRE_dP 4.93 / "
+                         "side SOLVED (gate grid 20x10x3: RMSRE_dP 4.88 / "
                          "RMSRE_Q 2.12); kernel = legacy frozen-B reference "
                          "runner (Tb prescribed from the MEASURED water outlet "
                          "temperature; RMSRE_dP 5.28 / RMSRE_Q 3.21)")

@@ -109,17 +109,89 @@ def test_residual_vanishes_at_momentum_fixed_point(use_sou, use_eps):
     assert Rw < 1e-12, f"w-momentum residual did not vanish: {Rw:.3e}"
 
 
+def _sweep_to_momentum_fixed_point(s, use_sou=0, use_eps=0, n=600):
+    kw = dict(Nx=s.Nx, Ny=s.Ny, Nz=s.Nz, dx=s.dx, dy=s.dy, dz=s.dz,
+              rho_field=s.rho_field, mu_eff_field=s._mu_eff_field,
+              mu_field=s.mu_field, eps_field=s.eps_field,
+              K_arr=s.K_arr, cF_arr=s.cF_arr,
+              outlet_frac=s.outlet_frac, inlet_frac=s.inlet_frac,
+              alpha_u=1.0, use_sou=use_sou, use_eps=use_eps)
+    for _ in range(n):
+        prev = (s.u.copy(), s.v.copy(), s.w.copy())
+        _sweep_u_jit_df_3d(s.u, s.v, s.w, s.P, s.d_u, n_sweeps=1, **kw)
+        _sweep_v_jit_df_3d(s.u, s.v, s.w, s.P, s.d_v,
+                           v_inlet_field=s.v_inlet_field, n_sweeps=1, **kw)
+        _sweep_w_jit_df_3d(s.u, s.v, s.w, s.P, s.d_w, n_sweeps=1, **kw)
+        d = max(np.abs(s.u - prev[0]).max(), np.abs(s.v - prev[1]).max(),
+                np.abs(s.w - prev[2]).max())
+        if d < 1e-14:
+            return d
+    return d
+
+
 def test_residual_is_nonzero_off_the_fixed_point():
-    """Sanity: the metric is not trivially zero. Perturb a converged field and
-    the residual must jump — otherwise the vanishing above proves nothing."""
+    """Sanity: the metric is not trivially zero. Take a field that IS at the
+    momentum fixed point (residual ~0), kick it, and the residual must jump.
+    Without this, the vanishing asserted above would prove nothing."""
     s = _make_solver()
-    s.P[:, :, :] = 100.0
+    ii = np.arange(s.Nx)[:, None, None]
+    jj = np.arange(s.Ny)[None, :, None]
+    s.P[:, :, :] = 50.0 * (s.Ny - 1 - jj) + 3.0 * ii
+    _sweep_to_momentum_fixed_point(s)
+
     before = _mom_res(s)
-    s.u += 0.5          # kick the field off any equilibrium
+    assert max(before) < 1e-12, f"not at the fixed point: {before}"
+
+    s.u += 0.5          # kick the field off equilibrium
     s.v += 0.3
     after = _mom_res(s)
-    assert max(after) > max(before), (before, after)
     assert max(after) > 1e-3, f"residual implausibly small after a 0.5 m/s kick: {after}"
+
+
+def test_balanced_denominator_has_no_false_zero():
+    """THE P0 this normalisation exists to kill (codex review, 2026-07-12).
+
+    A component whose velocity is identically zero but whose pressure source is
+    NOT (phi == 0, rhs != 0) is maximally unconverged. The first draft normalised
+    by `sum|aP0*phi|` alone, which is 0 here, and the caller's
+    `num/den if den > 0 else 0.0` guard then reported the component CONVERGED —
+    a silent false zero, and a silent false convergence the moment the metric
+    gates the exit.
+
+    The balanced denominator `sum(0.5*(|lhs| + |rhs|))` removes the failure mode
+    structurally rather than by a guard: |lhs - rhs| <= |lhs| + |rhs| gives
+    num <= 2*den, so num > 0 IMPLIES den > 0. The ratio is also bounded by 2.
+    """
+    s = _make_solver()
+    # w == 0 everywhere (no z-flow was ever imposed), but put a pressure
+    # gradient along z so the w-momentum p_src is nonzero.
+    s.u[:] = 0.0
+    s.v[:] = 0.0
+    s.w[:] = 0.0
+    kk = np.arange(s.Nz)[None, None, :]
+    s.P[:, :, :] = 1000.0 * kk
+
+    nu, du, nv, dv, nw, dw = _mom_res_jit_3d(
+        s.u, s.v, s.w, s.P, s.Nx, s.Ny, s.Nz, s.dx, s.dy, s.dz,
+        s.rho_field, s._mu_eff_field, s.mu_field, s.eps_field,
+        s.K_arr, s.cF_arr, s.outlet_frac, s.inlet_frac, 0, 0)
+
+    assert nw > 0.0, "w-momentum numerator must be nonzero (p_src != 0)"
+    assert dw > 0.0, (
+        "BALANCED denominator must be nonzero whenever the numerator is — "
+        "this is the false-zero the old sum|aP0*phi| denominator produced")
+    assert nw <= 2.0 * dw + 1e-9, "triangle inequality num <= 2*den violated"
+
+    Rw = nw / dw
+    assert Rw > 1.0, f"a quiescent component with a live source must read as " \
+                     f"badly unconverged, got {Rw:.3e}"
+    assert Rw <= 2.0 + 1e-9, f"the balanced ratio must be bounded by 2, got {Rw}"
+
+    # And the solver-level combination must not launder it back to zero.
+    Rmax, rec = s._momentum_residual(s.Nx, s.Ny, s.Nz, s.dx, s.dy, s.dz, 0, 0)
+    assert Rmax > 0.0, "solver-level momentum residual reported a false zero"
+    assert rec['num'][2] == nw and rec['den'][2] == dw, \
+        "raw num/den must be preserved in the record for post-hoc re-normalisation"
 
 
 def test_tracking_is_opt_in_and_off_by_default():
@@ -150,9 +222,12 @@ def test_tracking_records_a_history_and_does_not_change_the_result():
 
     assert len(s1.mom_residuals) == n1
     for r in s1.mom_residuals:
-        assert set(r) == {'u', 'v', 'w', 'max'}
+        assert set(r) == {'u', 'v', 'w', 'max', 'num', 'den', 'iter'}
         assert r['max'] == max(r['u'], r['v'], r['w'])
         assert np.isfinite(r['max'])
+        # raw num/den are kept so the normalisation can be revisited without
+        # re-running (codex review).
+        assert len(r['num']) == 3 and len(r['den']) == 3
 
 
 def test_momentum_residual_decays_over_a_solve():
