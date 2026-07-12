@@ -890,7 +890,19 @@ def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
 
 @njit(cache=True, fastmath=True)
 def _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_field):
-    """Global mass residual — sum of cell divergences."""
+    """Max PER-CELL divergence |div(rho.u)| over all cells.
+
+    NOT the same quantity as the 2D `_mass_res_jit` (`_kernels_simple_2d.py`),
+    which returns a PLANE-INTEGRATED flux defect `max_j |sum_i rho.v[i,j].dx -
+    Q_in| / Q_in`. Transverse per-cell imbalances cancel within a plane and are
+    invisible to the 2D metric; this one sees them. The two solvers are handed
+    the SAME `tol`, so the 3D target is strictly the harder one — and on the
+    pressure-pinned outlet row it is unreachable by construction. See
+    `simple_solver_3d.solve()`'s docstring and ledger C6 before using this
+    number as a convergence measure, and before "porting" 2D's
+    `_enforce_mass_conservation` rescale (measured no-op here: it removes 0.03%
+    of the outlet-row imbalance — that band-aid is tailored to the 2D metric).
+    """
     r_max = 0.0
     for i in range(Nx):
         for j in range(Ny):

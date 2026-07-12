@@ -911,6 +911,15 @@ def _mass_res_jit(u, v, Nx, Ny, dx_arr, dy_arr, rho_field):
 
     Returns max |Q(j) - Q_inlet| / Q_inlet where Q(j) = Σ_i ρ_face·v[i,j]·dx[i]
     is the cross-sectional MASS flux (not volumetric).
+
+    This is a PLANE-INTEGRATED defect, NOT a per-cell divergence — transverse
+    per-cell imbalances cancel within a plane and are invisible here. The 3D
+    `_mass_res_jit_3d` returns the per-cell divergence instead, i.e. a strictly
+    stronger quantity, even though both solvers are handed the same `tol`.
+    Note also that `_enforce_mass_conservation` (`simple_solver.py:958`) snaps
+    exactly THIS quantity to zero at the outlet plane — the rescale is tailored
+    to this metric, which is why porting it to 3D is a measured no-op (ledger
+    C2 / C6, 2026-07-12).
     """
     # Inlet mass flux (j=0): rho at face = rho at cell j=0 (boundary)
     Q_in = 0.0

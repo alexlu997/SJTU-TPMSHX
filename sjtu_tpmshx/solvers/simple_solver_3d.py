@@ -716,6 +716,44 @@ class SIMPLESolver3D:
             (UI report point 4, 2026-05-22 — water Re~33 needs thousands of
             iterations, so an outer-loop-only cancel left the user waiting).
 
+        `tol` IS NOT THE CONVERGENCE CRITERION — read this before touching it
+        ----------------------------------------------------------------------
+        `tol` gates `self.final_res`, the mass residual from `_mass_res_jit_3d`
+        (line ~910). On this solver that number is a BOUNDARY ARTIFACT and
+        carries no convergence information. Measured, ledger C6 (2026-07-12):
+
+          * `_build_pp_sparsity_3d` (:158) pins `Pp = 0` on the whole outlet row
+            (`cell_kind == 1`), so `_assemble_pp_3d` (:750) REPLACES those cells'
+            continuity equation. They are never solved. (Standard SIMPLE — you
+            need a pressure datum — and 2D does the same.)
+          * The residual at :910 is evaluated against `rho_eps_field`, the SAME
+            array `_solve_pp_amg` (:897) just solved `div(rho_eps.u) = 0` against
+            — before `_update_density` (:908) refreshed rho. So on every cell the
+            pp equation DID solve, the residual is ~0 by construction (measured
+            2.9e-17 with the outlet row excluded).
+
+        The two together mean `final_res` == the uncorrected transverse (x, z)
+        divergence on the pinned outlet row, and nothing else. Consequences, all
+        confirmed on the Shanghai production pipeline:
+
+          * NO case has ever exited via 'tol'. Every one exits on LowReExit's
+            velocity criterion. The `stall` exits are this plateau, not a solver
+            failure.
+          * Tripling max_iter (2000 -> 6000) moves the residual by ZERO to the
+            last bit — it is not iterating toward anything.
+          * The floor scales with Nz ONLY (the outlet-plane transverse mesh);
+            refining Nx/Ny 4x leaves it unchanged.
+
+        DO NOT "fix" this by skipping the outlet row in `_mass_res_jit_3d`. That
+        makes the residual tautologically zero, `tol` fires at the min-iter
+        floor, and the momentum field exits UNCONVERGED (measured: dP -2.1% on
+        Shanghai case 1). Continuity converges faster than momentum here, and
+        this solver tracks no momentum residual — so a mass-residual `tol` can
+        only ever exit early. The velocity criterion is what actually detects
+        convergence; leave it in charge. See ledger C6 for the two sanctioned
+        fixes (honest metric as a DIAGNOSTIC only, or add a momentum residual
+        and AND the two) — both need V&V and a golden re-baseline.
+
         Returns
         -------
         converged : bool
@@ -907,6 +945,16 @@ class SIMPLESolver3D:
                              self.rho_field, self.eps_field, self.outlet_mask_ij)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
 
+            # NOTE: `rho_eps_field` here is the PRE-`_update_density` array —
+            # the one `_solve_pp_amg` above just solved div(rho_eps.u)=0 against.
+            # So this residual is ~0 by construction on every cell the pp
+            # equation solved, and the reported number is entirely the pinned
+            # outlet row's uncorrected transverse divergence. It is a boundary
+            # artifact, not a convergence measure; `tol` on it is unreachable by
+            # design and never fires. See the solve() docstring and ledger C6
+            # BEFORE changing either the rho used here or the cells summed over —
+            # the obvious "fix" (skip the outlet row) makes it tautologically
+            # zero and exits the momentum field unconverged.
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
                                      rho_eps_field)

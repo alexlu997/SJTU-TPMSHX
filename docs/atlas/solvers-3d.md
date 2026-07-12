@@ -35,7 +35,7 @@
 ### SIMPLESolver3D（`sjtu_tpmshx/solvers/simple_solver_3d.py:329`）
 
 - `__init__(Lx, Ly, Lz, Nx, Ny, Nz, rho, mu, T_in, v_inlet, eps=1.0, K_arr=None, cF_arr=None, P_ref_abs=None, alpha_u=0.5, alpha_p=0.2, pyamg_rebuild_every=100, pyamg_rebuild_drift_thresh=0.05, use_coarse_bootstrap=None, fluid_type='ideal_gas', R_gas=287.05, alpha_rho=0.3, dx_arr=None, dy_arr=None, dz_arr=None)`（`sjtu_tpmshx/solvers/simple_solver_3d.py:466-478`）。`K_arr`/`cF_arr` 形状 (Ny, Nz)（`:570-572`）；`v_inlet` 标量或 (Nx, Nz) 数组（`:507-516`）；`dx_arr` 等为非均匀网格间距（E1，`:489-500`）。调用方：`pipelines/run_stack_3d.py:545,633`、`core/evaluators.py:261,275`、`validation/cases/validate_shanghai_3d_real.py:291`、`ui/demo_vis_3d.py:105`。
-- `solve(max_iter=3000, tol=1e-6, n_inner=1, verbose=False, cancel_check=None) -> (converged: bool, iterations: int)`（`sjtu_tpmshx/solvers/simple_solver_3d.py:708`）。质量残差为最大单胞 |∇·(ε·ρ·u)| 除以入口质量流量（A2 归一化，`:910-921`；参考量 `_inlet_mass_flux`，`:647-658`，退化无流动情形回退 1.0 保持绝对残差）。退出原因写入 `self.exit_reason` ∈ {'tol','velocity','stall','max_iter','cancelled'}（`:834-835, 986, 996, 999-1001`）；'velocity'（场静止）按 converged=True 返回，'stall' 返回 False（`:990-997`）。
+- `solve(max_iter=3000, tol=1e-6, n_inner=1, verbose=False, cancel_check=None) -> (converged: bool, iterations: int)`（`sjtu_tpmshx/solvers/simple_solver_3d.py:708`）。质量残差为最大单胞 |∇·(ε·ρ·u)| 除以入口质量流量（A2 归一化，`:910-921`；参考量 `_inlet_mass_flux`，`:647-658`，退化无流动情形回退 1.0 保持绝对残差）。退出原因写入 `self.exit_reason` ∈ {'tol','velocity','stall','max_iter','cancelled'}（`:834-835, 986, 996, 999-1001`）；'velocity'（场静止）按 converged=True 返回，'stall' 返回 False（`:990-997`）。**⚠️ `tol` 不是本求解器的收敛判据 —— 见「已知不足」第 10 条。真正在检测收敛的是 LowReExit 的 velocity 判据。**
 - `_update_density()`（`sjtu_tpmshx/solvers/simple_solver_3d.py:603-645`）：可压缩密度更新，见「关键配置项」与「边界·假设」。
 - `_apply_massflux_inlet()`（`sjtu_tpmshx/solvers/simple_solver_3d.py:660-682`）：重设 `v_inlet_field = _massflux_target / ρ_inlet`（`:681-682`），把入口从固定速度改为固定质量通量 G=ρ·v；`_massflux_target` 在 solve() 首次进入时按（给定 v × 初始 ρ）捕获一次并跨 warm restart 复用（`:731-737`）。
 - `apply_outlet_taper(n_taper=8, min_frac=0.2)`（`sjtu_tpmshx/solvers/simple_solver_3d.py:364-371`）：出口面 8 胞指数 taper（生成函数 `_build_outlet_frac_taper`，`:303-326`）。pipeline 中对流体 A 施加后再与 partial 掩码相乘（`sjtu_tpmshx/pipelines/run_stack_3d.py:567-568`）。
@@ -162,6 +162,12 @@
 7. **`_is_bc_face_inlet`/`_is_bc_face_outlet`/`_ifrac_at_face`/`_Tin_at_face`**（`sjtu_tpmshx/solvers/_kernels_ltne_3d.py:873-923`）标注为 "2026-04-26 strict-conservation refactor" 遗产，在当前内核中未被调用，仅经 re-export 保留。
 8. **red-black 能量内核与串行收敛到同一不动点**为注释断言（"verified"，`sjtu_tpmshx/solvers/_kernels_ltne_3d.py:606-614`），本文未独立复核（Q/dP 一致性有 golden gate 侧面保证，位级 field 一致性无保证——两者迭代路径不同）。
 9. Anderson 加速（Phase B）自述 "Off-by-default for safety... until full-sweep validated"（`sjtu_tpmshx/solvers/simple_solver_3d.py:803-804`；`sjtu_tpmshx/pipelines/run_stack_3d.py:90-91`）。
+10. **`self.final_res` 是出口 pin 伪迹，零收敛信息；`tol=1e-5` 是死钮（实测，2026-07-12，台账 C6）。改它之前必读。**
+    - **机制**：`_build_pp_sparsity_3d:158` 把出口整行标 `cell_kind=1`，`_assemble_pp_3d:750` 据此把这些格的**连续性方程替换成 `Pp=0`** —— 从未被求解（标准 SIMPLE 压力基准做法，2D `_kernels_simple_2d.py:735` 同构，本身不是 bug）。而 `:910` 算残差用的 `rho_eps_field` 正是 `:897` 的 `_solve_pp_amg` 刚刚**精确求解过** `div(ρε·u)=0` 的那份数组（`:908` 的 `_update_density` 之前），**故在所有被求解的格上残差按构造 ≈0**（实测剔掉出口行后 `final_res = 2.9e-17`）。两者相加 ⇒ **报出来的数 100% 是出口行未被修正的横向散度**。
+    - **实测印证**（上海生产管线，20×10×3）：① 任何工况从未以 `'tol'` 退出，全走 velocity 判据；② `max_iter` 2000→6000（×3）残差**逐位不动**（7.86e-4→7.86e-4）；③ 地板只随 **Nz** 变，Nx/Ny ×4 无变化（Nz 决定出口面横向网格）；④ 方向分解：主流向 `Σ|Fy|/ṁ=4.6e-6`（被出口 v-BC 外推 `_kernels_simple_3d.py:870` 精确望远镜掉），横向 `Σ|Fx|/ṁ=4.2e-3`、`Σ|Fz|/ṁ=1.3e-2`。
+    - **不要这样"修"**：单纯在 `_mass_res_jit_3d` 里跳过出口行 → 残差变成恒等 0，`tol` 在最小迭代数处即触发，**动量场未收敛就退出**（实测上海 case 1 的 dP 偏 −2.1%）。**连续性比动量收敛得快**，而本求解器**不跟踪动量残差**，故 mass-`tol` 只可能提前退出。
+    - **两条被认可的路**（均需 V&V + golden 重基线）：(F1) 把口径改成「更新后的 ρ + 只统计被求解的格」，**仅作诊断**，退出仍由 velocity 判据主导；(F2) 补一个动量残差，两者 AND（正统 SIMPLE）。
+    - **与 2D 的口径差**：2D `_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`，逐格横向失衡在面内互相抵消、看不见；3D 量的是**逐格散度**，严格更强。**两者被喂同一个 `tol`。** 这也是为什么 2D 的 `_enforce_mass_conservation`（`simple_solver.py:958`）移植到 3D 是**实测无效**的：它恰好把 2D 那个积分量掐到零，是给那个口径量身定做的（3D 实测 `scale=1.000194`，且出口面残差 99.97% 是散乱抵消，`|Σ|/Σ|·| = 0.03%`）。
 
 ## 服务器移植注意
 
