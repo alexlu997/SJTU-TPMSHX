@@ -119,9 +119,29 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # uniform ε keeps r ≡ 1.0 exactly, so the uniform tuple and both goldens are
 # bit-identical to the pre-M2 baselines (verified via golden_2d/3d_preM2
 # capture). Old nonuniform: (-7728.475410596369, 8022.029234363068, ...).
-_FROZEN_2D_UNIFORM = (-8161.676768977079, 10661.113158337937,
+#
+# RE-BASELINED 2026-07-12 (ledger C8 — a real BUG, not a scheme change): the 2D
+# evaluator was passing `P_ref_abs = P_inA / P_inB`. `P_ref_abs` is the OUTLET
+# absolute pressure (the pp equation pins the outlet row at Pp=0 and never
+# corrects its P), so this anchored the OUTLET at the INLET pressure and floated
+# the whole field up by Δp. The compressible density was therefore wrong
+# everywhere, by a factor that GROWS with Δp/P_in.
+#
+# For an OPTIMIZER that is not just a magnitude error, it is a RANKING
+# distortion: high-Δp designs were mis-scored against low-Δp ones, which is
+# precisely the comparison the optimizer exists to make. Every historical 2D
+# Pareto front was produced under it.
+#
+# Both 2D tuples move (the 3D ones are untouched — 3D always seeded the outlet
+# correctly via `run_stack_3d._seed_p_ref`):
+#     uniform    Q  -8161.68 -> -8573.83 (+5.05 %)   dP 10661.11 -> 11320.61 (+6.19 %)
+#     nonuniform Q  -7730.60 -> -8046.72 (+4.09 %)   dP  8013.42 ->  8429.88 (+5.20 %)
+# mass[2] is bit-identical in both (geometry only).
+# Old: (-8161.676768977079, 10661.113158337937, ...) /
+#      (-7730.600183907583, 8013.423850696896, ...).
+_FROZEN_2D_UNIFORM = (-8573.834141483694, 11320.610597603201,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7730.600183907583, 8013.423850696896,
+_FROZEN_2D_NONUNIF = (-8046.721764144899, 8429.876589408981,
                       3.6729327392578126)
 # re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
 # eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the

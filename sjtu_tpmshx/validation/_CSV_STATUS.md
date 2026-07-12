@@ -80,6 +80,69 @@
   convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
   see memory `feedback_dp_gap_attribution`).
 
+## 🔴 2026-07-12 (c) — 2D PRODUCTION BUG: the outlet was anchored at the INLET pressure (ledger C8)
+
+**A real bug in the shipped 2D code, not a scheme change.** `P_ref_abs` is the
+**outlet** absolute pressure — the pp equation pins the outlet row at `Pp = 0` and
+never corrects those cells' P, so the outlet's gauge pressure stays 0 for the whole
+solve ⇒ `outlet P_abs ≡ P_ref_abs`, `inlet P_abs ≡ P_ref_abs + Δp`.
+
+Every **production** 2D path was passing the **inlet** pressure:
+
+| path | before | |
+|---|---|---|
+| `pipelines/stages_2d.py:485,500` | `P_ref_abs = P_in_abs` | ❌ |
+| `optimization/evaluator.py:260,309` | `P_ref_abs = P_inA / P_inB` | ❌ |
+| `validation/.../validate_shanghai_aligned.py` (the GATE) | 1D-seeded outlet pressure | ✅ |
+| `pipelines/run_stack_3d.py:620` (3D) | `_seed_p_ref(P_out_sq, …)` | ✅ |
+
+So the outlet sat AT the inlet pressure and the whole field floated up by Δp. The
+compressible density was wrong everywhere, by a factor that **grows with Δp/P_in**.
+
+Measured, Shanghai case 16 (experiment: 304.7 kPa in → 126.1 kPa out, Δp = 178.7 kPa):
+
+```
+before:  inlet 407.3 kPa -> outlet 304.7 kPa   Δp = 102.6 kPa   (-42.6 %)
+                                  ^^^^^ the experiment's INLET pressure
+after:   inlet 289.0 kPa -> outlet  98.1 kPa   Δp = 190.9 kPa   (+6.8 %)
+kernel gate (which always did it right):       Δp = 191.4 kPa   (+7.0 %)
+```
+
+Error scales with Δp/P_in: case 1 (0.011) ≈ 1 % low; case 16 (0.59) 43 % low.
+
+**Why it stayed invisible: the 2D gate is kernel-direct and seeded the outlet
+correctly itself — it was validating a path production does not run.** (Structurally
+the same failure as the old 3D kernel gate; see section (a) below.)
+
+**For the OPTIMIZER this is a ranking distortion, not just a magnitude error** — the
+error grows with Δp, so high-Δp designs were mis-scored against low-Δp ones, which is
+exactly the comparison the optimizer exists to make. Every historical 2D Pareto front
+was produced under it.
+
+Fix: both production paths now seed `P_ref_abs` from the same 1D compressible
+Forchheimer closed form 3D uses (`envelope.predict_outlet_p_sq`), with the same
+(K, cF) the solver builds internally. Incompressible sides (water, sCO2 Phase-A) keep
+`P_in` — ρ is frozen there, so only pressure GRADIENTS matter and the gauge level is
+inert (verified: golden-2D `water_b.dP_B` moves −0.002 %).
+
+**Re-baselined:** golden-2D compressible Δp **+9…11 %** (air_air dP_A +9.14 %,
+dP_B +10.76 %; water_b dP_A +9.11 %); Q +0.1…0.3 %; water dP_B unchanged. Optimizer
+`test_evaluator_frozen_values` 2D tuples (Q +4…5 %, dP +5…6 %; 3D untouched).
+
+**A test was pinning the bug as a feature.** `test_2d_high_dp_inlet_anchored_not_falsely_flagged`
+asserted that a **Δp ≈ 3 × P_in** operating point produces a VALID result — i.e. that a
+point whose true outlet pressure is **−2 atm** is physical. It passed only because the
+outlet never fell. It has been rewritten to assert the opposite: that operating point is
+choked and must be REJECTED, exactly as 3D rejects it.
+
+**Still open:** 2D has no pre-solve choke guard (ledger O1) — the seed clips
+`P_out² ≤ 0` to a 1e4 Pa floor rather than raising; the post-solve envelope gate is what
+catches it. And the seed is only an estimate, so the SOLVED inlet pressure ≠ the
+specified `P_in` (case 16: 289.0 vs 304.7 kPa). 3D has the identical limitation. A
+shooting loop on the seed would tighten both dims — not done.
+
+---
+
 ## ⚠️ 2026-07-12 (b) — 3D CONVERGENCE CRITERION REPLACED (legacy → F2), ledger C6/C7
 
 **`RMSRE_dP 4.93 % → 4.88 %`; `RMSRE_Q 2.12 %` unchanged.** Physics unchanged; the

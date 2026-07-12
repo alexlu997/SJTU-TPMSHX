@@ -475,6 +475,66 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         rho_inlet_ref = (float(P_in_abs) / (287.05 * float(T_in_f))
                          if fluid_type == 'ideal_gas' else None)
 
+        # ── P_ref_abs is the OUTLET absolute pressure, not the inlet ────────
+        # BUG FIX 2026-07-12 (ledger C8). This used to pass `P_ref_abs=P_in_abs`.
+        #
+        # `P_ref_abs` is the ABSOLUTE pressure the solver's GAUGE field is
+        # measured from, and the gauge field's zero sits at the OUTLET: the pp
+        # equation pins the outlet row `Pp = 0` (`_kernels_simple_2d.py:735`) and
+        # `_correct_jit` never corrects those cells' P, so the outlet gauge stays
+        # 0 for the entire solve. Hence
+        #
+        #       outlet absolute pressure  ==  P_ref_abs   (exactly)
+        #       inlet  absolute pressure  ==  P_ref_abs + Δp
+        #
+        # Passing the INLET pressure therefore anchored the OUTLET at the inlet
+        # and floated the whole field up by Δp. Measured on Shanghai case 16
+        # (experiment: 304.7 kPa in -> 126.1 kPa out, Δp = 178.7 kPa):
+        #
+        #       before:  inlet 407.3 kPa -> outlet 304.7 kPa,  Δp =  102.6 kPa
+        #                                          ^^^^^ the experiment's INLET
+        #
+        # The outlet density was ~2.4x too high, so the compressible physics was
+        # wrong throughout and Δp came out 43 % low. The error scales with
+        # Δp/P_in: negligible for low-Δp designs (case 1: ~1 %), catastrophic for
+        # high-Δp ones. It was invisible because the 2D validation gate is
+        # kernel-direct and seeds this correctly itself — the gate was validating
+        # a path production does not run.
+        #
+        # (CLAUDE.md described this as "2D is inlet-anchored ... rarely chokes".
+        # That was a description of the SYMPTOM, not a design: it "rarely chokes"
+        # because it never lets the outlet pressure fall.)
+        #
+        # 3D always did this right (`run_stack_3d._seed_p_ref`, ~line 620). Use
+        # the same 1D compressible Forchheimer closed form, with the SAME (K, cF)
+        # the solver itself will build (`simple_solver.py:409-412`), so the seed
+        # can never drift from the drag it is seeding for.
+        L_stream = float(L if is_x else H)
+        if fluid_type == 'ideal_gas':
+            from df_surrogate.predict import predict_K_cF as _pred_KcF
+            from solvers.envelope import predict_outlet_p_sq
+            _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
+                                  0.5 * float(eps))
+            _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
+            _G = _rho_in * abs(float(u_f))                   # mass flux ρ·u
+            _mu_in = float(np.mean(mu_f)) if np.ndim(mu_f) else float(mu_f)
+            _C = _mu_in * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+            _P_out_sq = predict_outlet_p_sq(float(P_in_abs), float(T_in_f),
+                                            _C, L_stream)
+            # A non-positive P_out² means the 1D estimate says Δp >= P_in, i.e.
+            # the outlet would go to vacuum — no steady solution exists there.
+            # The 3D path raises ChokedFlowError; 2D has never had a choke guard
+            # (ledger O1), so clip to the same 1e4 Pa floor 3D's `_seed_p_ref`
+            # uses and leave the guard as a separate change, rather than silently
+            # widening the envelope here.
+            P_ref_out = float(np.sqrt(max(_P_out_sq, 1.0e4)))
+        else:
+            # Incompressible (water, sCO2 Phase-A): ρ is frozen, so the gauge
+            # LEVEL does not feed back into the physics at all — only gradients
+            # matter. Keep the inlet value (bit-identical to the old behaviour on
+            # every water/incompressible solve).
+            P_ref_out = float(P_in_abs)
+
         if is_x:
             s = SIMPLESolver(H, L, N_y, N_x, tpms_type, Lcell, t_wall,
                              eps, r_h, rho_simple, mu_simple, T_in_f,
@@ -482,7 +542,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs,
+                             P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type,
                              cf_scale=cf_scale)
@@ -497,7 +557,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              zone_config=zc_simple,
                              zone_arrays=z_arr if zc_simple is None else None,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs,
+                             P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type,
                              cf_scale=cf_scale)

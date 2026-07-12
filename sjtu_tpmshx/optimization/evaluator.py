@@ -249,6 +249,34 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     eps_mean = float(arrays['eps_arr'].mean())
     r_h_mean = float(arrays['r_h_arr'].mean())
 
+    # ── P_ref_abs is the OUTLET absolute pressure, not the inlet ──────────
+    # BUG FIX 2026-07-12 (ledger C8). This used to pass `P_ref_abs=P_inA`.
+    # The pp equation pins the OUTLET row at Pp=0 and never corrects its P, so
+    # the outlet's GAUGE pressure stays 0 all solve => outlet ABSOLUTE pressure
+    # == P_ref_abs, exactly. Passing the INLET pressure anchored the outlet at
+    # the inlet and floated the whole field up by Δp — the compressible density
+    # was then wrong everywhere, by a factor that GROWS with Δp/P_in.
+    #
+    # For the optimizer that is not merely a magnitude error, it is a RANKING
+    # distortion: high-Δp designs were mis-scored relative to low-Δp ones, and
+    # the optimizer's entire job is to rank them. (Measured on the 2D pipeline,
+    # Shanghai case 16, Δp/P_in = 0.59: Δp came out 43 % low. Case 1,
+    # Δp/P_in = 0.011: ~1 % low.)
+    #
+    # Same 1D compressible Forchheimer closed form as 3D (`run_stack_3d.
+    # _seed_p_ref`) and the 2D pipeline (`stages_2d`), using the SAME (K, cF)
+    # the solver builds internally so the seed cannot drift from the drag.
+    from df_surrogate.predict import predict_K_cF as _pred_KcF
+    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
+                          float(fc.t_ctrl.mean()), 0.5 * eps_mean)
+    _G = float(rho_A) * abs(u_A)
+    _C = float(mu_A) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+    # Note: no choke guard here — the 2D optimizer has never had one (ledger O1).
+    # Clip to the same 1e4 Pa floor the 3D seed uses rather than silently
+    # widening the envelope; adding the guard is a separate, tracked change.
+    P_ref_outA = float(np.sqrt(max(_p_out_sq(P_inA, T_inA, _C, L_dom), 1.0e4)))
+
     s = SIMPLESolver(
         H_dom, L_dom, Ny_real, Nx_real,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
@@ -257,7 +285,7 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_A,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
-        P_ref_abs=P_inA,
+        P_ref_abs=P_ref_outA,
     )
 
     # Push spatially-graded ε into SIMPLE's macroscopic continuity
@@ -298,6 +326,17 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     in_lo, in_hi, out_lo, out_hi = ((float(v) for v in pB) if pB is not None
                                     else (0.0, L_dom, 0.0, L_dom))
 
+    # P_ref_abs = the OUTLET absolute pressure (ledger C8) — see _build_simple_A
+    # for the full rationale. Fluid B is also AIR here (compressible), and its
+    # streamwise length is H_dom (it flows along -y), not L_dom.
+    from df_surrogate.predict import predict_K_cF as _pred_KcF
+    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
+                          float(fc.t_ctrl.mean()), 0.5 * eps_mean)
+    _G = float(rho_B) * abs(u_B)
+    _C = float(mu_B) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+    P_ref_outB = float(np.sqrt(max(_p_out_sq(P_inB, T_inB, _C, H_dom), 1.0e4)))
+
     s = SIMPLESolver(
         L_dom, H_dom, Nx_real, Ny_real,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
@@ -306,7 +345,7 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_B,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
-        P_ref_abs=P_inB,
+        P_ref_abs=P_ref_outB,
     )
 
     if 'eps_arr' in arrays:

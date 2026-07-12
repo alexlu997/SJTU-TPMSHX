@@ -115,7 +115,7 @@
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 8.4 %** (mass-flux inlet) |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.61 %** / Q **2.49 %** (production pipeline, water solved) |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
