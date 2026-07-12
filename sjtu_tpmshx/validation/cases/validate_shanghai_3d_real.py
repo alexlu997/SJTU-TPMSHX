@@ -564,6 +564,15 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
     _diag = result.diagnostics or {}
     _env_valid = bool(_diag.get('envelope_valid', True))
     _clip_hits = int(_diag.get('p_clip_hits', 0))
+    # The ACTUAL outer-iteration count, not the cap. `diagnostics['_max_outer']`
+    # is the CAP (`_result['_max_outer'] = _max_outer` in run_stack_3d); reading
+    # it here made the printed `outer=` track --max-outer instead of the work
+    # actually done (a cap of 12 and a cap of 30 both printed their own value
+    # while returning bit-identical fields — the tell that it was echoing the
+    # cap). The real count is on convergence_detail.
+    _cdet = _diag.get('convergence_detail') or {}
+    _outer_done = int(_cdet.get('outer_iters', 0)) or -1
+    _outer_conv = bool(_cdet.get('outer_converged', False))
     # A non-converged SIMPLE solve is not a pressure-validity failure, but it
     # must not vanish either — surface it the way the kernel branch surfaces
     # its own outer-loop count.
@@ -575,7 +584,8 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
         'dP_exp': dP_A_exp, 'dP_sim': dP_sim, 'err_dP%': err_dP,
         'Q_exp': Q_exp, 'Q_sim': Q_sim, 'err_Q%': err_Q,
         'Q_sim_am': float('nan'), 'Q_mw_am_rel%': float('nan'),
-        'outer_iters': int(_diag.get('_max_outer') or -1),
+        'outer_iters': _outer_done,
+        'outer_converged': _outer_conv,
         'Qs_A': float('nan'), 'Qs_B': float('nan'),
         'Q_net_rel': float('nan'), 'mass_rel_A': float('nan'),
         'pressure_clip_hits': _clip_hits,
@@ -648,9 +658,15 @@ def main():
                               max_outer=args.max_outer,
                               disp_c=args.disp_c)
         results.append(r)
+        # `outer=N` is the count of outer iterations ACTUALLY run. `!` marks a
+        # run that exhausted the cap without meeting the coupling criterion —
+        # i.e. a TRUNCATED result. (Only the pipeline runner reports this; the
+        # kernel runner breaks on its own criterion and has no separate flag.)
+        _oc = r.get('outer_converged')
+        _omark = '' if _oc is None or _oc else '!'
         print(f"Case {r['case']:2d}: dP {r['dP_exp']:.0f}/{r['dP_sim']:.0f} "
               f"({r['err_dP%']:+.1f}%)  Q {r['Q_exp']:.0f}/{r['Q_sim']:.0f} "
-              f"({r['err_Q%']:+.1f}%)  outer={r['outer_iters']}  "
+              f"({r['err_Q%']:+.1f}%)  outer={r['outer_iters']}{_omark}  "
               f"[Qnet_rel={r['Q_net_rel']:.2e} mA_rel={r['mass_rel_A']:.2e}]")
 
     # Summary statistics

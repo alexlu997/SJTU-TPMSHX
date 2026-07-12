@@ -63,7 +63,9 @@ def test_pipeline_branch_wires_max_outer_into_solver_config():
                 dP_A_Pa = 1.0
                 Q_W = 1.0
                 diagnostics = {'envelope_valid': True, 'p_clip_hits': 0,
-                               '_max_outer': 4}
+                               '_max_outer': 4,   # the CAP — must NOT be read
+                               'convergence_detail': {
+                                   'outer_iters': 3, 'outer_converged': True}}
                 warnings = []
             return _R()
 
@@ -110,8 +112,15 @@ def test_pipeline_branch_reports_real_pressure_diagnostics():
                 dP_A_Pa = 2000.0
                 Q_W = 5000.0
                 # A case the post-solve gate marked NON-physical, with clips.
+                # `_max_outer` is the CAP (30). The runner must report the work
+                # ACTUALLY done (4) and that it was TRUNCATED — reading the cap
+                # made the printed `outer=` track --max-outer, so a cap of 12
+                # and a cap of 30 both printed their own value while returning
+                # bit-identical fields (found 2026-07-12).
                 diagnostics = {'envelope_valid': False, 'p_clip_hits': 7,
-                               '_max_outer': 5}
+                               '_max_outer': 30,
+                               'convergence_detail': {
+                                   'outer_iters': 4, 'outer_converged': False}}
                 warnings = ['3D-A: Mach 1.02 >= 1.0']
             return _R()
 
@@ -133,7 +142,12 @@ def test_pipeline_branch_reports_real_pressure_diagnostics():
         "hard-coded 1 disabled main()'s valid_mask exclusion entirely")
     assert r['pressure_clip_hits'] == 7, (
         "p_clip_hits must come from the pipeline diagnostics, not a literal 0")
-    assert r['outer_iters'] == 5
+    assert r['outer_iters'] == 4, (
+        "outer_iters must be the work ACTUALLY done (convergence_detail), not "
+        "diagnostics['_max_outer'] — that key is the CAP, so reading it made "
+        "the reported count echo --max-outer regardless of what ran")
+    assert r['outer_converged'] is False, (
+        "a run that exhausted the cap must be reported as truncated")
 
 
 def test_finalize_3d_forwards_p_clip_hits():
