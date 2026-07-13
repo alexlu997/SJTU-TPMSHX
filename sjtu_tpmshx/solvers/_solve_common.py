@@ -131,6 +131,14 @@ class F2Monitor:
         self.mom_tol = float(g('mom_tol', 1e-4))
         self.mass_local_tol = float(g('mass_local_tol', 1e-6))
         self.mass_global_tol = float(g('mass_global_tol', 1e-6))
+        # Fourth gate (2026-07-13, codex review): the GLOBAL mass residual is a
+        # SIGNED scalar — positive and negative outlet fluxes can cancel inside
+        # it, so a recirculating outlet can read as perfectly mass-balanced
+        # (that is exactly why `outlet_backflow_frac` was reported separately,
+        # ledger C7). Reporting alone lets a separated/recirculating "solution"
+        # exit as converged; gate it. Every measured baseline has backflow == 0,
+        # so the default is inert there (bit-identical).
+        self.backflow_max = float(g('f2_backflow_max', 0.01))
         self.n_confirm = int(g('f2_n_confirm', 2))
         self.mom_every = max(1, int(g('f2_mom_every', 5)))
         self.vtol = float(g('lowre_vel_tol', 1e-4))
@@ -165,8 +173,12 @@ class F2Monitor:
         return (it % self.mom_every) == 0
 
     def submit(self, it: int, R_mom: float, R_mass_local: float,
-               R_mass_global: float, vd: float):
+               R_mass_global: float, vd: float, backflow_frac: float = 0.0):
         """Call ONLY on iterations where R_mom was actually evaluated.
+
+        `backflow_frac` is the outlet backflow fraction (|reverse flux| /
+        |total outlet flux|) — the fourth gate; defaults to 0.0 so callers
+        that cannot measure it degrade to the old three-gate behaviour.
 
         Returns None (keep iterating) | 'tol' (converged) | 'stall' (give up,
         converged=False).
@@ -175,7 +187,8 @@ class F2Monitor:
             return None
         ok = (R_mom < self.mom_tol
               and R_mass_local < self.mass_local_tol
-              and R_mass_global < self.mass_global_tol)
+              and R_mass_global < self.mass_global_tol
+              and backflow_frac <= self.backflow_max)
         if ok:
             self._streak += 1
             return 'tol' if self._streak >= self.n_confirm else None

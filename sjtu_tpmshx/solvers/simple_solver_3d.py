@@ -1215,7 +1215,7 @@ class SIMPLESolver3D:
 
                 if _Rmom is not None:
                     self.final_res_mom = _Rmom
-                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd)
+                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
                     if _reason is not None:
                         self.exit_reason = _reason
                         return (_reason == 'tol'), it

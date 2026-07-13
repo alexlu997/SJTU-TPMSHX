@@ -783,6 +783,9 @@ class SIMPLESolver:
             self.final_res_mass_local = None
             self.final_res_mass_global = None
             self.outlet_backflow_frac = 0.0
+            # True iff the F2 gates STILL hold on the returned (post-outlet-
+            # rescale) field — set at the F2 exit; None until an exit happens.
+            self.f2_cert_post_rescale_ok = None
         # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter';
         # reset on every (re-)entry (the 2D pipeline rebuilds the solver per
         # outer iteration, but direct callers may reuse one instance).
@@ -962,9 +965,52 @@ class SIMPLESolver:
                     _rec['iter'] = it
                     self.mom_residuals.append(_rec)
                     self.final_res_mom = _Rmom
-                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd)
+                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
                     if _reason is not None:
                         self._enforce_mass_conservation(verbose=verbose)
+                        # ── Certificate sync (2026-07-13, codex review P1) ──
+                        # `_enforce_mass_conservation` rescales the outlet v
+                        # AFTER the gates were evaluated, so the stored
+                        # certificates described the PRE-rescale field. Since
+                        # the gates passed, scale-1 ≲ mass_global_tol and the
+                        # drift is tiny on a full-face outlet — but on partial
+                        # outlets the rescale sums a different cell set
+                        # (frac > 0.5 only) than the gates, so re-measure on
+                        # the field actually RETURNED. Histories are not
+                        # appended to (iteration count stays exact); only the
+                        # final_res_* certificate is refreshed. The exit
+                        # decision itself is NOT revisited — flipping it here
+                        # would make convergence depend on a post-exit
+                        # band-aid; a certificate that no longer meets the
+                        # gates is flagged and warned instead.
+                        _rho_eps_post = np.ascontiguousarray(
+                            self.rho_field * self.eps_field, dtype=np.float64)
+                        _Rml_p, _ = _mass_res_solved_jit_2d(
+                            self.u, self.v, Nx, Ny, dx_a, dy_a,
+                            _rho_eps_post, self._pp_sparsity['cell_kind'])
+                        _min_p, _mout_p, _bf_p = _mass_global_jit_2d(
+                            self.v, Nx, Ny, dx_a, _rho_eps_post)
+                        _Rmg_p = (abs(_mout_p - _min_p) / abs(_min_p)
+                                  if abs(_min_p) > 1e-14 else 0.0)
+                        _Rmom_p, _ = self._momentum_residual(
+                            Nx, Ny, dx_a, dy_a, _K2d, _cF2d)
+                        self.final_res_mass_local = _Rml_p
+                        self.final_res_mass_global = _Rmg_p
+                        self.final_res_mom = _Rmom_p
+                        self.outlet_backflow_frac = _bf_p
+                        self.f2_cert_post_rescale_ok = bool(
+                            _Rmom_p < _f2.mom_tol
+                            and _Rml_p < _f2.mass_local_tol
+                            and _Rmg_p < _f2.mass_global_tol
+                            and _bf_p <= _f2.backflow_max)
+                        if _reason == 'tol' and not self.f2_cert_post_rescale_ok:
+                            _log.warning(
+                                "  [WARN] F2 gates held BEFORE the outlet mass "
+                                "rescale but not after (mom %.2e local %.2e "
+                                "global %.2e backflow %.2e) — the returned "
+                                "field's certificate exceeds the gates; "
+                                "inspect the outlet rescale scale.",
+                                _Rmom_p, _Rml_p, _Rmg_p, _bf_p)
                         self.exit_reason = _reason
                         self.final_res = res
                         return (_reason == 'tol'), it

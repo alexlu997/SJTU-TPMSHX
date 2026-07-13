@@ -245,15 +245,22 @@ def evaluate_3d(x_decision: np.ndarray,
             _log.warning(f"[3D verify] INFEASIBLE — P_out²_A={P_out_sq_A:.3e} Pa², "
                          f"P_out²_B={P_out_sq_B:.3e} Pa². Returning NaN per strict "
                          "validation contract.")
+        # mass is pure geometry — computable regardless of the choke, and a
+        # bounded-bad BO fallback needs it (mass=NaN/0 would make an invalid
+        # dense design look light on the mass objective).
+        _cv = (dx_arr[:, None, None] * dy_arr[None, :, None]
+               * dz_arr[None, None, :])
+        _mass_geom = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * _cv))
         return {
             'Q_3D_W':         float('nan'),
             'dP_A_Pa':        float('nan'),
             'dP_B_Pa':        float('nan'),
             'dP_total_Pa':    float('nan'),
-            'mass_kg':        float('nan'),
+            'mass_kg':        _mass_geom,
             'Lz_m':           Lz,
             'grid':           (Nx, Ny, Nz),
             'invalid':        True,
+            'converged':      False,
             'invalid_reason': ('P_out² ≤ 0 on the 1D D-F seed — operating '
                                f'point is choked (A={P_out_sq_A:.3e}, '
                                f'B={P_out_sq_B:.3e}).'),
@@ -330,18 +337,33 @@ def evaluate_3d(x_decision: np.ndarray,
     for _s in (sA, sB):
         _s.convergence_mode = str(convergence_mode)
 
-    # 4. Initial SIMPLE solves
+    # 4. Initial SIMPLE solves.
+    # Convergence TRUTH TABLE (2026-07-13, codex review P0): these verdicts
+    # used to be DISCARDED — three solve() calls dropped (converged, iters),
+    # the LTNE call never asked for return_info, and hitting max_outer set no
+    # failure state, so an unconverged run returned Q/dP indistinguishable
+    # from a converged one and `verify_pareto_3d` exited 0 on it. Every
+    # verdict is now collected and returned; reporting callers must gate on
+    # them (screening callers may ignore them — rankings-only, ledger O2).
     if verbose:
         _log.info(f"[3D] Solving SIMPLE A (cold) … ")
     t0 = time.perf_counter()
-    sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+    simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                 verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
         _log.info(f"[3D] Solving SIMPLE B (cold) … ")
     t0 = time.perf_counter()
-    sB.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+    simple_B_ok, _itB = sB.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                 verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
+    # Last LTNE inner pass's verdict (the returned fields ARE that pass's) and
+    # the outer dT loop's own verdict. `outer_converged` stays False when the
+    # loop exits via the max_outer cap — including max_outer == 1/2 where the
+    # dT check never fires: "unverified" counts as NOT converged, by design.
+    ltne_inner_ok = False
+    outer_ok = False
 
     # 5. Outer LTNE coupling with variable density on fluid A.
     rcp_A_field = np.full((Nx, Ny, Nz), rho_A0 * air_cp(T_inA), dtype=np.float64)
@@ -387,7 +409,7 @@ def evaluate_3d(x_decision: np.ndarray,
         # 2026-05-19 ε contract (Option A): pass FULL porosity. Kernel does
         # the single halving (eps_f = 0.5*epsilon → ε_A). Pre-halving here
         # double-halved to ε_full/4. K_ff arrays already use ε_A — untouched.
-        Ta, Tb, Ts = solve_full_domain_3d(
+        Ta, Tb, Ts, _ltne_info = solve_full_domain_3d(
             L_dom, H_dom, Lz, Nx, Ny, Nz, T_inA, T_inB,
             arrays['K_ffA_arr'], arrays['K_ffB_arr'], arrays['K_ss_arr'],
             arrays['h_vA_arr'], arrays['h_vB_arr'],
@@ -401,7 +423,9 @@ def evaluate_3d(x_decision: np.ndarray,
             alpha_T=0.7,
             ufA=ufA, vfA=vfA, wfA=wfA, ufB=ufB, vfB=vfB, wfB=wfB,
             conservative_ltne=True,
+            return_info=True,
         )
+        ltne_inner_ok = bool(_ltne_info.get('converged', False))
         if verbose:
             _log.info(f"{time.perf_counter()-t0:.0f}s")
 
@@ -411,6 +435,7 @@ def evaluate_3d(x_decision: np.ndarray,
                 if verbose:
                     _log.info(f"[3D] outer converged at iter {outer_it+1} "
                               f"(dT_max={dT_max:.2f} < {outer_tol_K} K)")
+                outer_ok = True
                 break
         Ta_prev = Ta.copy()
 
@@ -454,19 +479,24 @@ def evaluate_3d(x_decision: np.ndarray,
             # stop, and `verify_pareto_3d` REPORTS these numbers). Same strict
             # contract as the cold seed: NaN + invalid, never a floored anchor.
             if verbose:
-                _log.warning(f"[3D verify] INFEASIBLE at outer {outer_it+1} — "
-                             f"P_out²={P_out_sq_new:.3e} Pa² after var-ρ "
+                _log.warning(f"[3D verify] INFEASIBLE at outer {outer_it+1} -- "
+                             f"P_out^2={P_out_sq_new:.3e} Pa^2 after var-rho "
                              "reseed (hot-state choke). Returning NaN per "
                              "strict validation contract.")
+            _cv = (dx_arr[:, None, None] * dy_arr[None, :, None]
+                   * dz_arr[None, None, :])
+            _mass_geom = float(np.sum((1.0 - arrays['eps_arr'])
+                                      * rho_s * _cv))
             return {
                 'Q_3D_W':         float('nan'),
                 'dP_A_Pa':        float('nan'),
                 'dP_B_Pa':        float('nan'),
                 'dP_total_Pa':    float('nan'),
-                'mass_kg':        float('nan'),
+                'mass_kg':        _mass_geom,
                 'Lz_m':           Lz,
                 'grid':           (Nx, Ny, Nz),
                 'invalid':        True,
+                'converged':      False,
                 'invalid_reason': ('P_out² ≤ 0 on the var-ρ outer reseed — '
                                    'operating point chokes once heated '
                                    f'(outer {outer_it+1}, T_avg={T_avg:.1f} K, '
@@ -477,7 +507,10 @@ def evaluate_3d(x_decision: np.ndarray,
         if verbose:
             _log.info(f"[3D] re-solving SIMPLE A with var-ρ … ")
         t0 = time.perf_counter()
-        sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+        # Last re-solve's verdict overwrites the cold one (the fields returned
+        # are the last solve's).
+        simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                     verbose=False)
         if verbose:
             _log.info(f"{time.perf_counter()-t0:.0f}s")
 
@@ -519,6 +552,18 @@ def evaluate_3d(x_decision: np.ndarray,
     dP_total = dP_A + dP_B
     mass = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * cell_vol))
 
+    # Convergence truth table (codex review P0, 2026-07-13). `converged` is
+    # the conjunction; reporting callers (verify_pareto_3d) MUST gate on it,
+    # screening callers (BO wrapper) may ignore it — rankings-only, ledger O2.
+    finite_ok = bool(np.isfinite(Q_3D) and np.isfinite(dP_A)
+                     and np.isfinite(dP_B) and np.isfinite(mass))
+    truth = {
+        'simple_A_converged':   bool(simple_A_ok),
+        'simple_B_converged':   bool(simple_B_ok),
+        'ltne_inner_converged': bool(ltne_inner_ok),
+        'outer_converged':      bool(outer_ok),
+        'finite':               finite_ok,
+    }
     return {
         'Q_3D_W':       Q_3D,
         'dP_A_Pa':      dP_A,
@@ -527,4 +572,7 @@ def evaluate_3d(x_decision: np.ndarray,
         'mass_kg':      mass,
         'Lz_m':         Lz,
         'grid':         (Nx, Ny, Nz),
+        'invalid':      False,
+        'converged':    all(truth.values()),
+        **truth,
     }

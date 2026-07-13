@@ -44,6 +44,13 @@ Remaining, KNOWN gaps vs the production pipeline (ledger O2): fluid B is
 solved once cold (frozen velocities, no var-ρ re-solve) and there is no
 post-solve Mach/positive-pressure gate. The printout labels the path so
 these numbers are never mistaken for production-pipeline output.
+
+Exit codes
+----------
+0 — converged AND certified (full truth table PASS); numbers are reportable.
+2 — INVALID operating point (choked, no steady solution; ledger C10).
+3 — NOT CONVERGED (any of simple_A/B, LTNE-inner, outer, finite failed;
+    codex review P0, 2026-07-13) — numbers printed but uncertified.
 """
 
 from __future__ import annotations
@@ -129,10 +136,13 @@ def main(argv=None) -> int:
     t0 = time.perf_counter()
     # f2 = verification grade (ledger C7/C10) — NOT the BO screening profile.
     # See the module docstring for why this evaluator (and not run_stack_3d)
-    # and what gaps remain.
+    # and what gaps remain. max_outer=12 matches the production pipeline's
+    # _MAX_OUTER — the screening default (3) is too tight for a tool that
+    # GATES on outer convergence (codex review P0, 2026-07-13).
     out = evaluate_3d(x_decision, cfg,
                       Nx=args.Nx, Ny=args.Ny, Nz=args.Nz,
                       Lz=args.Lz,
+                      max_outer=12,
                       convergence_mode='f2')
     dt = time.perf_counter() - t0
     if out.get('invalid'):
@@ -142,7 +152,21 @@ def main(argv=None) -> int:
         print(f"\n=== INVALID operating point (3D wall {dt:.0f}s) ===")
         print(f"  {out.get('invalid_reason', '(no reason recorded)')}")
         return 2
+    # Convergence truth table (codex review P0, 2026-07-13): an unconverged
+    # run used to print here indistinguishably from a converged one and exit
+    # 0. A verification tool must not report numbers it cannot certify.
+    _gates = ('simple_A_converged', 'simple_B_converged',
+              'ltne_inner_converged', 'outer_converged', 'finite')
+    if not out.get('converged', False):
+        print(f"\n=== NOT CONVERGED (3D wall {dt:.0f}s) — "
+              "numbers below are NOT certified ===")
+        for g in _gates:
+            print(f"  {g:22s}: {'PASS' if out.get(g) else 'FAIL'}")
+        print(f"  Q_3D_W={out['Q_3D_W']:.1f}  dP_A={out['dP_A_Pa']:.0f}  "
+              f"dP_B={out['dP_B_Pa']:.0f}  (uncertified)")
+        return 3
     print(f"\n=== Results (3D wall {dt:.0f}s) ===")
+    print("  [conv] " + "  ".join(f"{g}=PASS" for g in _gates))
     print("  [path] core.evaluators.evaluate_3d @ convergence_mode='f2', "
           "local-ρ LTNE ρcp (ledger C10);")
     print("  [path] NOT the production run_stack_3d pipeline — fluid B frozen "

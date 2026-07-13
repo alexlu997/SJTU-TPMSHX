@@ -80,6 +80,8 @@ _log = get_logger(__name__)
 
 # Once-per-process flag for the resolved-BC log line (see evaluate_design).
 _BC_LOG_DONE = False
+# Once-per-process flag for the choked-design rejection warning (ledger O1).
+_CHOKE_LOG_DONE = False
 
 
 # ─── Default cfg (continuous-field flavour) ─────────────────────────
@@ -239,10 +241,12 @@ def _reseed_p_ref_from_actual_drag(s, mu, G, P_in, T_in, L_stream):
     ρ = P_abs/(RT) everywhere: the C8 mechanism surviving on the graded
     branch. Per-cell C averaged arithmetically (drag in SERIES along the
     stream). GUARDED on genuine non-uniformity so uniform designs never
-    recompute — bit-identical there (the kernels' use_eps pattern). Keeps
-    this file's 1e4 Pa floor convention (no choke guard here — ledger O1).
+    recompute — bit-identical there (the kernels' use_eps pattern). Raises
+    ChokedFlowError when the graded drag chokes (ledger O1, closed
+    2026-07-13); the 1e4 Pa floor stays for tiny-but-positive P_out².
     """
-    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
     K_act = (s._K_field2d if getattr(s, '_K_field2d', None) is not None
              else np.asarray(s._K_arr, dtype=np.float64))
     cF_act = (s._cF_field2d if getattr(s, '_cF_field2d', None) is not None
@@ -251,9 +255,13 @@ def _reseed_p_ref_from_actual_drag(s, mu, G, P_in, T_in, L_stream):
             and float(np.max(cF_act)) == float(np.min(cF_act))):
         return
     C_cells = mu * G / np.maximum(K_act, 1e-16) + cF_act * G * G
-    s.P_ref_abs = float(np.sqrt(max(
-        _p_out_sq(float(P_in), float(T_in), float(np.mean(C_cells)),
-                  float(L_stream)), 1.0e4)))
+    _Psq = _p_out_sq(float(P_in), float(T_in), float(np.mean(C_cells)),
+                     float(L_stream))
+    if _Psq <= 0.0:
+        raise ChokedFlowError(
+            f"graded drag chokes on the 1D D-F re-seed: P_out^2 = "
+            f"{_Psq:.3e} Pa^2 (P_in = {float(P_in):.0f} Pa)")
+    s.P_ref_abs = float(np.sqrt(max(_Psq, 1.0e4)))
 
 
 def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
@@ -295,15 +303,25 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     # _seed_p_ref`) and the 2D pipeline (`stages_2d`), using the SAME (K, cF)
     # the solver builds internally so the seed cannot drift from the drag.
     from df_surrogate.predict import predict_K_cF as _pred_KcF
-    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
     _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
                           float(fc.t_ctrl.mean()), 0.5 * eps_mean)
     _G = float(rho_A) * abs(u_A)
     _C = float(mu_A) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
-    # Note: no choke guard here — the 2D optimizer has never had one (ledger O1).
-    # Clip to the same 1e4 Pa floor the 3D seed uses rather than silently
-    # widening the envelope; adding the guard is a separate, tracked change.
-    P_ref_outA = float(np.sqrt(max(_p_out_sq(P_inA, T_inA, _C, L_dom), 1.0e4)))
+    # Choke guard (2026-07-13, ledger O1 closed): P_out² ≤ 0 means the 1D
+    # drag predicts Δp ≥ P_in — NO steady subsonic solution exists. This used
+    # to be silently floored to a 100 Pa outlet and solved anyway, wrapping a
+    # non-physical operating point into a finite "very bad but valid" design.
+    # Raise instead; evaluate_design catches it and returns the bounded
+    # dp_cap penalty WITHOUT solving. The 1e4 Pa floor stays for tiny-but-
+    # positive P_out² (near-choke rescue, same as the 3D `_seed_p_ref`).
+    _Psq_A = _p_out_sq(P_inA, T_inA, _C, L_dom)
+    if _Psq_A <= 0.0:
+        raise ChokedFlowError(
+            f"fluid A chokes on the 1D D-F seed: P_out^2 = {_Psq_A:.3e} Pa^2 "
+            f"(P_in = {P_inA:.0f} Pa, C = {_C:.3e}, L = {L_dom} m)")
+    P_ref_outA = float(np.sqrt(max(_Psq_A, 1.0e4)))
 
     s = SIMPLESolver(
         H_dom, L_dom, Ny_real, Nx_real,
@@ -364,12 +382,19 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     # for the full rationale. Fluid B is also AIR here (compressible), and its
     # streamwise length is H_dom (it flows along -y), not L_dom.
     from df_surrogate.predict import predict_K_cF as _pred_KcF
-    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
     _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
                           float(fc.t_ctrl.mean()), 0.5 * eps_mean)
     _G = float(rho_B) * abs(u_B)
     _C = float(mu_B) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
-    P_ref_outB = float(np.sqrt(max(_p_out_sq(P_inB, T_inB, _C, H_dom), 1.0e4)))
+    # Choke guard — see _build_simple_A (ledger O1 closed 2026-07-13).
+    _Psq_B = _p_out_sq(P_inB, T_inB, _C, H_dom)
+    if _Psq_B <= 0.0:
+        raise ChokedFlowError(
+            f"fluid B chokes on the 1D D-F seed: P_out^2 = {_Psq_B:.3e} Pa^2 "
+            f"(P_in = {P_inB:.0f} Pa, C = {_C:.3e}, L = {H_dom} m)")
+    P_ref_outB = float(np.sqrt(max(_Psq_B, 1.0e4)))
 
     s = SIMPLESolver(
         L_dom, H_dom, Nx_real, Ny_real,
@@ -567,8 +592,28 @@ def evaluate_design(x: np.ndarray,
     )
 
     # 3. SIMPLE for both fluids (cold-start; design-specific so cache is moot)
-    sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
-    sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
+    # Choke guard (ledger O1, closed 2026-07-13): a design whose 1D drag
+    # predicts Δp ≥ P_in has NO steady subsonic solution — do not solve it.
+    # Return the SAME bounded dp_cap penalty the blowup guard below uses
+    # (deliberate: keeps the GP input distribution bounded, :505-507), with
+    # the REAL geometry mass so the mass objective stays honest.
+    from solvers.envelope import ChokedFlowError as _Choked
+    try:
+        sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
+        sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
+    except _Choked as _ce:
+        global _CHOKE_LOG_DONE
+        if not _CHOKE_LOG_DONE:
+            _CHOKE_LOG_DONE = True
+            _log.warning(
+                "[evaluator2d] choked design rejected pre-solve (%s) -- "
+                "returning the bounded dp_cap penalty; further chokes this "
+                "process are silent.", _ce)
+        _dp_cap = float(cfg_full.get('dp_cap_pa', 1.0e6))
+        _cell_area = dx_arr[:, None] * dy_arr[None, :]
+        _mass = float(np.sum((1.0 - arrays['eps_arr'])
+                             * cfg_full['rho_s'] * _cell_area))
+        return -1e-6, _dp_cap, _mass
 
     sA_converged, _sA_iters = sA.solve(max_iter=cfg_full['max_iter_simple'],
                                         tol=cfg_full['tol_simple'],

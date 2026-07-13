@@ -183,6 +183,7 @@
       - `R_mom` — `_mom_res_jit_3d`：`R = aP0·φ − (Σaₙᵦ·φₙᵦ + p_src [+SOU])`，在**修正后 + 密度更新后 + Anderson 之后**求值。**balanced 分母 `D=Σ½(|lhs|+|rhs|)`** —— 由三角不等式 `num ≤ 2D`，故 `num>0 ⟹ D>0`，**假零结构性不可能**，`R∈[0,2]` 有界。另有共同 floor `max(D_c, 1e-3·max_c D_c)`。默认 `mom_tol=1e-4`。
       - `R_mass_local` — `_mass_res_solved_jit_3d`：**只统计 pp 真正求解的格**（按 `cell_kind==0` 选，**不是按行号** —— partial/taper 出口只 pin 部分格），用**更新后的 ρ**，逐格归一化 `|net|/Σ|face|`（**不是** `max|net|/ṁ_in` —— 后者随网格加密自动变小，固定 tol 会悄悄变松）。默认 `1e-6`。
       - `R_mass_global` — `_mass_global_jit_3d`：`|ṁ_out−ṁ_in|/ṁ_in`，**另报 `outlet_backflow_frac`**（全局是有符号标量，正负出口通量可互相抵消、掩盖回流）。默认 `1e-6`。
+      - **【第四门，2026-07-13 增】`outlet_backflow_frac ≤ f2_backflow_max`**（默认 0.01）：codex 复核指出"只报不判"留了盲区——正负出口通量抵消时全局门可过、出口再循环解仍判收敛。全部实测基线 backflow=0 → 默认惰性、golden 位同；两维同接（2D 同款）。
     - **`F2Monitor`（`_solve_common.py`）**：velocity 静止**只触发检查、不终止**；动量残差每 `f2_mom_every`(=5) 步算一次（**只读，不改数值轨迹**，最坏晚退出 4 步）；`'stall'` 只在**动量残差**在窗口内不再下降且场近静止时才报（不再是伪迹平台的假告警）。**`LowReExit` 未被修改**（2D/3D 共用、位同契约）。
     - **F2 与 Anderson 不兼容，直接 raise**（Anderson 的接受门仍用 C6 已证伪的质量伪迹，且回滚不精确恢复 `rho_field`/`v_inlet_field`）。
     - **实测定价**（复现：`validation/cases/price_f2_convergence_3d.py` → `reports/f2_pricing_3d.csv`；上海全 16 例 @20×10×3，wall 剔除首例 JIT 预热）：`legacy` 92 步 / 0.217 s / exit=**velocity** / RMSRE dP **4.93%**；`f2@1e-3` 206 步 / 0.377 s（**1.74×**）/ exit=**tol** / **4.87%**；`f2@1e-4` 234 步 / 0.440 s（**2.03×**）/ exit=**tol** / **4.88%**；`f2@1e-5` 298 步 / 0.557 s（**2.57×**）/ **4.88%**。Q 的 RMSRE 全部 2.12%，不动。**注意 2.5× 的迭代只换来 2.0× 的 wall —— 按 wall time 判优，不要按迭代数。**

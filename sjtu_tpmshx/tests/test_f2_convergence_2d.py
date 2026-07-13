@@ -220,6 +220,16 @@ def test_each_gate_can_hold_the_exit_open():
         assert conv is False, f"{gate} did not hold the exit open"
         assert s.exit_reason in ('max_iter', 'stall')
 
+    # Fourth gate (2026-07-13): outlet backflow. backflow_frac >= 0 always,
+    # so -1.0 is strictly unreachable — mirrors the 0.0 tolerances above.
+    # (The default 0.01 is inert on every measured baseline: backflow == 0.)
+    cfg = dict(base)
+    cfg['f2_backflow_max'] = -1.0
+    s = _make(**cfg)
+    conv, n = s.solve(max_iter=300, verbose=False)
+    assert conv is False, "f2_backflow_max did not hold the exit open"
+    assert s.exit_reason in ('max_iter', 'stall')
+
 
 def test_f2_rejects_simpler_coupling():
     """SIMPLER solves the pressure directly — a different fixed point. The

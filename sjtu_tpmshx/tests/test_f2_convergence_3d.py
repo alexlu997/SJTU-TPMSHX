@@ -133,6 +133,18 @@ def test_each_gate_can_hold_the_exit_open():
         assert s.exit_reason in ('max_iter', 'stall'), \
             f"{gate}: unexpected exit {s.exit_reason!r}"
 
+    # Fourth gate (2026-07-13): outlet backflow. backflow_frac >= 0 always,
+    # so a threshold of -1.0 is strictly unreachable — same pattern as the
+    # 0.0 tolerances above. (The default 0.01 is inert on every measured
+    # baseline: backflow is exactly 0 there.)
+    cfg = dict(base)
+    cfg['f2_backflow_max'] = -1.0
+    s = _make_solver(**cfg)
+    conv, n = s.solve(max_iter=400)
+    assert conv is False, "f2_backflow_max did not hold the exit open"
+    assert s.exit_reason in ('max_iter', 'stall'), \
+        f"f2_backflow_max: unexpected exit {s.exit_reason!r}"
+
     # And each gate is load-bearing in the ordinary regime too: tightening it
     # (without making it impossible) must delay the exit, not be ignored.
     for gate, tight in (('mom_tol', 1e-9),

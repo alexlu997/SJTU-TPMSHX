@@ -150,7 +150,7 @@
 4. **空间变 ε 的 interstitial 形式偏差**（B5）：对流与 Laplacian 算子在非均匀 ε_f 下偏离均质化 BFNS 推导，扩展 zoned-TPMS 前须复核（`sjtu_tpmshx/solvers/simple_solver.py:34-38`）。
 5. **SIMPLER 实验性**：partial-BC 配置未基准（`sjtu_tpmshx/solvers/simple_solver.py:716-718`）。
 6. **`_enforce_mass_conservation` 属事后重标，且它【在退出决定之后】才跑**（`sjtu_tpmshx/solvers/simple_solver.py:958`）。其 docstring 建议 "|scale−1| > 1e-3 → 收紧 tol 而非依赖重标"（`:973-976`），**但这条建议本身不成立**（codex 审计 2026-07-12）：调用顺序是 `:897` 先判 `res < tol` → `:900` 才调重标；LowRe 退出 `:907` → `:914` 才调；max_iter `:922` → `:926` 才调。**循环里根本不跑**，所以"收紧 tol"既不能让重标提前介入，重标也从来没帮任何一次 tol 触发过。它唯一的作用是**改写返回给调用方的出口速度**。
-7. **`final_res` 与返回的场对不上**（同上审计）：`:900` 重标改了 `self.v[i, Ny]`，但 `:902` 的 `self.final_res = res` 报的是**重标之前**算出的残差。低危（重标在全断面出口上 `scale≈1`），但它是个真实的状态不一致，别拿 `final_res` 当返回场的证书。
+7. **`final_res` 与返回的场对不上**（同上审计）：重标改了 `self.v[i, Ny]`，但 `final_res = res` 报的是**重标之前**算出的残差。低危（重标在全断面出口上 `scale≈1`），但它是个真实的状态不一致，别拿 legacy 的 `final_res` 当返回场的证书。**【2026-07-13 F2 侧已修（证书同步，codex P1）】**：F2 退出路径现于 `_enforce_mass_conservation` **之后**用同套核重算三残差 + backflow 回填 `final_res_*`（只读重算、场与迭代计数不变、golden 位同），超门时记 `f2_cert_post_rescale_ok=False` + 告警（不翻转 converged）。另：重标求和自 2026-07-13 起按 **ε·ρ·v** 口径（zoned 下原 ρ·v 口径会反向破坏刚认证的 VANS 守恒；非均匀才启用，均匀位同——C11-①）。legacy 路径的 `final_res` 不一致维持原状（legacy 本身已非证书）。
 8. **【① 已知错，已修】2D 的 `tol` 是【纯恒等式】，求解在第 20 步就停 —— F2 已接管（台账 C9）**
    - **机制**：`_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`。pp 求解让**逐格散度精确为零** ⇒ 截面通量**逐层望远镜** ⇒ `Q_j = Q_in` 对**所有** j 成立（出口面由 ε·ρ·v 守恒外推给出，也相等）⇒ **全断面出口下残差恒等于零**（实测 **1.6e-15**）。3D 至少还有出口 pin 行的横向散度这个"真信号"（虽是伪的）；**2D 字面上零信息**。
    - **后果**：`tol` 在 `it >= 20` 这个**最小迭代数**门槛上触发，**求解器在第 20 步就停**（3D 是 92 步）。实测代价：**dP_A 欠收敛 −3.3%**（随速度非单调，峰值在 u≈5~10 m/s）。参考解硬：500 步到不动点，之后到 20000 步一分不差。
