@@ -1244,7 +1244,10 @@ def _run_solvers(window, cfg, fields):
         _vA, _rA = gate_solution(
             float((simpA.P_ref_abs + simpA.P).min()), float(_vmagA.max()),
             float(T_inA), mode=_env_mode, dims='2D-A',
-            ma_max=mach_field_max(_vmagA, Ta))
+            # RAW T (2026-07-13 audit): Ta/Tb are display-smoothed rebinds by
+            # this point on partial-BC runs — a physics gate must not read a
+            # cosmetic filter. Q below already uses the raw fields.
+            ma_max=mach_field_max(_vmagA, Ta_raw))
         _env_valid = _env_valid and _vA
         _env_reasons += [f"[A] {r}" for r in _rA]
     if simpB is not None and getattr(simpB, 'fluid_type', None) == 'ideal_gas':
@@ -1253,7 +1256,7 @@ def _run_solvers(window, cfg, fields):
         _vB, _rB = gate_solution(
             float((simpB.P_ref_abs + simpB.P).min()), float(_vmagB.max()),
             float(T_inB), mode=_env_mode, dims='2D-B',
-            ma_max=mach_field_max(_vmagB, Tb))
+            ma_max=mach_field_max(_vmagB, Tb_raw))
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
 

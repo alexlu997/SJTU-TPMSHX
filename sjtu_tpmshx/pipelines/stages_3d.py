@@ -207,7 +207,7 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         max_outer_ltne=compute_cfg.solver.max_outer_ltne,
         outer_tol_K=compute_cfg.solver.outer_tol_K,
         # F2 convergence gates (ledger C6/C7). None -> _apply_accel_flags'
-        # defaults ('legacy' unless TPMSHX_CONV_MODE says otherwise).
+        # resolution: env TPMSHX_CONV_MODE > cfg > default 'f2'.
         **{k: v for k, v in (
             ('convergence_mode', compute_cfg.solver.convergence_mode),
             ('mom_tol', compute_cfg.solver.mom_tol),

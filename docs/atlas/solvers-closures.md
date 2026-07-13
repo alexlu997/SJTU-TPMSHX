@@ -157,7 +157,7 @@
 - **Re/Nu 约定**：`Re = ρ·u·D_h/μ`（D_h 基、单通道 interstitial u）、`Nu = h·D_h/k_f`（`tpms_calc.py:18-36` 模块 docstring；实装 :294、:328）。训练 Excel 的 ×2 只用于单通道→总质量流换算，不进 Re 定义（:25-29）。
 - **ε 拆分约定**：双连通 sheet HX 两股流均分 void，`ε_A = ε_B = ε/2`（`tpms_geometry.py:217-222`）；`D_h = 4·ε_A/A_0`（:224-229）。`A_0` 为**单侧**比表面积（`tpms_calc.py:247-250` 返回值注释），h_v = A_0×H_sf 不双计。
 - **K_ff（2D 集总路径）用 FULL ε**：`K_ff = eps·k_f`（`tpms_calc.py:350`），而 D-F 闭合 `predict_K_cF` 喂 ε/2（:334-335）——两者刻意不同，移植时不得"统一"。
-- **可压缩包络**：稳态低 Mach 求解器仅在 Forchheimer ΔP < 入口绝对压力时有效；出包络时不存在稳态解，必须改工况而非放宽守卫（`envelope.py:1-24` 模块 docstring + 顶层 CLAUDE.md 硬不变量）。「2D inlet-anchored / 3D outlet-anchored」的差异属管线模块，本文档未核实。
+- **可压缩包络**：稳态低 Mach 求解器仅在 Forchheimer ΔP < 入口绝对压力时有效；出包络时不存在稳态解，必须改工况而非放宽守卫（`envelope.py:1-24` 模块 docstring + 顶层 CLAUDE.md 硬不变量）。【2026-07-13 更新】「2D inlet-anchored / 3D outlet-anchored」的旧说法已被证明是 **2D 生产 bug 的症状描述**（台账 C8，2026-07-12 修复）：两维的契约相同——`P_ref_abs` = 出口绝对压，一维可压缩闭式播种；该"差异"不存在。
 - **粗糙度不双计**：DF 闭合的 cF 训练自真实 SLM 实验 ΔP，已隐含 Sa 摩擦贡献；f 侧任何额外乘子都是双重计数（`roughness.py:9-37` 推导链）。×1.28 仅在 air Nu 侧；water（`nu_water_topo` smooth-CFD 拟合 + Yan[6] 内嵌粗糙度）与 sCO2（D-7-6 实验内嵌）都不得再乘（`fluid_props.py:80,:96,:106,:116` `embeds_roughness` 标志；`roughness.py:69-70`）。
 - **sCO2 适用范围**：Phase A = far-from-critical（Pr≈0.8）、incompressible ρ(T,P_in)（`fluid_props.py:108-110`）；Nu 仅 Diamond、Re∈[9e3, 4.1e4]（`nu_correlations.py:204-212`）；近伪临界线（cp 尖峰）明确不适用（:207-208）。
 - **water dP 为工程占位**：D-F surrogate 仅用 air 数据训练，water 侧 K/cF 无物理标定；water 的 Q 严谨（`nu_water_topo`）、dP 仅工程估计（`tpms_calc.py:99-105,:135-139` 注释；代码层面 `predict_K_cF` 调用确实不区分 water，:334-335）。

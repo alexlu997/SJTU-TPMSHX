@@ -46,9 +46,9 @@
 
 ## 公开接口
 
-- `validate_shanghai_3d_real.main()` — CLI 入口，`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:534`。关键参数：`--runner {kernel,pipeline}`（默认 `kernel`）、`--nx/--ny/--nz`（默认 20/10/3）、`--gate-dp`（默认 12.0）、`--gate-q`（默认 6.0）、`--no-gate`。返回 `1`（gate fail）或 `0`，`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:660-664`。
-- `_run_one_case(ci, df, Nx_u, Ny_u, Nz_u, ...)` — kernel-direct 门禁跑法主体（水侧冻结 `Tb_prescribed`），`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:168`。调用方：`main()` 的 `--runner kernel` 分支（默认）与 `tests/test_shanghai_regression.py::test_shanghai_3d_baseline`（经子进程调用整个模块）。
-- `_run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, ...)` — 生产路径跑法（`ComputeConfig` → `Pipeline3D`，水侧真实求解），`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:461`。仅 `--runner pipeline` 使用，**不是** gate runner，输出 CSV 自动加 `_pipeline` 后缀避免覆盖门禁基线（`validate_shanghai_3d_real.py:652`）。
+- `validate_shanghai_3d_real.main()` — CLI 入口。关键参数：`--runner {kernel,pipeline}`（**默认 `pipeline`，2026-07-12 起** —— 本卷旧文曾记"默认 kernel"，已过期）、`--nx/--ny/--nz`（默认 20/10/3）、`--gate-dp`（默认 12.0）、`--gate-q`（默认 6.0）、`--no-gate`。返回 `1`（gate fail）或 `0`。
+- `_run_one_case(ci, df, Nx_u, Ny_u, Nz_u, ...)` — kernel-direct 跑法主体（水侧冻结 `Tb_prescribed`）。**2026-07-12 起不再是门禁 runner**，经 `--runner kernel` 保留以复现冻结水侧时代数字（5.28/3.21）。
+- `_run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, ...)` — 生产路径跑法（`ComputeConfig` → `Pipeline3D`，水侧真实求解）。**2026-07-12 起是 gate runner（默认）**，门禁值 4.88/2.12（F2 默认下）。CSV 后缀逻辑随之反转：现在 **kernel** 侧输出加 `_kernel` 后缀，pipeline 输出写 canonical 名。
 - `shanghai_spec() -> SpecimenSpec` / `d76_spec() -> SpecimenSpec` — 规格工厂，`sjtu_tpmshx/validation/harness/_case_sets.py:27,48`。调用方：`validate_shanghai_3d_real.py`（顶层 `SPEC = shanghai_spec()`）、`validate_shanghai_aligned.py`（经 `ComputeConfig` 间接引用相同基线）。
 - `SpecimenSpec`（frozen dataclass）— `sjtu_tpmshx/validation/harness/_harness.py:22`；`__post_init__`（`_harness.py:45`）用 `solvers.tpms_calc.geometry` 派生 `eps/eps_A/D_h/r_h/A_0`，callers 永不自行重算这些派生量。
 - `load_cases_df(xlsx_path) -> pd.DataFrame` — 统一 Excel 工况表加载（`sheet_name='Sheet1', header=None, skiprows=2`，纯位置 `iloc` 访问），`sjtu_tpmshx/validation/harness/_harness.py:55`。调用方：所有 Shanghai/D76 case 脚本。
@@ -63,23 +63,23 @@
 
 ## 关键配置项与开关
 
-- `--runner {kernel,pipeline}`，默认 `kernel` — `validate_shanghai_3d_real.py:537-541`。`kernel` 是唯一的 gate runner；`pipeline` 跑生产 `Pipeline3D` 双求解路径，仅供交叉核对，**不参与门禁数值**。
-- `--gate-dp` 默认 `12.0`，`--gate-q` 默认 `6.0` — `validate_shanghai_3d_real.py:564,566`。阈值刻意宽松（当前 Nz=3 门禁实测 RMSRE_dP≈5.28% / RMSRE_Q≈3.21%），只拦截"数量级级别"的代理后端回归，不拦截调参噪声（注释见 `validate_shanghai_3d_real.py:557-563`）。
+- `--runner {kernel,pipeline}`，**默认 `pipeline`（2026-07-12 起）** — gate runner = 生产 `Pipeline3D` 双求解路径（水侧真解、F2 收敛默认）；`kernel` 保留复现冻结水侧时代数字。本卷旧文（"默认 kernel、pipeline 不参与门禁数值"）随 gate 切换作废。
+- `--gate-dp` 默认 `12.0`，`--gate-q` 默认 `6.0`。阈值刻意宽松（当前 Nz=3 门禁实测 RMSRE_dP≈4.88% / RMSRE_Q≈2.12%，F2 默认；kernel 时代为 5.28/3.21），只拦截"数量级级别"的代理后端回归，不拦截调参噪声。
 - `--nx/--ny/--nz` 默认 `20/10/3` — `validate_shanghai_3d_real.py:546-548`；Nz=3 是速度优化的门禁网格（非网格收敛网格），网格收敛研究见 `_CSV_STATUS.md` 的 A1 行（Nz 更大时 dP 误差会上升到 ≈10%）。
 - `--max-outer` 默认 `MAX_OUTER=4` — `validate_shanghai_3d_real.py:72,555`；SIMPLE↔LTNE 外层耦合迭代数，比 2D 版本（`validate_shanghai_aligned.py:52` `_MAX_COUPLING=10`，非 8）少（3D 求解更慢）。`OUTER_TOL=0.5`（K）、`ALPHA_T=0.6` 同一处定义（`:73-74`）。
-- `pytest` 侧门禁：`tests/test_shanghai_regression.py::test_shanghai_3d_baseline` 通过子进程调用 `validate_shanghai_3d_real`（`--suffix _pytest_h3`），断言 `BASELINE_DP=5.28`（容差 ±5%）、`BASELINE_Q=3.21`（容差 ±10%），`tests/test_shanghai_regression.py:181-190`。该测试默认跳过，需 `TPMSHX_RUN_SHANGHAI_REGRESSION=1` 才运行（`tests/test_shanghai_regression.py:44-51`）。
+- `pytest` 侧门禁：`tests/test_shanghai_regression.py::test_shanghai_3d_baseline` 通过子进程调用 `validate_shanghai_3d_real`（`--suffix _pytest_h3`），断言 `BASELINE_DP=4.88`（容差 ±5%）、`BASELINE_Q=2.12`（容差 ±10%）——2026-07-13 随 F2 默认重基线（切换史：5.28/3.21 冻结水侧 → 4.93/2.12 管线化 → 4.88/2.12 F2）。该测试默认跳过，需 `TPMSHX_RUN_SHANGHAI_REGRESSION=1` 才运行。
 - `TPMSHX_DF_METHOD=rbf` — 环境变量，切换 D-F 代理后端为 rbf 参考路径（默认 `gamma_df`）；`_CSV_STATUS.md` 记录 rbf 参考值 Nz=3 dP 7.19%/Q 3.22%，Nz=10 dP 8.69%/Q 3.33%（未在本模块代码内定义该环境变量的读取点，读取逻辑在 `df_surrogate/` 内，未验证具体 file:line）。
 - `--disp-c` 默认 `0.0` — B4 热弥散系数敏感性旋钮，`K_ff += C·ρ·cp·|u|·D_h`，`validate_shanghai_3d_real.py:217-223,543-545`；`0.0` = 生产行为（研究台账结论：C_DISP=0 是正确值，见用户 memory，未在本次代码审阅中复核）。
 - `--profile {uniform,parabolic,edge}` + `--eta` — 入口速度剖面形状敏感性分析旋钮，`validate_shanghai_3d_real.py:132-165,551-554`；默认 `uniform, eta=0.0`（生产行为）。
 - `envelope_mode` — **不在本文件内定义**（`solvers/envelope.py`），但 `_run_one_case` 的 `pressure_state_valid` 字段（`validate_shanghai_3d_real.py:455-457`）依赖该守护是否触发过 P_abs clip；RMSRE 统计口径显式排除 `pressure_state_valid=False` 的工况（`:609-625`），并把排除列表打印出来（不静默丢弃）。
 - `resolve_mode_from_env()`（来自 `solvers/roughness.py`）— 粗糙度修正模式（baseline / norris_1a / bhatti_shah_1b），`validate_shanghai_3d_real.py:235`、`validate_shanghai_aligned.py:41`；默认 `baseline`（未在本次审阅中确认默认值来源 file:line，标记未验证）。
-- `TPMSHX_SIMPLE_TOL` — 环境变量，`phase_c_gci.py` 的 C.3 tol 敏感性扫描通过 `_patched_env` 临时覆写（`phase_c_gci.py:166-175`），扫描值 `{1e-3, 1e-5, 1e-7}`，门禁 `range/|Q_finest| < 1%`（`phase_c_gci.py:238-240`）。
+- `TPMSHX_SIMPLE_TOL` — 环境变量，`phase_c_gci.py` 的 C.3 tol 敏感性扫描通过 `_patched_env` 临时覆写，扫描值 `{1e-3, 1e-5, 1e-7}`，门禁 `range/|Q_finest| < 1%`。**2026-07-13 起该扫描显式钉 `convergence_mode='legacy'`**（env + cfg 双保险）：f2 默认下 `tol_simple` 不参与退出判定，三档会逐位相同、"饱和"变空洞通过；f2 侧的对应证据是 `reports/f2_pricing_3d.csv` 的 `mom_tol` 分档。
 
 ## 边界·假设·适用范围
 
 - **单位**：几何 `L_cell_mm`/`t_wall_mm` 为 mm，其余（域尺寸 `L_dom_m` 等）为 SI（m/K/Pa）——与仓库总约定一致。
 - **实验工况表列约定（硬编码位置）**：`validate_shanghai_3d_real.py` 用纯位置 `df.iloc[ci, N]` 读取 Excel 列（如 `m_air=col5`, `T_Ain_C=col28`, `P_Ain_g=col30`, `P_Aout_g=col31`, `Q_exp=col33`, `T_Bin_C=col24`, `T_Bout_C=col25`, `m_water=col7`），`validate_shanghai_3d_real.py:190-208`。**这些列号没有名字，Excel 表结构一旦改动（插列/换 sheet）会静默读错数据而不报错**——移植时必须先核对目标 Excel 是否列结构一致。
-- **水侧在门禁跑法中被冻结**：`_run_one_case`（kernel runner）不解水侧 SIMPLE，只用 `Tb_prescribed` 沿流向线性插值（`validate_shanghai_3d_real.py:314-317`）；真实水侧双解仅在 `--runner pipeline`（非门禁）路径。
+- **水侧冻结只存在于 kernel 跑法**：`_run_one_case`（`--runner kernel`，**非门禁**）不解水侧 SIMPLE，只用 `Tb_prescribed` 沿流向线性插值；**门禁（默认 pipeline）水侧真实求解**——2026-07-12 起本条与旧文相反。
 - **RMSRE 统计口径排除"压力无效"工况**：`pressure_state_valid` 要求全场 `1e3 Pa ≤ P_abs ≤ 10e6 Pa`（`validate_shanghai_3d_real.py:455-457`）；若全部工况都被判无效，代码会退回全量统计但打印不可信标记（`:619-625`）。
 - **Re>600 过滤逻辑存在但未在当前代码路径实际生效**：注释提到"2D 惯例"的 Re 过滤（`validate_shanghai_3d_real.py:616`），但 `u_arr` 计算之后未见到实际按 Re 过滤 case 的代码——**未验证/存疑**，需要在具体 diff 中确认是否只是历史注释残留。
 - **`audit_partial_b_ltne.py` 是归档快照**：脚本头部明确写"ARCHIVAL... not for routine CI runs"（`audit_partial_b_ltne.py:3-7`），诊断的问题已于 2026-05-14（closure 默认改 'none'）及 commit `02f091c`（ε 双重减半修复）解决，保留仅供历史参考，不应作为当前行为的证据来源。

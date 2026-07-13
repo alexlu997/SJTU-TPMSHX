@@ -590,6 +590,14 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             eps_sol = _to_simple_coords(eps_real)
             if eps_sol.shape == s.eps_field.shape:
                 s.eps_field = np.ascontiguousarray(eps_sol, dtype=np.float64)
+                # 2026-07-13 audit: refresh the Brinkman μ/ε to the zoned ε.
+                # `_mu_eff_field` is built from the SCALAR ε at construction
+                # and its only refresh path (`update_T_field`) fires on the
+                # first outer T-update, ideal_gas only — so without this the
+                # air side's first solve and the water side's WHOLE solve run
+                # Brinkman on the uniform ε while continuity runs the zoned ε.
+                s._mu_eff_field = np.ascontiguousarray(
+                    s.mu_field / s.eps_field, dtype=np.float64)
         # ── Design-specific K/c_F override (2026-04-17) ──
         # zone_config path above already populates per-row K/c_F via
         # predict_K_cF_vec inside SIMPLE.__init__. But zone_arrays path and
@@ -606,6 +614,28 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             elif za.get('grid_cells'):
                 override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
                                      za['grid_cells'], None, None, fluid)
+        # ── Re-seed P_ref_abs from the solver's ACTUAL drag (2026-07-13) ────
+        # The seed above used the uniform-geometry (K0, cF0); the zone_config /
+        # zone_arrays paths then swap in per-row graded K/cF (constructor or
+        # override_simple_K_cF). P_ref_abs is the PHYSICAL outlet absolute
+        # pressure (ledger C8) — leaving the uniform seed on a graded design
+        # anchors the outlet at the wrong pressure by (Δp_graded − Δp_uniform),
+        # which feeds ρ = P_abs/(RT) everywhere: the C8 mechanism surviving on
+        # the zoned branch. Per-row C averaged arithmetically (rows are drag in
+        # SERIES along the stream). Guarded on genuine non-uniformity so the
+        # uniform path never recomputes — bit-identical there (same reasoning
+        # as the kernels' use_eps guard).
+        if fluid_type == 'ideal_gas':
+            _K_rows = np.asarray(s._K_arr, dtype=np.float64)
+            _cF_rows = np.asarray(s._cF_arr, dtype=np.float64)
+            if (float(_K_rows.max()) != float(_K_rows.min())
+                    or float(_cF_rows.max()) != float(_cF_rows.min())):
+                _C_rows = (_mu_in * _G / np.maximum(_K_rows, 1e-16)
+                           + _cF_rows * _G * _G)
+                _P_out_sq_g = predict_outlet_p_sq(
+                    float(P_in_abs), float(T_in_f),
+                    float(np.mean(_C_rows)), L_stream)
+                s.P_ref_abs = float(np.sqrt(max(_P_out_sq_g, 1.0e4)))
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         # R3 (2026-07-07): production solver knobs, precedence
         # env > SolverConfig > dim-specific auto. The autos are the
@@ -671,9 +701,20 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         conv, n_it = s.solve(max_iter=_max_it, tol=_tol, verbose=False,
                                progress_cb=_progress_cb)
         if not conv:
-            simple_warnings[label] = (
-                f"SIMPLE ({label}): not converged after {n_it} iters "
-                f"(res={s.residuals[-1]:.2e})")
+            # Under f2 the legacy `residuals[-1]` is the C9 tautology (~1e-15
+            # on a full-face outlet) — quoting it makes a FAILED solve look
+            # converged. Report the gates that actually held the exit open.
+            if str(getattr(s, 'convergence_mode', 'legacy')) == 'f2':
+                simple_warnings[label] = (
+                    f"SIMPLE ({label}): not converged after {n_it} iters "
+                    f"(exit={getattr(s, 'exit_reason', '?')}, "
+                    f"mom={getattr(s, 'final_res_mom', None)}, "
+                    f"mass_local={getattr(s, 'final_res_mass_local', None)}, "
+                    f"mass_global={getattr(s, 'final_res_mass_global', None)})")
+            else:
+                simple_warnings[label] = (
+                    f"SIMPLE ({label}): not converged after {n_it} iters "
+                    f"(res={s.residuals[-1]:.2e})")
         else:
             # A converged re-solve SUPERSEDES an earlier failure on the same
             # side (2026-07-12). This dict is keyed by label and was only ever
@@ -792,22 +833,37 @@ def _finalize_cfg(raw: dict[str, Any],
         # solvers.fluid_props module this function now dispatches through.
         from solvers import fluid_props as _fluids
         # Same convention as ``_enthalpy_balance_2d`` outlet plane.
+        import numpy as _np
+        # Zoned-ε outlet weighting (2026-07-13 audit): the physical mass flux
+        # through an outlet cell is ε·ρ·|u|·dA. A missing ε cancels when ε is
+        # uniform along the outlet plane (every run without zoned ε — weights
+        # unchanged, bit-identical) but mis-weights T_out on zoned designs,
+        # inconsistent with the N1-fixed Q weighting. The FULL ε is enough:
+        # the per-side asym split ratio s is a scalar and cancels in the
+        # weighted average.
+        _za_f = fields.get('za')
+        _eps2d = None
+        if _za_f is not None and _za_f.get('eps_arr') is not None:
+            _e = _np.asarray(_za_f['eps_arr'], dtype=_np.float64)
+            if _e.shape == _np.asarray(T_field).shape:
+                _eps2d = _e
         if dir_code in (0, 1):
             j_out = -1 if dir_code == 0 else 0
             u_face = uc_field[j_out, :]
             T_face = T_field[j_out, :]
+            eps_face = _eps2d[j_out, :] if _eps2d is not None else 1.0
             dA = raw['energy_dy']
         else:
             i_out = -1 if dir_code == 2 else 0
             u_face = vc_field[:, i_out]
             T_face = T_field[:, i_out]
+            eps_face = _eps2d[:, i_out] if _eps2d is not None else 1.0
             dA = raw['energy_dx']
-        # ρ·cp weighting — registry primitives (water rho ignores P).
+        # ε·ρ·cp weighting — registry primitives (water rho ignores P).
         _m = _fluids.get(fluid_type)
         rho = _m.rho(T_face, P_in_Pa)
         cp = _m.cp(T_face, P_in_Pa)
-        import numpy as _np
-        w = _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
+        w = eps_face * _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
         wsum = float(_np.sum(w))
         if wsum < 1e-30:
             return float(_np.mean(T_face))

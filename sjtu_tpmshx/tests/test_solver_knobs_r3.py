@@ -106,9 +106,10 @@ def test_2d_max_outer_knob_turns():
     """Capping the SIMPLE↔LTNE coupling at 1 round must change the
     converged temperature field (this case needs 3+ rounds to settle),
     while identical settings reproduce bit-identically (determinism
-    control — the difference is the KNOB, not noise). tol_simple
-    effectiveness is proven on the 3D side (this tiny 2D case bottoms
-    out at machine-precision residual regardless of tol)."""
+    control — the difference is the KNOB, not noise). tol_simple gates
+    the exit only under convergence_mode='legacy' (ledger C6/C9 — under
+    the f2 pipeline default it drives nothing but the AMG scheduler), so
+    its effectiveness is not asserted here."""
     from controllers.compute_pipeline import Pipeline2D
     Ta_def = Pipeline2D(_small_2d_cfg()).run().fields['Ta']
     Ta_capped = Pipeline2D(_small_2d_cfg(max_outer_ltne=1)).run().fields['Ta']
@@ -122,8 +123,9 @@ def test_2d_max_outer_knob_turns():
 
 @pytest.mark.slow
 def test_3d_knobs_turn():
-    """max_outer_ltne must cap the 3D outer loop; tol_simple must loosen
-    the SIMPLE exit."""
+    """max_outer_ltne must cap the 3D outer loop. (tol_simple is also passed
+    but its exit-gating is legacy-only — ledger C6/C7; under the f2 pipeline
+    default it only retunes the AMG scheduler, so no assertion hangs on it.)"""
     from pipelines.stages_3d import _run_3d_stack
     from tests.test_partial_bc_ghost_b import _partial_bc_air_air_cfg
     base = _partial_bc_air_air_cfg(Nx=8, Ny=6, Nz=6)

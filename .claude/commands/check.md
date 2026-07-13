@@ -24,7 +24,7 @@ Serial equivalent (git-bash):
 cd /d/Postgraduate/Homogenize/SJTU-TPMSHX && PYTHONHASHSEED=0 python -u -m pytest sjtu_tpmshx/tests/ -q
 ```
 
-- Expected: all pass (≈1037 passed, a few skipped). Report the exact **passed / failed / skipped** counts.
+- Expected: all pass (≈1245+ passed, a few skipped — count grows with the suite; anything FAILED is the signal, not the total). Report the exact **passed / failed / skipped** counts.
 - If anything FAILS: list the failing test ids + the assertion line. Diagnose — do not hand back a green verdict on a red suite.
 
 ## 2. Golden bit-identical gate (only when `golden` arg is passed, around a specific change)

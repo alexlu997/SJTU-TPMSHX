@@ -63,8 +63,9 @@
 > **measured** water outlet temperature (`Tb_prescribed`). It now runs the production
 > `Pipeline3D` stack — the same code the GUI, the optimizer and the server batches drive —
 > with a real SIMPLE-B water solve. At the gate grid (20×10×3) that moves
-> **Δp 5.28 % → 4.88 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D lumped
-> baseline of 2.51 %). The old runner was partly *fed* the answer: the measured outlet
+> **Δp 5.28 % → 4.88 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D aligned
+> kernel gate's Q RMSRE of 2.51 % — the ε-NTU *lumped* baseline is a different number,
+> 1.71 %). The old runner was partly *fed* the answer: the measured outlet
 > temperature already encodes the true duty via the water enthalpy balance, and Q is
 > `Σ h_vB·(Ts − Tb)·dV`, so Tb sets the driving force. The new gate predicts it from
 > scratch and is still more accurate. Legacy numbers reproduce with `--runner kernel`;

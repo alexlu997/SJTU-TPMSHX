@@ -1106,10 +1106,26 @@ class SIMPLESolver:
         Nx, Ny = self.Nx, self.Ny
         inlet_mass = 0.0
         outlet_mass = 0.0
+        # ε-weighted fluxes (2026-07-13 audit): the pp equation and the F2
+        # global-mass gate conserve ∫ε·ρ·v (VANS continuity, rho_eps in the
+        # kernels), so the rescale must compare the SAME quantity. Without ε
+        # a streamwise-zoned field (ε_in ≠ ε_out) satisfies
+        # ε_in·Σρv_in = ε_out·Σρv_out at convergence, the un-weighted ratio
+        # reads ε_out/ε_in ≠ 1, and this "enforcement" would UNDO the
+        # converged VANS balance on the returned field.
+        # GUARDED on genuine non-uniformity (the kernels' use_eps pattern):
+        # a constant ε cancels in the ratio MATHEMATICALLY but not bitwise
+        # (Σ ε·aᵢ ≠ ε·Σaᵢ in floats) — the guard keeps uniform-ε goldens
+        # bit-identical.
+        _ef = self.eps_field
+        _use_eps_rescale = float(_ef.max()) != float(_ef.min())
         for i in range(Nx):
-            inlet_mass += self.rho_field[i, 0] * self.v[i, 0] * self.dx_arr[i]
+            _wi = _ef[i, 0] if _use_eps_rescale else 1.0
+            _wo = _ef[i, Ny - 1] if _use_eps_rescale else 1.0
+            inlet_mass += _wi * self.rho_field[i, 0] * self.v[i, 0] * self.dx_arr[i]
             if self.outlet_frac[i] > 0.5:
-                outlet_mass += self.rho_field[i, Ny - 1] * self.v[i, Ny] * self.dx_arr[i]
+                outlet_mass += (_wo * self.rho_field[i, Ny - 1]
+                                * self.v[i, Ny] * self.dx_arr[i])
         if abs(outlet_mass) > 1e-15:
             scale = inlet_mass / outlet_mass
             self._last_outlet_mass_scale = float(scale)

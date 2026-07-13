@@ -183,7 +183,8 @@ def test_shanghai_3d_baseline():
     # RMSRE_Q 3.21% → 2.12%. Three reasons, fully written up in the
     # validate_shanghai_3d_real module docstring:
     #   (1) more accurate — Q error cut 34%, and 2.12% finally beats the 2D
-    #       lumped baseline (2.51%);
+    #       aligned kernel gate's Q RMSRE (2.51%; the ε-NTU LUMPED baseline is
+    #       a different number, 1.71% — the two were conflated in early notes);
     #   (2) the frozen-B runner was fed part of the answer — Tb_prescribed is
     #       built from the MEASURED water outlet temperature, which already
     #       encodes the true duty through the water-side enthalpy balance
@@ -195,7 +196,12 @@ def test_shanghai_3d_baseline():
     # (The `A@init[stall]` on the high-u cases is a benign cold-start artifact;
     # every warm re-solve converges. See the module docstring.)
     # The old frozen-B numbers stay reproducible with `--runner kernel`.
-    BASELINE_DP = 4.93
+    # 2026-07-13 — RE-BASELINED for the F2 pipeline default (ledger C6/C7):
+    # the gate script inherits convergence_mode='f2' (RMSRE_dP 4.93% → 4.88%,
+    # Q unchanged at 2.12%). The 4.93 value was still passing only by eating
+    # half the ±5% drift budget — pin the number the default actually
+    # produces, keep the budget for real drift.
+    BASELINE_DP = 4.88
     BASELINE_Q = 2.12
     tol_dp = 0.05
     tol_q = 0.10

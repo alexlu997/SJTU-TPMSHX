@@ -352,10 +352,35 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
                     inlet_mask_A, inlet_mask_B,
                     Tb_prescribed,
                     alpha_T,
-                    q_rel_tol=None, conv_chunk=None):
+                    q_rel_tol=None, conv_chunk=None,
+                    eps_A=None, eps_B=None,
+                    chi_B_field=None,
+                    mms_S_A_field=None, mms_S_B_field=None,
+                    mms_S_s_field=None):
     """Nz == 1 shortcut: squeeze z axis and call 2D solver for bitwise equivalence.
     alpha_T is accepted but ignored (2D uses Q-chunk convergence).
-    q_rel_tol / conv_chunk passed through to the 2D solver (None = legacy)."""
+    q_rel_tol / conv_chunk passed through to the 2D solver (None = legacy).
+
+    Kwarg contract (2026-07-13 audit — these used to be dropped SILENTLY):
+      * eps_A / eps_B — forwarded (the 2D solver has the same asym hooks);
+        dropping them reverted a δ≠0 asymmetric Nz=1 call to the symmetric
+        ε/2 split with converged=True.
+      * chi_B_field / mms_S_* — no 2D equivalent: RAISE instead of silently
+        solving a different problem.
+      * conservative_ltne — intentionally NOT forwarded: the 2D solver's own
+        A3 signed shared-face scheme is its conservative form, and the Nz=1
+        delegate has always mapped onto it (the Nz=1 bitwise regression pins
+        this). Staggered ufA..wfB faces are unused for the same reason.
+    """
+    if chi_B_field is not None:
+        raise NotImplementedError(
+            "Nz==1 delegates to the 2D LTNE solver, which has no chi_B_field "
+            "hook — refusing to silently drop it. Use Nz >= 2.")
+    if any(s is not None for s in (mms_S_A_field, mms_S_B_field,
+                                   mms_S_s_field)):
+        raise NotImplementedError(
+            "Nz==1 delegates to the 2D LTNE solver, which has no MMS source "
+            "hooks — refusing to silently drop them. Use Nz >= 2.")
 
     def _sq3(a):
         if a is None:
@@ -403,6 +428,7 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         inlet_mask_A=_sq_mask(inlet_mask_A, dir_A),
         inlet_mask_B=_sq_mask(inlet_mask_B, dir_B),
         Tb_prescribed=_sq3(Tb_prescribed),
+        eps_A=_sq3(eps_A), eps_B=_sq3(eps_B),
         q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
 
     if return_info:
@@ -501,7 +527,11 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             Ta_init, Tb_init, Ts_init,
             dx_arr, dy_arr, dz_arr,
             inlet_mask_A, inlet_mask_B, Tb_prescribed, alpha_T,
-            q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
+            q_rel_tol=q_rel_tol, conv_chunk=conv_chunk,
+            eps_A=eps_A, eps_B=eps_B,
+            chi_B_field=chi_B_field,
+            mms_S_A_field=mms_S_A_field, mms_S_B_field=mms_S_B_field,
+            mms_S_s_field=mms_S_s_field)
 
     if not (0.0 < alpha_T <= 1.0):
         raise ValueError(f"alpha_T must be in (0, 1], got {alpha_T}")
@@ -563,9 +593,14 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         eps_fA_arr = _to_3d(eps_A)
         eps_fB_arr = _to_3d(eps_B)
         eps_tot_arr = _to_3d(epsilon)
-        if np.any(eps_fA_arr + eps_fB_arr > eps_tot_arr + 1e-9):
+        # Two-sided (2026-07-13 audit; mirrors ltne_energy.py): a sum BELOW ε
+        # means pre-halved per-side values (double-halving bug class) — fail
+        # loud instead of running with half the convective capacity.
+        if np.any(np.abs(eps_fA_arr + eps_fB_arr - eps_tot_arr) > 1e-9):
             raise ValueError(
-                "eps_A + eps_B exceeds epsilon at some cells.")
+                "eps_A + eps_B must equal epsilon cell-wise (they partition "
+                "the total void fraction; a sum below it usually means "
+                "pre-halved per-side values — double-halving bug class).")
 
     # Cell-centre velocity shape check
     for name, arr in (('ucA', ucA), ('vcA', vcA), ('wcA', wcA),

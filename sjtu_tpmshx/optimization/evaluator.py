@@ -228,6 +228,34 @@ def _percell_K_cF(cfg: dict, arrays: dict) -> tuple:
             cF.reshape(L_f.shape).astype(np.float64))
 
 
+def _reseed_p_ref_from_actual_drag(s, mu, G, P_in, T_in, L_stream):
+    """Re-seed `s.P_ref_abs` from the solver's ACTUAL drag (2026-07-13 audit).
+
+    The constructor-time seed uses the uniform mean-geometry (K0, cF0); the
+    graded overrides (`override_simple_K_cF`, `set_K_cF_field`) then swap in
+    per-row / per-cell drag. `P_ref_abs` is the PHYSICAL outlet absolute
+    pressure (ledger C8) — leaving the uniform seed on a graded design
+    anchors the outlet wrong by (Δp_graded − Δp_uniform), feeding
+    ρ = P_abs/(RT) everywhere: the C8 mechanism surviving on the graded
+    branch. Per-cell C averaged arithmetically (drag in SERIES along the
+    stream). GUARDED on genuine non-uniformity so uniform designs never
+    recompute — bit-identical there (the kernels' use_eps pattern). Keeps
+    this file's 1e4 Pa floor convention (no choke guard here — ledger O1).
+    """
+    from solvers.envelope import predict_outlet_p_sq as _p_out_sq
+    K_act = (s._K_field2d if getattr(s, '_K_field2d', None) is not None
+             else np.asarray(s._K_arr, dtype=np.float64))
+    cF_act = (s._cF_field2d if getattr(s, '_cF_field2d', None) is not None
+              else np.asarray(s._cF_arr, dtype=np.float64))
+    if (float(np.max(K_act)) == float(np.min(K_act))
+            and float(np.max(cF_act)) == float(np.min(cF_act))):
+        return
+    C_cells = mu * G / np.maximum(K_act, 1e-16) + cF_act * G * G
+    s.P_ref_abs = float(np.sqrt(max(
+        _p_out_sq(float(P_in), float(T_in), float(np.mean(C_cells)),
+                  float(L_stream)), 1.0e4)))
+
+
 def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
                     Nx_real: int, Ny_real: int) -> SIMPLESolver:
     """Build SIMPLE for fluid A (+x streamwise; SIMPLE-internal y ↔ real x).
@@ -294,6 +322,11 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         eps_simple = eps_real.T.copy()               # → (Ny_real, Nx_real) for SIMPLE A
         if eps_simple.shape == s.eps_field.shape:
             s.eps_field = np.ascontiguousarray(eps_simple, dtype=np.float64)
+            # 2026-07-13 audit: refresh Brinkman μ/ε to the graded ε (the
+            # constructor built it from the SCALAR mean; uniform designs are
+            # value-identical). Mirrors the stages_2d fix.
+            s._mu_eff_field = np.ascontiguousarray(
+                s.mu_field / s.eps_field, dtype=np.float64)
 
     # Override per-row K / c_F from the design L_field, t_field
     Ny_sim = s._K_arr.shape[0]
@@ -304,6 +337,7 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real.T, cF_real.T)
+    _reseed_p_ref_from_actual_drag(s, mu_A, _G, P_inA, T_inA, L_dom)
     # cf-aniso (2026-07-10): frame-invariant under the A/B axis swap and the
     # B y-flip (4nx^2ny^2 depends on |components| only) - same scalar both sides.
     s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
@@ -360,6 +394,9 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         eps_simple = arrays['eps_arr'][:, ::-1]      # real → SIMPLE-B coords
         if eps_simple.shape == s.eps_field.shape:
             s.eps_field = np.ascontiguousarray(eps_simple, dtype=np.float64)
+            # 2026-07-13 audit: same Brinkman μ/ε refresh as side A.
+            s._mu_eff_field = np.ascontiguousarray(
+                s.mu_field / s.eps_field, dtype=np.float64)
 
     Ny_sim = s._K_arr.shape[0]
     override_simple_K_cF(s, cfg['tpms_type'], cfg['k_s'], Ny_sim,
@@ -368,6 +405,8 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real[:, ::-1], cF_real[:, ::-1])
+    _reseed_p_ref_from_actual_drag(s, mu_B, float(rho_B) * abs(u_B),
+                                   P_inB, T_inB, H_dom)
     s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
@@ -628,13 +667,12 @@ def evaluate_design(x: np.ndarray,
         if outer_it == n_rho_loops - 1:
             break  # last sweep — no point re-solving SIMPLE only to discard
 
-        # Under-relaxed update of ρ + ρ·cp fields.
+        # Under-relaxed update of the ρ bookkeeping fields (these drive the
+        # drho_max convergence check above and the SIMPLE warm hint below —
+        # SIMPLE's own `_update_density` rebuilds ρ = P_abs/(RT) from its
+        # T_field on the first inner iteration regardless).
         rho_A_field = rho_relax * rho_A_new + (1.0 - rho_relax) * rho_A_field
         rho_B_field = rho_relax * rho_B_new + (1.0 - rho_relax) * rho_B_field
-        rcp_A = (rho_relax * rho_A_new * air_cp(Ta)
-                 + (1.0 - rho_relax) * rcp_A)
-        rcp_B = (rho_relax * rho_B_new * air_cp(Tb)
-                 + (1.0 - rho_relax) * rcp_B)
 
         # Push updated ρ + T into SIMPLE. SIMPLE A's internal grid is
         # axis-swapped (SIMPLE-y = real-x), so transpose before assignment.
@@ -650,6 +688,23 @@ def evaluate_design(x: np.ndarray,
                  tol=cfg_full['tol_simple'], verbose=verbose)
         sB.solve(max_iter=cfg_full['max_iter_simple'],
                  tol=cfg_full['tol_simple'], verbose=verbose)
+
+        # ── LTNE convective ρcp from SIMPLE's LOCAL ρ (ledger C10, 2D twin) ──
+        # This used to blend in `air_density(Ta/Tb, P_in)` — density at the
+        # INLET pressure over the whole domain. SIMPLE's u accelerates as ρ
+        # falls downstream (G = ρ·u conserved); an inlet-P ρcp inflates the
+        # LTNE convective flux by P_in/P_local, a spurious enthalpy source
+        # growing with Δp/P_in (the C8-family ranking distortion). Both
+        # solvers were JUST re-solved with the updated T_field, so their
+        # rho_field is ρ(P_local, T_local) — the flux SIMPLE actually
+        # conserves. A is axis-swapped (real = .T); B uses the same identity
+        # mapping as the pushes above. Isothermal fast path (n_rho_loops=1,
+        # the BO default and the frozen-values config) never reaches this
+        # block — unchanged there.
+        rcp_A = (rho_relax * np.ascontiguousarray(sA.rho_field.T) * air_cp(Ta)
+                 + (1.0 - rho_relax) * rcp_A)
+        rcp_B = (rho_relax * np.ascontiguousarray(sB.rho_field) * air_cp(Tb)
+                 + (1.0 - rho_relax) * rcp_B)
 
     # 5. Objectives
     Q_total = _enthalpy_q(arrays, Tb, Ts, dx_arr, dy_arr)

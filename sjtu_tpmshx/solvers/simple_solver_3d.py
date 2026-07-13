@@ -434,6 +434,17 @@ class SIMPLESolver3D:
         # Derive boolean wall/open mask: True = open (lets PPE/correction run),
         # False = wall (pin v=0). Threshold mirrors v-sweep (`> 0.5`).
         self.outlet_mask_ij = (arr > 0.5).astype(np.bool_)
+        # 2026-07-13 audit: the pp sparsity's `cell_kind` pin set is built from
+        # this mask ONCE at the first solve(). Without invalidation, a caller
+        # that changes the outlet mask AFTER a solve keeps the OLD pin set —
+        # some new wall cells retain a Pp=0 Dirichlet row (never solved) while
+        # `_v_bc_3d`/`_correct_jit_3d` wall their outlet face by the NEW mask:
+        # mass accumulates there with no pressure response. All production
+        # callers set the mask before the first solve (invalidation is then a
+        # no-op); this closes the reuse trap. AMG operator cache is keyed on
+        # the sparsity, so it rebuilds with it.
+        if getattr(self, '_pp_sparsity', None) is not None:
+            self._pp_sparsity = None
 
     @staticmethod
     def extract_dP_weighted(s):

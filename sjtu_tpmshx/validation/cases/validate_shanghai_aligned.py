@@ -29,7 +29,8 @@ one of which disqualifies it as a gate:
    the PRODUCTION path could not be caught here — and measurably was not: forcing
    the SIMPLE exit open moves this gate's dP RMSRE by 0.03 pp (8.76 → 8.79 %),
    while the same forcing on the production Pipeline2D moves dP by up to **3.4 %**
-   (ledger C8, 2026-07-12).
+   (ledger C9 — the 2D tol-tautology finding; C8 is the pressure-anchor bug
+   found in the same campaign — 2026-07-12).
 
 The pipeline runner fixes all three: it PREDICTS the water outlet temperature
 instead of being handed it, it solves the water momentum field, and it exercises

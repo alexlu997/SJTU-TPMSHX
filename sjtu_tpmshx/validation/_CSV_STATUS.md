@@ -8,12 +8,12 @@
 
 | CSV | dP RMSRE | Q RMSRE | Era | Status |
 |-----|----------|---------|-----|--------|
-| `shanghai_3d_baseline.csv` (7/06, regenerated) | **5.28%** | **3.21%** | **gamma_df (CFD-refit K) + mass-flux inlet + face-extrap Δp + A2 criteria, Nz=3 gate grid** | **CURRENT canonical (gate grid 20×10×3)** — trajectory: 9.82 (6/12 v1.4.0, cell-centre Δp + smooth-trend K) → 5.05 (6/30 face-extrap Δp) → 5.28 (6/30 CFD-refit K) → 5.28 (7/06 A2 normalized-residual criteria; gate-grid RMSRE unchanged, per-case values shift at the 1e-3 level). Pinned in `tests/test_shanghai_regression.py`. |
+| `shanghai_3d_baseline.csv` (7/12, regenerated) | **4.88%** | **2.12%** | **PRODUCTION Pipeline3D (solved water-B) + F2 convergence + gamma_df (CFD-refit K) + mass-flux inlet + face-extrap Δp, Nz=3 gate grid** | **CURRENT canonical (gate grid 20×10×3)** — trajectory: 9.82 (6/12 v1.4.0, cell-centre Δp + smooth-trend K) → 5.05 (6/30 face-extrap Δp) → 5.28 (6/30 CFD-refit K) → 5.28 (7/06 A2 criteria) → 4.93/2.12 (7/12 gate runner → production pipeline, water SOLVED — section (a) below) → **4.88/2.12 (7/12 F2 three-gate default — section (b))**. Frozen-B kernel era reproducible via `--runner kernel`. Pinned in `tests/test_shanghai_regression.py` (4.88/2.12). |
 | `shanghai_3d_baseline_a1_{16x8x4,32x16x8,64x32x16,128x64x32}.csv` (7/06, **gitignored**) | 5.19 / 6.46 / 8.09 / 8.70% | 3.44 / 3.07 / 2.94 / 2.88% | same era as canonical; all-axis r=2 grids | **A1 grid-convergence study** — per-case Richardson (finest triplet): Δp floor ≈9.6% (median p 1.59, 12/16 extrapolable), Q ≈2.8% (p 1.23). Source of the README grid-converged ≈10% headline + `assets/grid-convergence.png`. Regenerate: `validate_shanghai_3d_real.py --nx N --ny N/2 --nz N/4 --suffix _a1_NxN/2xN/4`, then `runs/tools/plot_grid_convergence.py`. |
 | `shanghai_3d_baseline_gammadf_routing_check.csv` (6/12) | **7.19%** | **3.22%** | rbf backend + mass-flux inlet, Nz=3 | **rbf reference** (pre-v1.4.0 default; also the bit-identical routing regression check). Reproduce: `TPMSHX_DF_METHOD=rbf`. |
 | `shanghai_3d_baseline_nz10_massflux.csv` (6/09) | **8.69%** | **3.33%** | rbf backend + mass-flux inlet, **Nz=10** | **rbf Nz=10 reference** (opt-in `TPMSHX_DF_METHOD=rbf`). |
 | `shanghai_3d_baseline_gammadf_nz10.csv` (6/30) | **12.06%** | **3.30%** | gamma_df (smooth-trend K era) + mass-flux inlet, cell-centre Δp, Nz=10 | **SUPERSEDED as README headline source (7/06)** — README now quotes the grid-converged ≈10% floor from the A1 rows above. Kept as the 6/30 Nz=10 cell-centre snapshot (its face-extrap counterpart, 7.03%, was the old README ★; CSV not retained). |
-| `shanghai_3d_baseline_pytest_h3.csv` (regenerated per run) | — | — | whatever HEAD defaults are | scratch output of `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` (opt-in); pinned values live in the test (5.28/3.21 since 6/30 CFD-refit K; unchanged by 7/06 A2, tol ±5%/±10%). |
+| `shanghai_3d_baseline_pytest_h3.csv` (regenerated per run) | — | — | whatever HEAD defaults are | scratch output of `tests/test_shanghai_regression.py::test_shanghai_3d_baseline` (opt-in); pinned values live in the test (**4.88/2.12** since 7/13 F2 re-baseline; 4.93/2.12 at the 7/12 gate switch; 5.28/3.21 in the frozen-B kernel era; tol ±5%/±10%). |
 | `shanghai_3d_baselineplhub_switch.csv` (gitignored) | 7.19% | — | rbf era snapshot | referenced in `df_surrogate/surrogate_v3.py` docstring (smooth-trend K comparison); kept for that citation. |
 
 > **2026-06-30 cleanup:** the obsolete / trajectory-only snapshots were removed
@@ -66,8 +66,7 @@
 > to **Δp ≈10% (floor 9.6%, median p 1.59) / Q ≈3% (2.8%)** — vs the 6/30
 > 3-grid study's ≈12% (p_obs 0.76), which was measured under the old criteria
 > and (for the figure) an earlier K; the attribution is mixed, both changed.
-- **Production default (gamma_df, 2nd-order face Δp + CFD-refit K + A2 criteria): Nz=3 gate dP 5.28% / Q 3.21% · grid-converged ≈10% / ≈3%**
-  (README headline grid-converged ≈10% since 7/06; was ≈12% 6/30–7/06). Cell-centre+Dh²-K (legacy) was 9.82% / 12.06%.
+- **Production default (Pipeline3D solved-water + F2 + gamma_df, 2nd-order face Δp + CFD-refit K): Nz=3 gate dP 4.88% / Q 2.12%** — since 7/12, sections (a)/(b) below. Frozen-B kernel era (5.28/3.21, A2 criteria) reproducible via `--runner kernel`. Grid-converged ≈10% / ≈3% headline is from the A1 study (OLD kernel runner — re-run on the pipeline runner pending). Cell-centre+Dh²-K (legacy) was 9.82% / 12.06%.
   DF surrogate default = GammaDF multi-fidelity (`df_surrogate/gamma_df.py`) since 2026-06-12.
 - **rbf backend reference (`TPMSHX_DF_METHOD=rbf`): Nz=3 dP 7.19% / Q 3.22%,
   Nz=10 dP 8.69% / Q 3.33%** — post 2026-06-04 mass-flux-inlet fix (which cut
@@ -262,7 +261,9 @@ instead of the kernel-direct runner with the water side **frozen**.
 Why (full write-up in the `validate_shanghai_3d_real` module docstring):
 
 1. **More accurate.** dP 5.28 → 4.88 %; Q 3.21 → **2.12 %** (a 34 % cut, and the
-   first time 3D beats the 2D lumped baseline of 2.51 %).
+   first time 3D beats the 2D aligned kernel gate's Q RMSRE of 2.51 % — the
+   ε-NTU LUMPED baseline is a different number, 1.71 %; early notes conflated
+   the two).
 2. **The frozen-B runner was fed part of the answer.** `Tb_prescribed` is built
    from the **measured** water outlet temperature (Excel col 25), and Q is
    `Σ h_vB·(Ts − Tb)·dV` — so Tb sets the driving force directly. That measured

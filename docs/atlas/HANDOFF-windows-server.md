@@ -96,7 +96,8 @@ Q_sim  = result.Q_W
 envelope 只接在管线上（`solve_2d.py:1233,1242`；`run_stack_3d.py:526,618,1413,1568` 预解 + `:1976,1984` 后解）。
 
 **2D optimizer** 的病态处理（`optimization/evaluator.py`）：
-- 根本没有可压缩 1D 种子 —— `_build_simple_A`/`_build_simple_B` 直接传 `P_ref_abs=P_inA`（`:260`、`:309`），inlet-anchored，**从不计算 P_out²**。
+- ~~根本没有可压缩 1D 种子 —— `_build_simple_A`/`_build_simple_B` 直接传 `P_ref_abs=P_inA`（`:260`、`:309`），inlet-anchored，**从不计算 P_out²**。~~
+  **【追记 2026-07-13】此条已被 C8 修复超越**：两个 builder 现均 import `solvers.envelope.predict_outlet_p_sq` 做一维可压缩出口种子（注释块自述 ledger C8）。本快照其余病态（返回 cap 值、无 Mach/正压/choke 检查）在写作时仍成立——移植者按台账 [O1]/[C8] 复核，不要按本行旧文。
 - `dp_cap_pa` 默认 `1.0e6`（`:177`），终检 `:632-633`：`if not np.isfinite(dP) or dP > dp_cap: return -1e-6, dp_cap, mass`。
 - **返回 cap 值（1e6 Pa），不是 NaN、不是 1e9。** `:505-507` 注释【自述假设】："Returning at the dp_cap (rather than 1e9) keeps the input distribution bounded"。
 - **无 Mach 检查、无正压检查、无 choke 检查。**

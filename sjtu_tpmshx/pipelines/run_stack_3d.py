@@ -142,8 +142,15 @@ def _apply_accel_flags(solver, cfg):
     # RANKINGS only, and Pareto picks are re-solved through this pipeline before
     # any number is reported. Switching it to f2 @ 1e-3 costs a measured 1.74x —
     # a separate decision, recorded in ledger C7.
-    solver.convergence_mode = str(cfg.get(
-        'convergence_mode', os.getenv('TPMSHX_CONV_MODE', 'f2')))
+    # Precedence env > cfg > default 'f2' (2026-07-13 audit): this used to be
+    # cfg-first, while the 2D pipeline (stages_2d) and the R3 solver-knob
+    # convention are env-first — an explicit SolverConfig + a set env var
+    # diverged between dims. TPMSHX_CONV_MODE is the operator's kill switch
+    # (docstring'd as the override in compute_config.py); it must win in both.
+    solver.convergence_mode = str(
+        os.getenv('TPMSHX_CONV_MODE')
+        or cfg.get('convergence_mode')
+        or 'f2')
     solver.mom_tol = float(cfg.get('mom_tol', 1e-4))
     solver.mass_local_tol = float(cfg.get('mass_local_tol', 1e-6))
     solver.mass_global_tol = float(cfg.get('mass_global_tol', 1e-6))

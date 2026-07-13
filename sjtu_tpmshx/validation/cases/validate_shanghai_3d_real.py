@@ -23,9 +23,11 @@ Why the default moved from `kernel` to `pipeline` (2026-07-12)
 Three reasons, in ascending order of importance:
 
 1. **It is more accurate.** dP 5.28 → 4.88 %, and Q 3.21 → **2.12 %** — a 34 %
-   cut in the heat-duty error, which also puts 3D ahead of the 2D lumped
-   baseline (2.51 %) for the first time. (Max per-case error is slightly worse:
-   16.24 % dP on case 1, whose Δp is only 1149 Pa, and +7.2 % Q on case 12.)
+   cut in the heat-duty error, which also puts 3D ahead of the 2D aligned
+   kernel gate's Q RMSRE (2.51 %) for the first time. (The ε-NTU LUMPED
+   baseline is a different number, 1.71 % — early notes conflated the two.
+   Max per-case error is slightly worse: 16.24 % dP on case 1, whose Δp is
+   only 1149 Pa, and +7.2 % Q on case 12.)
 
 2. **The frozen-B runner is fed part of the answer.** ``Tb_prescribed`` is built
    from the MEASURED water outlet temperature (Excel col 25):
@@ -562,10 +564,15 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
     incompressible water-B SIMPLE solve).
 
     Deliberately a DIFFERENT physics path from :func:`_run_one_case`
-    (kernel-direct, frozen-B ``Tb_prescribed`` linear profile) — the
-    gate runner stays kernel-direct; this runner exists so the
-    production path is scored against the same truth table
-    (``--runner pipeline``). Do not silently swap the gate.
+    (kernel-direct, frozen-B ``Tb_prescribed`` linear profile).
+
+    HISTORY (2026-07-13 update — this paragraph used to say "the gate runner
+    stays kernel-direct … do not silently swap the gate", contradicting the
+    module docstring after 2026-07-12): the gate DID swap to this pipeline
+    runner, deliberately and loudly (module docstring lists the three
+    reasons; RMSRE 5.28/3.21 → 4.93/2.12, then 4.88 under F2). The rule the
+    old wording was protecting still holds in its real form: never swap a
+    gate SILENTLY. ``--runner kernel`` reproduces the frozen-B era numbers.
     """
     spec = SPEC if spec is None else spec
     from domain.compute_config import (ComputeConfig, FluidConfig,
@@ -695,9 +702,11 @@ def main():
     # CLAUDE.md-designated gate for surrogate-backend changes, yet it always
     # exited 0 — headline accuracy could degrade with every automatic check
     # green. Thresholds are deliberately generous (current Nz=3 gate values
-    # are RMSRE_dP 5.28% / RMSRE_Q 3.21%; the per-case grid-convergence dP
-    # floor is ~10%): they catch the historical failure class (order-of-
-    # magnitude surrogate regressions), not tuning noise.
+    # are RMSRE_dP 4.88% / RMSRE_Q 2.12% — production pipeline, F2 default;
+    # the frozen-B kernel era's 5.28/3.21 stays reproducible via --runner
+    # kernel; the per-case grid-convergence dP floor is ~10%): they catch
+    # the historical failure class (order-of-magnitude surrogate
+    # regressions), not tuning noise.
     ap.add_argument('--gate-dp', type=float, default=12.0,
                     help='FAIL (exit 1) if RMSRE_dP exceeds this %% (default 12)')
     ap.add_argument('--gate-q', type=float, default=6.0,
@@ -779,15 +788,17 @@ def main():
           f"{n_invalid} pressure-INVALID (clip fired)")
     if n_invalid:
         print(f"  invalid cases : {invalid_cases}  (EXCLUDED from RMSRE below)")
-    # 2D baseline = validate_shanghai_aligned.py headline. Updated 2026-06-25
-    # after the 2D mass-flux inlet port: 2D RMSRE_dP 35.84->8.35%, Q 2.51%,
-    # max|err_Q| 5.0% (prior velocity-inlet baseline was dP 35.60% / Q 5.69%).
-    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 8.35%)  "
+    # 2D baseline = validate_shanghai_aligned.py headline. Updated 2026-07-13:
+    # the 2D gate is now the production Pipeline2D with solved water + F2
+    # (8.62% / 2.49%, ledger C8/C9); the older kernel-runner numbers
+    # (8.35/2.51 after the 2026-06-25 mass-flux inlet port) stay reproducible
+    # there via --runner kernel.
+    print(f"  RMSRE_dP      : {rmsre_dP:.2f}%  (2D baseline 8.62%)  "
           f"[over {len(err_dP)} valid]")
     print(f"  max|err_dP|   : {max_err_dP:.2f}%")
-    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  (2D baseline 2.51%)  "
+    print(f"  RMSRE_Q       : {rmsre_Q:.2f}%  (2D baseline 2.49%)  "
           f"[over {len(err_Q)} valid]")
-    print(f"  max|err_Q|    : {max_err_Q:.2f}%  (2D baseline 5.0%)")
+    print(f"  max|err_Q|    : {max_err_Q:.2f}%")
     print("=" * 70)
 
     # Save CSV (pipeline runner auto-suffixes — must never overwrite the

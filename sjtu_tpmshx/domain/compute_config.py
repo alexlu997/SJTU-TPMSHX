@@ -183,13 +183,18 @@ class SolverConfig:
     ``T_s_init_K=None`` falls back to the legacy seed
     ``0.5 * (T_inA + T_inB)`` inside ``solve_full_domain[_3d]``.
 
-    F2 CONVERGENCE GATES (3D only, ledger C6/C7 — added 2026-07-12)
-    ---------------------------------------------------------------
-    - ``convergence_mode``: ``'legacy'`` (default) or ``'f2'``.
-      ``'legacy'`` gates on ``tol_simple`` — which ledger C6 showed to be an
-      OUTLET-PIN ARTIFACT that never reaches its tolerance, so what actually
-      decides is LowReExit's velocity criterion (measured: it declares converged
-      at a momentum residual of 1.8e-3 .. 1.5e-2, still falling).
+    F2 CONVERGENCE GATES (BOTH dims since C9, ledger C6/C7/C9 — 2026-07-12)
+    ------------------------------------------------------------------------
+    - ``convergence_mode``: ``'legacy'`` or ``'f2'``. A ``None`` here resolves
+      to **'f2' in BOTH production pipelines** (env ``TPMSHX_CONV_MODE`` >
+      this config > default 'f2'; ``run_stack_3d._apply_accel_flags`` and
+      ``stages_2d``). Only the raw solver CLASSES default to 'legacy' for
+      kernel-direct callers.
+      ``'legacy'`` gates on ``tol_simple`` — in 3D an OUTLET-PIN ARTIFACT that
+      never reaches its tolerance (ledger C6; LowReExit's velocity criterion
+      actually decides, declaring converged at momentum residual 1.8e-3 ..
+      1.5e-2, still falling), in 2D a full-face TAUTOLOGY that fires at the
+      20-iteration floor (ledger C9, dP under-converged −3.3%).
       ``'f2'`` gates on three independent residuals instead — see below.
     - ``mom_tol`` / ``mass_local_tol`` / ``mass_global_tol``: the F2 gates
       (momentum residual / solved-cell continuity / global boundary mass). All
@@ -211,7 +216,7 @@ class SolverConfig:
     Ny: int = 60
     Nz: int = 1
     T_s_init_K: Optional[float] = None
-    convergence_mode: Optional[str] = None      # None -> 'legacy' (or env)
+    convergence_mode: Optional[str] = None      # None -> pipelines resolve 'f2' (env wins)
     mom_tol: Optional[float] = None
     mass_local_tol: Optional[float] = None
     mass_global_tol: Optional[float] = None

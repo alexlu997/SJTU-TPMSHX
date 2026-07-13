@@ -705,11 +705,16 @@ def solve_full_domain(L, H, Nx, Ny,
         eps_A_arr = _to_2d(eps_A, Nx, Ny)
         eps_B_arr = _to_2d(eps_B, Nx, Ny)
         eps_tot_arr = _to_2d(epsilon, Nx, Ny)
-        if np.any(eps_A_arr + eps_B_arr > eps_tot_arr + 1e-9):
+        # Two-sided (2026-07-13 audit): a sum BELOW ε is just as wrong as one
+        # above it — accidentally pre-halved per-side values (the historical
+        # double-halving bug class) used to sail through the one-sided check
+        # with half the convective capacity.
+        if np.any(np.abs(eps_A_arr + eps_B_arr - eps_tot_arr) > 1e-9):
             raise ValueError(
-                "eps_A + eps_B exceeds epsilon at some cells — the two fluid "
-                "channels cannot together occupy more than the total void "
-                "fraction.")
+                "eps_A + eps_B must equal epsilon cell-wise (they partition "
+                "the total void fraction). A sum above ε over-fills the void; "
+                "a sum below it usually means the caller passed PRE-HALVED "
+                "per-side values (double-halving bug class).")
         # Asymmetric ε_A ≠ ε_B is now routed per-side through the kernel: fluid
         # A's convection is weighted by ε_A, fluid B's by ε_B. A symmetric
         # explicit input (ε_A = ε_B = ε/2) reproduces the default path because

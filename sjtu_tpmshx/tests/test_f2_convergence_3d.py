@@ -32,8 +32,14 @@ def _make_solver(Nx=8, Ny=12, Nz=4, v_inlet=3.0, **kw):
 
 
 def test_legacy_is_the_default():
-    """F2 must be opt-in until it is priced and re-baselined. Every golden and
-    gate number to date was produced by the legacy exit."""
+    """The SOLVER CLASS default stays 'legacy' — deliberately, even though F2
+    is now priced (reports/f2_pricing_3d.csv), re-baselined, and the PIPELINE
+    default (run_stack_3d / stages_2d resolve env > cfg > 'f2'). The class
+    default is what kernel-direct callers (tests, diagnostics, the optimizer
+    evaluator per ledger O2/R3) get without opting in; flipping it would
+    silently change every one of them. If you flip it intentionally, this
+    test is the loud part — re-derive the optimizer cost (measured 1.74x at
+    mom_tol=1e-3) first."""
     s = _make_solver()
     s.solve(max_iter=30, tol=1e-12)
     assert not hasattr(s, 'mass_local_residuals'), \
