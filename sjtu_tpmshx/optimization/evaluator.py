@@ -80,6 +80,8 @@ _log = get_logger(__name__)
 
 # Once-per-process flag for the resolved-BC log line (see evaluate_design).
 _BC_LOG_DONE = False
+# Once-per-process flag for the choked-design rejection warning (ledger O1).
+_CHOKE_LOG_DONE = False
 
 
 # ─── Default cfg (continuous-field flavour) ─────────────────────────
@@ -228,6 +230,40 @@ def _percell_K_cF(cfg: dict, arrays: dict) -> tuple:
             cF.reshape(L_f.shape).astype(np.float64))
 
 
+def _reseed_p_ref_from_actual_drag(s, mu, G, P_in, T_in, L_stream):
+    """Re-seed `s.P_ref_abs` from the solver's ACTUAL drag (2026-07-13 audit).
+
+    The constructor-time seed uses the uniform mean-geometry (K0, cF0); the
+    graded overrides (`override_simple_K_cF`, `set_K_cF_field`) then swap in
+    per-row / per-cell drag. `P_ref_abs` is the PHYSICAL outlet absolute
+    pressure (ledger C8) — leaving the uniform seed on a graded design
+    anchors the outlet wrong by (Δp_graded − Δp_uniform), feeding
+    ρ = P_abs/(RT) everywhere: the C8 mechanism surviving on the graded
+    branch. Per-cell C averaged arithmetically (drag in SERIES along the
+    stream). GUARDED on genuine non-uniformity so uniform designs never
+    recompute — bit-identical there (the kernels' use_eps pattern). Raises
+    ChokedFlowError when the graded drag chokes (ledger O1, closed
+    2026-07-13); the 1e4 Pa floor stays for tiny-but-positive P_out².
+    """
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
+    K_act = (s._K_field2d if getattr(s, '_K_field2d', None) is not None
+             else np.asarray(s._K_arr, dtype=np.float64))
+    cF_act = (s._cF_field2d if getattr(s, '_cF_field2d', None) is not None
+              else np.asarray(s._cF_arr, dtype=np.float64))
+    if (float(np.max(K_act)) == float(np.min(K_act))
+            and float(np.max(cF_act)) == float(np.min(cF_act))):
+        return
+    C_cells = mu * G / np.maximum(K_act, 1e-16) + cF_act * G * G
+    _Psq = _p_out_sq(float(P_in), float(T_in), float(np.mean(C_cells)),
+                     float(L_stream))
+    if _Psq <= 0.0:
+        raise ChokedFlowError(
+            f"graded drag chokes on the 1D D-F re-seed: P_out^2 = "
+            f"{_Psq:.3e} Pa^2 (P_in = {float(P_in):.0f} Pa)")
+    s.P_ref_abs = float(np.sqrt(max(_Psq, 1.0e4)))
+
+
 def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
                     Nx_real: int, Ny_real: int) -> SIMPLESolver:
     """Build SIMPLE for fluid A (+x streamwise; SIMPLE-internal y ↔ real x).
@@ -249,6 +285,44 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     eps_mean = float(arrays['eps_arr'].mean())
     r_h_mean = float(arrays['r_h_arr'].mean())
 
+    # ── P_ref_abs is the OUTLET absolute pressure, not the inlet ──────────
+    # BUG FIX 2026-07-12 (ledger C8). This used to pass `P_ref_abs=P_inA`.
+    # The pp equation pins the OUTLET row at Pp=0 and never corrects its P, so
+    # the outlet's GAUGE pressure stays 0 all solve => outlet ABSOLUTE pressure
+    # == P_ref_abs, exactly. Passing the INLET pressure anchored the outlet at
+    # the inlet and floated the whole field up by Δp — the compressible density
+    # was then wrong everywhere, by a factor that GROWS with Δp/P_in.
+    #
+    # For the optimizer that is not merely a magnitude error, it is a RANKING
+    # distortion: high-Δp designs were mis-scored relative to low-Δp ones, and
+    # the optimizer's entire job is to rank them. (Measured on the 2D pipeline,
+    # Shanghai case 16, Δp/P_in = 0.59: Δp came out 43 % low. Case 1,
+    # Δp/P_in = 0.011: ~1 % low.)
+    #
+    # Same 1D compressible Forchheimer closed form as 3D (`run_stack_3d.
+    # _seed_p_ref`) and the 2D pipeline (`stages_2d`), using the SAME (K, cF)
+    # the solver builds internally so the seed cannot drift from the drag.
+    from df_surrogate.predict import predict_K_cF as _pred_KcF
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
+    _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
+                          float(fc.t_ctrl.mean()), 0.5 * eps_mean)
+    _G = float(rho_A) * abs(u_A)
+    _C = float(mu_A) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+    # Choke guard (2026-07-13, ledger O1 closed): P_out² ≤ 0 means the 1D
+    # drag predicts Δp ≥ P_in — NO steady subsonic solution exists. This used
+    # to be silently floored to a 100 Pa outlet and solved anyway, wrapping a
+    # non-physical operating point into a finite "very bad but valid" design.
+    # Raise instead; evaluate_design catches it and returns the bounded
+    # dp_cap penalty WITHOUT solving. The 1e4 Pa floor stays for tiny-but-
+    # positive P_out² (near-choke rescue, same as the 3D `_seed_p_ref`).
+    _Psq_A = _p_out_sq(P_inA, T_inA, _C, L_dom)
+    if _Psq_A <= 0.0:
+        raise ChokedFlowError(
+            f"fluid A chokes on the 1D D-F seed: P_out^2 = {_Psq_A:.3e} Pa^2 "
+            f"(P_in = {P_inA:.0f} Pa, C = {_C:.3e}, L = {L_dom} m)")
+    P_ref_outA = float(np.sqrt(max(_Psq_A, 1.0e4)))
+
     s = SIMPLESolver(
         H_dom, L_dom, Ny_real, Nx_real,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
@@ -257,7 +331,7 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_A,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
-        P_ref_abs=P_inA,
+        P_ref_abs=P_ref_outA,
     )
 
     # Push spatially-graded ε into SIMPLE's macroscopic continuity
@@ -266,6 +340,11 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         eps_simple = eps_real.T.copy()               # → (Ny_real, Nx_real) for SIMPLE A
         if eps_simple.shape == s.eps_field.shape:
             s.eps_field = np.ascontiguousarray(eps_simple, dtype=np.float64)
+            # 2026-07-13 audit: refresh Brinkman μ/ε to the graded ε (the
+            # constructor built it from the SCALAR mean; uniform designs are
+            # value-identical). Mirrors the stages_2d fix.
+            s._mu_eff_field = np.ascontiguousarray(
+                s.mu_field / s.eps_field, dtype=np.float64)
 
     # Override per-row K / c_F from the design L_field, t_field
     Ny_sim = s._K_arr.shape[0]
@@ -276,6 +355,7 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real.T, cF_real.T)
+    _reseed_p_ref_from_actual_drag(s, mu_A, _G, P_inA, T_inA, L_dom)
     # cf-aniso (2026-07-10): frame-invariant under the A/B axis swap and the
     # B y-flip (4nx^2ny^2 depends on |components| only) - same scalar both sides.
     s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
@@ -298,6 +378,24 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     in_lo, in_hi, out_lo, out_hi = ((float(v) for v in pB) if pB is not None
                                     else (0.0, L_dom, 0.0, L_dom))
 
+    # P_ref_abs = the OUTLET absolute pressure (ledger C8) — see _build_simple_A
+    # for the full rationale. Fluid B is also AIR here (compressible), and its
+    # streamwise length is H_dom (it flows along -y), not L_dom.
+    from df_surrogate.predict import predict_K_cF as _pred_KcF
+    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+                                  ChokedFlowError)
+    _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
+                          float(fc.t_ctrl.mean()), 0.5 * eps_mean)
+    _G = float(rho_B) * abs(u_B)
+    _C = float(mu_B) * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+    # Choke guard — see _build_simple_A (ledger O1 closed 2026-07-13).
+    _Psq_B = _p_out_sq(P_inB, T_inB, _C, H_dom)
+    if _Psq_B <= 0.0:
+        raise ChokedFlowError(
+            f"fluid B chokes on the 1D D-F seed: P_out^2 = {_Psq_B:.3e} Pa^2 "
+            f"(P_in = {P_inB:.0f} Pa, C = {_C:.3e}, L = {H_dom} m)")
+    P_ref_outB = float(np.sqrt(max(_Psq_B, 1.0e4)))
+
     s = SIMPLESolver(
         L_dom, H_dom, Nx_real, Ny_real,
         cfg['tpms_type'], float(fc.L_ctrl.mean()), float(fc.t_ctrl.mean()),
@@ -306,7 +404,7 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         inlet_lo=in_lo, inlet_hi=in_hi, v_inlet=u_B,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
-        P_ref_abs=P_inB,
+        P_ref_abs=P_ref_outB,
     )
 
     if 'eps_arr' in arrays:
@@ -321,6 +419,9 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         eps_simple = arrays['eps_arr'][:, ::-1]      # real → SIMPLE-B coords
         if eps_simple.shape == s.eps_field.shape:
             s.eps_field = np.ascontiguousarray(eps_simple, dtype=np.float64)
+            # 2026-07-13 audit: same Brinkman μ/ε refresh as side A.
+            s._mu_eff_field = np.ascontiguousarray(
+                s.mu_field / s.eps_field, dtype=np.float64)
 
     Ny_sim = s._K_arr.shape[0]
     override_simple_K_cF(s, cfg['tpms_type'], cfg['k_s'], Ny_sim,
@@ -329,6 +430,8 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     if cfg.get('per_cell_K', False):
         K_real, cF_real = _percell_K_cF(cfg, arrays)
         s.set_K_cF_field(K_real[:, ::-1], cF_real[:, ::-1])
+    _reseed_p_ref_from_actual_drag(s, mu_B, float(rho_B) * abs(u_B),
+                                   P_inB, T_inB, H_dom)
     s.cf_aniso = float(cfg.get('cf_aniso', 0.0))
     return s
 
@@ -489,8 +592,28 @@ def evaluate_design(x: np.ndarray,
     )
 
     # 3. SIMPLE for both fluids (cold-start; design-specific so cache is moot)
-    sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
-    sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
+    # Choke guard (ledger O1, closed 2026-07-13): a design whose 1D drag
+    # predicts Δp ≥ P_in has NO steady subsonic solution — do not solve it.
+    # Return the SAME bounded dp_cap penalty the blowup guard below uses
+    # (deliberate: keeps the GP input distribution bounded, :505-507), with
+    # the REAL geometry mass so the mass objective stays honest.
+    from solvers.envelope import ChokedFlowError as _Choked
+    try:
+        sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
+        sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
+    except _Choked as _ce:
+        global _CHOKE_LOG_DONE
+        if not _CHOKE_LOG_DONE:
+            _CHOKE_LOG_DONE = True
+            _log.warning(
+                "[evaluator2d] choked design rejected pre-solve (%s) -- "
+                "returning the bounded dp_cap penalty; further chokes this "
+                "process are silent.", _ce)
+        _dp_cap = float(cfg_full.get('dp_cap_pa', 1.0e6))
+        _cell_area = dx_arr[:, None] * dy_arr[None, :]
+        _mass = float(np.sum((1.0 - arrays['eps_arr'])
+                             * cfg_full['rho_s'] * _cell_area))
+        return -1e-6, _dp_cap, _mass
 
     sA_converged, _sA_iters = sA.solve(max_iter=cfg_full['max_iter_simple'],
                                         tol=cfg_full['tol_simple'],
@@ -589,13 +712,12 @@ def evaluate_design(x: np.ndarray,
         if outer_it == n_rho_loops - 1:
             break  # last sweep — no point re-solving SIMPLE only to discard
 
-        # Under-relaxed update of ρ + ρ·cp fields.
+        # Under-relaxed update of the ρ bookkeeping fields (these drive the
+        # drho_max convergence check above and the SIMPLE warm hint below —
+        # SIMPLE's own `_update_density` rebuilds ρ = P_abs/(RT) from its
+        # T_field on the first inner iteration regardless).
         rho_A_field = rho_relax * rho_A_new + (1.0 - rho_relax) * rho_A_field
         rho_B_field = rho_relax * rho_B_new + (1.0 - rho_relax) * rho_B_field
-        rcp_A = (rho_relax * rho_A_new * air_cp(Ta)
-                 + (1.0 - rho_relax) * rcp_A)
-        rcp_B = (rho_relax * rho_B_new * air_cp(Tb)
-                 + (1.0 - rho_relax) * rcp_B)
 
         # Push updated ρ + T into SIMPLE. SIMPLE A's internal grid is
         # axis-swapped (SIMPLE-y = real-x), so transpose before assignment.
@@ -611,6 +733,23 @@ def evaluate_design(x: np.ndarray,
                  tol=cfg_full['tol_simple'], verbose=verbose)
         sB.solve(max_iter=cfg_full['max_iter_simple'],
                  tol=cfg_full['tol_simple'], verbose=verbose)
+
+        # ── LTNE convective ρcp from SIMPLE's LOCAL ρ (ledger C10, 2D twin) ──
+        # This used to blend in `air_density(Ta/Tb, P_in)` — density at the
+        # INLET pressure over the whole domain. SIMPLE's u accelerates as ρ
+        # falls downstream (G = ρ·u conserved); an inlet-P ρcp inflates the
+        # LTNE convective flux by P_in/P_local, a spurious enthalpy source
+        # growing with Δp/P_in (the C8-family ranking distortion). Both
+        # solvers were JUST re-solved with the updated T_field, so their
+        # rho_field is ρ(P_local, T_local) — the flux SIMPLE actually
+        # conserves. A is axis-swapped (real = .T); B uses the same identity
+        # mapping as the pushes above. Isothermal fast path (n_rho_loops=1,
+        # the BO default and the frozen-values config) never reaches this
+        # block — unchanged there.
+        rcp_A = (rho_relax * np.ascontiguousarray(sA.rho_field.T) * air_cp(Ta)
+                 + (1.0 - rho_relax) * rcp_A)
+        rcp_B = (rho_relax * np.ascontiguousarray(sB.rho_field) * air_cp(Tb)
+                 + (1.0 - rho_relax) * rcp_B)
 
     # 5. Objectives
     Q_total = _enthalpy_q(arrays, Tb, Ts, dx_arr, dy_arr)

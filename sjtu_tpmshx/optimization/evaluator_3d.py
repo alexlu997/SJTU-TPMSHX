@@ -147,6 +147,20 @@ def evaluate_design_3d(x: np.ndarray,
         verbose=False,
     )
 
+    # Choke/invalid guard (ledger O1, closed 2026-07-13): evaluate_3d returns
+    # NaN + `invalid` for choked operating points (strict validation
+    # contract). This wrapper used to IGNORE the flag, letting the NaNs
+    # propagate to the qNEHVI worker's bare `except` — return the bounded
+    # dp_cap penalty here instead (same convention as the 2D evaluator's
+    # blowup guard: keeps the GP input distribution bounded). mass_kg is real
+    # geometry even on invalid returns, so the mass objective stays honest.
+    if res.get('invalid', False):
+        dp_cap = float(cfg_full.get('dp_cap_pa', 1.0e6))
+        mass_kg = float(res.get('mass_kg', float('nan')))
+        mass_per_m = (mass_kg / max(Lz, 1.0e-9)
+                      if np.isfinite(mass_kg) else 0.0)
+        return -1e-6, dp_cap, mass_per_m
+
     Q_per_m = float(res['Q_3D_W']) / max(Lz, 1.0e-9)       # W → W/m
     dP_total = float(res['dP_total_Pa'])
     mass_per_m = float(res['mass_kg']) / max(Lz, 1.0e-9)   # kg → kg/m

@@ -112,6 +112,59 @@ def _apply_accel_flags(solver, cfg):
     solver.use_coarse_bootstrap = bool(cfg.get('use_coarse_bootstrap', False))
     solver.coarse_bootstrap_max_iter = int(cfg.get('coarse_bootstrap_max_iter', 200))
     solver.coarse_bootstrap_tol = float(cfg.get('coarse_bootstrap_tol', 1e-3))
+    # ── Ledger C7 / F2 convergence gates — DEFAULT ON in the pipeline ─
+    # The production pipeline is the AUTHORITATIVE path, so it gets the honest
+    # convergence criterion. Ledger C6: the legacy `tol` gates a mass residual
+    # that is the Dirichlet-outlet-row artifact — it never reaches its tolerance
+    # (measured floor 7.9e-4 .. 9.4e-4 across all 16 Shanghai cases), so what
+    # actually decided was LowReExit's velocity criterion, which declares
+    # converged while the momentum residual is still 1.8e-3 .. 1.5e-2 and falling.
+    #
+    # Measured cost of the switch (validation/cases/price_f2_convergence_3d.py,
+    # reports/f2_pricing_3d.csv, Shanghai 16 @ 20x10x3):
+    #   legacy    92 SIMPLE iters, 0.22 s/case, exit='velocity', RMSRE dP 4.93 %
+    #   f2 1e-4  234 SIMPLE iters, 0.44 s/case, exit='tol',      RMSRE dP 4.88 %
+    # i.e. ~2.0x wall for a slightly BETTER gate and a criterion that means what
+    # it says. Also verified on the AMG path (40x40x20 = 32 000 cells: exit='tol'
+    # at R_mom = 8.8e-5, 2.1x wall) and on all three golden configs (air-air
+    # partial-BC, water-B, asym offset — every scalar moves < 0.1 %).
+    #
+    # NOT `tol_simple`. That one name already means five different numbers
+    # (solve() default 1e-6, this pipeline 1e-5, the Shanghai kernel runner 1e-3,
+    # coarse bootstrap 1e-3, the 3D optimizer 1e-2) and it still gates the legacy
+    # artifact + the adaptive-AMG scheduler. Silently re-pointing it at the
+    # momentum residual would fork all five (codex review P0-4).
+    #
+    # The OPTIMIZER is deliberately NOT switched: `core/evaluators.py` builds
+    # SIMPLESolver3D directly and never reaches this function, so it keeps the
+    # solver-level default ('legacy') and its throughput is unchanged. That is
+    # the standing convention (ledger O2 / audit R3): the optimizer produces
+    # RANKINGS only, and Pareto picks are re-solved through this pipeline before
+    # any number is reported. Switching it to f2 @ 1e-3 costs a measured 1.74x —
+    # a separate decision, recorded in ledger C7.
+    # Precedence env > cfg > default 'f2' (2026-07-13 audit): this used to be
+    # cfg-first, while the 2D pipeline (stages_2d) and the R3 solver-knob
+    # convention are env-first — an explicit SolverConfig + a set env var
+    # diverged between dims. TPMSHX_CONV_MODE is the operator's kill switch
+    # (docstring'd as the override in compute_config.py); it must win in both.
+    solver.convergence_mode = str(
+        os.getenv('TPMSHX_CONV_MODE')
+        or cfg.get('convergence_mode')
+        or 'f2')
+    solver.mom_tol = float(cfg.get('mom_tol', 1e-4))
+    solver.mass_local_tol = float(cfg.get('mass_local_tol', 1e-6))
+    solver.mass_global_tol = float(cfg.get('mass_global_tol', 1e-6))
+    if cfg.get('track_momentum_residual'):
+        solver.track_momentum_residual = True
+    # Anderson (Phase B) is incompatible with a residual-gated exit until its
+    # acceptance gate stops using the C6-falsified mass artifact and its rollback
+    # restores rho_field exactly (ledger C7 P0-3). solve() raises on the
+    # combination; make the pipeline's default coherent rather than explosive.
+    if solver.convergence_mode == 'f2' and solver.use_anderson:
+        raise ValueError(
+            "convergence_mode='f2' with use_anderson=True (TPMSHX_PHASE_B=1) is "
+            "not supported — see ledger C7 P0-3. Set TPMSHX_CONV_MODE=legacy or "
+            "TPMSHX_PHASE_B=0.")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -243,7 +296,33 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
 
 
 R_AIR = 287.05
-_MAX_OUTER = 5        # outer SIMPLE ↔ LTNE iterations
+# 2026-07-12 — bump _MAX_OUTER 5→8. This mirrors the SAME fix 2D already took
+# on 2026-05-09 (`solve_2d.py:683`: "bump _MAX_COUPLING 5→10 … cases that
+# previously hit iter 5 with dT_B still bouncing now have headroom to settle
+# without firing the 'not converged' warning") — 3D was left behind at 5.
+#
+# It is a CAP, not a budget: `run_outer_coupling` exits the moment the tracked
+# ΔT fields drop under `_OUTER_TOL`, so a bigger cap costs a converging case
+# nothing. At 5 the production Shanghai-grid case was being TRUNCATED one
+# iteration before it converged — it needs 6, and the honest verdict (2026-07-12)
+# duly reported converged=False on every such run.
+#
+# Measured outer-iteration counts to convergence (0.182×0.182×0.042, 20×10×3
+# unless noted):
+#     mild      ΔT=50 K,  u=2      → 4
+#     partial-BC air-air 8×6×6     → 5      (the cross-flow class that forced 2D)
+#     baseline  ΔT=180 K, u=6      → 6      (production Shanghai grid)
+#     partial-BC air-air 20×10×3   → 6
+#     hot+fast  ΔT=500 K, u=20     → 7
+#     golden-3D air_air            → 8
+#     golden-3D asym_b (δ=0.6)     → 9      (worst measured)
+# 8 was the first guess and is NOT enough: it truncates golden-3D's asym_b
+# (needs 9) and leaves air_air with zero spare — the exact failure mode being
+# fixed. 12 gives three iterations of headroom over the worst measured case.
+# The margin is free: the loop exits on convergence, so every case above runs
+# the same number of iterations (and returns bit-identical numbers) whether the
+# cap is 12, 20 or 100. Only a case that genuinely needs >12 would notice.
+_MAX_OUTER = 12       # outer SIMPLE ↔ LTNE iterations (cap, not a budget)
 _OUTER_TOL = 0.5      # K
 _ALPHA_T = 0.6
 
@@ -351,9 +430,11 @@ def _run_3d_stack(cfg):
     `in_z_ctr`/`in_z_w` etc. in `fluid_A_cfg`).
 
     Sweep profiles (cfg['sweep_profile']):
-      'fast_sweep'    — 15³ grid, _MAX_OUTER=3, max_iter=20000, compact diag
-      'full_validate' — cfg grid,  _MAX_OUTER=5, max_iter=50000, full diag
-      None (default)  — cfg values, _MAX_OUTER=5, full diagnostic
+      'fast_sweep'    — 15³ grid, outer cap 3 (BELOW the converging count —
+                        a screening scan, reports converged=False by design),
+                        max_iter=20000, compact diag
+      'full_validate' — cfg grid,  outer cap 12, max_iter=50000, full diag
+      None (default)  — cfg values, outer cap 12 (_MAX_OUTER), full diagnostic
     """
     # ── Sweep profile resolution ──
     _profile = cfg.get('sweep_profile', None)
@@ -361,6 +442,12 @@ def _run_3d_stack(cfg):
     _ltne_max_iter = 20000
     _compact_diag = False
     if _profile == 'fast_sweep':
+        # Deliberately BELOW the converging count (measured 4–7). This profile
+        # trades convergence for speed on purpose — it is a screening scan, and
+        # since 2026-07-12 it reports that honestly (`solver_converged=False`,
+        # `convergence_detail['outer_hit_cap']=True`). Do NOT read a fast_sweep
+        # result as a converged solve; raise it (or drop the profile) if you
+        # need one.
         _max_outer = 3
         _ltne_max_iter = 20000
         _compact_diag = True
@@ -370,7 +457,10 @@ def _run_3d_stack(cfg):
         cfg['Ny'] = min(cfg.get('Ny', 20), 15)
         cfg['Nz'] = min(cfg.get('Nz', 20), 15)
     elif _profile == 'full_validate':
-        _max_outer = 5
+        # 5→12 with _MAX_OUTER (2026-07-12). A *validation* profile truncating
+        # the coupling short of convergence was the worst instance of the bug:
+        # it is the path whose numbers get quoted.
+        _max_outer = 12
         _ltne_max_iter = 50000
         _compact_diag = False
     # else: use module-level defaults, full diagnostic
@@ -379,6 +469,17 @@ def _run_3d_stack(cfg):
     # None keeps the resolution above bit-identically.
     if cfg.get('max_outer_ltne') is not None:
         _max_outer = int(cfg['max_outer_ltne'])
+        # 0 used to fall through and blow up far downstream with an opaque
+        # `TypeError: unsupported operand type(s) for -: 'NoneType' and
+        # 'NoneType'` (nothing was ever solved, so the field vars stayed None).
+        # Fail loud, here, with the reason. `1` stays legal as an explicit
+        # single-pass SCREENING mode — it cannot converge by construction and
+        # now honestly reports solver_converged=False. The typed production
+        # boundary (ComputeConfig.validate) rejects anything < 2 outright.
+        if _max_outer < 1:
+            raise ValueError(
+                f"max_outer_ltne={_max_outer} — must be >= 1. Zero outer "
+                "iterations solves nothing; the run has no result to report.")
     _outer_tol = (float(cfg['outer_tol_K'])
                   if cfg.get('outer_tol_K') is not None else _OUTER_TOL)
 
@@ -661,8 +762,20 @@ def _run_3d_stack(cfg):
             G_B=G_B, T_inB=T_inB,
         )
         # ── Parallel SIMPLE A + B solve (threads, njit releases GIL) ──
+        # SolverConfig propagation (2026-07-12): this call used to pass NEITHER
+        # max_iter NOR tol, so the dual-fluid INITIAL solve silently fell back
+        # to the helper's signature defaults (max_iter=2000, tol=None →
+        # _simple_tol_default() with cfg=None, which skips the cfg['tol_simple']
+        # branch). Only the A-alone branch below and the `post` re-solves obeyed
+        # SolverConfig — i.e. a user-set max_iter_simple / tol_simple governed
+        # every SIMPLE solve EXCEPT the first one. Same resolution helpers as
+        # the A-alone branch, so a config leaving both knobs at None (and no
+        # TPMSHX_SIMPLE_TOL) is bit-identical to before.
         _init_res = _run_two_simple_parallel(
-            sA, sB, cancel_check=cfg.get('_cancel_check'))
+            sA, sB,
+            max_iter=_simple_max_iter(cfg, 2000),
+            tol=_simple_tol_default(cfg),
+            cancel_check=cfg.get('_cancel_check'))
         if _init_res and _init_res[0] is not None and not _init_res[0][0]:
             _simple_nonconv.append(
                 f"A@init[{getattr(sA, 'exit_reason', '?')}]")
@@ -964,6 +1077,34 @@ def _run_3d_stack(cfg):
     # still be moving when Ta settled).
     _outer_conv = OuterConvergence(tol_T=_outer_tol, track=('Ta', 'Tb', 'Ts'))
     _outer_dT_hist = []   # per-outer-iter {field: max|Δ|} — convergence_detail
+
+    # ── Anderson acceleration on the OUTER coupling map (opt-in, 2026-07-12) ──
+    # The outer loop's relaxation is a fixed constant (_ALPHA_T = 0.6) applied
+    # to the property fields (rho, mu) in `_outer_post_3d`. Measured on three
+    # air cases (mild / baseline / hot+fast), the resulting Picard iteration is
+    # OSCILLATORY — the residual grows x1.36 on the 2nd iteration before
+    # collapsing — i.e. it is under-damped, and the constant alpha is leaving
+    # convergence rate on the table.
+    #
+    # `AndersonOuterCoupling` replaces the constant with a least-squares mix
+    # over the last m (x, G(x)) pairs. Distinct from the EXISTING
+    # `use_anderson` knob, which accelerates SIMPLE's INNER Picard map
+    # (momentum/pressure) inside each solver — this one accelerates the
+    # SIMPLE<->LTNE coupling BETWEEN solves. They compose; neither is on by
+    # default.
+    #
+    # OFF by default: when disabled, `_outer_post_3d` runs the original blend
+    # expression verbatim, so the production path and the golden gates are
+    # bit-identical.
+    _use_outer_and = bool(cfg.get('outer_anderson', False))
+    _and_A = _and_B = None
+    if _use_outer_and:
+        from solvers.anderson_acceleration import AndersonOuterCoupling
+        _and_kw = dict(m=int(cfg.get('outer_anderson_m', 3)),
+                       trust=float(cfg.get('outer_anderson_trust', 5.0)),
+                       patience=int(cfg.get('outer_anderson_patience', 3)))
+        _and_A = AndersonOuterCoupling(**_and_kw)
+        _and_B = AndersonOuterCoupling(**_and_kw)
     chi_B = None         # B flow-path indicator field (χ_B), built each outer iter
     # Optional solid warm-start seed from the UI. Empty → solver default
     # (Ta=T_inA, Tb=T_inB, Ts=0.5*(T_inA+T_inB) inside solve_full_domain_3d).
@@ -1392,12 +1533,23 @@ def _run_3d_stack(cfg):
             rho_new = sco2_props.sco2_density_field(Ta_sA, P_inA)
             mu_new_A = sco2_props.sco2_viscosity_field(Ta_sA, P_inA)
         if outer > 0:
-            sA.rho_field = np.ascontiguousarray(
-                _ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field,
-                dtype=np.float64)
-            sA.mu_field = np.ascontiguousarray(
-                _ALPHA_T * mu_new_A
-                + (1.0 - _ALPHA_T) * sA.mu_field, dtype=np.float64)
+            # Damped-Picard property update — the outer coupling's relaxation.
+            # `_and_A` (opt-in, cfg['outer_anderson'], default OFF) replaces the
+            # fixed _ALPHA_T with an Anderson least-squares mix over the last m
+            # (x, G(x)) pairs; it falls back to EXACTLY this blend whenever the
+            # candidate is inadmissible or history is short, so the disabled
+            # path — and the golden gates — are bit-identical.
+            if _and_A is not None:
+                (sA.rho_field, sA.mu_field), _ok_A = _and_A.step(
+                    [sA.rho_field, sA.mu_field], [rho_new, mu_new_A],
+                    _ALPHA_T)
+            else:
+                sA.rho_field = np.ascontiguousarray(
+                    _ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field,
+                    dtype=np.float64)
+                sA.mu_field = np.ascontiguousarray(
+                    _ALPHA_T * mu_new_A
+                    + (1.0 - _ALPHA_T) * sA.mu_field, dtype=np.float64)
         else:
             sA.rho_field = np.ascontiguousarray(rho_new, dtype=np.float64)
             sA.mu_field = np.ascontiguousarray(mu_new_A, dtype=np.float64)
@@ -1540,12 +1692,22 @@ def _run_3d_stack(cfg):
                 rho_new_B = _mB.rho(Tb_sB, P_inB)   # water ignores P; sco2 (T,P_in)
             mu_new_B = _mB.mu(Tb_sB, P_inB)          # air/water ignore P; sco2 needs P
             if outer > 0:
-                sB.rho_field = np.ascontiguousarray(
-                    _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
-                    dtype=np.float64)
-                sB.mu_field = np.ascontiguousarray(
-                    _ALPHA_T * mu_new_B + (1.0 - _ALPHA_T) * sB.mu_field,
-                    dtype=np.float64)
+                # Mirror of the fluid-A property update above (see comment
+                # there). Separate Anderson instance per side: A's blend is
+                # applied BEFORE the SIMPLE-A re-solve and B's before SIMPLE-B,
+                # so the two are sequential, not simultaneous — block-wise
+                # acceleration respects that structure.
+                if _and_B is not None:
+                    (sB.rho_field, sB.mu_field), _ok_B = _and_B.step(
+                        [sB.rho_field, sB.mu_field], [rho_new_B, mu_new_B],
+                        _ALPHA_T)
+                else:
+                    sB.rho_field = np.ascontiguousarray(
+                        _ALPHA_T * rho_new_B + (1.0 - _ALPHA_T) * sB.rho_field,
+                        dtype=np.float64)
+                    sB.mu_field = np.ascontiguousarray(
+                        _ALPHA_T * mu_new_B + (1.0 - _ALPHA_T) * sB.mu_field,
+                        dtype=np.float64)
             else:
                 sB.rho_field = np.ascontiguousarray(rho_new_B, dtype=np.float64)
                 sB.mu_field = np.ascontiguousarray(mu_new_B, dtype=np.float64)
@@ -1592,7 +1754,12 @@ def _run_3d_stack(cfg):
             vcB[:] = vcB2
             wcB[:] = wcB2
 
-    run_outer_coupling(
+    # The skeleton returns (last_iter, converged). 3D used to DISCARD both, so
+    # the outer-coupling verdict never reached `solver_converged` (2D captures
+    # it — solve_2d.py:1173). A run that burned every outer iteration with ΔT
+    # still bouncing could therefore report success as long as the final LTNE
+    # inner pass and the SIMPLE solves converged. (Audit 2026-07-12.)
+    _outer_last_iter, _outer_converged = run_outer_coupling(
         max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
 
     # ── Extract metrics + fields ──
@@ -1987,26 +2154,84 @@ def _run_3d_stack(cfg):
             ma_max=mach_field_max(vmag_B, Tb))
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
-    if _simple_nonconv:
+    # ── SIMPLE verdict: judge the FINAL solve, not the whole history ─────────
+    # `_simple_nonconv` is a STICKY list of every SIMPLE solve that failed,
+    # including the cold-start one. But outer iteration 0 can never satisfy the
+    # coupling criterion (there is no previous iterate to diff against), so
+    # `post(0)` ALWAYS runs and ALWAYS re-solves SIMPLE — the cold-start
+    # velocity/pressure field is therefore ALWAYS superseded before anything is
+    # reported. Gating the verdict on the sticky list meant a run whose every
+    # reported field came from a converged solve still said converged=False
+    # because a transient warm-up solve had stalled. (Shanghai: the u≈22 m/s
+    # cases log `A@init[stall]` while every subsequent re-solve exits
+    # 'velocity'.) The verdict now measures the state that produced the answer;
+    # the full history stays in convergence_detail for diagnosis, and a
+    # superseded stall still raises a (differently worded) warning.
+    #
+    # `SIMPLESolver3D.solve` returns converged=True for exit_reason 'tol' or
+    # 'velocity' (LowReExit's velocity-stability criterion) and False for
+    # 'stall' / 'max_iter' / 'cancelled'. `exit_reason` holds the LAST solve.
+    _OK_EXITS = ('tol', 'velocity')
+
+    def _final_ok(s):
+        return s is None or getattr(s, 'exit_reason', None) in _OK_EXITS
+    _simple_final_ok = _final_ok(sA) and _final_ok(sB)
+    _simple_nonconv_transient = [
+        t for t in _simple_nonconv if t.startswith(('A@init', 'B@init'))]
+    _simple_nonconv_final = [
+        t for t in _simple_nonconv if t not in _simple_nonconv_transient]
+
+    if not _simple_final_ok:
         _env_warnings.append(
-            "SIMPLE momentum solve did not converge to tol at: "
-            + ", ".join(_simple_nonconv)
-            + " — the velocity/pressure field may be under-resolved (raise "
+            "SIMPLE momentum solve did not converge in the FINAL solve: "
+            + ", ".join(_simple_nonconv_final or _simple_nonconv)
+            + " — the reported velocity/pressure field is not converged (raise "
               "max_iter or relax tol).")
+    elif _simple_nonconv_transient:
+        _env_warnings.append(
+            "SIMPLE momentum solve stalled in a TRANSIENT (superseded) solve: "
+            + ", ".join(_simple_nonconv_transient)
+            + " — the cold-start field was re-solved by the outer loop and the "
+              "reported field DID converge, so this is informational. It does "
+              "flag a hard cold start (typically high u).")
     _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
     _result['envelope_valid'] = _env_valid
     _result['envelope_reasons'] = _env_reasons
     _result['envelope_warnings'] = _env_warnings
     _result['p_clip_hits'] = _clip_hits
-    # robustness-hardening (2026-07-03): first-class convergence verdict —
-    # False when any SIMPLE solve stalled (init or outer re-solve) or the
-    # FINAL outer LTNE pass failed its residual target (earlier passes
-    # hitting the iteration cap is a normal warm-up, only the last one
-    # carries the result). Flows into ComputeResult.converged.
+    # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
+    # robustness-hardening (2026-07-03) introduced this key but only ANDed
+    # SIMPLE with the FINAL outer LTNE pass. Three ways a bad solve could still
+    # report success, all closed here:
+    #   (a) outer coupling never converged  — the skeleton's verdict was
+    #       discarded at the call site (see run_outer_coupling above);
+    #   (b) `max_outer_ltne=0` → zero iterations → `_ltne_info` empty → the
+    #       `not _ltne_info` short-circuit returned True on a run that solved
+    #       nothing;
+    #   (c) a non-finite (NaN/inf) temperature or velocity field — the envelope
+    #       gate flags non-finite P/Mach, but a NaN inside Ta/Tb/Ts alone did
+    #       not touch the verdict.
+    # Only the verdict changes; no numeric field is touched (golden gates hash
+    # fields + headline scalars, not this key).
+    _fields_finite = bool(
+        np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
+        and np.all(np.isfinite(Ts)) and np.all(np.isfinite(vmag))
+        and (vmag_B is None or np.all(np.isfinite(vmag_B))))
+    if not _fields_finite:
+        _env_warnings.append(
+            "Non-finite (NaN/inf) cells in the converged temperature or "
+            "velocity field — the result is not physical; solver_converged "
+            "is forced False.")
+        _env_warnings = list(dict.fromkeys(_env_warnings))
+        _result['envelope_warnings'] = _env_warnings
+    _ltne_ok = bool(_ltne_info) and bool(
+        _ltne_info[-1].get('converged', False))
     _result['solver_converged'] = bool(
-        (not _simple_nonconv)
-        and ((not _ltne_info)
-             or bool(_ltne_info[-1].get('converged', False))))
+        _simple_final_ok               # the FINAL SIMPLE solve on EACH side
+        and _ltne_ok                   # FINAL outer LTNE inner pass converged
+        and bool(_outer_converged)     # outer coupling converged (not capped)
+        and _fields_finite             # no NaN/inf in the reported fields
+        and bool(_env_valid))          # post-solve compressible envelope gate
     # A2 (2026-07-06): structured convergence detail. Additive result keys
     # only (the golden gate hashes fields + headline scalars, not these).
     #   simple_*   : final SIMPLE exit per solver — reason ('tol'|'velocity'|
@@ -2019,17 +2244,57 @@ def _run_3d_stack(cfg):
         if s is None:
             return None
         return dict(exit_reason=getattr(s, 'exit_reason', None),
+                    # LEGACY mass residual. Ledger C6: on 3D this is the
+                    # Dirichlet-outlet-row artifact, NOT a convergence measure.
+                    # Kept because it still drives the adaptive-AMG scheduler and
+                    # every historical number was produced against it.
                     final_res=getattr(s, 'final_res', None),
-                    res_norm_ref=getattr(s, 'res_norm_ref', None))
+                    res_norm_ref=getattr(s, 'res_norm_ref', None),
+                    iterations=len(getattr(s, 'residuals', []) or []),
+                    # F2 gates (ledger C7). None in convergence_mode='legacy'
+                    # unless track_momentum_residual was set.
+                    convergence_mode=getattr(s, 'convergence_mode', 'legacy'),
+                    final_res_mom=getattr(s, 'final_res_mom', None),
+                    final_res_mass_local=getattr(
+                        s, 'final_res_mass_local', None),
+                    final_res_mass_global=getattr(
+                        s, 'final_res_mass_global', None),
+                    outlet_backflow_frac=getattr(
+                        s, 'outlet_backflow_frac', None))
     _result['convergence_detail'] = dict(
         simple_A=_simple_detail(sA),
         simple_B=_simple_detail(sB),
         simple_nonconv=list(_simple_nonconv),
         outer_dT=[{k: float(v) for k, v in d.items()}
                   for d in _outer_dT_hist],
-        outer_converged=bool(
-            _outer_dT_hist
-            and all(v < _outer_tol for v in _outer_dT_hist[-1].values())),
+        # The skeleton's OWN verdict, not a reconstruction from the ΔT history
+        # (the reconstruction could disagree with the loop that actually ran —
+        # e.g. it returned True for a converged-on-the-first-pass run whose
+        # history the skeleton never marks). Also records WHY it stopped.
+        outer_converged=bool(_outer_converged),
+        outer_iters=int(_outer_last_iter) + 1,
+        outer_hit_cap=bool(not _outer_converged),
+        # Per-gate breakdown so a caller can see WHICH gate failed rather than
+        # just that the AND is False (convergence truth-table, 2026-07-12).
+        # simple_ok gates the verdict and judges the FINAL solve on each side.
+        # simple_nonconv (above) stays the FULL sticky history; the two lists
+        # below split it, so a caller can tell "the reported field is bad" from
+        # "a superseded warm-up solve stalled" — they used to be indistinguishable
+        # and both forced converged=False.
+        simple_ok=bool(_simple_final_ok),
+        simple_nonconv_final=list(_simple_nonconv_final),
+        simple_nonconv_transient=list(_simple_nonconv_transient),
+        simple_exit_A=getattr(sA, 'exit_reason', None),
+        simple_exit_B=getattr(sB, 'exit_reason', None) if sB is not None else None,
+        ltne_ok=_ltne_ok,
+        fields_finite=_fields_finite,
+        envelope_ok=bool(_env_valid),
+        # Outer-coupling Anderson (None when the opt-in knob is off). Records
+        # how many candidates were accepted / rejected by the admissibility
+        # gate / dropped by the staleness reset, plus the fixed-point residual
+        # history — so the acceleration is auditable, never a black box.
+        outer_anderson=(None if not _use_outer_and else dict(
+            A=_and_A.stats(), B=(_and_B.stats() if sB is not None else None))),
     )
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.

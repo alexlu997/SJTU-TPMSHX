@@ -110,4 +110,11 @@ def main():
 
 
 if __name__ == '__main__':
+    # Pin the convergence criterion (2026-07-13 audit; mirrors _golden_3d.py):
+    # stages_2d resolves convergence_mode as env > cfg > 'f2' — a stray
+    # TPMSHX_CONV_MODE in the shell would silently swap the criterion between
+    # capture and check. Pinned HERE, not at module level: tests import
+    # `_air_air_cfg` from this file, and a module-level env write poisons the
+    # whole pytest worker process (measured: 18 unrelated failures).
+    os.environ['TPMSHX_CONV_MODE'] = 'f2'
     main()

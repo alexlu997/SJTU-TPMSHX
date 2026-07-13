@@ -475,6 +475,66 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         rho_inlet_ref = (float(P_in_abs) / (287.05 * float(T_in_f))
                          if fluid_type == 'ideal_gas' else None)
 
+        # ── P_ref_abs is the OUTLET absolute pressure, not the inlet ────────
+        # BUG FIX 2026-07-12 (ledger C8). This used to pass `P_ref_abs=P_in_abs`.
+        #
+        # `P_ref_abs` is the ABSOLUTE pressure the solver's GAUGE field is
+        # measured from, and the gauge field's zero sits at the OUTLET: the pp
+        # equation pins the outlet row `Pp = 0` (`_kernels_simple_2d.py:735`) and
+        # `_correct_jit` never corrects those cells' P, so the outlet gauge stays
+        # 0 for the entire solve. Hence
+        #
+        #       outlet absolute pressure  ==  P_ref_abs   (exactly)
+        #       inlet  absolute pressure  ==  P_ref_abs + Δp
+        #
+        # Passing the INLET pressure therefore anchored the OUTLET at the inlet
+        # and floated the whole field up by Δp. Measured on Shanghai case 16
+        # (experiment: 304.7 kPa in -> 126.1 kPa out, Δp = 178.7 kPa):
+        #
+        #       before:  inlet 407.3 kPa -> outlet 304.7 kPa,  Δp =  102.6 kPa
+        #                                          ^^^^^ the experiment's INLET
+        #
+        # The outlet density was ~2.4x too high, so the compressible physics was
+        # wrong throughout and Δp came out 43 % low. The error scales with
+        # Δp/P_in: negligible for low-Δp designs (case 1: ~1 %), catastrophic for
+        # high-Δp ones. It was invisible because the 2D validation gate is
+        # kernel-direct and seeds this correctly itself — the gate was validating
+        # a path production does not run.
+        #
+        # (CLAUDE.md described this as "2D is inlet-anchored ... rarely chokes".
+        # That was a description of the SYMPTOM, not a design: it "rarely chokes"
+        # because it never lets the outlet pressure fall.)
+        #
+        # 3D always did this right (`run_stack_3d._seed_p_ref`, ~line 620). Use
+        # the same 1D compressible Forchheimer closed form, with the SAME (K, cF)
+        # the solver itself will build (`simple_solver.py:409-412`), so the seed
+        # can never drift from the drag it is seeding for.
+        L_stream = float(L if is_x else H)
+        if fluid_type == 'ideal_gas':
+            from df_surrogate.predict import predict_K_cF as _pred_KcF
+            from solvers.envelope import predict_outlet_p_sq
+            _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
+                                  0.5 * float(eps))
+            _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
+            _G = _rho_in * abs(float(u_f))                   # mass flux ρ·u
+            _mu_in = float(np.mean(mu_f)) if np.ndim(mu_f) else float(mu_f)
+            _C = _mu_in * _G / max(_K0, 1e-16) + _cF0 * _G * _G
+            _P_out_sq = predict_outlet_p_sq(float(P_in_abs), float(T_in_f),
+                                            _C, L_stream)
+            # A non-positive P_out² means the 1D estimate says Δp >= P_in, i.e.
+            # the outlet would go to vacuum — no steady solution exists there.
+            # The 3D path raises ChokedFlowError; 2D has never had a choke guard
+            # (ledger O1), so clip to the same 1e4 Pa floor 3D's `_seed_p_ref`
+            # uses and leave the guard as a separate change, rather than silently
+            # widening the envelope here.
+            P_ref_out = float(np.sqrt(max(_P_out_sq, 1.0e4)))
+        else:
+            # Incompressible (water, sCO2 Phase-A): ρ is frozen, so the gauge
+            # LEVEL does not feed back into the physics at all — only gradients
+            # matter. Keep the inlet value (bit-identical to the old behaviour on
+            # every water/incompressible solve).
+            P_ref_out = float(P_in_abs)
+
         if is_x:
             s = SIMPLESolver(H, L, N_y, N_x, tpms_type, Lcell, t_wall,
                              eps, r_h, rho_simple, mu_simple, T_in_f,
@@ -482,7 +542,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              outlet_lo=out_lo, outlet_hi=out_hi,
                              zone_arrays=z_arr,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs,
+                             P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type,
                              cf_scale=cf_scale)
@@ -497,7 +557,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              zone_config=zc_simple,
                              zone_arrays=z_arr if zc_simple is None else None,
                              wall_refine=False,
-                             P_ref_abs=P_in_abs,
+                             P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
                              fluid_type=fluid_type,
                              cf_scale=cf_scale)
@@ -530,6 +590,14 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             eps_sol = _to_simple_coords(eps_real)
             if eps_sol.shape == s.eps_field.shape:
                 s.eps_field = np.ascontiguousarray(eps_sol, dtype=np.float64)
+                # 2026-07-13 audit: refresh the Brinkman μ/ε to the zoned ε.
+                # `_mu_eff_field` is built from the SCALAR ε at construction
+                # and its only refresh path (`update_T_field`) fires on the
+                # first outer T-update, ideal_gas only — so without this the
+                # air side's first solve and the water side's WHOLE solve run
+                # Brinkman on the uniform ε while continuity runs the zoned ε.
+                s._mu_eff_field = np.ascontiguousarray(
+                    s.mu_field / s.eps_field, dtype=np.float64)
         # ── Design-specific K/c_F override (2026-04-17) ──
         # zone_config path above already populates per-row K/c_F via
         # predict_K_cF_vec inside SIMPLE.__init__. But zone_arrays path and
@@ -546,6 +614,28 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             elif za.get('grid_cells'):
                 override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
                                      za['grid_cells'], None, None, fluid)
+        # ── Re-seed P_ref_abs from the solver's ACTUAL drag (2026-07-13) ────
+        # The seed above used the uniform-geometry (K0, cF0); the zone_config /
+        # zone_arrays paths then swap in per-row graded K/cF (constructor or
+        # override_simple_K_cF). P_ref_abs is the PHYSICAL outlet absolute
+        # pressure (ledger C8) — leaving the uniform seed on a graded design
+        # anchors the outlet at the wrong pressure by (Δp_graded − Δp_uniform),
+        # which feeds ρ = P_abs/(RT) everywhere: the C8 mechanism surviving on
+        # the zoned branch. Per-row C averaged arithmetically (rows are drag in
+        # SERIES along the stream). Guarded on genuine non-uniformity so the
+        # uniform path never recomputes — bit-identical there (same reasoning
+        # as the kernels' use_eps guard).
+        if fluid_type == 'ideal_gas':
+            _K_rows = np.asarray(s._K_arr, dtype=np.float64)
+            _cF_rows = np.asarray(s._cF_arr, dtype=np.float64)
+            if (float(_K_rows.max()) != float(_K_rows.min())
+                    or float(_cF_rows.max()) != float(_cF_rows.min())):
+                _C_rows = (_mu_in * _G / np.maximum(_K_rows, 1e-16)
+                           + _cF_rows * _G * _G)
+                _P_out_sq_g = predict_outlet_p_sq(
+                    float(P_in_abs), float(T_in_f),
+                    float(np.mean(_C_rows)), L_stream)
+                s.P_ref_abs = float(np.sqrt(max(_P_out_sq_g, 1.0e4)))
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         # R3 (2026-07-07): production solver knobs, precedence
         # env > SolverConfig > dim-specific auto. The autos are the
@@ -584,12 +674,57 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # partial-B inlet (e.g. user's pipeB w=0.068m of L=0.182) +
         # high-u Forchheimer-branch needs more iters to drive residual
         # below tol. 5000 left B at res~3e-3 with target 1e-3.
+        # ── Ledger C9 / F2 convergence gates ────────────────────────────
+        # DEFAULT ON in the pipeline, mirroring 3D (ledger C7). The legacy `tol`
+        # gates `_mass_res_jit`, a PLANE-INTEGRATED flux defect that the pp solve
+        # makes TAUTOLOGICALLY ZERO on a full-face outlet (measured 1.6e-15), so
+        # it fires at the min-iter floor (iteration 20) and stops the solve there
+        # — under-converging dP_A by 3.3 %. F2 gates on the momentum residual +
+        # solved-cell continuity + global boundary mass instead.
+        #
+        # NOT `tol_simple`: that name already means several different numbers
+        # across the codebase and it still drives the legacy path. F2 gets its own
+        # names so nothing forks silently (codex review P0-4).
+        # precedence: env > SolverConfig > cfg > default (same shape as `_tol`)
+        def _f2_knob(name, default):
+            v = getattr(_sol_knobs, name, None) if _sol_knobs is not None else None
+            if v is None:
+                v = cfg.get(name)
+            return default if v is None else v
+
+        s.convergence_mode = str(os.environ.get(
+            'TPMSHX_CONV_MODE', _f2_knob('convergence_mode', 'f2')))
+        s.mom_tol = float(_f2_knob('mom_tol', 1e-4))
+        s.mass_local_tol = float(_f2_knob('mass_local_tol', 1e-6))
+        s.mass_global_tol = float(_f2_knob('mass_global_tol', 1e-6))
+
         conv, n_it = s.solve(max_iter=_max_it, tol=_tol, verbose=False,
                                progress_cb=_progress_cb)
         if not conv:
-            simple_warnings[label] = (
-                f"SIMPLE ({label}): not converged after {n_it} iters "
-                f"(res={s.residuals[-1]:.2e})")
+            # Under f2 the legacy `residuals[-1]` is the C9 tautology (~1e-15
+            # on a full-face outlet) — quoting it makes a FAILED solve look
+            # converged. Report the gates that actually held the exit open.
+            if str(getattr(s, 'convergence_mode', 'legacy')) == 'f2':
+                simple_warnings[label] = (
+                    f"SIMPLE ({label}): not converged after {n_it} iters "
+                    f"(exit={getattr(s, 'exit_reason', '?')}, "
+                    f"mom={getattr(s, 'final_res_mom', None)}, "
+                    f"mass_local={getattr(s, 'final_res_mass_local', None)}, "
+                    f"mass_global={getattr(s, 'final_res_mass_global', None)})")
+            else:
+                simple_warnings[label] = (
+                    f"SIMPLE ({label}): not converged after {n_it} iters "
+                    f"(res={s.residuals[-1]:.2e})")
+        else:
+            # A converged re-solve SUPERSEDES an earlier failure on the same
+            # side (2026-07-12). This dict is keyed by label and was only ever
+            # WRITTEN on failure, never cleared — so one stalled warm-up solve
+            # stuck for the whole run and forced solver_converged=False even
+            # though every field the run reported came from a converged solve.
+            # The outer loop re-solves SIMPLE on every iteration, so the early
+            # ones are transient warm-starts, not the answer. Mirrors the 3D
+            # fix (judge the FINAL solve per side).
+            simple_warnings.pop(label, None)
 
         # Extract cell-centre velocities (wall-masked for energy solver)
         u_m, v_m = s.get_wall_masked_velocity()
@@ -698,22 +833,37 @@ def _finalize_cfg(raw: dict[str, Any],
         # solvers.fluid_props module this function now dispatches through.
         from solvers import fluid_props as _fluids
         # Same convention as ``_enthalpy_balance_2d`` outlet plane.
+        import numpy as _np
+        # Zoned-ε outlet weighting (2026-07-13 audit): the physical mass flux
+        # through an outlet cell is ε·ρ·|u|·dA. A missing ε cancels when ε is
+        # uniform along the outlet plane (every run without zoned ε — weights
+        # unchanged, bit-identical) but mis-weights T_out on zoned designs,
+        # inconsistent with the N1-fixed Q weighting. The FULL ε is enough:
+        # the per-side asym split ratio s is a scalar and cancels in the
+        # weighted average.
+        _za_f = fields.get('za')
+        _eps2d = None
+        if _za_f is not None and _za_f.get('eps_arr') is not None:
+            _e = _np.asarray(_za_f['eps_arr'], dtype=_np.float64)
+            if _e.shape == _np.asarray(T_field).shape:
+                _eps2d = _e
         if dir_code in (0, 1):
             j_out = -1 if dir_code == 0 else 0
             u_face = uc_field[j_out, :]
             T_face = T_field[j_out, :]
+            eps_face = _eps2d[j_out, :] if _eps2d is not None else 1.0
             dA = raw['energy_dy']
         else:
             i_out = -1 if dir_code == 2 else 0
             u_face = vc_field[:, i_out]
             T_face = T_field[:, i_out]
+            eps_face = _eps2d[:, i_out] if _eps2d is not None else 1.0
             dA = raw['energy_dx']
-        # ρ·cp weighting — registry primitives (water rho ignores P).
+        # ε·ρ·cp weighting — registry primitives (water rho ignores P).
         _m = _fluids.get(fluid_type)
         rho = _m.rho(T_face, P_in_Pa)
         cp = _m.cp(T_face, P_in_Pa)
-        import numpy as _np
-        w = _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
+        w = eps_face * _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
         wsum = float(_np.sum(w))
         if wsum < 1e-30:
             return float(_np.mean(T_face))
@@ -804,6 +954,17 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_enthalpy_B': raw.get('Q_enthalpy_B'),
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
+            # 2026-07-12: solve_2d produced all three of these on the raw dict
+            # and none of them were forwarded — every ComputeResult consumer
+            # was blind to the 2D compressible-envelope verdict and to the
+            # P_abs-clip engagement (the 3D side had the same gap for
+            # p_clip_hits; both are closed now).
+            'envelope_valid': raw.get('envelope_valid', True),
+            'envelope_reasons': list(raw.get('envelope_reasons', [])),
+            'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # Per-gate breakdown behind ComputeResult.converged, so a caller
+            # can see WHICH gate failed (convergence truth-table).
+            'convergence_detail': raw.get('convergence_detail'),
         },
     )
 

@@ -168,12 +168,22 @@ def run_c3_tol(case_id='T2', grid=20, tols=(1e-3, 1e-5, 1e-7)):
 
     Uses ``_patched_env`` context manager so env var is restored even if
     a sweep run raises.
+
+    FORCED LEGACY (2026-07-13 audit): `tol_simple` gates the SIMPLE exit only
+    under convergence_mode='legacy' (ledger C6/C7 — under the 'f2' pipeline
+    default it drives nothing but the AMG scheduler, and the three sweep
+    points would be bit-identical, turning "Q saturates" into a vacuous
+    pass). This sweep exists to demonstrate tol-insensitivity OF THE LEGACY
+    CRITERION, so it pins that criterion explicitly; the f2 analogue would
+    sweep `mom_tol` instead (see reports/f2_pricing_3d.csv for that data).
     """
     print(f"\n--- C.3 tol sweep: case={case_id}, grid={grid} ---")
     rows = []
     for tol in tols:
-        with _patched_env('TPMSHX_SIMPLE_TOL', f'{tol:.2e}'):
-            cfg = CASES_C[case_id](grid)
+        with _patched_env('TPMSHX_SIMPLE_TOL', f'{tol:.2e}'), \
+             _patched_env('TPMSHX_CONV_MODE', 'legacy'):
+            cfg = dict(CASES_C[case_id](grid))
+            cfg['convergence_mode'] = 'legacy'   # belt (env above is braces)
             t0 = time.time()
             res = _run_3d_stack(cfg)
             dt = time.time() - t0

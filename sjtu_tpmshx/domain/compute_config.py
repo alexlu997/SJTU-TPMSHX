@@ -182,6 +182,31 @@ class SolverConfig:
 
     ``T_s_init_K=None`` falls back to the legacy seed
     ``0.5 * (T_inA + T_inB)`` inside ``solve_full_domain[_3d]``.
+
+    F2 CONVERGENCE GATES (BOTH dims since C9, ledger C6/C7/C9 — 2026-07-12)
+    ------------------------------------------------------------------------
+    - ``convergence_mode``: ``'legacy'`` or ``'f2'``. A ``None`` here resolves
+      to **'f2' in BOTH production pipelines** (env ``TPMSHX_CONV_MODE`` >
+      this config > default 'f2'; ``run_stack_3d._apply_accel_flags`` and
+      ``stages_2d``). Only the raw solver CLASSES default to 'legacy' for
+      kernel-direct callers.
+      ``'legacy'`` gates on ``tol_simple`` — in 3D an OUTLET-PIN ARTIFACT that
+      never reaches its tolerance (ledger C6; LowReExit's velocity criterion
+      actually decides, declaring converged at momentum residual 1.8e-3 ..
+      1.5e-2, still falling), in 2D a full-face TAUTOLOGY that fires at the
+      20-iteration floor (ledger C9, dP under-converged −3.3%).
+      ``'f2'`` gates on three independent residuals instead — see below.
+    - ``mom_tol`` / ``mass_local_tol`` / ``mass_global_tol``: the F2 gates
+      (momentum residual / solved-cell continuity / global boundary mass). All
+      three must hold for ``f2_n_confirm`` consecutive checks.
+
+    These are DELIBERATELY separate names, not a redefinition of ``tol_simple``.
+    ``tol_simple`` already means five different numbers across the codebase
+    (``solve()`` default 1e-6, this pipeline 1e-5, the Shanghai kernel runner
+    1e-3, coarse bootstrap 1e-3, the 3D optimizer 1e-2). Re-pointing it at the
+    momentum residual would silently fork every one of them (codex review P0-4).
+    ``tol_simple`` keeps its legacy meaning and keeps driving the legacy path and
+    the adaptive-AMG scheduler.
     """
     max_outer_ltne: Optional[int] = None
     outer_tol_K: Optional[float] = None
@@ -191,6 +216,10 @@ class SolverConfig:
     Ny: int = 60
     Nz: int = 1
     T_s_init_K: Optional[float] = None
+    convergence_mode: Optional[str] = None      # None -> pipelines resolve 'f2' (env wins)
+    mom_tol: Optional[float] = None
+    mass_local_tol: Optional[float] = None
+    mass_global_tol: Optional[float] = None
 
 
 @dataclass
@@ -453,6 +482,87 @@ class ComputeConfig:
             if iv < 1:
                 raise ValueError(
                     f"ComputeConfig.{name}={n} — must be >= 1")
+
+        # ── Lz contract (2026-07-12) ─────────────────────────────────────────
+        # This class's own GeometryConfig docstring says the 3D path *requires*
+        # Lz_m, but stages_3d silently substituted 0.042 m (the Shanghai depth)
+        # when it was None — a 3D result computed against a magic constant the
+        # user never chose, with every extensive scalar (Q, mass, dP_B) scaled
+        # by it. Nz >= 2 is exactly `is_3d`, so this is a config error.
+        if self.is_3d and self.geometry.Lz_m is None:
+            raise ValueError(
+                f"ComputeConfig.geometry.Lz_m is None but solver.Nz="
+                f"{self.solver.Nz} >= 2 selects the 3D path, which requires an "
+                "explicit domain depth (it used to silently fall back to "
+                "0.042 m). Set geometry.Lz_m, or set Nz=1 for a 2D run.")
+
+        # ── Numerical solver settings (2026-07-12) ───────────────────────────
+        # These were previously UNVALIDATED: a JSON with max_outer_ltne=0,
+        # outer_tol_K=-1 or tol_simple=1e9 loaded clean and produced a result
+        # that looked like a solve. None = "use the dimension built-in" and
+        # stays legal.
+        for name, v in (('solver.outer_tol_K', self.solver.outer_tol_K),
+                        ('solver.tol_simple', self.solver.tol_simple),
+                        # F2 gates (ledger C7). Same rule: positive and finite.
+                        # A zero or negative gate is strictly unreachable (all
+                        # three residuals are >= 0), so the solve could only ever
+                        # burn max_iter and report converged=False.
+                        ('solver.mom_tol', self.solver.mom_tol),
+                        ('solver.mass_local_tol', self.solver.mass_local_tol),
+                        ('solver.mass_global_tol',
+                         self.solver.mass_global_tol)):
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                _bad(name, v)
+            if not math.isfinite(fv) or fv <= 0.0:
+                _bad(name, v)
+        if self.solver.convergence_mode is not None:
+            if self.solver.convergence_mode not in ('legacy', 'f2'):
+                raise ValueError(
+                    f"ComputeConfig.solver.convergence_mode="
+                    f"{self.solver.convergence_mode!r} — must be 'legacy' or "
+                    "'f2' (ledger C6/C7). 'legacy' gates on the mass residual "
+                    "that C6 showed to be an outlet-pin artifact; 'f2' gates on "
+                    "momentum + solved-cell mass + global mass.")
+
+        if self.solver.max_iter_simple is not None:
+            try:
+                mi = int(self.solver.max_iter_simple)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"ComputeConfig.solver.max_iter_simple="
+                    f"{self.solver.max_iter_simple!r} — must be an int >= 1")
+            if mi < 1:
+                raise ValueError(
+                    f"ComputeConfig.solver.max_iter_simple={mi} — must be >= 1")
+        if self.solver.max_outer_ltne is not None:
+            try:
+                mo = int(self.solver.max_outer_ltne)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"ComputeConfig.solver.max_outer_ltne="
+                    f"{self.solver.max_outer_ltne!r} — must be an int >= 2")
+            # < 2 CANNOT converge: OuterConvergence needs a previous field to
+            # diff against, so the first outer iteration is never 'converged'
+            # by construction — the loop always exits on the cap and the run
+            # can only ever report converged=False. Fail loud here (the typed
+            # production boundary) rather than silently ship a result that
+            # claims nothing. The raw-cfg path (_run_3d_stack) still accepts 1
+            # as an explicit single-pass SCREENING mode — it now honestly
+            # reports solver_converged=False (see run_stack_3d.py).
+            if mo < 2:
+                raise ValueError(
+                    f"ComputeConfig.solver.max_outer_ltne={mo} — must be >= 2. "
+                    "A single outer pass can never satisfy the coupling "
+                    "criterion (it needs a previous iterate to compare "
+                    "against), so the run could only ever report "
+                    "converged=False. For a deliberate single-pass screening "
+                    "sweep, drive pipelines.stages_3d._run_3d_stack directly "
+                    "with a raw cfg dict and read convergence_detail — do not "
+                    "route it through the typed production config.")
         return self
 
     @classmethod

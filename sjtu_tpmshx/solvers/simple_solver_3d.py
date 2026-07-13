@@ -27,14 +27,38 @@ Physics (velocity, interstitial convention — matches 2D). Production default
 is COMPRESSIBLE ideal-gas ρ=ρ(P,T) with a mass-flux inlet and the choke
 envelope guard (solvers/envelope.py); the discrete pressure-correction
 continuity operator carries ε·ρ (rho_eps_field), so per-side and spatially
-varying ε enter mass conservation. The momentum operator itself carries no
-ε weighting and no ∇ε source (uniform-ε-per-side form — see research ledger
-B5 before attempting zoned in-domain ε gradients):
+varying ε enter mass conservation.
+
+ε IN THE MOMENTUM OPERATOR — corrected 2026-07-12. This docstring used to say
+"the momentum operator carries no ε weighting and no ∇ε source". THAT IS STALE:
+M2b (2026-07-09, ledger B5) added the ε-divided VANS form to all three 3D
+momentum cell bodies. Every flux face carries the ratio r_f = ε_f/ε_CV on BOTH
+the convective (F) and diffusive (D) coefficients, so a spatially varying ε does
+enter momentum. It is guarded: `_use_eps` is 1 only when `eps_field` is genuinely
+non-uniform (`solve()`, ~line 888), so the uniform-ε path keeps the pre-M2b
+expression tree bit-for-bit (these kernels are fastmath; an inline ×1.0 could be
+re-associated and break golden bit-identity). The pressure term is unfactored and
+the D-F drag is untouched — the ratio form captures ∇ε without an explicit source
+term and without double-counting the calibrated drag.
+
     ∂(ερu)/∂x + ∂(ερv)/∂y + ∂(ερw)/∂z = 0                       (continuity)
     ρ(u·∇)u = -∂P/∂x + μ_eff ∇²u − R·u                          (x-momentum)
     ρ(u·∇)v = -∂P/∂y + μ_eff ∇²v − R·v                          (y-momentum)
     ρ(u·∇)w = -∂P/∂z + μ_eff ∇²w − R·w                          (z-momentum)
   with R = μ/K + ρ·c_F·|U| (D-F closure, ConstDF-v1 interstitial form).
+
+BOUNDARY CONDITIONS (be precise — the two ends are NOT symmetric):
+  * INLET (j=0): MASS-FLUX. ρ·v is held at the physical throughput and
+    `v_inlet_field` is recomputed from the current inlet ρ every density update
+    (`_apply_massflux_inlet`). HARD INVARIANT — see CLAUDE.md.
+  * OUTLET (j=Ny-1): DIRICHLET PRESSURE. Every open outlet cell is pinned
+    `Pp = 0` and its P is never corrected (`_correct_jit_3d`), so its GAUGE
+    pressure stays 0 for the whole solve ⇒ **the outlet ABSOLUTE pressure is
+    exactly `self.P_ref_abs`**. `self.P` is a GAUGE field (init 0 everywhere,
+    line ~600); absolute pressure is always `P + P_ref_abs`.
+  ⇒ the solver solves "given the mass flow and the outlet pressure, what is Δp?"
+    Δp is an OUTPUT. Specifying BOTH end pressures and solving for the mass flow
+    is a DIFFERENT problem (pressure-driven flow) and needs a different inlet BC.
 
 Staggered grid:
     P : cell-centre (Nx, Ny, Nz)
@@ -98,7 +122,7 @@ _AMG_GATE = 30_000
 from .tpms_calc import air_density, air_viscosity, P_atm
 from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
 from ._kernels_2d import minmod
-from ._solve_common import LowReExit
+from ._solve_common import LowReExit, F2Monitor
 
 
 # ===================================================================
@@ -113,19 +137,25 @@ from ._kernels_simple_3d import (  # noqa: F401
     _umag_w_3d,
     _porous_src_df_3d,
     _sou_axis,
+    _u_coeffs_df_3d,
     _u_cell_df_3d,
     _sweep_u_jit_df_3d,
     _sweep_u_jit_df_3d_parallel,
+    _v_coeffs_df_3d,
     _v_cell_df_3d,
     _v_bc_3d,
     _sweep_v_jit_df_3d,
     _sweep_v_jit_df_3d_parallel,
+    _w_coeffs_df_3d,
     _w_cell_df_3d,
     _sweep_w_jit_df_3d,
     _sweep_w_jit_df_3d_parallel,
     _assemble_pp_3d,
     _correct_jit_3d,
     _mass_res_jit_3d,
+    _mass_res_solved_jit_3d,
+    _mass_global_jit_3d,
+    _mom_res_jit_3d,
 )
 
 
@@ -136,6 +166,22 @@ def _build_pp_sparsity_3d(Nx, Ny, Nz, outlet_mask_ij):
         (i, k) column are treated as outlet reference. Actually we use the
         j-direction outlet (Fluid A) by default; Phase 1 pins k=Nz-1 too if
         provided. For MVP we use j=Ny-1 only.
+
+    WHAT THE PIN ACTUALLY IS (be precise — ledger C6, corrected 2026-07-12).
+    `cell_kind = 1` marks EVERY open outlet cell, and `_assemble_pp_3d` then
+    REPLACES that cell's continuity equation with `Pp = 0`. That is a DIRICHLET
+    PRESSURE-OUTLET boundary condition on the whole outlet face — not merely a
+    single-point gauge fixing the pressure datum of a singular system. The two
+    are different things and this docstring (and C6's first draft) blurred them.
+    Consequences, all measured:
+      * the outlet row's per-cell mass balance is never solved, so its residual
+        is whatever the momentum sweep leaves there (transverse divergence,
+        dominated by Fz) — see `_mom_res_jit_3d` and ledger C6;
+      * a uniform outlet pressure is defensible physics for a plenum exit, but
+        it is a MODELLING CHOICE, not a numerical necessity. Revisiting it
+        (ledger F3: impose Pp=0 on the outlet FACE and keep the last CV's
+        continuity equation) is a boundary-condition change needing its own V&V
+        — NOT a convergence patch, and NOT to be bundled with F2.
     """
     N = Nx * Ny * Nz
 
@@ -388,6 +434,17 @@ class SIMPLESolver3D:
         # Derive boolean wall/open mask: True = open (lets PPE/correction run),
         # False = wall (pin v=0). Threshold mirrors v-sweep (`> 0.5`).
         self.outlet_mask_ij = (arr > 0.5).astype(np.bool_)
+        # 2026-07-13 audit: the pp sparsity's `cell_kind` pin set is built from
+        # this mask ONCE at the first solve(). Without invalidation, a caller
+        # that changes the outlet mask AFTER a solve keeps the OLD pin set —
+        # some new wall cells retain a Pp=0 Dirichlet row (never solved) while
+        # `_v_bc_3d`/`_correct_jit_3d` wall their outlet face by the NEW mask:
+        # mass accumulates there with no pressure response. All production
+        # callers set the mask before the first solve (invalidation is then a
+        # no-op); this closes the reuse trap. AMG operator cache is keyed on
+        # the sparsity, so it rebuilds with it.
+        if getattr(self, '_pp_sparsity', None) is not None:
+            self._pp_sparsity = None
 
     @staticmethod
     def extract_dP_weighted(s):
@@ -602,8 +659,21 @@ class SIMPLESolver3D:
 
     def _update_density(self):
         """Compressible rho update: ρ = P_abs / (R·T), under-relaxed.
-        v_inlet_field stays fixed (velocity-inlet BC); mass flux at inlet
-        floats with density. No-op for incompressible fluid_type.
+
+        The inlet is then re-imposed as a MASS-FLUX inlet (`_apply_massflux_inlet`
+        at the tail of this method): ρ·v at the inlet is held at the physical
+        throughput and `v_inlet_field` is recomputed as G_target / ρ_inlet. This
+        is a HARD INVARIANT (CLAUDE.md) and the DEFAULT (`massflux_inlet=True`).
+
+        (Corrected 2026-07-12. This docstring previously read "v_inlet_field
+        stays fixed (velocity-inlet BC); mass flux at inlet floats with density"
+        — the exact OPPOSITE of what the code does, and of the invariant. A
+        velocity inlet + compressible ρ + Forchheimer is a positive feedback
+        (dP↑→ρ↑→dP↑) that makes Δp drift with the grid; the mass-flux inlet is
+        what makes Shanghai Δp grid-convergent (2D RMSRE 35.8%→8.4%). Do not
+        "restore" the old behaviour on the strength of a stale comment.)
+
+        No-op for incompressible fluid_type.
 
         Clipping policy (2026-05-06 fix #1, widened 2026-05-07 after UI
         report 2): clip P_abs to [1 kPa, 10 MPa] — physical HX envelope
@@ -715,6 +785,59 @@ class SIMPLESolver3D:
             returns the current iterate so the caller can abort responsively
             (UI report point 4, 2026-05-22 — water Re~33 needs thousands of
             iterations, so an outer-loop-only cancel left the user waiting).
+
+        `tol` IS NOT THE CONVERGENCE CRITERION — read this before touching it
+        ----------------------------------------------------------------------
+        `tol` gates `self.final_res`, the mass residual from `_mass_res_jit_3d`.
+        On this solver that number is dominated by a BOUNDARY ARTIFACT and does
+        not measure convergence. Measured, ledger C6 (2026-07-12):
+
+          * `_build_pp_sparsity_3d` marks EVERY open outlet cell `cell_kind = 1`,
+            and `_assemble_pp_3d` then REPLACES those cells' continuity equation
+            with `Pp = 0`. They are never solved. This is a DIRICHLET
+            PRESSURE-OUTLET BC on the whole outlet face — NOT merely a
+            single-point gauge for a singular system. (2D does the same.)
+          * The residual is evaluated against `rho_eps_field`, the SAME array
+            `_solve_pp_amg` just solved `div(rho_eps.u) = 0` against — before
+            `_update_density` refreshed rho. So on every cell the pp equation
+            solved, the residual is ~0 TO THE ACCURACY OF THE pp SOLVE.
+
+        SCOPE (added 2026-07-12 after review — the original C6 wording overstated
+        this). "~0 by construction" is exact only on the DIRECT-SOLVE path:
+        `N <= _AMG_GATE` (30 000 cells) uses `spsolve`, and the measured
+        outlet-row-excluded residual is 2.9e-17. Above the gate the pp system is
+        solved by AMG-preconditioned BiCGStab with an ADAPTIVE `rtol_dyn` that
+        can be as loose as 1e-3, so on server-sized grids the old mass residual
+        also carries the pp LINEAR-SOLVE error. It is then a diagnostic of the pp
+        sub-problem — still NOT a SIMPLE fixed-point residual, and still polluted
+        by the outlet-pin artifact, but do not quote "2.9e-17" outside the small-
+        grid regime.
+
+        Consequences, all confirmed on the Shanghai production pipeline (600
+        cells, direct solve):
+
+          * NO case has ever exited via 'tol'. Every one exits on LowReExit's
+            velocity criterion. The `stall` exits are this plateau, not a solver
+            failure.
+          * Tripling max_iter (2000 -> 6000) moves the residual by ZERO to the
+            last bit — it is not iterating toward anything.
+          * The floor scales with Nz ONLY (the outlet-plane transverse mesh);
+            refining Nx/Ny 4x leaves it unchanged.
+
+        DO NOT "fix" this by skipping the outlet row in `_mass_res_jit_3d` while
+        still letting it drive the exit. That makes the residual tautologically
+        zero, `tol` fires at the min-iter floor, and the momentum field exits
+        UNCONVERGED (measured: dP -2.1% on Shanghai case 1). Continuity converges
+        FASTER than momentum here, so a mass-only `tol` can only ever exit early.
+
+        The honest criterion is the MOMENTUM residual (`_mom_res_jit_3d`, ledger
+        C7) ANDed with a solved-cell mass residual — see `convergence_mode`.
+
+        Also note `self.residuals` is not inert: the adaptive AMG inner tolerance
+        reads `self.residuals[-1]` to schedule `rtol_dyn`. Changing WHAT that list
+        holds changes the pp solve's precision schedule on AMG-sized grids. The
+        F2 path therefore keeps the legacy mass residual in `residuals` and drives
+        the scheduler from it explicitly.
 
         Returns
         -------
@@ -836,6 +959,64 @@ class SIMPLESolver3D:
         self.final_res = None
         self.res_norm_ref = 1.0
 
+        # Ledger C6 — OPT-IN momentum residual. DIAGNOSTIC ONLY: it is recorded
+        # but does NOT gate the exit, so enabling it cannot change any result.
+        # Default OFF (it costs one extra full coefficient assembly per SIMPLE
+        # iteration). Enable per-solver via `track_momentum_residual = True`, or
+        # globally via env TPMSHX_MOM_RES=1 (for sweeps / V&V studies).
+        # `mom_residuals` accumulates across warm restarts, like `residuals`.
+        _track_mom = bool(getattr(self, 'track_momentum_residual', False)
+                          or os.environ.get('TPMSHX_MOM_RES', '') == '1')
+        if _track_mom and not hasattr(self, 'mom_residuals'):
+            self.mom_residuals = []
+
+        # ── Ledger C7 / F2 — convergence mode ────────────────────────────
+        # 'legacy' (default): `tol` on the mass residual + LowReExit. Ledger C6
+        #     shows that `tol` is unreachable and LowReExit's velocity criterion
+        #     is what actually decides. Kept as the default until F2 is priced
+        #     and re-baselined; it is what every golden / gate number to date was
+        #     produced with.
+        # 'f2'    : three independent gates (momentum + solved-cell mass + global
+        #     boundary mass), each with its OWN tolerance, confirmed over
+        #     `f2_n_confirm` consecutive checks. A static velocity field triggers
+        #     a check; it does NOT terminate. See F2Monitor.
+        _mode = str(getattr(self, 'convergence_mode',
+                            os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
+        if _mode not in ('legacy', 'f2'):
+            raise ValueError(
+                f"convergence_mode must be 'legacy' or 'f2', got {_mode!r}")
+        _f2 = None
+        if _mode == 'f2':
+            # Anderson mutates u/v/w/P/rho AFTER the Picard step, gates its
+            # candidate on the C6-falsified mass artifact, and its rollback does
+            # NOT restore rho_field exactly (`_update_density` re-blends against
+            # the already-Anderson-mixed rho, and `_apply_massflux_inlet` then
+            # rebuilds v_inlet_field from it). Every one of those breaks a
+            # residual-gated exit. Fix Anderson first; do not silently combine.
+            if bool(getattr(self, 'use_anderson', False)):
+                raise ValueError(
+                    "convergence_mode='f2' with use_anderson=True is not "
+                    "supported: Anderson's acceptance gate still uses the "
+                    "C6-falsified mass residual and its rollback does not "
+                    "restore rho_field/v_inlet_field exactly (ledger C7 P0-3). "
+                    "Disable one of them.")
+            _f2 = F2Monitor(self, (self.u, self.v, self.w), min_iter=10)
+            for _h in ('mass_local_residuals', 'mass_global_residuals'):
+                if not hasattr(self, _h):
+                    setattr(self, _h, [])
+            if not hasattr(self, 'mom_residuals'):
+                self.mom_residuals = []
+            self.final_res_mom = None
+            self.final_res_mass_local = None
+            self.final_res_mass_global = None
+            self.outlet_backflow_frac = 0.0
+        elif _track_mom and bool(getattr(self, 'use_anderson', False)):
+            _log.warning(
+                "  [WARN] track_momentum_residual + use_anderson: the recorded "
+                "momentum residual is evaluated after the Anderson step, but "
+                "Anderson's own accept/rollback still uses the legacy mass "
+                "residual — treat the history as indicative only (ledger C7).")
+
         for it in range(1, max_iter + 1):
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
             # fine enough that a water solve aborts in well under a second.
@@ -907,6 +1088,16 @@ class SIMPLESolver3D:
                              self.rho_field, self.eps_field, self.outlet_mask_ij)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
 
+            # NOTE: `rho_eps_field` here is the PRE-`_update_density` array —
+            # the one `_solve_pp_amg` above just solved div(rho_eps.u)=0 against.
+            # So this residual is ~0 by construction on every cell the pp
+            # equation solved, and the reported number is entirely the pinned
+            # outlet row's uncorrected transverse divergence. It is a boundary
+            # artifact, not a convergence measure; `tol` on it is unreachable by
+            # design and never fires. See the solve() docstring and ledger C6
+            # BEFORE changing either the rho used here or the cells summed over —
+            # the obvious "fix" (skip the outlet row) makes it tautologically
+            # zero and exits the momentum field unconverged.
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
                                      rho_eps_field)
@@ -975,13 +1166,71 @@ class SIMPLESolver3D:
                 # accepted) state for the next iteration's diff.
                 prev_x = stack_state(self.u, self.v, self.w, self.P)
 
+            # `residuals` keeps holding the LEGACY mass residual, deliberately.
+            # It is not inert: the adaptive AMG scheduler above reads
+            # `self.residuals[-1]` to set `rtol_dyn`. Repurposing this list would
+            # silently change the pp solve's precision schedule on AMG-sized
+            # grids. The F2 metrics get their own histories (below).
             self.residuals.append(res)
 
             if verbose and it % 50 == 0:
                 _log.info(f"  3D iter {it:5d}  |R| = {res:.3e}")
 
+            # ══ Residuals evaluated on the FINAL state of this iteration ══
+            # After the sweeps, the pp solve, the correction, the density update
+            # AND any Anderson accept/rollback. Ordering matters: an earlier
+            # revision computed the momentum residual BEFORE the Anderson block,
+            # so on an accepted Anderson step the recorded residual described a
+            # state that was then overwritten (codex review, 2026-07-12).
+            _need_mom = _track_mom or (_f2 is not None)
+            _vd = _f2.velocity_delta((self.u, self.v, self.w)) \
+                if _f2 is not None else None
+            _eval_mom = (_track_mom if _f2 is None
+                         else (_f2.should_eval_momentum(it, _vd) or _track_mom))
+
+            _Rmom = None
+            if _need_mom and _eval_mom:
+                _Rmom, _mom_rec = self._momentum_residual(
+                    Nx, Ny, Nz, dx, dy, dz, _use_sou, _use_eps)
+                self.final_res_mom = _Rmom
+                if _track_mom:
+                    _mom_rec['iter'] = it
+                    self.mom_residuals.append(_mom_rec)
+
+            if _f2 is not None:
+                _rho_eps_now = np.ascontiguousarray(
+                    self.rho_field * self.eps_field, dtype=np.float64)
+                _Rml, _n_solved = _mass_res_solved_jit_3d(
+                    self.u, self.v, self.w, Nx, Ny, Nz, dx, dy, dz,
+                    _rho_eps_now, self._pp_sparsity['cell_kind'])
+                _min, _mout, _bf = _mass_global_jit_3d(
+                    self.v, Nx, Ny, Nz, dx, dz, _rho_eps_now)
+                _Rmg = (abs(_mout - _min) / abs(_min)
+                        if abs(_min) > 1e-14 else 0.0)
+                self.mass_local_residuals.append(_Rml)
+                self.mass_global_residuals.append(_Rmg)
+                self.outlet_backflow_frac = _bf
+                self.final_res_mass_local = _Rml
+                self.final_res_mass_global = _Rmg
+
+                if _Rmom is not None:
+                    self.final_res_mom = _Rmom
+                    _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
+                    if _reason is not None:
+                        self.exit_reason = _reason
+                        return (_reason == 'tol'), it
+                # NOTE: no `velocity` exit here. A static field only TRIGGERS a
+                # check (see F2Monitor.should_eval_momentum); it never
+                # terminates. Returning False on it would merely convert a
+                # premature success into a premature failure — the solve would
+                # still stop at ~90 iters and never reach the real gate at ~250.
+                continue
+
+            # ── LEGACY path (convergence_mode='legacy') ──────────────────
             # Strict exit: residual below tol (A2: res is now the inlet-flux-
             # normalised relative norm, so tol means a throughput fraction).
+            # Ledger C6: this `tol` is unreachable in practice — `res` is the
+            # outlet-pin artifact. Kept for bit-identity / back-compat only.
             if res < tol and it >= 10:
                 self.exit_reason = 'tol'
                 return True, it
@@ -999,6 +1248,43 @@ class SIMPLESolver3D:
         self.exit_reason = ('cancelled' if getattr(self, '_cancelled', False)
                             else 'max_iter')
         return False, max_iter
+
+    # ── ledger C7 — momentum residual, balanced normalisation ─────────
+    _MOM_FLOOR_FRAC = 1e-3
+
+    def _momentum_residual(self, Nx, Ny, Nz, dx, dy, dz, use_sou, use_eps):
+        """(R_max, record) on the solver's CURRENT state.
+
+        Balanced denominator (see `_mom_res_jit_3d`): den_c = Σ½(|lhs| + |rhs|),
+        so `num > 0 ⟹ den > 0` and a false zero is structurally impossible.
+
+        COMMON FLOOR. Each component is divided by `max(den_c, floor)` with
+        `floor = _MOM_FLOOR_FRAC * max(den_u, den_v, den_w)`. Without it, a
+        physically negligible component (e.g. w-momentum in a plane-dominated
+        flow, whose forces are orders of magnitude below u/v) would be scored on
+        its own tiny scale and could hold the gate open on numerical noise. With
+        it, a component carrying less than 0.1 % of the dominant momentum scale
+        is measured against that dominant scale instead — it can still fail the
+        gate, but only for an imbalance that is large in absolute terms.
+
+        Raw num/den are kept in the record so the normalisation can be revisited
+        without re-running.
+        """
+        nu_, du_, nv_, dv_, nw_, dw_ = _mom_res_jit_3d(
+            self.u, self.v, self.w, self.P,
+            Nx, Ny, Nz, dx, dy, dz,
+            self.rho_field, self._mu_eff_field, self.mu_field,
+            self.eps_field, self.K_arr, self.cF_arr,
+            self.outlet_frac, self.inlet_frac, use_sou, use_eps)
+        d_ref = max(du_, dv_, dw_)
+        floor = self._MOM_FLOOR_FRAC * d_ref
+        def _r(n, d):
+            den = max(d, floor)
+            return (n / den) if den > 0.0 else 0.0
+        ru, rv, rw = _r(nu_, du_), _r(nv_, dv_), _r(nw_, dw_)
+        rmax = max(ru, rv, rw)
+        return rmax, {'u': ru, 'v': rv, 'w': rw, 'max': rmax,
+                      'num': (nu_, nv_, nw_), 'den': (du_, dv_, dw_)}
 
 
 # ── JIT warmup — pay the compile cost at module-import time, not on first

@@ -624,7 +624,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | `stages_3d_helpers.py`（~460 行） | Phase-3 早期抽出的纯 numpy 助手（χ_B 阈值等）。 |
 | `_stage_common.py` | 2D/3D 共享非内核胶水（域尺寸防火墙、外推守卫、safe_float、props 三元组）。 |
 
-- **2D 要点**：入口锚定（高 Δp 抬入口压力，很少 choke）；`rho_inlet_ref` 显式传参防外迭代 ratchet。
+- **2D 要点**：**出口锚定**（与 3D 同一契约：`P_ref_abs` = 出口绝对压，一维可压缩闭式播种。旧文案"入口锚定、很少 choke"描述的是 2026-07-12 修复的生产 bug——台账 C8——不是设计；2D 目前仍无预解 choke 守卫，台账 O1）；`rho_inlet_ref` 显式传参防外迭代 ratchet。
 - **3D 要点**：ε 减半契约（调用方传完整 ε；asym 例外见 `solvers/asym_split.py`）；出口锚定 —— `solvers/envelope.py` 的 choke 守卫主要在这里生效；外层 ρ(T) 耦合循环（默认 max_outer=5，A、B 都收敛就早停）；边界层加密单元数封顶 ~5 万。
 
 ---

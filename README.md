@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
-  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order 1.975." width="100%">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order p_obs ≥ 2.07." width="100%">
 </picture>
 
 <br><br>
@@ -34,7 +34,7 @@
 | **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
 | **3D pressure drop** RMSRE | **≈ 10 %** | full SIMPLE 3D, gamma_df default, grid-converged (per-case Richardson, A2 criteria) |
 | **3D heat duty Q** RMSRE | **≈ 3 %** | full SIMPLE 3D, gamma_df default, grid-converged |
-| **MMS** observed order `p_obs` | **1.975** | code verification, SOU 2nd-order |
+| **MMS** observed order `p_obs` | **≥ 2.07** | code verification, SOU 2nd-order (gate ≥ 1.5) |
 
 </div>
 
@@ -57,6 +57,56 @@
 > `tests/test_dp_face_extrap_order.py`, direction-invariance (any ±x/±y/±z flow axis) in
 > `tests/test_dp_direction_invariance.py`.
 
+> [!IMPORTANT]
+> **Gate runner switched 2026-07-12 — the water side is now SOLVED, not frozen.**
+> The validation gate used to run a kernel-direct path with fluid B prescribed from the
+> **measured** water outlet temperature (`Tb_prescribed`). It now runs the production
+> `Pipeline3D` stack — the same code the GUI, the optimizer and the server batches drive —
+> with a real SIMPLE-B water solve. At the gate grid (20×10×3) that moves
+> **Δp 5.28 % → 4.88 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D aligned
+> kernel gate's Q RMSRE of 2.51 % — the ε-NTU *lumped* baseline is a different number,
+> 1.71 %). The old runner was partly *fed* the answer: the measured outlet
+> temperature already encodes the true duty via the water enthalpy balance, and Q is
+> `Σ h_vB·(Ts − Tb)·dV`, so Tb sets the driving force. The new gate predicts it from
+> scratch and is still more accurate. Legacy numbers reproduce with `--runner kernel`;
+> full rationale in `validation/_CSV_STATUS.md` and the gate script's docstring.
+> **The grid-converged ≈ 10 % / ≈ 3 % above are *not* affected** — that 4-grid study was
+> run on the old runner and has not yet been repeated on the new one.
+
+> [!IMPORTANT]
+> **3D convergence criterion replaced 2026-07-12 (ledger C6/C7) — `f2` is now the
+> production default.** The old exit gated `tol` on a mass residual that turned out to be
+> a **boundary artifact**: the pressure-correction equation *replaces* the continuity
+> equation on the whole outlet face with a Dirichlet `Pp = 0`, and the residual was then
+> evaluated against the very density array the pp solve had just zeroed itself against. So
+> it never reached its tolerance (measured floor 7.9e-4 … 9.4e-4 on **all 16** Shanghai
+> cases) and what actually decided convergence was a *velocity-went-static* heuristic —
+> which declares success while the momentum equation is still violated by 0.2–1.5 %.
+>
+> The pipeline now gates on three independent residuals — **momentum**
+> (`aP0·φ − Σa_nb·φ_nb − p_src`, the SIMPLE fixed-point defect), **solved-cell continuity**
+> (fresh ρ, Dirichlet cells excluded), and **global boundary mass** (plus a backflow
+> fraction) — each with its own tolerance, held for consecutive checks. `exit_reason ==
+> 'tol'` now means the equations are satisfied, not that the field stopped moving.
+>
+> Measured cost: **≈ 2.0× SIMPLE wall time** at `mom_tol=1e-4`, for **Δp RMSRE 4.93 % →
+> 4.88 %** (Q unchanged at 2.12 %). Verified on the full Shanghai 16, on all three golden
+> configs (air-air partial-BC / water-B / asym offset — every scalar moves < 0.1 %) and on
+> the AMG path (40×40×20). **The optimizer deliberately stays on the legacy criterion** —
+> it produces rankings only, and Pareto picks are re-solved through this pipeline. Reproduce
+> the pricing: `validation/cases/price_f2_convergence_3d.py` → `reports/f2_pricing_3d.csv`.
+> Revert with `TPMSHX_CONV_MODE=legacy`.
+>
+> **2D got the same treatment (ledger C9) — and needed it MORE.** 2D's legacy `tol`
+> gated a PLANE-INTEGRATED flux defect, which the pp solve makes **tautologically
+> zero** on a full-face outlet (measured 1.6e-15). It therefore fired at the
+> minimum-iteration floor and **stopped the solve after 20 iterations**, leaving Δp
+> under-converged by **3.3 %**. Going to 50 iterations removes that for **1.24× wall**
+> — a far better trade than 3D's. (The old 2D gate could not see it: it was
+> kernel-direct and did not run the production pipeline.) golden-2D compressible Δp
+> re-baselines **+3.9…4.0 %**; the partial-BC side barely moves, because it exited on
+> the velocity criterion rather than the tautological `tol`.
+
 <div align="center">
 
 <img src="assets/grid-convergence.png" width="84%" alt="3D grid convergence, Shanghai 16-case: under all-axis refinement the Δp RMSRE climbs from ~5% to a ~10% geometry/closure floor while the validation-gate 20×10×3 grid (~5%) is under-resolved; Q clean-converges to ~3%.">
@@ -74,10 +124,10 @@
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
 | **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct · solid-conduction tortuosity **χ_s(type, ε)** from unit-cell periodic homogenization (≈0.59–0.83; thin-sheet limit ⅔) |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
-| **3D solver** | full SIMPLE 3D **+** Streamfunction–Pressure formulation with a 3D Pressure-Poisson solve (Helmholtz machine-ε mass conservation) · **mass-flux inlet** (ideal-gas) by default |
+| **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **≈ 28 %** |
-| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≈ 1.97`), GCI grid convergence, tolerance sweep |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
+| **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
 ---
@@ -118,8 +168,9 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate.
-The runtime path loads an exported joblib RBF model.
+GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate
+(the historical `rbf` backend; superseded by `gamma_df` as default 2026-06-12).
+The runtime path reads a CSV-based log-space TPS surface (`gamma_df`, no joblib/torch at runtime).
 
 ---
 
@@ -148,7 +199,7 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 #### ✔️ Tests
 
 ```bash
-# full suite, parallel (~4.5 min; ~120 test files). PYTHONHASHSEED must be
+# full suite, parallel (~4.5 min; ~150 test files). PYTHONHASHSEED must be
 # set in the shell — the 3D pipeline output is hash-seed sensitive.
 PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
 
@@ -203,7 +254,7 @@ ASME V&V 20 **Standard Tier** complete (single-day closure, 2026-05-04):
 | **D — Domain sweep** | **18 / 20** PASS, applicability `u ≤ 10 m/s` |
 | **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.71 %** |
 
-Streamfunction–Pressure formulation: 3D PPE Phase-A MMS `p_obs = 1.975` (SOU 2nd-order verified).
+3D PPE Phase-A MMS `p_obs ≥ 2.07` (SOU 2nd-order verified).
 
 ---
 

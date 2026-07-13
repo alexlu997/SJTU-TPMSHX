@@ -911,6 +911,26 @@ def _mass_res_jit(u, v, Nx, Ny, dx_arr, dy_arr, rho_field):
 
     Returns max |Q(j) - Q_inlet| / Q_inlet where Q(j) = Σ_i ρ_face·v[i,j]·dx[i]
     is the cross-sectional MASS flux (not volumetric).
+
+    This is a PLANE-INTEGRATED defect, NOT a per-cell divergence — transverse
+    per-cell imbalances cancel within a plane (u = 0 at the i = 0 / i = Nx walls
+    makes the x-flux telescope to zero over any j-plane) and are invisible here.
+    The 3D `_mass_res_jit_3d` returns the per-cell divergence instead, i.e. a
+    strictly stronger quantity — yet both solvers are handed the same `tol`.
+    THAT mismatch, not any 2D band-aid, is why 2D's `tol` is reachable and 3D's
+    is not (ledger C6).
+
+    CORRECTION (2026-07-12, codex review). An earlier revision of this docstring
+    claimed `_enforce_mass_conservation` (`simple_solver.py:958`) "snaps exactly
+    this quantity to zero, which is why 2D's tol fires". THAT IS WRONG, and the
+    call order disproves it: the tol test runs FIRST (`simple_solver.py:897`) and
+    the rescale is invoked only on the way OUT (`:900`, `:914`, `:926`) — never
+    inside the loop. It cannot help any tol check fire. What it DOES do is change
+    the RETURNED outlet velocity while `final_res` (`:902`) still reports the
+    pre-rescale value — a real (minor) state inconsistency, logged in ledger C2.
+
+    Like 3D, this residual is evaluated against the PRE-`_update_density`
+    rho_eps (`simple_solver.py:880-882`), so it shares 3D's staleness too.
     """
     # Inlet mass flux (j=0): rho at face = rho at cell j=0 (boundary)
     Q_in = 0.0
@@ -1019,3 +1039,343 @@ def _solve_temp_jit(Tf, Ts, u, v, inlet_mask,
             return it + 1
 
     return max_iter
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  F2 convergence residuals — 2D (ledger C6 / C7 / C9)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# The 2D `tol` is even more degenerate than 3D's. `_mass_res_jit` is a
+# PLANE-INTEGRATED flux defect, and the pp solve drives the per-cell divergence
+# to zero, so every plane's flux telescopes to the inlet's — on a FULL-FACE
+# outlet the residual is a TAUTOLOGY. Measured: it reaches 1.6e-15, so `tol`
+# fires at the MIN-ITER FLOOR (iteration 20) and the solve stops there.
+#
+# Cost of that, measured on the production Pipeline2D (golden air-air config,
+# ledger C9): dP_A is under-converged by -3.3 %, and 50 iterations per SIMPLE
+# call removes it for 1.21x wall. (3D's premature exit costs only 0.13-0.23 %.)
+#
+# These kernels give 2D the same honest three-gate criterion 3D got in C7.
+
+
+@njit(cache=True)
+def _u_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
+                    rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
+                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+    """(aP0, rhs) for the u-face (i, j): the UNRELAXED discrete x-momentum
+    equation ``aP0 * u = rhs``, with ``rhs = sum(a_nb*u_nb) + p_src + SOU``.
+
+    DELIBERATE PARALLEL ASSEMBLY of `_sweep_u_jit_df`'s coefficient block, for
+    `_mom_res_jit_2d` only. NOT shared with the sweep — the same decision as 3D
+    (`_u_coeffs_df_3d`) and for the same reason: factoring the coefficients out
+    of the sweep and having both call one helper moved golden-3D by fastmath
+    re-association at the inline boundary, and a diagnostic must not cost a
+    re-baseline.
+
+    The duplication is GUARDED, not trusted: `_mom_res_jit_2d` must return ~0 at
+    the SWEEP's own momentum fixed point (`tests/test_f2_convergence_2d.py`).
+    Edit `_sweep_u_jit_df` and not this, and that test fails loudly. KEEP THEM IN
+    LOCKSTEP.
+
+    Two 2D-vs-3D differences that are easy to get wrong: the SOU deferred
+    correction is ALWAYS applied here (2D has no `use_sou` flag), and the VANS
+    eps-ratio factors are ALWAYS computed (no `use_eps` flag — uniform eps gives
+    r == 1.0 exactly).
+    """
+    dxi = 0.5 * (dx_arr[i - 1] + dx_arr[min(i, Nx - 1)])
+    dyj = dy_arr[j]
+    vol = dxi * dyj
+
+    il_r = max(i - 1, 0); ir_r = min(i, Nx - 1)
+    mu_e = 0.5 * (mu_eff_field[il_r, j] + mu_eff_field[ir_r, j])
+
+    eps_u = 0.5 * (eps_field[il_r, j] + eps_field[ir_r, j])
+    r_e = eps_field[ir_r, j] / eps_u
+    r_w = eps_field[il_r, j] / eps_u
+    r_n = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                   + eps_field[il_r, j + 1]
+                   + eps_field[ir_r, j + 1]) / eps_u
+           if j < Ny - 1 else 1.0)
+    r_s = (0.25 * (eps_field[il_r, j] + eps_field[ir_r, j]
+                   + eps_field[il_r, j - 1]
+                   + eps_field[ir_r, j - 1]) / eps_u
+           if j > 0 else 1.0)
+
+    De = r_e * mu_e * dyj / dx_arr[ir_r]
+    Dw = r_w * mu_e * dyj / dx_arr[il_r]
+    Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
+          if j < Ny - 1 else 0.0)
+    Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
+          if j > 0 else 0.0)
+
+    uE = u[i + 1, j] if i + 1 < Nx else 0.0
+    uW = u[i - 1, j] if i > 1 else 0.0
+    uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+    uS = u[i, j - 1] if j > 0 else 0.0
+
+    ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
+    uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
+    il = max(i - 1, 0); ir = min(i, Nx - 1)
+    vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+    vs = 0.5 * (v[il, j] + v[ir, j])
+
+    rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
+    mu_loc = 0.5 * (mu_field[il_r, j] + mu_field[ir_r, j])
+
+    Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+    Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
+
+    aE = De + max(-Fe, 0.0)
+    aW = Dw + max(Fw, 0.0)
+    aN = Dn + max(-Fn, 0.0)
+    aS = Ds + max(Fs, 0.0)
+
+    umag = _umag_u(u, v, i, j, Nx, Ny)
+    K_u = 0.5 * (K_arr[il_r, j] + K_arr[ir_r, j])
+    cF_u = 0.5 * (cF_arr[il_r, j] + cF_arr[ir_r, j])
+    if cf_aniso != 0.0 and umag > 1e-10:
+        va_c = 0.25 * (v[il_r, j] + v[ir_r, j]
+                       + v[il_r, j + 1] + v[ir_r, j + 1])
+        ux2 = u[i, j] * u[i, j]
+        uy2 = va_c * va_c
+        xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+        cF_u = cF_u * (1.0 + cf_aniso * xi4)
+    Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
+
+    aP_nat = aE + aW + aN + aS
+    il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
+    wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
+    if wall_out > 0.01 and j >= Ny - 8:
+        wall_dist = Ny - j
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+    wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
+    if wall_in > 0.01 and j < 8:
+        wall_dist = j + 1
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+    p_src = (P[i - 1, j] - P[i, j]) * dyj
+    sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
+           + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
+    aP0 = aE + aW + aN + aS + Sp
+    rhs = aE * uE + aW * uW + aN * uN + aS * uS + p_src + sou
+    return aP0, rhs
+
+
+@njit(cache=True)
+def _v_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
+                    rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
+                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+    """(aP0, rhs) for the v-face (i, j) — UNRELAXED discrete y-momentum.
+    Parallel assembly of `_sweep_v_jit_df`; see `_u_coeffs_df_2d`."""
+    jc = min(j, Ny - 1)
+    dxi = dx_arr[i]
+    dyj = 0.5 * (dy_arr[j - 1] + dy_arr[min(j, Ny - 1)])
+    vol = dxi * dyj
+
+    jb = max(j - 1, 0); jt = min(j, Ny - 1)
+    mu_e = 0.5 * (mu_eff_field[i, jb] + mu_eff_field[i, jt])
+
+    eps_v = 0.5 * (eps_field[i, jb] + eps_field[i, jt])
+    r_n = eps_field[i, jt] / eps_v
+    r_s = eps_field[i, jb] / eps_v
+    r_e = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                   + eps_field[i + 1, jb] + eps_field[i + 1, jt])
+           / eps_v if i < Nx - 1 else 1.0)
+    r_w = (0.25 * (eps_field[i, jb] + eps_field[i, jt]
+                   + eps_field[i - 1, jb] + eps_field[i - 1, jt])
+           / eps_v if i > 0 else 1.0)
+
+    if i < Nx - 1:
+        vE = v[i + 1, j]
+        De = r_e * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i + 1]))
+    else:
+        vE = 0.0; De = 2.0 * mu_e * dyj / dxi
+    if i > 0:
+        vW = v[i - 1, j]
+        Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
+    else:
+        vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi
+    vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+    vS = v[i, j - 1]
+
+    Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+    Ds = r_s * mu_e * dxi / dy_arr[jb]
+
+    ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
+    uw = 0.5 * (u[i, jb] + u[i, jt]) if i > 0 else 0.0
+    vn = 0.5 * (v[i, j] + v[i, min(j + 1, Ny)])
+    vs = 0.5 * (v[i, max(j - 1, 0)] + v[i, j])
+
+    rho_loc = 0.5 * (rho_field[i, jb] + rho_field[i, jt])
+    mu_loc = 0.5 * (mu_field[i, jb] + mu_field[i, jt])
+
+    Fe = r_e * rho_loc * ue * dyj; Fw = r_w * rho_loc * uw * dyj
+    Fn = r_n * rho_loc * vn * dxi; Fs = r_s * rho_loc * vs * dxi
+
+    aE = De + max(-Fe, 0.0)
+    aW = Dw + max(Fw, 0.0)
+    aN = Dn + max(-Fn, 0.0)
+    aS = Ds + max(Fs, 0.0)
+
+    umag = _umag_v(u, v, i, j, Nx, Ny)
+    cF_v = cF_arr[i, jc]
+    if cf_aniso != 0.0 and umag > 1e-10:
+        ua_c = 0.25 * (u[i, jb] + u[i + 1, jb]
+                       + u[i, jt] + u[i + 1, jt])
+        ux2 = ua_c * ua_c
+        uy2 = v[i, j] * v[i, j]
+        xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
+        cF_v = cF_v * (1.0 + cf_aniso * xi4)
+    Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
+
+    aP_nat = aE + aW + aN + aS
+    wall_out = 1.0 - outlet_frac[i]
+    if wall_out > 0.01 and j >= Ny - 8:
+        wall_dist = Ny - j
+        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+    wall_in = 1.0 - inlet_frac[i]
+    if wall_in > 0.01 and j < 8:
+        wall_dist = j + 1
+        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
+            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
+
+    p_src = (P[i, j - 1] - P[i, j]) * dxi
+    sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
+           + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
+    aP0 = aE + aW + aN + aS + Sp
+    rhs = aE * vE + aW * vW + aN * vN + aS * vS + p_src + sou
+    return aP0, rhs
+
+
+@njit(cache=True)
+def _mom_res_jit_2d(u, v, P, Nx, Ny, dx_arr, dy_arr,
+                    rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
+                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+    """Momentum residual  R = aP0*phi - (sum a_nb*phi_nb + p_src + SOU), on the
+    CURRENT (post-correction, post-`_update_density`) fields.
+
+    Same construction and the same BALANCED denominator as 3D
+    (`_mom_res_jit_3d` — read its docstring for why the mass residual cannot do
+    this job, and why `den = sum(0.5*(|lhs| + |rhs|))` makes a false zero
+    structurally impossible: |lhs-rhs| <= |lhs|+|rhs| gives num <= 2*den, so
+    num > 0 IMPLIES den > 0, and the ratio is bounded by 2).
+
+    Returns raw (num_u, den_u, num_v, den_v) so the normalisation can be
+    revisited without re-running.
+    """
+    nu_ = 0.0; du_ = 0.0
+    for i in range(1, Nx):
+        for j in range(Ny):
+            aP0, rhs = _u_coeffs_df_2d(
+                u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
+                rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
+                eps_field, inlet_frac, outlet_frac, cf_aniso)
+            lhs = aP0 * u[i, j]
+            nu_ += abs(lhs - rhs)
+            du_ += 0.5 * (abs(lhs) + abs(rhs))
+
+    nv_ = 0.0; dv_ = 0.0
+    for i in range(Nx):
+        for j in range(1, Ny):
+            aP0, rhs = _v_coeffs_df_2d(
+                u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
+                rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
+                eps_field, inlet_frac, outlet_frac, cf_aniso)
+            lhs = aP0 * v[i, j]
+            nv_ += abs(lhs - rhs)
+            dv_ += 0.5 * (abs(lhs) + abs(rhs))
+
+    return nu_, du_, nv_, dv_
+
+
+@njit(cache=True)
+def _mass_res_solved_jit_2d(u, v, Nx, Ny, dx_arr, dy_arr,
+                            rho_eps_field, cell_kind):
+    """LOCAL continuity residual over the cells the pp equation ACTUALLY SOLVES.
+
+    Three deliberate differences from `_mass_res_jit` (ledger C6 / C9):
+
+      1. `cell_kind` (from `_build_pp_sparsity_pattern`) selects `== 0`. Outlet
+         cells are `cell_kind == 1`: their continuity equation was REPLACED by
+         `Pp = 0` (a Dirichlet pressure outlet), so they have no continuity
+         residual to converge. Select by cell_kind, NOT by row index — a partial
+         outlet pins only some cells of the row.
+      2. The caller must pass a rho_eps rebuilt from the CURRENT (post-
+         `_update_density`) rho. `_mass_res_jit` is handed the pre-update array
+         the pp solve already zeroed itself against.
+      3. It is a PER-CELL divergence, not a plane-integrated flux defect. The
+         plane-integrated form telescopes to a TAUTOLOGY on a full-face outlet
+         (measured 1.6e-15) — which is exactly why 2D's `tol` fires at the
+         min-iter floor and stops the solve at iteration 20.
+
+    Normalisation is per-cell and grid-scale invariant:
+        R_cell = |net flux| / sum|face fluxes|      in [0, 1]
+    NOT `max|net| / mdot_inlet` — that shrinks as the mesh refines (a finer cell
+    simply carries less flux), so a fixed tolerance on it silently loosens.
+
+    Returns (max_local, n_cells_counted).
+    """
+    r_max = 0.0
+    n_cnt = 0
+    for i in range(Nx):
+        for j in range(Ny):
+            k = i * Ny + j
+            if cell_kind[k] != 0:
+                continue                      # Dirichlet outlet: not solved
+            dxi = dx_arr[i]; dyj = dy_arr[j]
+
+            re_ = (0.5 * (rho_eps_field[i, j] + rho_eps_field[i + 1, j])
+                   if i < Nx - 1 else rho_eps_field[i, j])
+            rw_ = (0.5 * (rho_eps_field[i - 1, j] + rho_eps_field[i, j])
+                   if i > 0 else rho_eps_field[i, j])
+            rn_ = (0.5 * (rho_eps_field[i, j] + rho_eps_field[i, j + 1])
+                   if j < Ny - 1 else rho_eps_field[i, j])
+            rs_ = (0.5 * (rho_eps_field[i, j - 1] + rho_eps_field[i, j])
+                   if j > 0 else rho_eps_field[i, j])
+
+            fe = re_ * u[i + 1, j] * dyj
+            fw = rw_ * u[i, j] * dyj
+            fn = rn_ * v[i, j + 1] * dxi
+            fs = rs_ * v[i, j] * dxi
+
+            net = (fe - fw) + (fn - fs)
+            thru = abs(fe) + abs(fw) + abs(fn) + abs(fs)
+            if thru <= 0.0:
+                continue                      # no flux -> nothing to violate
+            n_cnt += 1
+            r = abs(net) / thru
+            if r > r_max:
+                r_max = r
+    return r_max, n_cnt
+
+
+@njit(cache=True)
+def _mass_global_jit_2d(v, Nx, Ny, dx_arr, rho_eps_field):
+    """GLOBAL boundary mass balance on the streamwise (j) faces.
+
+    Returns (mdot_in, mdot_out, backflow_frac_out). Signed, so a reversed outlet
+    cell SUBTRACTS — the right global balance, but it also means positive and
+    negative outlet fluxes can cancel and hide a recirculating outlet. Hence
+    `backflow_frac_out = sum|negative outlet flux| / sum|outlet flux|` alongside.
+    (Neither dimension has an outlet backflow clamp — ledger C2, still open.)
+    """
+    mdot_in = 0.0
+    mdot_out = 0.0
+    out_pos = 0.0
+    out_neg = 0.0
+    for i in range(Nx):
+        A = dx_arr[i]
+        fin = rho_eps_field[i, 0] * v[i, 0] * A
+        fout = rho_eps_field[i, Ny - 1] * v[i, Ny] * A
+        mdot_in += fin
+        mdot_out += fout
+        if fout >= 0.0:
+            out_pos += fout
+        else:
+            out_neg += -fout
+    tot = out_pos + out_neg
+    bf = (out_neg / tot) if tot > 0.0 else 0.0
+    return mdot_in, mdot_out, bf

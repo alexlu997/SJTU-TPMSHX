@@ -178,8 +178,31 @@ def test_shanghai_3d_baseline():
     # surface (per-geometry water-CFD K, 2-stage extraction). c_F unchanged; the
     # cleaner/smaller K lifts the Darcy term, so Nz=3 RMSRE_dP 5.05% → 5.28%
     # (Q 3.20% → 3.21%). See gamma_df.py K UPDATE + openspec/df-coeffs-cfd-refit.
-    BASELINE_DP = 5.28
-    BASELINE_Q = 3.21
+    # 2026-07-12 — GATE RUNNER SWITCHED: frozen-B kernel → production Pipeline3D
+    # (the water side is now SOLVED, not prescribed). RMSRE_dP 5.28% → 4.93%,
+    # RMSRE_Q 3.21% → 2.12%. Three reasons, fully written up in the
+    # validate_shanghai_3d_real module docstring:
+    #   (1) more accurate — Q error cut 34%, and 2.12% finally beats the 2D
+    #       aligned kernel gate's Q RMSRE (2.51%; the ε-NTU LUMPED baseline is
+    #       a different number, 1.71% — the two were conflated in early notes);
+    #   (2) the frozen-B runner was fed part of the answer — Tb_prescribed is
+    #       built from the MEASURED water outlet temperature, which already
+    #       encodes the true duty through the water-side enthalpy balance
+    #       (243.8 W vs the experimental air-side 248.4 W). A method given LESS
+    #       information produces a BETTER answer;
+    #   (3) the old gate validated a code path production never runs — the GUI,
+    #       the optimizer and the server batches all drive Pipeline3D.
+    # All 16 cases converge the outer coupling in 3 iterations, none truncated.
+    # (The `A@init[stall]` on the high-u cases is a benign cold-start artifact;
+    # every warm re-solve converges. See the module docstring.)
+    # The old frozen-B numbers stay reproducible with `--runner kernel`.
+    # 2026-07-13 — RE-BASELINED for the F2 pipeline default (ledger C6/C7):
+    # the gate script inherits convergence_mode='f2' (RMSRE_dP 4.93% → 4.88%,
+    # Q unchanged at 2.12%). The 4.93 value was still passing only by eating
+    # half the ±5% drift budget — pin the number the default actually
+    # produces, keep the budget for real drift.
+    BASELINE_DP = 4.88
+    BASELINE_Q = 2.12
     tol_dp = 0.05
     tol_q = 0.10
     assert abs(rmsre_dP - BASELINE_DP) < BASELINE_DP * tol_dp, (

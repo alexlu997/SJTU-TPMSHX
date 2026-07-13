@@ -104,8 +104,21 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # ── scalar geometry + grid + fluids ─────────────────────────────
     L = compute_cfg.geometry.L_dom_m
     H = compute_cfg.geometry.H_dom_m
-    Lz = (compute_cfg.geometry.Lz_m
-          if compute_cfg.geometry.Lz_m is not None else 0.042)
+    # Lz contract (2026-07-12): GeometryConfig's docstring says the 3D path
+    # *requires* Lz_m, but this line silently substituted the Shanghai depth
+    # (0.042 m) whenever it was None — so a config that never specified a depth
+    # still produced a 3D result, computed against a magic constant the user
+    # never chose, and every extensive 3D scalar (Q, mass, dP_B) scaled with it.
+    # Nz >= 2 already routes here (ComputeConfig.is_3d), so arriving with
+    # Lz_m=None is a config error, not a default. Fail loud.
+    if compute_cfg.geometry.Lz_m is None:
+        raise ValueError(
+            "GeometryConfig.Lz_m is None but the 3D path was selected "
+            f"(solver.Nz={compute_cfg.solver.Nz} >= 2). The 3D solver requires "
+            "an explicit domain depth — it used to silently fall back to "
+            "0.042 m (the Shanghai HX depth), which every extensive 3D scalar "
+            "then scaled with. Set geometry.Lz_m explicitly.")
+    Lz = float(compute_cfg.geometry.Lz_m)
     Nx = compute_cfg.solver.Nx
     Ny = compute_cfg.solver.Ny
     Nz = compute_cfg.solver.Nz
@@ -193,6 +206,14 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         max_iter_simple=compute_cfg.solver.max_iter_simple,
         max_outer_ltne=compute_cfg.solver.max_outer_ltne,
         outer_tol_K=compute_cfg.solver.outer_tol_K,
+        # F2 convergence gates (ledger C6/C7). None -> _apply_accel_flags'
+        # resolution: env TPMSHX_CONV_MODE > cfg > default 'f2'.
+        **{k: v for k, v in (
+            ('convergence_mode', compute_cfg.solver.convergence_mode),
+            ('mom_tol', compute_cfg.solver.mom_tol),
+            ('mass_local_tol', compute_cfg.solver.mass_local_tol),
+            ('mass_global_tol', compute_cfg.solver.mass_global_tol),
+        ) if v is not None},
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
@@ -368,6 +389,19 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             # can flag a result the warn-mode gate marked non-physical.
             'envelope_valid': raw.get('envelope_valid', True),
             'envelope_reasons': list(raw.get('envelope_reasons', [])),
+            # Companion to envelope_valid: the SIMPLE P_abs-clip engagement
+            # count (_run_3d_stack sums A+B side `_p_clip_hits`). It was
+            # produced on the raw dict but never forwarded, so every
+            # ComputeResult consumer had to hard-code a placeholder — see
+            # validate_shanghai_3d_real.py --runner pipeline, which reported a
+            # constant 0/valid and thereby disabled its own pressure-validity
+            # filter. Informational (lifetime counter, not a validity verdict).
+            'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # Per-gate breakdown behind ComputeResult.converged (SIMPLE / LTNE
+            # inner / outer coupling / finite fields / envelope), plus the
+            # outer ΔT history. Produced by _run_3d_stack but never forwarded,
+            # so a caller could see `converged=False` and not know why.
+            'convergence_detail': raw.get('convergence_detail'),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),

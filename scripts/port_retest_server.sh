@@ -55,13 +55,21 @@ if [ ! -d "$REPO/data/raw_data" ]; then
     exit 1
 fi
 
-# 4. 四臂并行 (每臂 2 线程上限, 防超订)
+# 4. 四臂并行
+# 注意 (2026-07-11 交接审计): 下面 export 的线程数只对 45 点均匀扫掠阶段有效.
+# BO 阶段 (占墙钟绝大部分) 的 optimizer_qnehvi.py 会按 os.cpu_count() 重新切
+# 内层线程 —— 它看到的是整机核数, 不知道有 4 个臂在跑 —— 并用显式的
+# inner_max_num_threads 覆盖掉这里的 export, 导致四臂合计 ~4x 超订.
+# TPMSHX_BO_CORE_BUDGET 是给它的显式每臂核预算; 不设时它退回整机核数(旧行为).
 cd "$REPO"
 NCORE=$(nproc)
-THREADS=$(( NCORE / 4 )); [ "$THREADS" -lt 1 ] && THREADS=1; [ "$THREADS" -gt 4 ] && THREADS=4
+PER_ARM=$(( NCORE / 4 )); [ "$PER_ARM" -lt 1 ] && PER_ARM=1
+THREADS=$PER_ARM; [ "$THREADS" -gt 8 ] && THREADS=8
 export PYTHONHASHSEED=0
 export PYTHONPATH="$REPO/sjtu_tpmshx"
-export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS NUMBA_NUM_THREADS=$THREADS
+export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMBA_NUM_THREADS=$THREADS
+export TPMSHX_BO_CORE_BUDGET=$PER_ARM
+echo "cores=$NCORE arms=4 -> 每臂预算 $PER_ARM 核, 每 worker $THREADS 线程"
 
 launch() {  # launch <ctrl> <seed>
     local tag="c${1}s${2}"

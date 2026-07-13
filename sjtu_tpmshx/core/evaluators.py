@@ -119,9 +119,17 @@ def evaluate_3d(x_decision: np.ndarray,
                 tol_energy: float = 0.5,
                 roughness_mode: str | None = None,
                 roughness_eps_um: float | None = None,
+                convergence_mode: str = 'legacy',
                 verbose: bool = True) -> dict:
     """Run the 3D evaluator on a single decision vector. Returns (Q_3D_W,
     dP_A_3D, dP_B_3D, dP_total_3D, mass_kg, info_dict).
+
+    convergence_mode : 'legacy' (default) or 'f2'.
+        'legacy' is the cheap screening criterion for BO throughput (rankings
+        only — see the block comment at the solver setup below). 'f2' is the
+        honest three-gate criterion (ledger C7); pass it when this evaluator
+        is used to REPORT numbers rather than rank designs (e.g.
+        `validation/cases/verify_pareto_3d.py`).
     """
     L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
     u_A   = float(cfg['u_A']);     u_B   = float(cfg['u_B'])
@@ -237,15 +245,22 @@ def evaluate_3d(x_decision: np.ndarray,
             _log.warning(f"[3D verify] INFEASIBLE — P_out²_A={P_out_sq_A:.3e} Pa², "
                          f"P_out²_B={P_out_sq_B:.3e} Pa². Returning NaN per strict "
                          "validation contract.")
+        # mass is pure geometry — computable regardless of the choke, and a
+        # bounded-bad BO fallback needs it (mass=NaN/0 would make an invalid
+        # dense design look light on the mass objective).
+        _cv = (dx_arr[:, None, None] * dy_arr[None, :, None]
+               * dz_arr[None, None, :])
+        _mass_geom = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * _cv))
         return {
             'Q_3D_W':         float('nan'),
             'dP_A_Pa':        float('nan'),
             'dP_B_Pa':        float('nan'),
             'dP_total_Pa':    float('nan'),
-            'mass_kg':        float('nan'),
+            'mass_kg':        _mass_geom,
             'Lz_m':           Lz,
             'grid':           (Nx, Ny, Nz),
             'invalid':        True,
+            'converged':      False,
             'invalid_reason': ('P_out² ≤ 0 on the 1D D-F seed — operating '
                                f'point is choked (A={P_out_sq_A:.3e}, '
                                f'B={P_out_sq_B:.3e}).'),
@@ -271,6 +286,12 @@ def evaluate_3d(x_decision: np.ndarray,
     # solver and the pre-M2b float sequence is reproduced bit-identically.
     sA.eps_field = np.ascontiguousarray(
         arrays['eps_arr'].transpose(1, 0, 2), dtype=np.float64)
+    # C10: refresh μ/ε to the installed per-cell ε (production pattern,
+    # run_stack_3d does this right after its eps_field install). Without it
+    # the FIRST cold solve ran the Brinkman term on the uniform mean-ε
+    # (update_T_field self-heals sA from outer iter 1 — but not the cold one).
+    sA._mu_eff_field = np.ascontiguousarray(sA.mu_field / sA.eps_field,
+                                            dtype=np.float64)
 
     sB = SIMPLESolver3D(
         Lx=L_dom, Ly=H_dom, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
@@ -280,21 +301,69 @@ def evaluate_3d(x_decision: np.ndarray,
     sB.dx = np.ascontiguousarray(dx_arr, dtype=np.float64)
     sB.dy = np.ascontiguousarray(dy_arr, dtype=np.float64)
     sB.dz = np.ascontiguousarray(dz_arr, dtype=np.float64)
-    # M2b: per-cell ε (SIMPLE-B indices = real coords).
-    sB.eps_field = np.ascontiguousarray(arrays['eps_arr'], dtype=np.float64)
+    # M2b per-cell ε — C10 mapping fix: sB is REVERSE-y (real −y streamwise),
+    # solver j=0 = the B inlet at real y=H, so per-cell fields map real→solver
+    # by MIRRORING axis 1 — the same transform as the staggered faces above
+    # and as K_B/cF_B (df_projection docstring: "flip along 0" for fluid B).
+    # The pre-C10 install was unmirrored: an identity for symmetric_y=True
+    # designs (every current track), WRONG for y-asymmetric ones.
+    sB.eps_field = np.ascontiguousarray(arrays['eps_arr'][:, ::-1, :],
+                                        dtype=np.float64)
+    # C10: same μ/ε refresh as sA. sB never gets update_T_field (frozen-B),
+    # so without this its Brinkman term uses the mean-ε μ/ε for the WHOLE run.
+    sB._mu_eff_field = np.ascontiguousarray(sB.mu_field / sB.eps_field,
+                                            dtype=np.float64)
 
-    # 4. Initial SIMPLE solves
+    # ── Convergence mode: LEGACY by default, deliberately (ledger C6/C7) ──
+    # The production pipeline (`run_stack_3d._apply_accel_flags`) now defaults to
+    # 'f2' — the honest three-gate criterion. This optimizer evaluator does NOT,
+    # and the choice is explicit rather than inherited so it cannot rot into an
+    # accident:
+    #   * F2 costs a measured ~2x SIMPLE wall time (reports/f2_pricing_3d.csv).
+    #     This evaluator is called thousands of times per BO run; the pipeline is
+    #     called once per reported result.
+    #   * The standing convention (ledger O2 / audit R3) is that the optimizer
+    #     produces RANKINGS ONLY, and every Pareto pick is re-solved through the
+    #     production pipeline before any physical number is reported. Under that
+    #     rule a cheaper, less-converged screening criterion is legitimate.
+    # Under 'legacy': DO NOT quote this evaluator's dP/Q as physical results.
+    # Callers that must REPORT numbers pass convergence_mode='f2' (ledger C10):
+    # graded continuous-field designs cannot run through `run_stack_3d` (its
+    # zoned path is piecewise-constant `zone_grid_cells`, a different geometry
+    # parametrization), so `verify_pareto_3d.py` uses THIS evaluator at f2.
+    # Remaining gaps vs the production pipeline even at f2 (ledger O2): fluid B
+    # is solved once cold (frozen velocities, no var-ρ re-solve) and there is no
+    # post-solve Mach/positive-pressure gate.
+    for _s in (sA, sB):
+        _s.convergence_mode = str(convergence_mode)
+
+    # 4. Initial SIMPLE solves.
+    # Convergence TRUTH TABLE (2026-07-13, codex review P0): these verdicts
+    # used to be DISCARDED — three solve() calls dropped (converged, iters),
+    # the LTNE call never asked for return_info, and hitting max_outer set no
+    # failure state, so an unconverged run returned Q/dP indistinguishable
+    # from a converged one and `verify_pareto_3d` exited 0 on it. Every
+    # verdict is now collected and returned; reporting callers must gate on
+    # them (screening callers may ignore them — rankings-only, ledger O2).
     if verbose:
         _log.info(f"[3D] Solving SIMPLE A (cold) … ")
     t0 = time.perf_counter()
-    sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+    simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                 verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
         _log.info(f"[3D] Solving SIMPLE B (cold) … ")
     t0 = time.perf_counter()
-    sB.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+    simple_B_ok, _itB = sB.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                 verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
+    # Last LTNE inner pass's verdict (the returned fields ARE that pass's) and
+    # the outer dT loop's own verdict. `outer_converged` stays False when the
+    # loop exits via the max_outer cap — including max_outer == 1/2 where the
+    # dT check never fires: "unverified" counts as NOT converged, by design.
+    ltne_inner_ok = False
+    outer_ok = False
 
     # 5. Outer LTNE coupling with variable density on fluid A.
     rcp_A_field = np.full((Nx, Ny, Nz), rho_A0 * air_cp(T_inA), dtype=np.float64)
@@ -340,7 +409,7 @@ def evaluate_3d(x_decision: np.ndarray,
         # 2026-05-19 ε contract (Option A): pass FULL porosity. Kernel does
         # the single halving (eps_f = 0.5*epsilon → ε_A). Pre-halving here
         # double-halved to ε_full/4. K_ff arrays already use ε_A — untouched.
-        Ta, Tb, Ts = solve_full_domain_3d(
+        Ta, Tb, Ts, _ltne_info = solve_full_domain_3d(
             L_dom, H_dom, Lz, Nx, Ny, Nz, T_inA, T_inB,
             arrays['K_ffA_arr'], arrays['K_ffB_arr'], arrays['K_ss_arr'],
             arrays['h_vA_arr'], arrays['h_vB_arr'],
@@ -354,7 +423,9 @@ def evaluate_3d(x_decision: np.ndarray,
             alpha_T=0.7,
             ufA=ufA, vfA=vfA, wfA=wfA, ufB=ufB, vfB=vfB, wfB=wfB,
             conservative_ltne=True,
+            return_info=True,
         )
+        ltne_inner_ok = bool(_ltne_info.get('converged', False))
         if verbose:
             _log.info(f"{time.perf_counter()-t0:.0f}s")
 
@@ -364,6 +435,7 @@ def evaluate_3d(x_decision: np.ndarray,
                 if verbose:
                     _log.info(f"[3D] outer converged at iter {outer_it+1} "
                               f"(dT_max={dT_max:.2f} < {outer_tol_K} K)")
+                outer_ok = True
                 break
         Ta_prev = Ta.copy()
 
@@ -389,27 +461,85 @@ def evaluate_3d(x_decision: np.ndarray,
         sA.mu_field = np.ascontiguousarray(
             alpha_outer * mu_A_new + (1 - alpha_outer) * sA.mu_field,
             dtype=np.float64)
+        # C10: divide by the PER-CELL eps_field, not the scalar (this line used
+        # to re-break the per-cell μ/ε install on every outer iteration;
+        # uniform designs are value-identical either way).
         sA._mu_eff_field = np.ascontiguousarray(
-            sA.mu_field / sA.eps, dtype=np.float64)
+            sA.mu_field / sA.eps_field, dtype=np.float64)
         T_avg = float(Ta_sA.mean())
         mu_avg = float(air_viscosity(T_avg))
         C_avg = mu_avg * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
         P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_dom
-        sA.P_ref_abs = float(np.sqrt(max(P_out_sq_new, 1.0e4)))
+        if P_out_sq_new <= 0.0:
+            # Hot-state choke (2026-07-13 audit): the COLD seed above passed,
+            # but the heated T_avg raised 2RT·C·L past P_in². This used to be
+            # `sqrt(max(..., 1e4))` — a silent 100 Pa outlet anchor that let
+            # the run continue in a region with NO steady solution and return
+            # numbers (the exact failure mode the envelope invariant exists to
+            # stop, and `verify_pareto_3d` REPORTS these numbers). Same strict
+            # contract as the cold seed: NaN + invalid, never a floored anchor.
+            if verbose:
+                _log.warning(f"[3D verify] INFEASIBLE at outer {outer_it+1} -- "
+                             f"P_out^2={P_out_sq_new:.3e} Pa^2 after var-rho "
+                             "reseed (hot-state choke). Returning NaN per "
+                             "strict validation contract.")
+            _cv = (dx_arr[:, None, None] * dy_arr[None, :, None]
+                   * dz_arr[None, None, :])
+            _mass_geom = float(np.sum((1.0 - arrays['eps_arr'])
+                                      * rho_s * _cv))
+            return {
+                'Q_3D_W':         float('nan'),
+                'dP_A_Pa':        float('nan'),
+                'dP_B_Pa':        float('nan'),
+                'dP_total_Pa':    float('nan'),
+                'mass_kg':        _mass_geom,
+                'Lz_m':           Lz,
+                'grid':           (Nx, Ny, Nz),
+                'invalid':        True,
+                'converged':      False,
+                'invalid_reason': ('P_out² ≤ 0 on the var-ρ outer reseed — '
+                                   'operating point chokes once heated '
+                                   f'(outer {outer_it+1}, T_avg={T_avg:.1f} K, '
+                                   f'P_out²={P_out_sq_new:.3e}).'),
+            }
+        sA.P_ref_abs = float(np.sqrt(P_out_sq_new))
 
         if verbose:
             _log.info(f"[3D] re-solving SIMPLE A with var-ρ … ")
         t0 = time.perf_counter()
-        sA.solve(max_iter=max_iter_simple, tol=tol_simple, verbose=False)
+        # Last re-solve's verdict overwrites the cold one (the fields returned
+        # are the last solve's).
+        simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
+                                     verbose=False)
         if verbose:
             _log.info(f"{time.perf_counter()-t0:.0f}s")
 
-        # Update rcp (real coords) using current Ta, Tb
+        # ── LTNE convective ρcp from SIMPLE's LOCAL ρ (ledger C10 fix) ────
+        # This used to be `air_density(Ta/Tb, P_in)` — density at the INLET
+        # pressure over the WHOLE domain, the pre-2026-06-09 behaviour the
+        # production pipeline already fixed (`run_stack_3d` variable_rho_cp:
+        # "rho_cp = ρ_local·cp matches SIMPLE's conserved mass flux").
+        # SIMPLE's u accelerates as ρ falls downstream (G = ρ·u conserved);
+        # multiplying that u by an inlet-pressure ρ inflates the convective
+        # flux by P_in/P_local — a spurious enthalpy source growing with
+        # Δp/P_in, i.e. a ranking distortion for high-Δp designs (C8-family).
+        #   A: sA was just re-solved with the updated T_field, so rho_field is
+        #      ρ(P_local, Ta) — use it directly (production pattern). SIMPLE-A
+        #      layout (real-y, real-x, z) → real via transpose(1, 0, 2).
+        #   B: sB is solved ONCE (cold, isothermal T_inB) with frozen
+        #      velocities — use its ρ AS-IS (local P, T_inB) rather than
+        #      re-warming with Tb: ρ·u then remains the flux SIMPLE-B actually
+        #      conserved, so the convective operator sees no spurious
+        #      divergence. The stale-T bias in B's ρ is part of the frozen-B
+        #      approximation, same tier as the frozen velocities themselves.
+        #      sB is reverse-y (see face transform above): mirror axis 1.
+        rho_A_ltne = sA.rho_field.transpose(1, 0, 2)
+        rho_B_ltne = sB.rho_field[:, ::-1, :]
         rcp_A_field = np.ascontiguousarray(
-            alpha_outer * air_density(Ta, P_inA) * air_cp(Ta)
+            alpha_outer * rho_A_ltne * air_cp(Ta)
             + (1 - alpha_outer) * rcp_A_field, dtype=np.float64)
         rcp_B_field = np.ascontiguousarray(
-            alpha_outer * air_density(Tb, P_inB) * air_cp(Tb)
+            alpha_outer * rho_B_ltne * air_cp(Tb)
             + (1 - alpha_outer) * rcp_B_field, dtype=np.float64)
 
     # 6. Integrate Q, dP, mass over the actual 3D grid
@@ -422,6 +552,18 @@ def evaluate_3d(x_decision: np.ndarray,
     dP_total = dP_A + dP_B
     mass = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * cell_vol))
 
+    # Convergence truth table (codex review P0, 2026-07-13). `converged` is
+    # the conjunction; reporting callers (verify_pareto_3d) MUST gate on it,
+    # screening callers (BO wrapper) may ignore it — rankings-only, ledger O2.
+    finite_ok = bool(np.isfinite(Q_3D) and np.isfinite(dP_A)
+                     and np.isfinite(dP_B) and np.isfinite(mass))
+    truth = {
+        'simple_A_converged':   bool(simple_A_ok),
+        'simple_B_converged':   bool(simple_B_ok),
+        'ltne_inner_converged': bool(ltne_inner_ok),
+        'outer_converged':      bool(outer_ok),
+        'finite':               finite_ok,
+    }
     return {
         'Q_3D_W':       Q_3D,
         'dP_A_Pa':      dP_A,
@@ -430,4 +572,7 @@ def evaluate_3d(x_decision: np.ndarray,
         'mass_kg':      mass,
         'Lz_m':         Lz,
         'grid':         (Nx, Ny, Nz),
+        'invalid':      False,
+        'converged':    all(truth.values()),
+        **truth,
     }

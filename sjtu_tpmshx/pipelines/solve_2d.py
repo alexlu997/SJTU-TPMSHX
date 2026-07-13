@@ -862,6 +862,13 @@ def _run_solvers(window, cfg, fields):
     # (Ta,Tb)-only gate could break while Ts was still moving.
     _outer_conv = OuterConvergence(tol_T=_DT_TOL_K, track=('Ta', 'Tb', 'Ts'))
     e_info = {'converged': False, 'iterations': 0, 'residual': float('inf')}
+    # Sticky: set the moment the energy solve produces a NaN cell. The NaN is
+    # patched over (below) so the UI can still render velocity/pressure, but a
+    # patched-over blow-up must never be reported as a converged solve. Sticky
+    # because a later outer iteration starting from the PATCHED field can
+    # converge on the patch — the deltas between two identically-patched fields
+    # are small. (Audit 2026-07-12.)
+    _energy_nan_hit = False
     Ta = Tb = Ts = None
     # User-provided solid warm-start seed. Empty → solver fallback
     # (per-fluid inlet T for Ta/Tb, 0.5*(T_inA+T_inB) for Ts).
@@ -896,6 +903,7 @@ def _run_solvers(window, cfg, fields):
     # `nonlocal`s are the vars that persist across iters or are read afterwards.
     def _step_2d(_coup_it):
         nonlocal ucA, vcA, ucB, vcB, simpA, simpB, Ta, Tb, Ts, e_info
+        nonlocal _energy_nan_hit
         nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
         nonlocal drho_A, drho_B, dT_A, dT_B
@@ -1077,6 +1085,9 @@ def _run_solvers(window, cfg, fields):
         _has_nan = (np.any(np.isnan(Ta)) or np.any(np.isnan(Tb))
                     or np.any(np.isnan(Ts)))
         if _has_nan:
+            # Validity, not just a warning string: the patched field is NOT a
+            # solution. Sticky flag → forced into solver_converged below.
+            _energy_nan_hit = True
             n_nan_a = int(np.sum(np.isnan(Ta)))
             n_nan_b = int(np.sum(np.isnan(Tb)))
             n_nan_s = int(np.sum(np.isnan(Ts)))
@@ -1233,7 +1244,10 @@ def _run_solvers(window, cfg, fields):
         _vA, _rA = gate_solution(
             float((simpA.P_ref_abs + simpA.P).min()), float(_vmagA.max()),
             float(T_inA), mode=_env_mode, dims='2D-A',
-            ma_max=mach_field_max(_vmagA, Ta))
+            # RAW T (2026-07-13 audit): Ta/Tb are display-smoothed rebinds by
+            # this point on partial-BC runs — a physics gate must not read a
+            # cosmetic filter. Q below already uses the raw fields.
+            ma_max=mach_field_max(_vmagA, Ta_raw))
         _env_valid = _env_valid and _vA
         _env_reasons += [f"[A] {r}" for r in _rA]
     if simpB is not None and getattr(simpB, 'fluid_type', None) == 'ideal_gas':
@@ -1242,7 +1256,7 @@ def _run_solvers(window, cfg, fields):
         _vB, _rB = gate_solution(
             float((simpB.P_ref_abs + simpB.P).min()), float(_vmagB.max()),
             float(T_inB), mode=_env_mode, dims='2D-B',
-            ma_max=mach_field_max(_vmagB, Tb))
+            ma_max=mach_field_max(_vmagB, Tb_raw))
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
 
@@ -1320,10 +1334,39 @@ def _run_solvers(window, cfg, fields):
         'Q_total': Q_total,
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
-        # robustness-hardening (2026-07-03): first-class convergence verdict
-        # — False when any SIMPLE side stalled or the outer coupling never
-        # met the dual ΔT+Δρ criterion. Flows into ComputeResult.converged.
-        'solver_converged': bool(coupling_converged and not simple_warnings),
+        # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
+        # robustness-hardening (2026-07-03) ANDed SIMPLE with the outer
+        # coupling only. Three gaps closed here (mirrors the 3D fix):
+        #   (a) the LTNE inner verdict `e_info['converged']` was captured at
+        #       the solve_full_domain call and then NEVER READ — a write-only
+        #       variable;
+        #   (b) a NaN blow-up patched over with inlet T (see _energy_nan_hit)
+        #       left `converged` untouched, so a patched non-solution could
+        #       report success;
+        #   (c) the post-solve compressible envelope verdict was reported on a
+        #       separate key but not ANDed into the headline flag.
+        # Verdict only — no numeric field is touched.
+        'solver_converged': bool(
+            coupling_converged                       # outer ΔT+Δρ criterion
+            and not simple_warnings                  # every SIMPLE side ok
+            and bool(e_info.get('converged', False))  # LTNE inner pass
+            and not _energy_nan_hit                  # no patched-over NaN
+            and bool(_env_valid)),                   # envelope gate
+        'convergence_detail': {
+            'outer_converged': bool(coupling_converged),
+            # The ACTUAL outer-iteration count (3D parity). `_last_coup` is the
+            # 0-based index the skeleton stopped at, so +1 is the count of passes
+            # actually run — NOT the cap. Absent before 2026-07-12, so callers
+            # reading `outer_iters` (e.g. the Shanghai 2D gate) silently got -1.
+            'outer_iters': int(_last_coup) + 1,
+            'outer_hit_cap': bool(not coupling_converged),
+            'simple_ok': bool(not simple_warnings),
+            'ltne_ok': bool(e_info.get('converged', False)),
+            'ltne_iterations': int(e_info.get('iterations', 0)),
+            'ltne_residual': float(e_info.get('residual', float('inf'))),
+            'energy_nan_hit': bool(_energy_nan_hit),
+            'envelope_ok': bool(_env_valid),
+        },
         'residuals_A': resid_A, 'residuals_B': resid_B,
         # Conservation diagnostics
         'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,

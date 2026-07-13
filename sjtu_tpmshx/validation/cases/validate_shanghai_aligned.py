@@ -1,16 +1,42 @@
-"""validate_shanghai_aligned.py — Shanghai 2D validation with STRICTLY
-the same pipeline as run_calculation.py (v1.0.10 UI Compute path).
+"""validate_shanghai_aligned.py — Shanghai 2D validation gate.
 
-Differences vs the legacy `validate_shanghai.py`:
-  * h_vA / h_vB are real tpms_compute outputs (no 1e10 water shortcut)
-  * K_ffA / K_ffB built the same way as run_calculation._run_solvers
-  * Outer coupling mirrors run_calculation's 5-iter (drho + dT AND) loop
-  * rho / mu / rho_cp fields updated identically
-  * dP via `extract_dP_from_simple` (same as UI)
+Two runners, selected by ``--runner``:
 
-Water side is frozen via Tb_prescribed built from measured T_in / T_out
-(linear along streamwise y), since we have no water-side dP/Q reference
-to validate — but h_vB is finite + physical (tpms_compute), not 1e10.
+  ``pipeline``  (DEFAULT since 2026-07-12)
+      The production stack — ``controllers.compute_pipeline.Pipeline2D``, the
+      same code the GUI drives and the optimizer's Pareto re-solve goes through —
+      with a REAL SIMPLE-B water solve and a real water energy solve.
+
+  ``kernel``    (legacy; kept so the old numbers reproduce exactly)
+      A hand-built kernel-direct loop with the water side FROZEN.
+
+WHY THE DEFAULT SWITCHED. The legacy runner had three independent problems, any
+one of which disqualifies it as a gate:
+
+1. **It was fed part of the answer.** ``Tb_prescribed`` is a linear profile built
+   from the MEASURED water inlet AND OUTLET temperatures (Excel cols 24, 25). Q
+   is ``Σ h_vB·(Ts − Tb)·dV``, so Tb sets the driving force directly — and the
+   measured outlet temperature already encodes the true duty through the water
+   enthalpy balance. The gate was scoring the solver on a number it had handed it.
+
+2. **The water side had no velocity field at all.** ``ucB_real`` / ``vcB_real``
+   were literally ``np.zeros(...)``. SIMPLE-B was never even built, let alone
+   solved — water-side advection did not exist.
+
+3. **It validated a code path production never runs.** The loop called
+   ``SIMPLESolver(...).solve(max_iter=3000, tol=1e-4)`` directly; ``Pipeline2D``
+   and ``pipelines.stages_2d`` appear nowhere in it. So a convergence defect in
+   the PRODUCTION path could not be caught here — and measurably was not: forcing
+   the SIMPLE exit open moves this gate's dP RMSRE by 0.03 pp (8.76 → 8.79 %),
+   while the same forcing on the production Pipeline2D moves dP by up to **3.4 %**
+   (ledger C9 — the 2D tol-tautology finding; C8 is the pressure-anchor bug
+   found in the same campaign — 2026-07-12).
+
+The pipeline runner fixes all three: it PREDICTS the water outlet temperature
+instead of being handed it, it solves the water momentum field, and it exercises
+the shipped code.
+
+Legacy numbers reproduce exactly with ``--runner kernel``.
 """
 from __future__ import annotations
 import os, sys, warnings
@@ -164,14 +190,161 @@ from validation.harness._harness import load_cases_df
 from validation.harness._case_sets import SHANGHAI_XLSX
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  PRODUCTION-PIPELINE RUNNER (default) — real water solve, shipped code
+# ═══════════════════════════════════════════════════════════════════════
+
+def _run_one_case_pipeline(ci, df):
+    """Drive the production `Pipeline2D` — the stack the GUI runs.
+
+    Deliberately a DIFFERENT physics path from the kernel runner above: the water
+    side gets a real SIMPLE-B momentum solve and a real energy solve, instead of
+    a zero velocity field and a Tb profile interpolated from the MEASURED water
+    outlet temperature. See the module docstring for why the frozen-B runner is
+    not a valid gate.
+
+    Returns the same result dict shape as the kernel loop so the summary code is
+    shared. Fields the frozen-B path computed from its prescribed Tb (Q_solid_B,
+    the enthalpy-balance residual) are NaN here — they were only ever a
+    self-consistency check on a prescribed profile.
+    """
+    from domain.compute_config import (FluidConfig, GeometryConfig,
+                                       SolverConfig, PartialBCConfig,
+                                       ExtrapPolicy, FeatureFlags)
+    from controllers.compute_pipeline import Pipeline2D
+
+    case = ci + 1
+    m_air = float(df.iloc[ci, 5])
+    T_Ain_K = float(df.iloc[ci, 28]) + 273.15
+    P_Ain_g = float(df.iloc[ci, 30])
+    P_Ain = P_atm + P_Ain_g
+    m_water = float(df.iloc[ci, 7])
+    T_Bin_K = float(df.iloc[ci, 24]) + 273.15
+    dP_A_exp = P_Ain_g - float(df.iloc[ci, 31])
+    Q_exp = float(df.iloc[ci, 33])
+
+    rho_A0 = float(air_density(T_Ain_K, P_Ain))
+    u_A = m_air / (rho_A0 * A_FLOW)
+    u_B = m_water / (float(water_density(T_Bin_K)) * A_FLOW)
+
+    cc = ComputeConfig(
+        fluid_A=FluidConfig(type='air', u_mps=u_A, T_in_K=T_Ain_K,
+                            P_in_Pa=P_Ain),
+        fluid_B=FluidConfig(type='water', u_mps=u_B, T_in_K=T_Bin_K,
+                            P_in_Pa=101325.0),
+        geometry=GeometryConfig(tpms=TPMS, L_cell_mm=L_CELL, t_wall_mm=T_WALL,
+                                k_s_W_mK=K_S, L_dom_m=L_DOM, H_dom_m=H_DOM),
+        # Nz omitted -> 1 -> the 2D path. Grid from the same adaptive_grid the
+        # kernel runner uses, so the two runners are compared on the same mesh.
+        solver=SolverConfig(Nx=N_X_USER, Ny=N_Y_USER),
+        # Full-face crossflow: A along +x, B along -y (the production Shanghai
+        # topology, and what the kernel runner models with outlet_lo/hi = 0..H).
+        bc_A=PartialBCConfig(dir=0, in_ctr=H_DOM / 2, in_w=H_DOM,
+                             out_ctr=H_DOM / 2, out_w=H_DOM),
+        bc_B=PartialBCConfig(dir=3, in_ctr=L_DOM / 2, in_w=L_DOM,
+                             out_ctr=L_DOM / 2, out_w=L_DOM),
+        extrap=ExtrapPolicy(allow=True),
+        flags=FeatureFlags(),
+    )
+    res = Pipeline2D(cc).run()
+
+    dP_A_sim = float(res.dP_A_Pa)
+
+    # Q via the AIR-SIDE ENTHALPY BALANCE, exactly as the kernel runner does
+    # (`Q_enthalpy_A = m_air * cp * (T_in - T_out)`), so the two runners report
+    # the same quantity and are directly comparable.
+    #
+    # Do NOT use `res.Q_W` here. The 2D pipeline's Q is a domain integral over a
+    # 2D cell AREA (`solve_2d.py`: `cell_area = dx * dy`, and h_v is W/(m³·K)),
+    # so it is **W per metre of depth**, not watts — the 2D model has no third
+    # dimension. Converting it would need the machine depth (for Shanghai,
+    # Lz = 0.042 m: 60 737 W/m x 0.042 m = 2551 W vs the measured 2514 W, which
+    # is how this was diagnosed). The enthalpy balance sidesteps the whole
+    # question because `m_air` is the measured TOTAL mass flow.
+    cp_A0 = float(air_cp(T_Ain_K))
+    Q_sim = float(m_air * cp_A0 * (T_Ain_K - float(res.T_out_A_K)))
+
+    err_dP = ((dP_A_sim - dP_A_exp) / dP_A_exp * 100
+              if dP_A_exp != 0 else float('nan'))
+    err_Q = (Q_sim - Q_exp) / Q_exp * 100 if Q_exp != 0 else float('nan')
+
+    d = res.diagnostics or {}
+    cd = d.get('convergence_detail') or {}
+    if res.warnings:
+        print(f"  [case {case}] pipeline warnings: "
+              f"{'; '.join(str(w) for w in res.warnings)}")
+
+    _nan = float('nan')
+    return {
+        'Case': case, 'u_air': round(u_A, 2), 'u_water': round(u_B, 4),
+        'T_air_in': round(T_Ain_K - 273.15, 1),
+        'T_water_in': round(T_Bin_K - 273.15, 1),
+        'P_in_abs_kPa': round(P_Ain / 1000.0, 1),
+        'dP_air_exp': round(dP_A_exp), 'dP_air_sim': round(dP_A_sim),
+        'err_dP%': round(err_dP, 1),
+        'Q_exp': round(Q_exp, 1), 'Q_sim': round(Q_sim, 1),
+        'err_Q%': round(err_Q, 1),
+        # Frozen-B self-consistency numbers: meaningless once Tb is SOLVED.
+        'Q_solid_A': _nan, 'Q_solid_B': _nan, 'eb_resid%': _nan,
+        'Q_enthalpy_A': round(Q_sim, 1), 'Q_total_max': round(abs(Q_sim), 1),
+        # 2D exposes its verdict as per-gate flags, not the single
+        # `solver_converged` key 3D has (and it has no outer-iteration counter).
+        # Reading 3D's key here silently reported conv=False on every case.
+        'outer_iters': int(cd.get('outer_iters', -1)),
+        'converged': bool(cd.get('simple_ok', False)
+                          and cd.get('ltne_ok', False)
+                          and cd.get('outer_converged', False)
+                          and cd.get('envelope_ok', False)
+                          and not cd.get('energy_nan_hit', False)),
+        'h_vA': _nan, 'h_vB': _nan,
+        # 2D water-side outputs the frozen runner could not produce at all.
+        'dP_B_sim': float(res.dP_B_Pa),
+        'T_water_out_sim': float(res.T_out_B_K) - 273.15,
+        'T_water_out_exp': float(df.iloc[ci, 25]),
+    }
+
+
 # 2026-06-30: guard execution so importing this module has no side
 # effects (no SIMPLE solve, no xlsx write). Was an unguarded top-level script.
 if __name__ == "__main__":
+    import argparse
+    _ap = argparse.ArgumentParser()
+    # DEFAULT SWITCHED kernel -> pipeline (2026-07-12). See the module docstring:
+    # the kernel runner freezes the water side from MEASURED data, never solves
+    # SIMPLE-B at all, and exercises a code path production does not run.
+    _ap.add_argument('--runner', choices=['pipeline', 'kernel'],
+                     default='pipeline',
+                     help="pipeline (DEFAULT) = production Pipeline2D with the "
+                          "water side SOLVED. kernel = the legacy frozen-B "
+                          "kernel-direct loop (reproduces the old numbers).")
+    _args = _ap.parse_args()
+
     df = load_cases_df(SHANGHAI_XLSX)
 
     results = []
 
-    for ci in range(16):
+    print(f"\n[Shanghai aligned] Runner: {_args.runner}"
+          + ("  (production Pipeline2D, water SOLVED)"
+             if _args.runner == 'pipeline'
+             else "  (LEGACY frozen-B kernel loop — water Tb PRESCRIBED from "
+                  "measured data, SIMPLE-B never solved)") + "\n")
+
+    if _args.runner == 'pipeline':
+        for _ci in range(16):
+            _r = _run_one_case_pipeline(_ci, df)
+            results.append(_r)
+            print(f"Case {_r['Case']:2d}: "
+                  f"dP {_r['dP_air_exp']:.0f}/{_r['dP_air_sim']:.0f} "
+                  f"({_r['err_dP%']:+.1f}%)  "
+                  f"Q {_r['Q_exp']:.0f}/{_r['Q_sim']:.0f} ({_r['err_Q%']:+.1f}%)  "
+                  f"T_w_out {_r['T_water_out_exp']:.1f}/"
+                  f"{_r['T_water_out_sim']:.1f}°C  "
+                  f"outer={_r['outer_iters']} conv={_r['converged']}")
+        _KERNEL_LOOP = False
+    else:
+        _KERNEL_LOOP = True
+
+    for ci in (range(16) if _KERNEL_LOOP else range(0)):
         case = ci + 1
 
         # ── Case inputs ──

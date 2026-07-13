@@ -1,5 +1,10 @@
 """Frozen-value regression for the 2D + 3D continuous-field evaluators.
 
+NOTE ON "C7": in this file's history comments, "B3 C7" is the 2026-06-13
+shared-QUANTIZATION dedup work item — NOT the research ledger's C7 (the F2
+convergence criterion, 2026-07-12). The two collided by accident; dated
+context disambiguates each mention.
+
 Pins the exact (Q_neg, dP, mass) outputs of ``evaluate_design`` (2D) and
 ``evaluate_design_3d`` (3D) on fixed decision vectors, captured on master
 BEFORE the B3 C7 shared-quantization dedup. C7 moves the per-cell
@@ -119,9 +124,38 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # uniform ε keeps r ≡ 1.0 exactly, so the uniform tuple and both goldens are
 # bit-identical to the pre-M2 baselines (verified via golden_2d/3d_preM2
 # capture). Old nonuniform: (-7728.475410596369, 8022.029234363068, ...).
-_FROZEN_2D_UNIFORM = (-8161.676768977079, 10661.113158337937,
+#
+# RE-BASELINED 2026-07-12 (ledger C8 — a real BUG, not a scheme change): the 2D
+# evaluator was passing `P_ref_abs = P_inA / P_inB`. `P_ref_abs` is the OUTLET
+# absolute pressure (the pp equation pins the outlet row at Pp=0 and never
+# corrects its P), so this anchored the OUTLET at the INLET pressure and floated
+# the whole field up by Δp. The compressible density was therefore wrong
+# everywhere, by a factor that GROWS with Δp/P_in.
+#
+# For an OPTIMIZER that is not just a magnitude error, it is a RANKING
+# distortion: high-Δp designs were mis-scored against low-Δp ones, which is
+# precisely the comparison the optimizer exists to make. Every historical 2D
+# Pareto front was produced under it.
+#
+# Both 2D tuples move (the 3D ones are untouched — 3D always seeded the outlet
+# correctly via `run_stack_3d._seed_p_ref`):
+#     uniform    Q  -8161.68 -> -8573.83 (+5.05 %)   dP 10661.11 -> 11320.61 (+6.19 %)
+#     nonuniform Q  -7730.60 -> -8046.72 (+4.09 %)   dP  8013.42 ->  8429.88 (+5.20 %)
+# mass[2] is bit-identical in both (geometry only).
+# Old: (-8161.676768977079, 10661.113158337937, ...) /
+#      (-7730.600183907583, 8013.423850696896, ...).
+#
+# 2D NONUNIF re-baselined 2026-07-13 (ledger C11 audit): (i) P_ref_abs is now
+# RE-SEEDED from the solver's ACTUAL graded drag after override_simple_K_cF /
+# set_K_cF_field (the constructor seed used the uniform mean geometry — the
+# C8 outlet-anchor mechanism surviving on the graded branch); (ii) the graded
+# eps_field push now refreshes the Brinkman μ/ε (was left on the scalar mean
+# ε). Both are guarded on genuine non-uniformity, so the UNIFORM tuple is
+# bit-identical (verified). Q +0.29%, dP −0.39%, mass bit-identical.
+# Old nonuniform: (-8046.721764144899, 8429.876589408981, ...).
+_FROZEN_2D_UNIFORM = (-8573.834141483694, 11320.610597603201,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7730.600183907583, 8013.423850696896,
+_FROZEN_2D_NONUNIF = (-8023.328438019232, 8397.055931922105,
                       3.6729327392578126)
 # re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
 # eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the
@@ -130,9 +164,29 @@ _FROZEN_2D_NONUNIF = (-7730.600183907583, 8013.423850696896,
 # mean-ε approximation error the retired warning flagged, now corrected.
 # Uniform 3D is bit-identical on this case (use_eps=0 guard path). Old
 # nonuniform: (-10056.123672085494, 5968.430162466379, ...).
-_FROZEN_3D_UNIFORM = (-7819.313135202607, 18176.77875067786,
+#
+# 3D re-baselined 2026-07-12 (ledger C10): evaluate_3d's LTNE convective ρcp
+# now uses SIMPLE's LOCAL ρ instead of `air_density(T, P_in)` — density at the
+# INLET pressure over the whole domain, the pre-2026-06-09 behaviour the
+# production pipeline (`run_stack_3d` variable_rho_cp) fixed long ago. Fluid A
+# uses its re-solved ρ(P_local, Ta); fluid B (frozen, solved once cold) uses
+# its solved ρ AS-IS so ρ·u stays the mass flux SIMPLE-B actually conserved.
+# Q moves by a REAL margin (uniform −23.34%, nonuniform −10.51%): that is the
+# size of the old inlet-P ρcp error on these dense (dP ≈ 18/6 kPa) designs.
+# dP and mass are BIT-IDENTICAL (ρcp enters the energy solve only). Same
+# commit: sB's per-cell eps_field is now mirrored along y (reverse-y mapping
+# fix — an identity for these symmetric_y designs) and both solvers refresh
+# _mu_eff_field to the installed per-cell ε (production pattern; moves the
+# nonuniform dP at 1.4e-7 rel via the sub-dominant Brinkman term, uniform
+# bit-identical). The same commit also fixes the OUTER-LOOP μ/ε refresh
+# denominator (scalar ε → per-cell eps_field — the old line re-broke the
+# per-cell install every outer iteration), which moves the NONUNIFORM tuple
+# a further 1.5e-8 rel (uniform bit-identical: eps_field ≡ scalar there).
+# Old: (-7819.313135202607, 18176.77875067786, ...) /
+# (-9736.62293019604, 5859.925022099803, ...).
+_FROZEN_3D_UNIFORM = (-9644.406654069786, 18176.77875067786,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-9736.62293019604, 5859.925022099803,
+_FROZEN_3D_NONUNIF = (-10759.937887695394, 5859.926835485792,
                       3.675970458984375)
 
 
