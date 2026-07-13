@@ -153,9 +153,21 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # ε). Both are guarded on genuine non-uniformity, so the UNIFORM tuple is
 # bit-identical (verified). Q +0.29%, dP −0.39%, mass bit-identical.
 # Old nonuniform: (-8046.721764144899, 8429.876589408981, ...).
+# NONUNIF re-baselined 2026-07-13 (#2, smooth_df._geom purity fix): the DF
+# smooth-base geometry cache now evaluates AT its rounded 3-decimal key
+# instead of at the caller's exact floats (pre-fix, the cached value depended
+# on which caller hit the key first — order-dependent, ~0.14% cF drift shown
+# by test_df_projection_equivalence under per-test xdist). The 0.05/0.01-
+# quantized per-cell (L, t) carry ULP tails (k*0.05 accumulation), so rounding
+# them moves eps_f/D_h at ULP level and the solved tuples at truncation level:
+# 2D Q 1.2e-6 / dP 1.5e-6, 3D Q 3.9e-7 / dP 2.2e-5 rel; mass BIT-IDENTICAL
+# (both dims). UNIFORM tuples bit-identical (6.0/0.4 and 4.0/0.6 are exactly
+# representable → round is an identity). Projector baseline JSON recaptured
+# in the same change. Old: (-8023.328438019232, 8397.055931922105, ...) /
+# (-10759.937887695394, 5859.926835485792, ...).
 _FROZEN_2D_UNIFORM = (-8573.834141483694, 11320.610597603201,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-8023.328438019232, 8397.055931922105,
+_FROZEN_2D_NONUNIF = (-8023.338274641158, 8397.068602254822,
                       3.6729327392578126)
 # re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
 # eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the
@@ -184,9 +196,11 @@ _FROZEN_2D_NONUNIF = (-8023.328438019232, 8397.055931922105,
 # a further 1.5e-8 rel (uniform bit-identical: eps_field ≡ scalar there).
 # Old: (-7819.313135202607, 18176.77875067786, ...) /
 # (-9736.62293019604, 5859.925022099803, ...).
+# 3D NONUNIF re-baselined 2026-07-13 (#2): see the smooth_df._geom purity
+# note above the 2D constants — same change, same mechanism.
 _FROZEN_3D_UNIFORM = (-9644.406654069786, 18176.77875067786,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10759.937887695394, 5859.926835485792,
+_FROZEN_3D_NONUNIF = (-10759.9420728641, 5859.7962293252385,
                       3.675970458984375)
 
 

@@ -11,8 +11,25 @@ Run with:
 import sys
 import os
 
+import pytest
+
 # Qt requires a platform plugin; offscreen works on both headless and desktop
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_dir(tmp_path, monkeypatch):
+    """Main_Menu.closeEvent auto-saves the session (main.py); without this
+    redirect the w.close() below writes the REAL sjtu_tpmshx/.last_session.json
+    and clobbers the user's saved GUI session (bug found 2026-07-13)."""
+    import controllers.session_manager as sm_mod
+    orig_init = sm_mod.SessionManager.__init__
+
+    def _init(self, base_dir=None, parent=None):
+        orig_init(self, base_dir=base_dir if base_dir is not None else tmp_path,
+                  parent=parent)
+
+    monkeypatch.setattr(sm_mod.SessionManager, '__init__', _init)
 
 
 def test_main_menu_startup():

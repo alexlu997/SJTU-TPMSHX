@@ -59,10 +59,18 @@ _K_S_DEFAULT = 16.0
 
 
 def _geom(tp: str, L: float, t: float, _cache={}) -> tuple[float, float]:
-    """(eps_f, D_h[m]) for one geometry, cached."""
+    """(eps_f, D_h[m]) for one geometry, quantized to 3 decimals and cached.
+
+    The value MUST stay a pure function of the rounded key: geometry is
+    evaluated AT the rounded (L, t), never at the caller's exact floats.
+    Evaluating at exact floats under a rounded key (pre-2026-07-13 bug)
+    made the cached value depend on which caller hit the key first, so
+    cF drifted ~0.14% with call history. The 3-decimal quantization is
+    intended — sub-µm L/t deltas are below geometry-model resolution.
+    """
     k = (tp, round(float(L), 3), round(float(t), 3))
     if k not in _cache:
-        g = tpms_geometry(tp, float(L), float(t), _K_S_DEFAULT)
+        g = tpms_geometry(tp, k[1], k[2], _K_S_DEFAULT)
         _cache[k] = (float(g["epsilon"]) / 2.0, float(g["D_h"]))
     return _cache[k]
 
