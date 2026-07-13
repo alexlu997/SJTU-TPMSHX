@@ -7,7 +7,7 @@ Custom Python compressible SIMPLE/LTNE TPMS heat-exchanger solver. NOT Fluent, N
 - **`README.md`** — headline results, install / run commands, V&V table.
 - **`docs/atlas/`** — 17-volume full-codebase atlas (2026-07-11), file:line-cited and adversarially fact-checked, aimed at a weaker AI agent porting this repo to a server. Finer-grained than `PROJECT_MANUAL.md` §6; on conflict, atlas wins. Start with `docs/atlas/README.md`.
 - Research notes and experiment reports are kept in a **separate vault outside this repository** (this package is a sub-repo of a larger research workspace). The in-repo `reports/` holds computed CSV / figures, not the report archive.
-- **`D:\Postgraduate\vault\reports\_research-ledger-CN.md`** — 调研台账（单一真源）：证伪方案（附推翻条件）+ 搁置与已知缺陷（附重启触发）+ 想法池 + 能力（活维护）。**任何闭合标定 / 数值格式 / 物理增补类调查开工前先查它**，做完当场回写；回写结论须溯源可执行代码 file:line，注释与旧报告只作线索。数字溯源查 `sjtu_tpmshx/validation/_CSV_STATUS.md`。
+- **`E:\LWH\vault\reports\_research-ledger-CN.md`** — 调研台账（单一真源）：证伪方案（附推翻条件）+ 搁置与已知缺陷（附重启触发）+ 想法池 + 能力（活维护）。**任何闭合标定 / 数值格式 / 物理增补类调查开工前先查它**，做完当场回写；回写结论须溯源可执行代码 file:line，注释与旧报告只作线索。数字溯源查 `sjtu_tpmshx/validation/_CSV_STATUS.md`。
 
 ## Hard invariants — violating these causes real regressions
 - **Compressible is required.** Air uses ideal-gas ρ=ρ(P,T) — the code default (`variable_rho_cp=True` in `domain/compute_config.py`, `fluid_type='ideal_gas'`). Removing compressibility roughly doubled the Shanghai 3D Δp error in the compressibility-fix benchmark; it is the single biggest correctness lever. Never substitute isothermal as a "simplification".

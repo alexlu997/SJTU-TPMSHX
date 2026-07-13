@@ -529,7 +529,7 @@ SJTU-TPMSHX/                       ← 仓库根
 
 | 文件 | 作用 | 关键指标/门槛 |
 |---|---|---|
-| `validate_shanghai_lumped_dual_nu.py` | 上海 16 工况的**集总 ε-NTU** 基准（不解流场，只用进口条件，无出口泄漏，论文级基准） | Q 误差 RMSRE **1.71%** |
+| `validate_shanghai_lumped_dual_nu.py` | 上海 16 工况的**集总 ε-NTU** 基准（不解流场，只用进口条件，无出口泄漏，论文级基准） | Q 误差 RMSRE **1.73%** |
 | `validate_shanghai_3d_real.py` | 上海 16 工况的 **3D SIMPLE+LTNE 生产验证**（空气可压缩，水侧温度规定为线性） | dP 5.28% / Q 3.21%（Nz=3 门，mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
 | `validate_shanghai_aligned.py` | 2D 验证，精确复刻界面“计算”路径，确保求解器按界面意图工作 | dP ~8.4%（mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
 | `mms_3d_air_air.py` | MMS 人造解法（用 sympy 推导解析解+源项）验证 3D LTNE 求解器离散一致性 | 单网格 rel L2<2%、Linf<3K |
@@ -694,13 +694,13 @@ SJTU-TPMSHX/                       ← 仓库根
 
 ## 7. 典型工作流（怎么用）
 
-1. **图形界面跑一次正向计算**：运行 `python main.py` → 填几何/流体/边界 → 点“计算”（2D 走 `pipelines/stages_2d.py`，3D 走 `pipelines/stages_3d.py`，后台线程由 `controllers/compute_orchestrator.py` 管理）→ 结果页看温度/压力/速度场 + 诊断侧栏。
+1. **图形界面跑一次正向计算**：在 `sjtu_tpmshx/` 目录内运行 `python main.py`（仓库根无 main.py） → 填几何/流体/边界 → 点“计算”（2D 走 `pipelines/stages_2d.py`，3D 走 `pipelines/stages_3d.py`，后台线程由 `controllers/compute_orchestrator.py` 管理）→ 结果页看温度/压力/速度场 + 诊断侧栏。
 
 2. **命令行快速定尺**：准备工况 Excel（照 `design/examples/quick_design_template.xlsx`）→ `python -m design.cli --xlsx cases.xlsx --arrangement cross --out out.xlsx` → 得双 sheet Excel 报告。
 
 3. **多目标优化**：`python -m optimization.parallel_runner --seeds 3 --n_init 32 --n_iter 24` → 得帕累托前沿 CSV → 可用 `optimization/export_ntop_csv.py` 导成 nTop 标量场建模。
 
-4. **验证可信度**：`python validation/cases/validate_shanghai_lumped_dual_nu.py`（论文基准 Q 1.71%）或 `validation/cases/validate_shanghai_3d_real.py`（3D 生产验证）。引用任何数字前先读 `validation/_CSV_STATUS.md`。
+4. **验证可信度**：`python validation/cases/validate_shanghai_lumped_dual_nu.py`（论文基准 Q 1.73%）或 `validation/cases/validate_shanghai_3d_real.py`（3D 生产验证）。引用任何数字前先读 `validation/_CSV_STATUS.md`。
 
 ---
 

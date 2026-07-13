@@ -16,6 +16,7 @@ Parallel is the default (~4.5 min vs ~16 min serial). `PYTHONHASHSEED=0` must be
 
 ```powershell
 $env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
+# ⚠ 128核服务器上 -n auto 会超额订阅卡死（实测 2026-07-13）：用 scripts/run_tests_server.ps1（-n 64 worksteal + 顺序敏感模块串行，~11 min）
 ```
 
 Serial equivalent (git-bash):

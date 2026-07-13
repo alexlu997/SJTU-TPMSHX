@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/hero-light.svg">
-  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.71%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order p_obs ≥ 2.07." width="100%">
+  <img src="assets/hero-light.svg" alt="SJTU-TPMSHX — validated 2D/3D CFD solver for TPMS heat exchangers. Headline metrics: air-side Q RMSRE 1.73%, 3D pressure-drop RMSRE ~10% (grid-converged), 3D heat-duty Q RMSRE ~3%, MMS observed order p_obs ≥ 2.07." width="100%">
 </picture>
 
 <br><br>
@@ -31,7 +31,7 @@
 
 | Metric | Value | Where |
 |:------:|:-----:|:------|
-| **Air-side Q** RMSRE | **1.71 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
+| **Air-side Q** RMSRE | **1.73 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
 | **3D pressure drop** RMSRE | **≈ 10 %** | full SIMPLE 3D, gamma_df default, grid-converged (per-case Richardson, A2 criteria) |
 | **3D heat duty Q** RMSRE | **≈ 3 %** | full SIMPLE 3D, gamma_df default, grid-converged |
 | **MMS** observed order `p_obs` | **≥ 2.07** | code verification, SOU 2nd-order (gate ≥ 1.5) |
@@ -65,7 +65,7 @@
 > with a real SIMPLE-B water solve. At the gate grid (20×10×3) that moves
 > **Δp 5.28 % → 4.88 %** and **Q 3.21 % → 2.12 %** (the first time 3D beats the 2D aligned
 > kernel gate's Q RMSRE of 2.51 % — the ε-NTU *lumped* baseline is a different number,
-> 1.71 %). The old runner was partly *fed* the answer: the measured outlet
+> 1.73 %). The old runner was partly *fed* the answer: the measured outlet
 > temperature already encodes the true duty via the water enthalpy balance, and Q is
 > `Σ h_vB·(Ts − Tb)·dV`, so Tb sets the driving force. The new gate predicts it from
 > scratch and is still more accurate. Legacy numbers reproduce with `--runner kernel`;
@@ -126,7 +126,7 @@
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.71 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
+| **Validation** | Shanghai 16-case — Q air RMSRE **1.73 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
@@ -252,7 +252,7 @@ ASME V&V 20 **Standard Tier** complete (single-day closure, 2026-05-04):
 | **B — Grid convergence (GCI)** | T2 **0.86 %**, T4 `H=8` grid-30 **1.37 %** |
 | **C — Tolerance / iteration sweep** | spread **0.02 %** |
 | **D — Domain sweep** | **18 / 20** PASS, applicability `u ≤ 10 m/s` |
-| **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.71 %** |
+| **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.73 %** |
 
 3D PPE Phase-A MMS `p_obs ≥ 2.07` (SOU 2nd-order verified).
 

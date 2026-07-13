@@ -73,8 +73,12 @@
   Nz=3 dP 17.43→7.19 by injecting the experimentally-correct air mass flow).
   The gamma_df−rbf gap (+2.6pp) is entirely the smooth-trend K; cF is
   gate-identical (534.8) by construction.
-- **Clean no-leak Q (paper baseline): Q_air 1.71%** — lumped dual-Nu ε-NTU
+- **Clean no-leak Q (paper baseline): Q_air 1.73%** — lumped dual-Nu ε-NTU
   (`validate_shanghai_lumped_dual_nu.py`), surrogate-independent.
+  Was 1.71% until f9a44a8 (2026-05-29, voxel N 256→128 default while
+  `_C_COEFFS` stay N=256-fit; eps drift ≤0.21% per test_tpms_geometry_n128).
+  Re-baselined 2026-07-13 after git-bisect on the migration server confirmed
+  the shift is that commit, not environment (17ecec6→1.71%, f9a44a8→1.73%).
 - rbf-side dP residual ~7% = true closure + geometry floor (the old "entrance
   convention" contributor was the velocity-inlet BC bug, fixed 2026-06-04;
   see memory `feedback_dp_gap_attribution`).
