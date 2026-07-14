@@ -249,7 +249,7 @@ ASME V&V 20 **Standard Tier** complete (single-day closure, 2026-05-04):
 | Phase | Result |
 |-------|--------|
 | **A — MMS code verification** | A.1–A.4, 5-grid h-refinement, `p_obs ≥ 2.07` (gate ≥ 1.5) |
-| **B — Grid convergence (GCI)** | T2 **0.86 %**, T4 `H=8` grid-30 **1.37 %** |
+| **B — Grid convergence (GCI)** | T2 g20 **0.81 %** · T4 `H=8` g20 **6.38 %** (> 5 % gate — partial-B not yet grid-converged; g30 4.01 %, monotone) |
 | **C — Tolerance / iteration sweep** | spread **0.02 %** |
 | **D — Domain sweep** | **18 / 20** PASS, applicability `u ≤ 10 m/s` |
 | **E — Validation vs experiment** | Shanghai lumped Q RMSRE **1.73 %** |

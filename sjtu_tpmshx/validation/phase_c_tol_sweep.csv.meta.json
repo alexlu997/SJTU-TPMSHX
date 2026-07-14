@@ -1,6 +1,14 @@
 {
-  "script": "sjtu_tpmshx/validation/phase_c_tol_sweep.py",
-  "commit": "d15be56",
-  "date": "2026-05-04T23:37:44+08:00",
-  "backfilled": true
+  "script": "validation/cases/phase_c_gci.py",
+  "commit": "8e5302c",
+  "date": "2026-07-14T15:09:23+08:00",
+  "rows": 3,
+  "columns": [
+    "case",
+    "grid",
+    "tol",
+    "Q_enth_A",
+    "T_A_out",
+    "elapsed"
+  ]
 }

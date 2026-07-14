@@ -1,6 +1,17 @@
 {
-  "script": "sjtu_tpmshx/validation/phase_c_gci.py",
-  "commit": "d15be56",
-  "date": "2026-05-04T23:26:17+08:00",
-  "backfilled": true
+  "script": "validation/cases/phase_c_gci.py",
+  "commit": "8e5302c",
+  "date": "2026-07-14T15:07:38+08:00",
+  "rows": 2,
+  "columns": [
+    "case",
+    "order_obs",
+    "Q_inf",
+    "GCI_g16_pct",
+    "rel_diff_g12_g16",
+    "GCI_g20_pct",
+    "rel_diff_g16_g20",
+    "GCI_g30_pct",
+    "rel_diff_g20_g30"
+  ]
 }
