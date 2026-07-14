@@ -780,6 +780,14 @@ def compute_phase3(res):
     # Use LTNE-effective C (= m_LTNE·cp). The kernel's energy equation
     # balances at this scale: ε_α·ρ·cp·u·∇T = h_vα·(Ts−Tα). m_LTNE already
     # carries the ε/2 factor. ε-NTU bound applied at this consistent scale.
+    # Degenerate-path defaults: single-fluid (T5, cp_B None) and
+    # equi-temperature (T6, zero inlet gap) skip the guarded block below,
+    # but the metrics dict at the bottom still references these names —
+    # pre-init to nan so it reports "not applicable" instead of dying with
+    # UnboundLocalError on C_A (found 2026-07-14 on the T6 audit).
+    C_A = C_B = C_r = C_min = float('nan')
+    Q_primary = Q_phys_A = Q_phys_B = Q_volumetric_phys = float('nan')
+    Q_NTU_max = eps_obs = eps_max_NTU = NTU_int = float('nan')
     if cp_B is not None and T_inB is not None and abs(T_inA - T_inB) > 1e-30:
         C_A = m_A * cp_A
         C_B = m_B * cp_B
@@ -1233,9 +1241,20 @@ def main():
     args = ap.parse_args()
 
     if args.out is None:
-        proj_root = ROOT.parents[2]
-        out_path = proj_root / 'vault' / 'reports' / '3d-solver' \
-                            / '2026-05-04-phase2-conservation-CN.md'
+        # The vault sits at a different depth per machine (laptop:
+        # D:\Postgraduate\vault with the repo two levels down; server:
+        # E:\LWH\vault beside the repo). A fixed parents[N] therefore
+        # resolved to a stray root (E:\vault) after the 2026-07 migration —
+        # walk up until an actual vault/reports directory is found instead.
+        # Filename carries the RUN date so a regeneration can never clobber
+        # a historical dated report in the vault.
+        vault_root = next((c for c in ROOT.parents
+                           if (c / 'vault' / 'reports').is_dir()), None)
+        fname = time.strftime('%Y-%m-%d') + '-phase2-conservation-CN.md'
+        if vault_root is None:
+            out_path = ROOT / 'validation' / fname
+        else:
+            out_path = vault_root / 'vault' / 'reports' / '3d-solver' / fname
     else:
         out_path = Path(args.out).resolve()
 

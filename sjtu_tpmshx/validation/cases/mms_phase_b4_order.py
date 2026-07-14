@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 
 from validation.cases.mms_3d_air_air import run_mms
 from validation.harness._order_fit import fit_order_loglog
+from validation.harness import _provenance as _prov
 
 GRIDS = [10, 16, 24, 32]
 OUT_CSV = ROOT / 'validation' / 'mms_phase_b4_orders.csv'
@@ -55,9 +56,16 @@ def main():
         p, r2 = _fit.p, _fit.r2
         rows.append((m, p, r2, errs[m][-1]))
         print(f"  {m}: p_obs={p:.3f}  R2={r2:.5f}  val_gfine={errs[m][-1]:.3e}")
-    with open(OUT_CSV, 'w') as f:
+    # encoding='utf-8' is load-bearing: without it Windows writes the em-dash
+    # below in the console codepage (GBK) and the utf-8 reader in
+    # tests/test_mms_b4_conservative_order.py dies with UnicodeDecodeError
+    # (found 2026-07-14). Provenance trio per the C.4 convention.
+    with open(OUT_CSV, 'w', encoding='utf-8', newline='') as f:
         f.write(f"# MMS Phase B4 — conservative HO path observed order\n")
         f.write(f"# grids={GRIDS}  case=3d  conservative=1\n")
+        f.write(f"# script: {_prov._normalise_script(__file__)}\n")
+        f.write(f"# commit: {_prov._git_sha() or '<no-git>'}\n")
+        f.write(f"# date:   {_prov._iso_now()}\n")
         f.write("case,metric,p_obs,R2,val_gfine\n")
         for m, p, r2, v in rows:
             f.write(f"3d,{m},{p:.4f},{r2:.5f},{v:.4e}\n")

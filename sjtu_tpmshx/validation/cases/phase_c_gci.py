@@ -41,6 +41,7 @@ except Exception:
 warnings.filterwarnings('ignore')
 
 from pipelines.stages_3d import _run_3d_stack
+from validation.harness._provenance import write_csv_with_provenance
 from validation.cases.audit_3d_conservation import (
     make_T2, make_T4_H8, L_DOM, H_DOM, LZ,
 )
@@ -220,9 +221,14 @@ def main():
         summary.append(dict(case=cid, **gci))
 
     df = pd.DataFrame(all_rows)
-    df.to_csv(ROOT / 'validation' / 'phase_c_gci.csv', index=False)
+    # C.4 provenance headers (# script/commit/date) — a plain to_csv here
+    # silently dropped them on regeneration (found 2026-07-14).
+    write_csv_with_provenance(df, ROOT / 'validation' / 'phase_c_gci.csv',
+                              __file__)
     sdf = pd.DataFrame(summary)
-    sdf.to_csv(ROOT / 'validation' / 'phase_c_gci_summary.csv', index=False)
+    write_csv_with_provenance(sdf,
+                              ROOT / 'validation' / 'phase_c_gci_summary.csv',
+                              __file__)
 
     print(f"\n{'='*72}")
     print(f"  GCI summary")
@@ -242,7 +248,9 @@ def main():
     if not args.skip_tol:
         tol_rows = run_c3_tol('T2', grid=20)
         tdf = pd.DataFrame(tol_rows)
-        tdf.to_csv(ROOT / 'validation' / 'phase_c_tol_sweep.csv', index=False)
+        write_csv_with_provenance(tdf,
+                                  ROOT / 'validation' / 'phase_c_tol_sweep.csv',
+                                  __file__)
         Qs = [r['Q_enth_A'] for r in tol_rows]
         rng = max(Qs) - min(Qs)
         rel = rng / max(abs(Qs[-1]), 1e-30)
