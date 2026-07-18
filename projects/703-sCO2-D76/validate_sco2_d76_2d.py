@@ -21,6 +21,15 @@ Gate: max per-case |Q error| < 15 %.
 """
 from __future__ import annotations
 
+# ⚠ 2026-07-15: solver sCO2 closures switched to the SMOOTH-WALL unit-cell
+# CFD campaign (nu_correlations.SCO2_NU_COEFFS now c·Re^a·Pr^⅓·(Dh/L)^d, both
+# topologies; cF via df_surrogate.sco2_df, SCO2_CF_SCALE retired). This script
+# validates against the D-7-6 EXPERIMENT (rough SLM part) — with smooth-wall
+# closures its errors are EXPECTED to grow (~1.7× on Nu, ~3.4× on dP) until an
+# experimental roughness anchor (gamma) lands. Historical experimental fit for
+# reference: Nu = 0.28·Re^0.75·Pr^(1/3) (D76_EXP_NU), cF scale 3.39.
+D76_EXP_NU = {'c': 0.28, 'a': 0.75}
+
 import sys
 import warnings
 from pathlib import Path
@@ -47,7 +56,11 @@ from solvers.ltne_energy import solve_full_domain             # noqa: E402
 from solvers.df_projection import (build_master_refined_grid,  # noqa: E402
                                    extract_dP_from_simple,
                                    extract_dP_mass_flux_from_simple)
-from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE  # noqa: E402
+from df_surrogate.predict import predict_K_cF  # noqa: E402
+# Historical D-7-6 experimental effective-cF multiplier (retired from
+# production 2026-07-15 — solver now uses the smooth-wall sCO2 CFD cF).
+# Kept LOCALLY here: this script validates the ROUGH D-7-6 experiment.
+SCO2_CF_SCALE = 3.39
 # Module moved to validation/harness/ (c3635cd-era reorg); old path broke
 # this script — the calibration driver for the production SCO2_CF_SCALE.
 from validation.harness._case_sets import d76_spec             # noqa: E402
@@ -94,7 +107,8 @@ def _run_case(m_h, Th, Ph, m_c, Tc_in, Tc_out, Pc, Qexp, dP_exp=None):
     u_B = m_c / (rho_B0 * A_FLOW)
     Re_B = rho_B0 * abs(u_B) * D_H / mu_B0
     Pr_B = mu_B0 * cp_B0 / k_B
-    Nu_B = float(nu_sco2_topo(TPMS, max(Re_B, 1.0), Pr_B))
+    Nu_B = float(nu_sco2_topo(TPMS, max(Re_B, 1.0), Pr_B, L_CELL,
+                              D_H * 1e3))
     h_vB = A0 * Nu_B * k_B / D_H
     K_ffB = EPS_A * k_B
     K_ss = (1.0 - EPS) * K_S

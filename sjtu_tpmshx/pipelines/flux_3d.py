@@ -177,7 +177,8 @@ def _mass_weighted_h_out(T_face: np.ndarray, P_ref: float,
 
 def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
                          u_abs: np.ndarray | float, A_0: float,
-                         D_h_m: float, tpms_type: str) -> np.ndarray:
+                         D_h_m: float, tpms_type: str,
+                         L_cell_mm: float) -> np.ndarray:
     """sCO2 per-cell volumetric h_v = A_0·Nu·k(T)/D_h with LOCAL-temperature
     transport properties (audit 2026-06-28 D3).
 
@@ -200,7 +201,8 @@ def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
     Pr = _s2.sco2_cp_field(T, P_Pa) * mu / np.maximum(k_f, 1e-30)
     Re_loc = rho * np.abs(u_abs) * D_h_m / np.maximum(mu, 1e-30)
     Nu_loc = np.maximum(
-        np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr),
+        np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
+                          L_cell_mm, D_h_m * 1000.0),
                    dtype=np.float64), _floor)
     return A_0 * Nu_loc * k_f / D_h_m
 

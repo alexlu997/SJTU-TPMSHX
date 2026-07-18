@@ -37,11 +37,13 @@ def _nu_water(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
 
 
 def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
-    # Direct sCO2 Nu fit (nu_correlations.SCO2_NU_COEFFS; D-7-6 experiment,
-    # no air x1.28 — roughness baked in, like water). Diamond only; raises
-    # for other topologies. eps_f / L_mm / D_h_mm unused (signature contract).
-    del eps_f, L_mm, D_h_mm
-    return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr)
+    # Direct sCO2 Nu fit (nu_correlations.SCO2_NU_COEFFS; 2026-07 smooth-wall
+    # unit-cell CFD campaign, Diamond + Gyroid, c·Re^a·Pr^(1/3)·(Dh/L)^d).
+    # SMOOTH WALL — no roughness term (sCO2 roughness unanchored until
+    # experiment data lands). L_mm / D_h_mm feed the (Dh/L)^d geometry term;
+    # eps_f stays unused (signature contract).
+    del eps_f
+    return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr, L_mm, D_h_mm)
 
 
 def _sco2_prop(key):
@@ -113,7 +115,13 @@ FLUIDS = {
         mu=_sco2_prop("V"),
         k=_sco2_prop("L"),
         nu=_nu_sco2,
-        embeds_roughness=True,   # SLM roughness baked into the D-7-6 fit (like water)
+        # True here means "do NOT apply the air-calibrated roughness.py
+        # multipliers" — correct for sCO2 whose closures are now smooth-wall
+        # CFD (2026-07-15): roughness is deliberately UNMODELLED (not baked
+        # in), and the air modes are the wrong anchor for it. Rename trap:
+        # the flag gates air-mode application, it does not assert the fit
+        # contains roughness.
+        embeds_roughness=True,
         enthalpy=_sco2_prop("H"),  # true-enthalpy duty ṁ·Δh (cp·ΔT wrong for sCO2)
     ),
 }

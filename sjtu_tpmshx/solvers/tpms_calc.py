@@ -54,7 +54,7 @@ from .tpms_props import (  # noqa: F401 — re-exports
     water_conductivity, water_cp, water_density, water_viscosity,
     _warn_range_once,
 )
-from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
+from df_surrogate.predict import predict_K_cF
 
 from logutil import get_logger
 
@@ -122,10 +122,12 @@ def parse_fluid_type(combo):
 def validate_fluid_type(fluid_type: str, side: str) -> None:
     """Raise NotImplementedError for fluid types without fitted correlations.
 
-    Air + water + sCO2 are supported. sCO2 (2026-06): Diamond-only Nu
-    (nu_sco2_topo, D-7-6) + cF×SCO2_CF_SCALE + CoolProp real-gas props; wired in
-    the 2D and 3D pipelines (Phase A = incompressible). sCO2 on a non-Diamond
-    lattice still raises (nu_sco2_topo Diamond-only).
+    Air + water + sCO2 are supported. sCO2 (2026-07-15): SMOOTH-WALL unit-cell
+    CFD closures for BOTH topologies — Nu = c·Re^a·Pr^⅓·(Dh/L)^d
+    (nu_sco2_topo, SCO2_NU_COEFFS) + cF from df_surrogate.sco2_df + CoolProp
+    real-gas props; wired in the 2D and 3D pipelines (Phase A =
+    incompressible). Roughness deliberately unmodelled for sCO2 (no
+    experimental anchor yet) — Δp/Nu are smooth-wall estimates.
 
     For water:
       * Properties: NIST-grade rho/mu/k (Vogel viscosity, < 2 % vs NIST 0–90 °C).
@@ -333,13 +335,14 @@ def _compute_cached(tpms_type: str,
     # arch-b-c-e batch B (tpms_props leaf broke the old two-way coupling).
     K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
                                float(eps) / 2.0)
-    # sCO2: predict_K_cF returns the GEOMETRIC (air/water-anchored) cF; the
-    # D-7-6 field-calibrated effective cF is geometric × SCO2_CF_SCALE (3.39),
-    # applied inside the SIMPLE solver for the field path. The lumped compute()
-    # path must apply it too, else the UI/quick-estimate dP for sCO2 reads ~3.4×
-    # too low (audit 2026-06-28). air/water keep the geometric cF (×1.0).
+    # sCO2: cF comes from the smooth-wall sCO2 unit-cell CFD fit
+    # (df_surrogate.sco2_df, 2026-07-15; replaces the retired D-7-6 ×3.39).
+    # K stays the production CFD-refit face (sCO2 data cannot identify K).
+    # ⚠ smooth-wall estimate — real SLM-part Δp runs several × higher until
+    # an experimental γ anchor lands. air/water keep the production cF.
     if fluid_type == 'sco2':
-        cF_df = cF_df * SCO2_CF_SCALE
+        from df_surrogate.sco2_df import predict_cF_sco2
+        cF_df = predict_cF_sco2(tpms_type, float(L_cell_mm), float(t_mm), Re)
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────

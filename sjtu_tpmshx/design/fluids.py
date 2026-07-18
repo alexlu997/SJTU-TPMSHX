@@ -13,7 +13,7 @@ from solvers.nu_correlations import (
     NU_RE_FIT_RANGE,        # air 幂律拟合 Re 窗 (400,16000)
     WATER_NU_RE_RANGE,      # 拓扑专属水侧 Nu 关联式验证 Re 域 (新式)
     WATER_NU_COEFFS,        # 拓扑专属水侧系数 (单源 re-export)
-    SCO2_NU_RE_RANGE,       # sCO2 D-7-6 Nu 拟合 Re 域 (9000,41000), Diamond-only
+    SCO2_NU_RE_RANGE,       # sCO2 CFD 拟合 Re 域 (2600,128000), Diamond+Gyroid
     nu_water_topo,
     nu_sco2_topo,
 )
@@ -24,7 +24,8 @@ YAN_RE_RANGE = WATER_NU_RE_RANGE        # 向后兼容别名 (旧名, 现已非 
 def nu_re_window(fluid: str):
     """该流体 Nu 关联式的验证 Re 域 (lo, hi)。域外 = 外推, 低置信。
     air → 项目幂律拟合窗 (400,16000); water → 拓扑专属 (100,50000);
-    sco2 → D-7-6 拟合 (9000,41000), 仅 Diamond, 远离临界。"""
+    sco2 → 光滑壁单胞 CFD 拟合 (2600,128000), Diamond+Gyroid
+    (2026-07-15, 局部体物性 Re_b 覆盖; 失效带见 nu_correlations)。"""
     if fluid == "water":
         return WATER_NU_RE_RANGE
     if fluid == "sco2":
@@ -49,9 +50,10 @@ def fluid_props(fluid: str, T_K: float, P_Pa: float) -> Props:
 def fluid_nu(fluid: str, topo: str, Re: float, eps_f: float,
              L_mm: float, D_h_mm: float) -> float:
     """单股 Nu。air: 项目幂律×f_rough; water: 拓扑专属 c·Re^a·Pr^(1/3);
-    sco2: nu_sco2_topo (D-7-6, 仅 Diamond, 远离临界).
+    sco2: nu_sco2_topo (光滑壁 CFD, c·Re^a·Pr^⅓·(Dh/L)^d, Diamond+Gyroid).
     ⚠ design 工具是常物性 ε-NTU，对 sco2 变-cp/近临界本就粗糙——sco2 正式定尺
-    用 projects/703-sCO2-D76/size_sco2_703.py (焓基)。此处 Pr 取代表性远离临界态。"""
+    用 projects/703-sCO2-D76/size_sco2_703.py (焓基)。此处 Pr 取代表性远离临界态。
+    ⚠ sco2 为光滑壁值（粗糙度未标定, 2026-07-15）。"""
     if fluid == "air":
         return nu_from_Re(topo, Re, eps_f, L_mm, D_h_mm)
     if fluid == "water":
@@ -60,5 +62,5 @@ def fluid_nu(fluid: str, topo: str, Re: float, eps_f: float,
     if fluid == "sco2":
         # representative far-from-critical sCO2 (D-7-6 mid ~480K/9MPa)
         Pr_s = fluid_props("sco2", 480.0, 9.0e6).Pr
-        return nu_sco2_topo(topo, Re, Pr_s)
+        return nu_sco2_topo(topo, Re, Pr_s, L_mm, D_h_mm)
     raise ValueError(f"unknown fluid {fluid!r}")

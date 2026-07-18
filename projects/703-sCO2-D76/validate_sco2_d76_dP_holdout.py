@@ -45,7 +45,10 @@ except Exception:
 # Reuse the gate's field driver + constants verbatim — no duplicated physics.
 from validate_sco2_d76_2d import (_run_case, _col, GOLD, XLSX,  # noqa: E402
                                              N_X, N_Y, L_CELL, T_WALL, L_DOM)
-from df_surrogate.predict import SCO2_CF_SCALE                             # noqa: E402
+# Historical D-7-6 experimental effective-cF multiplier (retired from
+# production 2026-07-15 — solver now uses the smooth-wall sCO2 CFD cF).
+# Kept LOCALLY here: this script validates the ROUGH D-7-6 experiment.
+SCO2_CF_SCALE = 3.39
 
 
 def _summary(tag, errs):

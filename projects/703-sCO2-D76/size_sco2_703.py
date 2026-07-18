@@ -31,6 +31,15 @@ Run:  python -u projects/703-sCO2-D76/size_sco2_703.py
 """
 from __future__ import annotations
 
+# ⚠ 2026-07-15: solver sCO2 closures switched to the SMOOTH-WALL unit-cell
+# CFD campaign (nu_correlations.SCO2_NU_COEFFS now c·Re^a·Pr^⅓·(Dh/L)^d, both
+# topologies; cF via df_surrogate.sco2_df, SCO2_CF_SCALE retired). This script
+# validates against the D-7-6 EXPERIMENT (rough SLM part) — with smooth-wall
+# closures its errors are EXPECTED to grow (~1.7× on Nu, ~3.4× on dP) until an
+# experimental roughness anchor (gamma) lands. Historical experimental fit for
+# reference: Nu = 0.28·Re^0.75·Pr^(1/3) (D76_EXP_NU), cF scale 3.39.
+D76_EXP_NU = {'c': 0.28, 'a': 0.75}
+
 import sys
 import warnings
 from pathlib import Path
@@ -49,7 +58,11 @@ except Exception:
 from CoolProp.CoolProp import PropsSI                          # noqa: E402
 from solvers.tpms_calc import geometry as tpms_geometry        # noqa: E402
 from solvers.nu_correlations import nu_sco2_topo, nu_water_topo  # noqa: E402
-from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE    # noqa: E402
+from df_surrogate.predict import predict_K_cF  # noqa: E402
+# Historical D-7-6 experimental effective-cF multiplier (retired from
+# production 2026-07-15 — solver now uses the smooth-wall sCO2 CFD cF).
+# Kept LOCALLY here: this script validates the ROUGH D-7-6 experiment.
+SCO2_CF_SCALE = 3.39
 
 # ── geometry: Diamond 7/0.6 (the only sCO2-calibrated lattice) ──────────
 K_S, T_WALL_MM = 16.0, 0.6
@@ -85,7 +98,7 @@ def _T_of_h(fluid, h, P):
 def _nu(fluid, Re, Pr):
     Re = max(Re, 1.0)
     if fluid == "sco2":
-        return float(nu_sco2_topo("Diamond", Re, Pr))
+        return float(nu_sco2_topo("Diamond", Re, Pr, 7.0, D_H * 1e3))
     return float(nu_water_topo("Diamond", Re, Pr))
 
 

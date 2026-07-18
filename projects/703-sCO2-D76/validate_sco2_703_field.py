@@ -25,6 +25,15 @@ Run:  python -u projects/703-sCO2-D76/validate_sco2_703_field.py
 """
 from __future__ import annotations
 
+# ⚠ 2026-07-15: solver sCO2 closures switched to the SMOOTH-WALL unit-cell
+# CFD campaign (nu_correlations.SCO2_NU_COEFFS now c·Re^a·Pr^⅓·(Dh/L)^d, both
+# topologies; cF via df_surrogate.sco2_df, SCO2_CF_SCALE retired). This script
+# validates against the D-7-6 EXPERIMENT (rough SLM part) — with smooth-wall
+# closures its errors are EXPECTED to grow (~1.7× on Nu, ~3.4× on dP) until an
+# experimental roughness anchor (gamma) lands. Historical experimental fit for
+# reference: Nu = 0.28·Re^0.75·Pr^(1/3) (D76_EXP_NU), cF scale 3.39.
+D76_EXP_NU = {'c': 0.28, 'a': 0.75}
+
 import sys
 import warnings
 from pathlib import Path
@@ -44,7 +53,10 @@ from solvers.simple_solver import SIMPLESolver                 # noqa: E402
 from solvers.ltne_energy import solve_full_domain              # noqa: E402
 from solvers.df_projection import extract_dP_mass_flux_from_simple  # noqa: E402
 from solvers.nu_correlations import nu_sco2_topo, nu_water_topo  # noqa: E402
-from df_surrogate.predict import SCO2_CF_SCALE                 # noqa: E402
+# Historical D-7-6 experimental effective-cF multiplier (retired from
+# production 2026-07-15 — solver now uses the smooth-wall sCO2 CFD cF).
+# Kept LOCALLY here: this script validates the ROUGH D-7-6 experiment.
+SCO2_CF_SCALE = 3.39
 from size_sco2_703 import (DEVICES, design_device,  # noqa: E402
                                        EPS, EPS_A, D_H, A0, K_S, K0, CF0,
                                        _h as _enth, _props as _propsA)
@@ -105,7 +117,8 @@ def run_device(d, n_x=240, n_y=12, max_outer=40, alpha=0.30):
     u_B = dev["mc"] / (rcB * A_FLOW)
     Re_B = rcB * abs(u_B) * D_H / muB
     Pr_B = muB * cpB / kB
-    nuB = (nu_sco2_topo("Diamond", max(Re_B, 1.0), Pr_B) if cold == "sco2"
+    nuB = (nu_sco2_topo("Diamond", max(Re_B, 1.0), Pr_B, 7.0, D_H * 1e3)
+           if cold == "sco2"
            else nu_water_topo("Diamond", max(Re_B, 1.0), Pr_B))
     h_vB = np.full((N_X, N_Y), A0 * float(nuB) * kB / D_H)
     K_ffB = np.full((N_X, N_Y), EPS_A * kB)
@@ -148,14 +161,16 @@ def run_device(d, n_x=240, n_y=12, max_outer=40, alpha=0.30):
             kA = S.sco2_conductivity_field(Ta, PM)
             ReA = rho_f * np.abs(ucA) * D_H / np.maximum(mu_f, 1e-12)
             PrA = mu_f * (rho_cp_A / np.maximum(rho_f, 1e-9)) / np.maximum(kA, 1e-12)
-            NuA = nu_sco2_topo("Diamond", np.maximum(ReA, 1.0), np.maximum(PrA, 1e-3))
+            NuA = nu_sco2_topo("Diamond", np.maximum(ReA, 1.0),
+                               np.maximum(PrA, 1e-3), 7.0, D_H * 1e3)
             h_vA = A0 * NuA * kA / D_H
             K_ffA = EPS_A * kA
         else:
             kA0 = S.sco2_conductivity(Th_in, PM)
             ReA0 = rho0 * abs(u_A) * D_H / mu0
             PrA0 = mu0 * cp0 / kA0
-            h_vA = np.full((N_X, N_Y), A0 * float(nu_sco2_topo("Diamond", ReA0, PrA0)) * kA0 / D_H)
+            h_vA = np.full((N_X, N_Y), A0 * float(nu_sco2_topo(
+                "Diamond", ReA0, PrA0, 7.0, D_H * 1e3)) * kA0 / D_H)
             K_ffA = np.full((N_X, N_Y), EPS_A * kA0)
 
         Ta, Tb, Ts, _ = solve_full_domain(

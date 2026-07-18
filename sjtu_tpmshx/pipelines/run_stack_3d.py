@@ -23,7 +23,7 @@ from solvers import sco2_props
 from solvers.asym_split import (
     _asym_split_A, _per_side_eps_override, _eps_sides_for_run,
 )
-from df_surrogate.predict import predict_K_cF, SCO2_CF_SCALE
+from df_surrogate.predict import predict_K_cF, sco2_cf_scale
 from df_surrogate.kappa_asym import kappa_KcF
 from solvers.envelope import (check_compressible_envelope, gate_solution,
                                mach_field_max, ChokedFlowError,
@@ -609,12 +609,17 @@ def _run_3d_stack(cfg):
     # (`nu_water_topo`) embeds AM roughness).
     K_A_arr, cF_A_arr = _apply_roughness_KcF(
         K_A_arr, cF_A_arr, fluid_type_A, rho_A, mu_A, u_A, D_h)
-    # sCO2: Forchheimer cF needs the D-7-6 effective scale (×3.39). Roughness is
-    # already skipped for sco2 (embeds_roughness), so this is the sole cF lift.
-    # Diamond-only, like nu_sco2_topo. Scale both the field and the seed scalar.
+    # sCO2: rescale the production base cF onto the smooth-wall sCO2 CFD value
+    # at the inlet Re (2026-07-15; replaces the retired D-7-6 ×3.39 — solver
+    # sCO2 Δp is now a SMOOTH-WALL estimate until an experimental γ lands).
+    # Roughness modes already skipped for sco2 (embeds_roughness). Scale both
+    # the field and the seed scalar; κ/zoned structure is preserved (uniform
+    # ratio, exactly like the old constant).
     if fluid_type_A == 'sco2':
-        cF_A_arr = cF_A_arr * SCO2_CF_SCALE
-        cF_pred = cF_pred * SCO2_CF_SCALE
+        _cfs_A = sco2_cf_scale(tpms_type, Lcell, t_wall, 0.5 * eps,
+                               rho_A, mu_A, u_A)
+        cF_A_arr = cF_A_arr * _cfs_A
+        cF_pred = cF_pred * _cfs_A
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream).
     solver_fluid_type_A = fluid_props.flow_model(fluid_type_A)
@@ -704,11 +709,13 @@ def _run_3d_stack(cfg):
         K_B_arr, cF_B_arr = _apply_roughness_KcF(
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
-        # sCO2 B side: same D-7-6 effective-cF scale as A (×3.39); roughness
-        # already skipped (embeds_roughness). Scale field + seed scalar.
+        # sCO2 B side: same smooth-wall CFD rescale as A (inlet-Re anchored);
+        # roughness already skipped (embeds_roughness). Field + seed scalar.
         if fluid_type_B == 'sco2':
-            cF_B_arr = cF_B_arr * SCO2_CF_SCALE
-            cF_pred_B = cF_pred_B * SCO2_CF_SCALE
+            _cfs_B = sco2_cf_scale(tpms_type, Lcell, t_wall, 0.5 * eps,
+                                   rho_B, mu_B, u_B)
+            cF_B_arr = cF_B_arr * _cfs_B
+            cF_pred_B = cF_pred_B * _cfs_B
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
@@ -931,7 +938,7 @@ def _run_3d_stack(cfg):
         if fluid_type == 'sco2' and L_fld is None and np.ndim(T_side) > 0:
             g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
             return _sco2_hv_local_field(T_side, P_side, u_abs,
-                                        g['A_0'], g['D_h'], tpms_type)
+                                        g['A_0'], g['D_h'], tpms_type, Lcell)
         rho, mu, k_f, Pr_f = _fluid_transport_props(fluid_type, T_side, P_side)
         if L_fld is None:
             g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
@@ -1566,7 +1573,8 @@ def _run_3d_stack(cfg):
                                        warn_list=_env_warnings,
                                        context='fluid A reseed (outer iter)')
         else:
-            # sco2-A reseed: 1D Darcy-Forchheimer dP (cF_pred already ×SCO2_CF_SCALE).
+            # sco2-A reseed: 1D Darcy-Forchheimer dP (cF_pred already rescaled
+            # onto the smooth-wall sCO2 CFD cF via sco2_cf_scale).
             mu_avg = float(sco2_props.sco2_viscosity(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
             _sco2_compress = (os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '')

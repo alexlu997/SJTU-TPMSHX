@@ -124,20 +124,38 @@ def _overrides_enabled() -> bool:
 # constant-cF closure does NOT transfer air -> sCO2. See vault
 # reports/.../sco2 + [[project_sco2_pche_feasibility]].
 #
-# SCO2_CF_SCALE is the multiplier applied to the geometric cF inside the SIMPLE
-# field momentum source so the SOLVER's sCO2 Δp matches the D-7-6 experiment.
-# Forensic (inlet-property 1D) gives a cF ratio of ~3.13; but the field solver
-# cools the stream (ρ rises, the Forchheimer dP = cF·G²/ρ·L drops along the
-# channel), so matching the MEASURED (property-integrated) Δp needs a slightly
-# larger scale. Calibrated directly against the full coupled GOLD-6 field driver
-# (validate_sco2_d76_2d.py): 3.39 centres the Δp bias to ~0 (RMSRE ~6 %,
-# max ~10 %); 3.13 left a −7.6 % bias because the inlet-property forensic
-# under-weights the cold (dense) end.
-#
-# ⚠ SINGLE-GEOMETRY (Diamond 7/0.6) calibration. The ratio's transfer to other
-# (L, t) is UNVERIFIED — there is no other sCO2 dP dataset. For 703 (all Diamond
-# 7/0.6) this is exact; elsewhere it is an explicit assumption, not a fit.
-SCO2_CF_SCALE = 3.39             # sCO2 effective-cF multiplier (D-7-6 field-calibrated)
+# [RETIRED 2026-07-15] SCO2_CF_SCALE = 3.39 — the D-7-6 field-calibrated
+# effective-cF multiplier (single geometry Diamond 7/0.6, rough SLM part;
+# forensic inlet-property ratio 3.13, field-calibrated 3.39 against
+# validate_sco2_d76_2d.py, Δp RMSRE ~6 %). Retired by user decision: sCO2 cF
+# now comes from the 2026-07 SMOOTH-WALL unit-cell CFD campaign via
+# ``sco2_cf_scale`` below (both topologies, 27 geometries, Re-dependent).
+# ⚠ Consequence: solver sCO2 Δp is a SMOOTH-WALL estimate — the D-7-6
+# experiment says the real printed part runs ~3.4× higher on that geometry.
+# Re-anchor (γ-style) when sCO2 experiment data lands (ledger SCO2-CFD).
+
+
+def sco2_cf_scale(tpms: str, L_mm: float, t_mm: float, eps_f: float,
+                  rho_in: float, mu_in: float, u_in: float) -> float:
+    """Per-run sCO2 cf_scale: smooth-CFD cF(Re_in) / production base cF.
+
+    Drop-in replacement for the retired constant SCO2_CF_SCALE in the
+    ``cf_scale`` hook: callers keep multiplying their production base cF
+    (predict_K_cF, same ``eps_f`` argument) by this ratio, which lands the
+    effective cF exactly on the sCO2 smooth-wall CFD value
+    ``df_surrogate.sco2_df.predict_cF_sco2`` evaluated at the run's INLET
+    Reynolds number (the solver treats cF as a per-run constant; the
+    (Re/1000)^−m slope is collapsed at Re_in like SmoothDF anchors B at
+    Re=1000). Zoned/κ-split adjustments layered on the base cF are preserved
+    (the ratio multiplies them through, exactly as the old ×3.39 did).
+    """
+    from .sco2_df import predict_cF_sco2
+    from .smooth_df import _geom
+
+    _, D_h = _geom(tpms, L_mm, t_mm)
+    Re_in = float(rho_in) * abs(float(u_in)) * D_h / max(float(mu_in), 1e-30)
+    base = predict_K_cF(tpms, float(L_mm), float(t_mm), float(eps_f))[1]
+    return float(predict_cF_sco2(tpms, L_mm, t_mm, Re_in)) / max(base, 1e-30)
 
 
 def _apply_override(tpms: str, L_mm: float, t_mm: float,

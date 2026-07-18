@@ -924,11 +924,22 @@ def _run_solvers(window, cfg, fields):
             # the registry's flow_model() instead of a per-site string check.
             _ftA = fluid_props.flow_model(_pA['name'])
             _ftB = fluid_props.flow_model(_pB['name'])
-            # sCO2 Forchheimer cF needs the D-7-6 effective scale (air/water=1.0,
-            # bit-identical). Diamond-only, like nu_sco2_topo.
-            from df_surrogate.predict import SCO2_CF_SCALE
-            _cfsA = SCO2_CF_SCALE if _pA['name'] == 'sco2' else 1.0
-            _cfsB = SCO2_CF_SCALE if _pB['name'] == 'sco2' else 1.0
+            # sCO2 Forchheimer cF: rescale the production base cF onto the
+            # smooth-wall sCO2 CFD value at the inlet Re (2026-07-15; replaces
+            # the retired D-7-6 ×3.39 — solver sCO2 Δp is now a SMOOTH-WALL
+            # estimate until an experimental γ lands). air/water = 1.0,
+            # bit-identical.
+            from df_surrogate.predict import sco2_cf_scale
+            _cfsA = (sco2_cf_scale(
+                tpms_type, Lcell, t_wall, 0.5 * eps,
+                float(_pA['rho'](T_inA, P_inA_val)),
+                float(_pA['mu'](T_inA, P_inA_val)), u_A)
+                if _pA['name'] == 'sco2' else 1.0)
+            _cfsB = (sco2_cf_scale(
+                tpms_type, Lcell, t_wall, 0.5 * eps,
+                float(_pB['rho'](T_inB, P_inB_val)),
+                float(_pB['mu'](T_inB, P_inB_val)), u_B)
+                if _pB['name'] == 'sco2' else 1.0)
             # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
             # on two OS threads — the 2D port of run_stack_3d's
             # _run_two_simple_parallel. njit kernels + spsolve release the

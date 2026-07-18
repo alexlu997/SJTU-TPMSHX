@@ -24,6 +24,12 @@ Run:  python -u projects/703-sCO2-D76/validate_sco2_703_coupled.py
 """
 from __future__ import annotations
 
+# ⚠ 2026-07-15: solver sCO2 closures switched to SMOOTH-WALL unit-cell CFD
+# fits (Nu: nu_correlations.SCO2_NU_COEFFS with (Dh/L)^d; cF: df_surrogate/
+# sco2_df.py via predict.sco2_cf_scale; the D-7-6 ×3.39 retired). This script
+# validates the ROUGH D-7-6 experiment — errors are EXPECTED to grow until an
+# experimental roughness anchor (gamma) lands. Ledger: SCO2-CFD.
+
 import os
 import sys
 import warnings

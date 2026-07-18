@@ -423,9 +423,10 @@ class SIMPLESolver:
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
 
         # Fluid-dependent Forchheimer scale (default 1.0 = air/water, untouched).
-        # The geometric cF is air/water-anchored; sCO2 needs cF x SCO2_CF_SCALE_FIELD
-        # to match the measured D-7-6 Δp (df_surrogate/predict.py). Applied here so
-        # the field momentum source uses the right inertial resistance per fluid.
+        # The base cF is the air/water-anchored production value; sCO2 passes a
+        # per-run ratio (df_surrogate.predict.sco2_cf_scale, 2026-07-15) that
+        # lands the effective cF on the smooth-wall sCO2 CFD fit. Applied here
+        # so the field momentum source uses the right inertial resistance.
         if cf_scale != 1.0:
             self._cF_arr = self._cF_arr * float(cf_scale)
 

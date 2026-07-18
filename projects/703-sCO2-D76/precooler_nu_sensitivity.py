@@ -20,6 +20,15 @@ Run:  python -u projects/703-sCO2-D76/precooler_nu_sensitivity.py
 """
 from __future__ import annotations
 
+# ⚠ 2026-07-15: solver sCO2 closures switched to the SMOOTH-WALL unit-cell
+# CFD campaign (nu_correlations.SCO2_NU_COEFFS now c·Re^a·Pr^⅓·(Dh/L)^d, both
+# topologies; cF via df_surrogate.sco2_df, SCO2_CF_SCALE retired). This script
+# validates against the D-7-6 EXPERIMENT (rough SLM part) — with smooth-wall
+# closures its errors are EXPECTED to grow (~1.7× on Nu, ~3.4× on dP) until an
+# experimental roughness anchor (gamma) lands. Historical experimental fit for
+# reference: Nu = 0.28·Re^0.75·Pr^(1/3) (D76_EXP_NU), cF scale 3.39.
+D76_EXP_NU = {'c': 0.28, 'a': 0.75}
+
 import sys
 import warnings
 from pathlib import Path
@@ -89,7 +98,8 @@ def main():
         Reb = G_MASS * D_H / mub
         Prb = mub * cpb / kb
         T_w = T_b - 0.5 * (T_b - T_water)         # wall midway (cooling)
-        Nu_topo = float(nu_sco2_topo("Diamond", max(Reb, 1.0), Prb))
+        Nu_topo = float(nu_sco2_topo("Diamond", max(Reb, 1.0), Prb,
+                                     7.0, D_H * 1e3))
         Nu_gn = gnielinski(Reb, Prb)
         Nu_pit, _, _ = pitla(T_b, T_w)
         print(f"{T_b:>6.0f} {T_w:>6.1f} {Reb:>7.0f} {Prb:>7.2f} {cpb/1e3:>6.1f} "
