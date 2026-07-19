@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 13
-- next: P1.5 D 缝（指标/场提取段——近纯函数，块搬移 + bundle；工具改常量复用）
+- iteration: 14
+- next: P1.5 E 缝（守恒诊断+envelope 门+收敛裁决+结果组装——自足尾段）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
