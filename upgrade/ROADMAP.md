@@ -14,7 +14,7 @@
       需注明 pytorch cpu 索引）入库；`requirements.txt` 头注说明三档清单
       （裸 requirements / constraints-devbox-2026-07-11 / server lock）各自的用途与适用机器；
       写明 torch/botorch 栈不在 requirements.txt 的事实（HANDOFF §9e）
-- [ ] P0.3 raw_data 静默回退改响亮：`df_surrogate/surrogate_v3.py:156` 的 `_log.info` 回退
+- [x] P0.3 raw_data 静默回退改响亮（`cdbe14e`，iter 3；pin 改放仓库根 data-repo.pin——data/ 整目录 gitignore 所致）：`df_surrogate/surrogate_v3.py:156` 的 `_log.info` 回退
       升级为 `_log.warning` + 显著横幅（找不到 Excel 校准源 = 数字口径变化，必须喊出来）；
       加数据仓钉扎记录 `data/raw_data/.data-repo-pin`（记 SJTU-TPMSHX-data 的 commit，HANDOFF §8）。
       验证：suite + golden 位同（行为只在缺数据场景变化）
