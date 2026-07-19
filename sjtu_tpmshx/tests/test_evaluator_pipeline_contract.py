@@ -1,0 +1,134 @@
+"""Evaluator ↔ Pipeline CONTRACT (P1.4, architecture audit 2026-07 §2).
+
+The BO evaluators (optimization/evaluator.py 2D, core/evaluators.py 3D) are a
+CHEAP SCREENING TIER, deliberately not routed through ComputePipeline — their
+throughput budget is why BO is affordable. The master rule this file encodes:
+
+    **Pareto picks must be re-solved through the production Pipeline
+    (verify_pareto_3d / stages_*) before any number is quoted.**
+
+Each test below pins ONE deliberate divergence with its rationale. If a test
+here fails, either (a) an accidental drift crept in — fix the code, or (b) a
+divergence was consciously resolved — update the assertion AND the openspec
+change evaluator-envelope-authority (design.md) in the same commit. Never
+"fix" these by deleting the assertion.
+
+Several assertions are source-marker checks (repo precedent:
+test_validate_pipeline_runner_wiring.py). They are deliberately brittle:
+renaming the marker means you touched the contract surface — re-read the
+rationale before updating.
+"""
+import inspect
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+def test_3d_evaluator_defaults_to_legacy_convergence():
+    """DELIBERATE: evaluate_3d screens with the cheaper 'legacy' criterion;
+    the production pipeline resolves to 'f2' (ledger C6/C7). Reporting
+    callers (verify_pareto_3d) explicitly pass 'f2'."""
+    import core.evaluators as ev
+    import pipelines.run_stack_3d as rs
+    assert (inspect.signature(ev.evaluate_3d)
+            .parameters['convergence_mode'].default == 'legacy')
+    assert "'f2'" in inspect.getsource(rs._apply_accel_flags), (
+        "pipeline default convergence resolution lost its 'f2' branch")
+
+
+def test_3d_evaluator_keeps_b_side_frozen():
+    """DELIBERATE (BO throughput): the var-rho outer loop re-solves SIMPLE-A
+    only; fluid B stays the cold solve (frozen-B tier, core/evaluators
+    rationale at the rho_B_ltne block). The pipeline reseeds B too."""
+    import core.evaluators as ev
+    src = inspect.getsource(ev.evaluate_3d)
+    assert 're-solving SIMPLE A' in src, (
+        "lost the A-side re-solve marker — if the loop structure changed, "
+        "re-read the frozen-B rationale before updating this contract")
+    assert 're-solving SIMPLE B' not in src, (
+        "a B-side re-solve appeared: that is a Pipeline-tier feature; adding "
+        "it to the evaluator changes the BO cost model — conscious decision "
+        "required (openspec evaluator-envelope-authority)")
+
+
+def test_objective_shaping_is_evaluator_only():
+    """DELIBERATE: manufacturability penalty / dp_cap / reject_unconverged
+    are OPTIMIZER objective shaping. The physics pipeline must stay free of
+    them (a validation number must never contain a penalty term)."""
+    import optimization.evaluator as ev2d
+    import pipelines.stages_2d as st2d
+    src_ev = inspect.getsource(ev2d)
+    src_pipe = inspect.getsource(st2d)
+    for token in ('penalty_enabled', 'dp_cap_pa'):
+        assert token in src_ev, f"evaluator lost its {token} shaping knob"
+        assert token not in src_pipe, (
+            f"objective-shaping token {token!r} leaked into the pipeline")
+
+
+def test_evaluators_do_not_route_through_pipeline():
+    """DELIBERATE (audit §2 verdict): full routing would destroy the BO
+    throughput budget. The convergence path is shared AUTHORITIES (envelope,
+    df_surrogate, extract_dP), not shared orchestration. Pareto numbers go
+    through verify_pareto_3d / the Pipeline instead."""
+    import core.evaluators as ev3d
+    import optimization.evaluator as ev2d
+    for mod in (ev3d, ev2d):
+        assert 'compute_pipeline' not in inspect.getsource(mod), (
+            f"{mod.__name__} started importing the Pipeline — that is a "
+            "tier change, not a refactor")
+
+
+def test_2d_choke_policy_evaluator_raises_pipeline_clips():
+    """CURRENT STATE, both sides pinned: the 2D evaluator rejects choked
+    designs pre-solve (raise -> bounded penalty, aa3f477); the 2D pipeline
+    has never had a choke guard and CLIPS the seed instead (ledger O1).
+    The evaluator being stricter than its pipeline is accepted; the pipeline
+    growing a gate is DECISIONS D2 territory."""
+    import optimization.evaluator as ev2d
+    import pipelines.stages_2d as st2d
+    src_ev = inspect.getsource(ev2d)
+    src_pipe = inspect.getsource(st2d)
+    assert 'ChokedFlowError' in src_ev
+    # The word appears in a stages_2d COMMENT (the ledger-O1 rationale), so
+    # assert the absence of the raising MECHANISMS, not of the token.
+    assert 'raise ChokedFlowError' not in src_pipe, (
+        "the 2D pipeline grew a choke raise — that resolves DECISIONS D2; "
+        "update this contract with the decision reference")
+    assert 'check_compressible_envelope' not in src_pipe, (
+        "the 2D pipeline adopted the raising pre-solve gate — DECISIONS D2")
+    assert 'max(_P_out_sq, 1.0e4)' in src_pipe, (
+        "2D pipeline lost its documented clip-not-raise seed floor")
+    assert 'predict_outlet_p_sq' in src_pipe, (
+        "2D pipeline lost its envelope seed authority")
+
+
+def test_g_reference_density_divergence_pending_D3():
+    """KNOWN DIVERGENCE, direction reserved (upgrade/DECISIONS-NEEDED.md D3):
+    the 2D pipeline pins the PHYSICAL inlet mass flux via an explicit
+    rho_inlet_ref = rho(T_in, P_in); the 3D solver has no such knob (first-
+    solve capture at the outlet-datum density, under-driving G by
+    P_out_seed/P_in — measured 7.4%/19.3% at the frozen points) and neither
+    evaluator passes one. gamma_df calibration partially absorbs this.
+
+    This test pins the CURRENT state so that whichever way D3 goes, the
+    change trips here and gets recorded consciously."""
+    import core.evaluators as ev3d
+    import optimization.evaluator as ev2d
+    import pipelines.stages_2d as st2d
+    from solvers.simple_solver_3d import SIMPLESolver3D
+
+    assert 'rho_inlet_ref' in inspect.getsource(st2d), (
+        "2D pipeline stopped passing rho_inlet_ref — the C8-era ratchet "
+        "guard is gone; that is a regression, not a D3 resolution")
+    assert 'rho_inlet_ref' not in inspect.getsource(ev2d), (
+        "2D evaluator now passes rho_inlet_ref — D3 option (a)/(c) executed? "
+        "Update this contract + frozen values + DECISIONS D3 together")
+    assert 'rho_inlet_ref' not in inspect.getsource(ev3d), (
+        "3D evaluator G convention changed — D3 resolution? Update contract")
+    assert 'rho_inlet_ref' not in inspect.signature(
+        SIMPLESolver3D.__init__).parameters, (
+        "SIMPLESolver3D grew a rho_inlet_ref knob — D3 option (a) executed? "
+        "golden_3d + Shanghai headline re-validation are prerequisites")

@@ -40,6 +40,16 @@ iter 10 现场核实推翻本节原设计："补传即对齐"的前提不成立�
 已被 γ_df 标定部分吸收。统一方向是标定级决策 → `upgrade/DECISIONS-NEEDED.md` **D3**。
 本变更的切片 C 冻结，待 D3 拍板后按其选项执行（(c) 时仅动 2D 评估器 + frozen 2D 重基准）。
 
+## D5 契约测试（P1.4，iter 11）
+
+`tests/test_evaluator_pipeline_contract.py` 把审计 §2 的"有意差异"逐条固化为机器断言
+（主规则：**Pareto 选点须经 Pipeline 复核后方可引用数字**；评估器是廉价筛选层）：
+legacy 收敛默认（签名 introspect）、B 侧冻结（日志标记）、目标整形只在评估器、
+不路由 Pipeline、2D choke"评估器 raise / 管线 clip"现状双向钉住（raise **语义**缺席而非
+词汇缺席——stages_2d 注释里有该词）、G 口径差异 D3 绊线（四处 rho_inlet_ref 在/缺席断言，
+任一变动即触发，强制与 D3 决议同 commit 更新）。断言失败的处置规则写在模块 docstring：
+修代码（事故漂移）或改契约+openspec 同步（有意决议），**绝不删断言了事**。
+
 ## 验证
 
 - 切片 A：suite 全绿（frozen-values 数字锁未动即证位同）+ golden 位同 +

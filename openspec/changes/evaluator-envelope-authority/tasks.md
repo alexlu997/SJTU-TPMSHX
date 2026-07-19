@@ -1,5 +1,9 @@
 # Tasks — evaluator-envelope-authority
 
+## 契约测试（P1.4，iter 11；设计见 design.md D5）
+- [x] tests/test_evaluator_pipeline_contract.py 六断言（legacy 默认 / B 冻结 / 整形隔离 /
+      不路由 / 2D choke 双向现状 / D3 绊线）
+
 ## 切片 A（iter 8）
 - [x] core/evaluators.py 三处种子 → `predict_outlet_p_sq`（冷 A、冷 B、热重播种）
 - [x] `R_AIR = R_AIR_DEFAULT` 别名（保 `__all__` 兼容）
