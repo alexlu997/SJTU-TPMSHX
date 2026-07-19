@@ -43,7 +43,12 @@ from solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
 from solvers.continuous_field import from_decision_vector
-from solvers.envelope import R_AIR_DEFAULT, predict_outlet_p_sq
+from solvers.envelope import (
+    R_AIR_DEFAULT,
+    assess_solution_validity,
+    mach_field_max,
+    predict_outlet_p_sq,
+)
 from logutil import get_logger
 
 _log = get_logger(__name__)
@@ -56,6 +61,35 @@ R_AIR = R_AIR_DEFAULT
 
 __all__ = ["evaluate_3d", "_build_3d_arrays", "R_AIR"]
 
+
+
+def _post_solve_gate_3d(sA, sB, Ta, Tb):
+    """Post-solve physical-validity check (P1.3-B, openspec D3).
+
+    Same criteria as the production gate (run_stack_3d.py:2151-2164): minimum
+    absolute pressure vs the clip floor + per-cell Mach against the LOCAL
+    temperature, both ideal-gas sides. Assess-only — never raises; callers map
+    ``(False, reasons)`` onto their existing invalid/penalty channels.
+
+    Velocity magnitude is frame-invariant, so each side is evaluated in its
+    OWN solver frame; the real-frame T fields are mapped in with the same
+    self-inverse transforms the rho/LTNE plumbing uses (A: transpose(1,0,2),
+    B: mirror along axis 1).
+    """
+    reasons = []
+    for tag, s, T_solver in (('A', sA, Ta.transpose(1, 0, 2)),
+                             ('B', sB, Tb[:, ::-1, :])):
+        u_cc = 0.5 * (s.u[:-1, :, :] + s.u[1:, :, :])
+        v_cc = 0.5 * (s.v[:, :-1, :] + s.v[:, 1:, :])
+        w_cc = 0.5 * (s.w[:, :, :-1] + s.w[:, :, 1:])
+        vmag = np.sqrt(u_cc ** 2 + v_cc ** 2 + w_cc ** 2)
+        ok, why = assess_solution_validity(
+            float((s.P_ref_abs + s.P).min()), float(vmag.max()),
+            float(T_solver.mean()),
+            ma_max=mach_field_max(vmag, T_solver))
+        if not ok:
+            reasons += [f"[{tag}] {r}" for r in why]
+    return (not reasons), reasons
 
 
 # ─── 3D field construction (extrude 2D field along z) ───────────────
@@ -554,6 +588,30 @@ def evaluate_3d(x_decision: np.ndarray,
     dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
     dP_total = dP_A + dP_B
     mass = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * cell_vol))
+
+    # Post-solve envelope gate (P1.3-B): the pre-solve 1D seed can pass while
+    # the CONVERGED field is non-physical (floor-clipped P or supersonic |v|).
+    # Same NaN+invalid contract as the choke seeds — these numbers must never
+    # be reported (verify_pareto) and map to the bounded penalty in the BO
+    # wrapper. Mass stays real: it is pure geometry.
+    _env_ok, _env_reasons = _post_solve_gate_3d(sA, sB, Ta, Tb)
+    if not _env_ok:
+        if verbose:
+            _log.warning("[3D verify] POST-SOLVE INVALID -- %s",
+                         "; ".join(_env_reasons))
+        return {
+            'Q_3D_W':         float('nan'),
+            'dP_A_Pa':        float('nan'),
+            'dP_B_Pa':        float('nan'),
+            'dP_total_Pa':    float('nan'),
+            'mass_kg':        mass,
+            'Lz_m':           Lz,
+            'grid':           (Nx, Ny, Nz),
+            'invalid':        True,
+            'converged':      False,
+            'invalid_reason': ('post-solve envelope gate: '
+                               + '; '.join(_env_reasons)),
+        }
 
     # Convergence truth table (codex review P0, 2026-07-13). `converged` is
     # the conjunction; reporting callers (verify_pareto_3d) MUST gate on it,
