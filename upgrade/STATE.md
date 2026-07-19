@@ -3,7 +3,7 @@
 - iteration: 0
 - next: P0.1
 - in_progress: （空）
-- armed_at: （未布置——就绪门通过后写入）
+- armed_at: 2026-07-19（job 224f9aa6；>5 天须按 PROTOCOL §8 重建）
 - cron_spec: `4,29,54 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
 
