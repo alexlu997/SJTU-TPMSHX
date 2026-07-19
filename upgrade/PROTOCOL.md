@@ -53,6 +53,7 @@
 | 触及闭合/surrogate/物性 | 上两行 + `validate_shanghai_3d_real.py` 与 `validate_shanghai_lumped_dual_nu.py`，数字对照 `upgrade/BASELINE.md` |
 | 纯 docs / upgrade/ 协议文件 | 免测，commit 注明 docs-only |
 | 依赖元数据的注释级改动（requirements* 头注、锁文件新增，无运行时路径） | 免套件，但须 pip --dry-run 解析通过 + 指纹核对，证据入 commit |
+| 独立工具/诊断脚本（不被包或测试导入，如 runs/tools/audit_*） | 免套件，但须在 venv 实际运行成功（exit 0），证据入 commit |
 
 - 报告**真实计数**（passed/failed/skipped），禁"基本通过"
 - 红了就修或回退，绝不在红套件上宣称完成；连续 2 轮修不绿 → stash + DECISIONS + 跳条目
@@ -82,7 +83,7 @@ e) 向台账 `E:\LWH\vault\reports\_research-ledger-CN.md` 追加条目并署名
 
 ## 8. 定时器自维护
 
-- 会话内 cron 规格：`4,29,54 * * * *`（每 25 分钟档），提示词全文存于 STATE.md
+- 会话内 cron 规格：`7,22,37,52 * * * *`（每 15 分钟档，Alex 2026-07-19 由 25 分钟档调频），提示词全文存于 STATE.md
 - 每轮结束：`CronList` 查活任务；无任务、或 STATE.md `armed_at` 距今 > 5 天（cron 7 天自动过期）→ 重建（CronDelete 旧 + CronCreate 新）并更新 `armed_at`
 - 会话死掉（服务器重启/终端关闭）后的复活：在 worktree 目录新开 Claude 会话说"继续升级循环"——本协议 + STATE.md + 用户记忆里的 sjtu-tpmshx-upgrade-loop 条目承载全部上下文
 
