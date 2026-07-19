@@ -20,5 +20,5 @@
       "QT_QPA_PLATFORM": "offscreen"
     }
   },
-  "history_note": "golden_3d.json itself is (as of 2026-07-19) deliberately untracked; this sidecar closes the HANDOFF §9 'zero version records for golden numbers' gap: verify a local copy with sha256 before trusting --check results. Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update this file in the same commit (upgrade/PROTOCOL.md §5)."
+  "history_note": "golden_3d.json is COMMITTED alongside this sidecar since 2026-07-19 (decision D1 by Alex; it was untracked before, the HANDOFF §9 'zero version records' era). Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update json + this sidecar in the SAME commit, with a `!` commit type (upgrade/PROTOCOL.md §5)."
 }
