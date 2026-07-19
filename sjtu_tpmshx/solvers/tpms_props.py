@@ -194,9 +194,16 @@ def chi_s_eff(tpms_type: str, eps):
 
     Vectorized over `eps` (scalar or ndarray). Priority:
     env TPMSHX_CHI_S constant (legacy override) > per-type linear fit.
+
+    The env var is read PER CALL (P1.6, audit §5d): the old import-time
+    snapshot silently ignored TPMSHX_CHI_S set after the first import —
+    monkeypatch.setenv in tests and runtime overrides both hit that trap.
+    (The module constant CHI_S above keeps its documented import-time
+    snapshot semantics for back-compat.)
     """
-    if _CHI_S_ENV is not None:
-        c = float(_CHI_S_ENV)
+    env = os.environ.get('TPMSHX_CHI_S')
+    if env is not None:
+        c = float(env)
         e = np.asarray(eps, dtype=np.float64)
         return c if e.ndim == 0 else np.full_like(e, c)
     c0, c1 = _CHI_S_FIT[tpms_type]

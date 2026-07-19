@@ -78,15 +78,18 @@ def test_chi_s_eff_monotone_and_bounded():
 
 
 def test_priority_explicit_over_env_over_fit(monkeypatch):
-    # env constant overrides fit
-    monkeypatch.setattr(tpms_props, '_CHI_S_ENV', '0.42')
+    # env constant overrides fit — patch the ENVIRONMENT: chi_s_eff reads
+    # TPMSHX_CHI_S per call since P1.6 (2026-07-20). The old import-frozen
+    # _CHI_S_ENV snapshot forced this test to patch a module global; that
+    # mechanism is gone (and setenv now works the way a reader expects).
+    monkeypatch.setenv('TPMSHX_CHI_S', '0.42')
     assert chi_s_eff('Gyroid', 0.7) == 0.42
     arr = chi_s_eff('Gyroid', np.array([0.5, 0.7]))
     assert np.all(arr == 0.42)
     # explicit geometry(chi_s=...) wins over env
     g = geometry('Gyroid', 7.0, 0.6, k_s=16.0, chi_s=0.9)
     assert abs(g['K_ss'] - 0.9 * (1 - g['epsilon']) * 16.0) < 1e-12
-    monkeypatch.setattr(tpms_props, '_CHI_S_ENV', None)
+    monkeypatch.delenv('TPMSHX_CHI_S')
     # fit path again
     assert abs(chi_s_eff('Gyroid', 0.7367) - 0.650) < 0.005
 

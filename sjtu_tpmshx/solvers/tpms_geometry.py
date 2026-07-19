@@ -58,12 +58,20 @@ _PHI_FUNCS = {
 
 @lru_cache(maxsize=4)
 def _phi_grid(tpms_type: str, N: int):
-    """Compute and cache phi values on [0, 2*pi]^3 grid. L-independent."""
+    """Compute and cache phi values on [0, 2*pi]^3 grid. L-independent.
+
+    The cached ndarray is SHARED across all callers, so it is frozen
+    (writeable=False): a caller mutating it would poison every later cache
+    hit silently (W7b hazard family; same hardening as sco2_props
+    _FIELD_CACHE). Callers needing a scratch copy must .copy().
+    """
     phi_func = _PHI_FUNCS[tpms_type]
     h = 2 * np.pi / N
     x1d = np.linspace(h / 2, 2 * np.pi - h / 2, N)
     X, Y, Z = np.meshgrid(x1d, x1d, x1d, indexing='ij')
-    return phi_func(X, Y, Z)
+    phi = phi_func(X, Y, Z)
+    phi.flags.writeable = False
+    return phi
 
 
 def _eps_from_C(phi: np.ndarray, C: float) -> float:
@@ -187,8 +195,8 @@ def _compute_raw(tpms_type: str, L_mm: float, t_mm: float,
 
 
 @lru_cache(maxsize=4096)   # perf-wave1: 1024 → 4096, same rationale as above
-def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
-                     N: int = 128) -> dict:
+def _compute_geometry_cached(tpms_type: str, L_mm: float, t_mm: float,
+                             N: int = 128) -> dict:
     """
     Compute TPMS geometric properties with validation.
 
@@ -246,6 +254,23 @@ def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
         'A_0': A0,
         'D_h': D_h,
     }
+
+
+def compute_geometry(tpms_type: str, L_mm: float, t_mm: float,
+                     N: int = 128) -> dict:
+    """Public entry: fresh shallow copy of the cached geometry dict.
+
+    The lru_cache used to hand every caller the SAME dict object; a caller
+    mutating its result would poison all later cache hits (the W7b hazard
+    tpms_calc.compute was bitten by — see test_cache_and_source_guards).
+    Values are all scalars, so a shallow copy fully detaches the caller.
+    """
+    return dict(_compute_geometry_cached(tpms_type, L_mm, t_mm, N))
+
+
+# Cache management re-exposed (the wrapper hides the lru_cache attributes).
+compute_geometry.cache_clear = _compute_geometry_cached.cache_clear
+compute_geometry.cache_info = _compute_geometry_cached.cache_info
 
 
 # ── Verification against lookup table data ───────────────────────

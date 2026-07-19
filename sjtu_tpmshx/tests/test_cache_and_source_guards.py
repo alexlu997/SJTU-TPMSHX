@@ -69,6 +69,63 @@ def test_df_prebuilt_fallback_warns(monkeypatch, caplog):
     assert banner, "prebuilt fallback must log a WARNING banner"
 
 
+# ── P1.6 (2026-07-20): the remaining W7b-family cache hazards ────────
+
+
+def test_compute_geometry_returns_unpoisonable_copy():
+    """compute_geometry's lru_cache used to hand every caller the SAME dict;
+    mutating a result poisoned all later hits (the exact W7b mechanism
+    tpms_calc.compute was fixed for)."""
+    from solvers.tpms_geometry import compute_geometry
+    a = compute_geometry('Diamond', 6.0, 0.4)
+    a['D_h'] = -1.0                      # caller scribbles on its copy
+    b = compute_geometry('Diamond', 6.0, 0.4)
+    assert b['D_h'] > 0.0, "cache hit returned the poisoned shared dict"
+    assert a is not b
+
+
+def test_compute_geometry_cache_management_reexposed():
+    from solvers.tpms_geometry import compute_geometry
+    assert callable(compute_geometry.cache_clear)
+    assert compute_geometry.cache_info().maxsize == 4096
+
+
+def test_phi_grid_cache_is_frozen():
+    """The shared cached phi ndarray must be read-only: an in-place write
+    would silently corrupt every later geometry computation at that
+    (type, N) key."""
+    import numpy as np
+    import pytest
+    from solvers.tpms_geometry import _phi_grid
+    phi = _phi_grid('Diamond', 32)
+    assert phi.flags.writeable is False
+    with pytest.raises((ValueError, RuntimeError)):
+        phi[0, 0, 0] = 999.0
+
+
+def test_chi_s_env_is_read_per_call(monkeypatch):
+    """TPMSHX_CHI_S used to be read at import time only — setting it after
+    the first import (monkeypatch.setenv included) was silently ignored
+    (audit §5d). chi_s_eff must honor the CURRENT environment."""
+    from solvers.tpms_props import chi_s_eff, _CHI_S_FIT
+    monkeypatch.delenv('TPMSHX_CHI_S', raising=False)
+    c0, c1 = _CHI_S_FIT['Diamond']
+    fit_val = chi_s_eff('Diamond', 0.6)
+    assert fit_val == c0 + c1 * (1.0 - 0.6)
+    monkeypatch.setenv('TPMSHX_CHI_S', '1.0')
+    assert chi_s_eff('Diamond', 0.6) == 1.0
+    monkeypatch.delenv('TPMSHX_CHI_S')
+    assert chi_s_eff('Diamond', 0.6) == fit_val
+
+
+def test_laplacian_amg_cache_reset_hook():
+    from solvers.ltne_energy_3d import (_LAPLACIAN_AMG_CACHE,
+                                        clear_laplacian_amg_cache)
+    _LAPLACIAN_AMG_CACHE[(2, 2, 2)] = {'probe': True}
+    clear_laplacian_amg_cache()
+    assert _LAPLACIAN_AMG_CACHE == {}
+
+
 # ── W7a: geometry LUT cache honours kwargs ──────────────────────────
 
 
