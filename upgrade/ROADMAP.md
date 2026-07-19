@@ -49,7 +49,7 @@
       余一个收尾切片：mega-tuple 数据类化 + 五函数文件级迁移（可选，见下）；
       每步 golden 位同 + 全套件；stages_3d 的 re-export 面 = raw-cfg 直调方的兼容层，必须保持；
       C 缝需显式耦合态对象保 nonlocal 语义。预计 3-5 轮
-- [ ] P1.6 缓存与 env 卫生（审计 §5b/§5d）：`compute_geometry` 返回浅拷贝、`_phi_grid` 冻结
+- [x] P1.6 缓存与 env 卫生（`7d70227`，iter 17）：`compute_geometry` 返回浅拷贝、`_phi_grid` 冻结
       writeable=False（两个 W7b 同族潜伏隐患，照 _FIELD_CACHE 标杆）；`TPMSHX_CHI_S` 改 per-call
       （import 冻结影响 K_ss）；`_LAPLACIAN_AMG_CACHE` 只读性查证 + reset 钩；各配 W7 风格测试。
       全程 golden 位同
@@ -66,6 +66,9 @@
 
 （本 Phase 起按 PROTOCOL §10 模型分层：机械项派 Sonnet 5/Opus 子代理执行 + Fable 5 复核提交；判断型 Fable 5 直做）
 
+- [ ] P2.0 run_stack_3d 阶段函数收整（P1.5 收尾评估降级至此，iter 17 定）：mega-tuple →
+      dataclass 状态包 + 五阶段函数迁 run_stack_3d_stages.py（stages_3d re-export 面保持）；
+      按 PROTOCOL §10 属机械型——派子代理执行、Fable 复核
 - [ ] P2.1 ruff format + lint 引入（配置从宽起步；机械 diff 独立 commit，绝不与语义改动混提交）
 - [ ] P2.2 核心公共面类型注解（solvers/pipelines 对外 API）+ mypy 宽松档
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、

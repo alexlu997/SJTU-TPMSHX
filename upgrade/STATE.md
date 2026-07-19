@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 16
-- next: P1.5 收尾切片（评估是否值得：mega-tuple → dataclass 状态包 + 五函数迁至 run_stack_3d_stages.py；或直接判 P1.5 完成转 P1.6 缓存卫生——开工时现场评估定夺）
+- iteration: 17
+- next: P1.7（死路径清理：smooth_df AIR_XLSX 守卫 + runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化，archive/ 只标注）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
