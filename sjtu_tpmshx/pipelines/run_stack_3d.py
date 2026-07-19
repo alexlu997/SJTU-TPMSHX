@@ -950,101 +950,18 @@ def _build_3d_problem(cfg):
      wcB)
 
 
-def _run_3d_stack(cfg):
-    """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
-
-    Supports fluid-A streamwise direction ∈ {+x, -x, +y, -y} and partial
-    inlet/outlet in the cross-stream dimension (z-partial optional via
-    `in_z_ctr`/`in_z_w` etc. in `fluid_A_cfg`).
-
-    Sweep profiles (cfg['sweep_profile']):
-      'fast_sweep'    — 15³ grid, outer cap 3 (BELOW the converging count —
-                        a screening scan, reports converged=False by design),
-                        max_iter=20000, compact diag
-      'full_validate' — cfg grid,  outer cap 12, max_iter=50000, full diag
-      None (default)  — cfg values, outer cap 12 (_MAX_OUTER), full diagnostic
+def _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, eps, fluid_type_A, fluid_type_B, k_s, mu_A, mu_B, rho_A, rho_B, sB, t_field_3d, t_wall, tpms_type, u_A, cfg):
+    """Seam-B extraction (P1.5, 2026-07-20): h_v machinery factory --
+    the five h_v/transport closures (now capturing THIS function's
+    read-only params) + the initial bulk h_v fields. Moved VERBATIM
+    from _run_3d_stack; returns callables + fields as the cross-seam
+    bundle. Contract: bit-identical behavior (golden gate).
     """
-    (D_h,
-     G_A,
-     G_B,
-     H,
-     K_disp_A,
-     K_disp_B,
-     K_ffA,
-     K_ffB,
-     K_pred,
-     K_pred_B,
-     K_ss,
-     L,
-     L_mm_field,
-     L_stream,
-     L_stream_B,
-     Lcell,
-     Lz,
-     Nx,
-     Ny,
-     Nz,
-     P_inA,
-     P_inB,
-     T_inA,
-     T_inB,
-     Tb_presc,
-     _compact_diag,
-     _env_mode,
-     _env_warnings,
-     _ltne_info,
-     _ltne_max_iter,
-     _mA,
-     _mB,
-     _max_outer,
-     _outer_tol,
-     _simple_nonconv,
-     axis_map,
-     axis_map_B,
-     cF_pred,
-     cF_pred_B,
-     cfg,
-     cp_A,
-     cp_B,
-     disp_C_A,
-     disp_C_B,
-     dx,
-     dy,
-     dz,
-     eps,
-     eps_arr,
-     eps_fA_arr,
-     eps_fB_arr,
-     fA,
-     fB,
-     fluid_type_A,
-     fluid_type_B,
-     in_mask_2d,
-     in_mask_B,
-     is_reverse,
-     k_s,
-     mu_A,
-     mu_B,
-     out_mask_2d,
-     out_mask_B,
-     perm_B,
-     rho_A,
-     rho_B,
-     rho_B_ltne,
-     sA,
-     sB,
-     sB_info,
-     solver_to_real_perm,
-     stream_real_axis,
-     t_field_3d,
-     t_wall,
-     tpms_type,
-     u_A,
-     u_B,
-     ucB,
-     vcB,
-     wcB) = _build_3d_problem(cfg)
-
+    # Conditionally-bound cross-seam names (surgery tool definite-
+    # assignment pass): None-init so the unconditional return below
+    # cannot raise UnboundLocalError on guarded paths. Downstream
+    # reads keep their original guards.
+    h_vB_field = None
     # h_v from Nu correlation. Per-cell when zoned (#4): tpms_compute uses
     # local (Lcell_ij, t_wall_ij) so A_0, H_sf track the design field.
     # Uniform case reduces to the old scalar path.
@@ -1231,6 +1148,116 @@ def _run_3d_stack(cfg):
         # h_vB_field=0 makes the solid energy equation degenerate cleanly
         # to the single-fluid LTNE limit driven only by Q_sA.
         h_vB_field = np.zeros((Nx, Ny, Nz), dtype=np.float64)
+
+    return (_build_hv_local_3d,
+     _hv_ratio_A,
+     _hv_ratio_B,
+     h_vA_field,
+     h_vB_field,
+     u_B_val)
+
+
+def _run_3d_stack(cfg):
+    """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
+
+    Supports fluid-A streamwise direction ∈ {+x, -x, +y, -y} and partial
+    inlet/outlet in the cross-stream dimension (z-partial optional via
+    `in_z_ctr`/`in_z_w` etc. in `fluid_A_cfg`).
+
+    Sweep profiles (cfg['sweep_profile']):
+      'fast_sweep'    — 15³ grid, outer cap 3 (BELOW the converging count —
+                        a screening scan, reports converged=False by design),
+                        max_iter=20000, compact diag
+      'full_validate' — cfg grid,  outer cap 12, max_iter=50000, full diag
+      None (default)  — cfg values, outer cap 12 (_MAX_OUTER), full diagnostic
+    """
+    (D_h,
+     G_A,
+     G_B,
+     H,
+     K_disp_A,
+     K_disp_B,
+     K_ffA,
+     K_ffB,
+     K_pred,
+     K_pred_B,
+     K_ss,
+     L,
+     L_mm_field,
+     L_stream,
+     L_stream_B,
+     Lcell,
+     Lz,
+     Nx,
+     Ny,
+     Nz,
+     P_inA,
+     P_inB,
+     T_inA,
+     T_inB,
+     Tb_presc,
+     _compact_diag,
+     _env_mode,
+     _env_warnings,
+     _ltne_info,
+     _ltne_max_iter,
+     _mA,
+     _mB,
+     _max_outer,
+     _outer_tol,
+     _simple_nonconv,
+     axis_map,
+     axis_map_B,
+     cF_pred,
+     cF_pred_B,
+     cfg,
+     cp_A,
+     cp_B,
+     disp_C_A,
+     disp_C_B,
+     dx,
+     dy,
+     dz,
+     eps,
+     eps_arr,
+     eps_fA_arr,
+     eps_fB_arr,
+     fA,
+     fB,
+     fluid_type_A,
+     fluid_type_B,
+     in_mask_2d,
+     in_mask_B,
+     is_reverse,
+     k_s,
+     mu_A,
+     mu_B,
+     out_mask_2d,
+     out_mask_B,
+     perm_B,
+     rho_A,
+     rho_B,
+     rho_B_ltne,
+     sA,
+     sB,
+     sB_info,
+     solver_to_real_perm,
+     stream_real_axis,
+     t_field_3d,
+     t_wall,
+     tpms_type,
+     u_A,
+     u_B,
+     ucB,
+     vcB,
+     wcB) = _build_3d_problem(cfg)
+
+    (_build_hv_local_3d,
+     _hv_ratio_A,
+     _hv_ratio_B,
+     h_vA_field,
+     h_vB_field,
+     u_B_val) = _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, eps, fluid_type_A, fluid_type_B, k_s, mu_A, mu_B, rho_A, rho_B, sB, t_field_3d, t_wall, tpms_type, u_A, cfg)
 
     # NOTE on wall-BL homogenization (2026-04-25 NTU audit):
     # Kim/Gyroid Nu correlations fit BULK TPMS-cell flow at Re ≥ 600. Cells

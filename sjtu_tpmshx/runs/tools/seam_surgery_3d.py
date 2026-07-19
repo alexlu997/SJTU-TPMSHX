@@ -14,7 +14,8 @@ import ast
 import sys
 
 PATH = r'E:\LWH\SJTU-TPMSHX-upgrade\sjtu_tpmshx\pipelines\run_stack_3d.py'
-A_LO, A_HI = 439, 853
+A_LO, A_HI = 1048, 1233
+NEW_NAME = '_build_hv_machinery'
 
 src = open(PATH, encoding='utf-8').read()
 lines = src.splitlines(keepends=True)
@@ -27,43 +28,71 @@ fn_end = fn.end_lineno
 assigned_a, loaded_a = set(), set()
 used_after, returns_in_a, defs_in_a = set(), [], []
 
-class V(ast.NodeVisitor):
-    def __init__(self, in_a):
-        self.in_a = in_a
-    def visit_Name(self, node):
-        tgt = assigned_a if isinstance(node.ctx, ast.Store) else loaded_a
-        if self.in_a(node.lineno):
-            if isinstance(node.ctx, ast.Store):
-                assigned_a.add(node.id)
-            else:
-                loaded_a.add(node.id)
-        elif isinstance(node.ctx, ast.Load):
-            used_after.add(node.id)
-        self.generic_visit(node)
-    def visit_Nonlocal(self, node):
-        if not self.in_a(node.lineno):
-            used_after.update(node.names)
-    def visit_Return(self, node):
-        if self.in_a(node.lineno):
-            returns_in_a.append(node.lineno)
-        self.generic_visit(node)
-    def visit_FunctionDef(self, node):
-        if self.in_a(node.lineno):
-            assigned_a.add(node.name)
-            defs_in_a.append(f"{node.name}:{node.lineno}")
-        self.generic_visit(node)
-    def visit_Import(self, node):
-        for a in node.names:
-            nm = (a.asname or a.name).split('.')[0]
-            (assigned_a if self.in_a(node.lineno) else set()).add(nm)
-        self.generic_visit(node)
-    def visit_ImportFrom(self, node):
-        for a in node.names:
-            nm = a.asname or a.name
-            (assigned_a if self.in_a(node.lineno) else set()).add(nm)
-        self.generic_visit(node)
 
-V(lambda ln: A_LO <= ln <= A_HI).visit(fn)
+def _fn_locals(fnode):
+    """Names bound anywhere inside fnode (params + stores + inner defs +
+    imports). Over-broad (treats inner-def locals as fnode-local) — safe
+    for free-variable EXCLUSION."""
+    s = {a.arg for a in fnode.args.args + fnode.args.kwonlyargs}
+    if fnode.args.vararg:
+        s.add(fnode.args.vararg.arg)
+    if fnode.args.kwarg:
+        s.add(fnode.args.kwarg.arg)
+    for n in ast.walk(fnode):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            s.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.Lambda)) and n is not fnode:
+            if isinstance(n, ast.FunctionDef):
+                s.add(n.name)
+            for a in n.args.args + n.args.kwonlyargs:
+                s.add(a.arg)
+            if n.args.vararg:
+                s.add(n.args.vararg.arg)
+            if n.args.kwarg:
+                s.add(n.args.kwarg.arg)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                s.add((a.asname or a.name).split('.')[0])
+    return s
+
+
+def _fn_free_loads(fnode):
+    loc = _fn_locals(fnode)
+    return {n.id for n in ast.walk(fnode)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            and n.id not in loc}
+
+
+# Scope-aware region pass over _run_3d_stack's TOP-LEVEL statements.
+for st in fn.body:
+    in_a = A_LO <= st.lineno <= A_HI
+    if isinstance(st, ast.FunctionDef):
+        if in_a:
+            assigned_a.add(st.name)
+            defs_in_a.append(f"{st.name}:{st.lineno}")
+            loaded_a |= _fn_free_loads(st)
+        else:
+            used_after |= (_fn_free_loads(st)
+                           if st.lineno > A_HI else set())
+            for n in ast.walk(st):
+                if isinstance(n, ast.Nonlocal) and st.lineno > A_HI:
+                    used_after.update(n.names)
+        continue
+    for n in ast.walk(st):
+        if isinstance(n, ast.FunctionDef):
+            # non-def top statement can't nest defs except lambdas; guard
+            continue
+        if isinstance(n, ast.Name):
+            if in_a:
+                (assigned_a if isinstance(n.ctx, ast.Store)
+                 else loaded_a).add(n.id)
+            elif st.lineno > A_HI and isinstance(n.ctx, ast.Load):
+                used_after.add(n.id)
+        elif isinstance(n, ast.Return) and in_a:
+            returns_in_a.append(n.lineno)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)) and in_a:
+            for a in n.names:
+                assigned_a.add((a.asname or a.name).split('.')[0])
 
 module_names = set()
 for n in tree.body:
@@ -89,9 +118,9 @@ print(f"EXTRA INPUTS beyond cfg (must be empty): {inputs}")
 if '--apply' not in sys.argv:
     sys.exit(0)
 if returns_in_a:
-    sys.exit('ABORT: return statements inside seam A')
-if inputs:
-    sys.exit(f'ABORT: extraction needs extra inputs: {inputs}')
+    sys.exit('ABORT: return statements inside the seam')
+# Seam B: nested defs are the POINT (closures become factory-made callables),
+# and extra inputs become the factory signature.
 
 # Definite-assignment at the A block's TOP statement level: names bound by an
 # unconditional top-level statement are safe; everything else (bound only
@@ -117,14 +146,15 @@ params = {a.arg for a in fn.args.args}
 preinit = sorted(set(bundle) - definite - params)
 print(f"PRE-INIT (conditionally bound, {len(preinit)}): {preinit}")
 
+sig = ", ".join(inputs + ['cfg'] if 'cfg' in loaded_a else inputs)
 tup = "(" + ",\n     ".join(bundle) + ")"
 new_fn = (
-    "def _build_3d_problem(cfg):\n"
-    '    """Seam-A extraction (P1.5, 2026-07-20): problem setup/build --\n'
-    "    profile/grid/axis-map resolution, D-F surrogate, SIMPLE A/B build,\n"
-    "    initial (parallel) SIMPLE solve, LTNE input fields. Moved VERBATIM\n"
-    "    from _run_3d_stack; returns the cross-seam state bundle. Contract:\n"
-    "    bit-identical behavior (golden gate).\n"
+    f"def {NEW_NAME}({sig}):\n"
+    '    """Seam-B extraction (P1.5, 2026-07-20): h_v machinery factory --\n'
+    "    the five h_v/transport closures (now capturing THIS function's\n"
+    "    read-only params) + the initial bulk h_v fields. Moved VERBATIM\n"
+    "    from _run_3d_stack; returns callables + fields as the cross-seam\n"
+    "    bundle. Contract: bit-identical behavior (golden gate).\n"
     '    """\n'
     + "    # Conditionally-bound cross-seam names (surgery tool definite-\n"
     + "    # assignment pass): None-init so the unconditional return below\n"
@@ -134,7 +164,8 @@ new_fn = (
     + "".join(lines[A_LO - 1:A_HI])
     + "\n    return " + tup + "\n\n\n"
 )
-call_site = "    " + tup.replace("\n     ", "\n     ") + " = _build_3d_problem(cfg)\n"
+call_site = ("    " + tup.replace("\n     ", "\n     ")
+             + f" = {NEW_NAME}({sig})\n")
 
 def_line = fn.lineno  # 'def _run_3d_stack' line, 1-based
 out = (lines[:def_line - 1]
