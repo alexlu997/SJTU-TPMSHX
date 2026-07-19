@@ -6,7 +6,7 @@ allowed-tools: Bash(cd:*), Bash(python:*), Bash(python -m pytest:*), Bash(pytest
 
 Run the solver's **"before claiming done"** verification and report PASS/FAIL **with evidence**. Do not claim the work is complete, commit, or open a PR until the pytest gate passes. Evidence before assertions — show the real counts, never "mostly passing".
 
-All commands run from the repo root `/d/Postgraduate/Homogenize/SJTU-TPMSHX`. Use `python -u` so stdout doesn't block-buffer and look hung.
+All commands run from the **repo root**（本服务器：`E:\LWH\SJTU-TPMSHX`）. Use `python -u` so stdout doesn't block-buffer and look hung.
 
 ## 1. Full pytest suite (the standing gate — always run)
 
@@ -16,13 +16,14 @@ Parallel is the default (~4.5 min vs ~16 min serial). `PYTHONHASHSEED=0` must be
 
 ```powershell
 $env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
-# ⚠ 128核服务器上 -n auto 会超额订阅卡死（实测 2026-07-13）：用 scripts/run_tests_server.ps1（-n 64 worksteal + 顺序敏感模块串行，~11 min）
+# ⚠ 128核服务器上 -n auto 会超额订阅卡死（实测 2026-07-13）：用 scripts/run_tests_server.ps1
+#   （已入库；-n 64 worksteal + 顺序敏感模块串行双 pass，~11 min，策略见其头注）
 ```
 
 Serial equivalent (git-bash):
 
 ```bash
-cd /d/Postgraduate/Homogenize/SJTU-TPMSHX && PYTHONHASHSEED=0 python -u -m pytest sjtu_tpmshx/tests/ -q
+cd <repo-root> && PYTHONHASHSEED=0 python -u -m pytest sjtu_tpmshx/tests/ -q
 ```
 
 - Expected: all pass (≈1245+ passed, a few skipped — count grows with the suite; anything FAILED is the signal, not the total). Report the exact **passed / failed / skipped** counts.
@@ -30,19 +31,26 @@ cd /d/Postgraduate/Homogenize/SJTU-TPMSHX && PYTHONHASHSEED=0 python -u -m pytes
 
 ## 2. Golden bit-identical gate (only when `golden` arg is passed, around a specific change)
 
-`runs/_out/` is gitignored — the baseline json is **local and must be captured BEFORE the change** to mean anything. Workflow:
+**3D：入库基线（D1，2026-07-19 起）。** 仓库根的 `golden_3d.json` 是权威基线，`golden_3d.meta.json`
+侧车记录其 sha256 / 认证 commit / 环境指纹——直接 --check 即可：
 
 ```bash
-# capture baseline BEFORE editing (stash/checkout the pre-change tree first):
-python -u sjtu_tpmshx/runs/_out/_golden_2d.py golden_2d.json
-python -u sjtu_tpmshx/runs/_out/_golden_3d.py golden_3d.json
-# ...make the change, then diff:
-python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d.json   # → GOLDEN-2D: PASS (bit-identical) / FAIL
-python -u sjtu_tpmshx/runs/_out/_golden_3d.py --check golden_3d.json   # → GOLDEN-3D: PASS / FAIL
+python -u sjtu_tpmshx/runs/_out/_golden_3d.py --check golden_3d.json   # → GOLDEN-3D: PASS (bit-identical) / FAIL
 ```
 
-- A FAIL = output fields changed. Classify it as **(a) a real regression** (fix it) or **(b) an intentional re-baseline** (state which fields moved and why). Never silently accept a FAIL.
-- If no baseline json exists, say so — a golden check with no pre-change baseline is meaningless; don't fabricate a pass.
+- A FAIL = output fields changed. Classify it as **(a) a real regression** (fix it) or **(b) an intentional
+  re-baseline**（重基准：重新生成 json，**json + meta 侧车同一个 commit** 更新，commit 类型带 `!`，
+  正文写明哪些字段动了多少、为何）. Never silently accept a FAIL.
+
+**2D：仍是本地捕获流程**（仓库无 golden_2d.json 基线）——改动前先在 pre-change 树上捕获：
+
+```bash
+python -u sjtu_tpmshx/runs/_out/_golden_2d.py golden_2d.json           # capture BEFORE editing
+# ...make the change, then:
+python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d.json   # → GOLDEN-2D: PASS / FAIL
+```
+
+- If no pre-change baseline exists (2D), say so — a golden check with no baseline is meaningless; don't fabricate a pass.
 
 ## 3. Validation cases (run when a closure / surrogate / solver path changed)
 
