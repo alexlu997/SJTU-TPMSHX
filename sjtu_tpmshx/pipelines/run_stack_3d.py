@@ -9,6 +9,7 @@ pipelines.stages_3d (no cycles; stages_3d re-exports these names instead).
 from __future__ import annotations
 import os
 import time as _time
+from dataclasses import dataclass
 import numpy as np
 
 from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
@@ -420,6 +421,166 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
         mass_rel_A=mass_rel_A, mass_rel_B=mass_rel_B,
         Q_sA_interior=Q_sA_interior, Q_sB_interior=Q_sB_interior,
         Q_interior_primary=Q_interior_primary, AB_interior=AB_interior)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Cross-seam state bundles (P2.0, 2026-07-20) — transitional dataclasses
+#  replacing the five stage functions' giant positional tuples. Pure
+#  plumbing: fields are exactly the old return-tuple names, in the same
+#  order, untyped beyond `object` (these are transitional bundles, not a
+#  redesigned data model). Behavior is bit-identical to the tuple form.
+# ─────────────────────────────────────────────────────────────────────────
+@dataclass
+class _Problem3D:
+    """Seam-A state bundle (P2.0): _build_3d_problem's return, as fields."""
+    D_h: object
+    G_A: object
+    G_B: object
+    H: object
+    K_disp_A: object
+    K_disp_B: object
+    K_ffA: object
+    K_ffB: object
+    K_pred: object
+    K_pred_B: object
+    K_ss: object
+    L: object
+    L_mm_field: object
+    L_stream: object
+    L_stream_B: object
+    Lcell: object
+    Lz: object
+    Nx: object
+    Ny: object
+    Nz: object
+    P_inA: object
+    P_inB: object
+    T_inA: object
+    T_inB: object
+    Tb_presc: object
+    _compact_diag: object
+    _env_mode: object
+    _env_warnings: object
+    _ltne_info: object
+    _ltne_max_iter: object
+    _mA: object
+    _mB: object
+    _max_outer: object
+    _outer_tol: object
+    _simple_nonconv: object
+    axis_map: object
+    axis_map_B: object
+    cF_pred: object
+    cF_pred_B: object
+    cfg: object
+    cp_A: object
+    cp_B: object
+    disp_C_A: object
+    disp_C_B: object
+    dx: object
+    dy: object
+    dz: object
+    eps: object
+    eps_arr: object
+    eps_fA_arr: object
+    eps_fB_arr: object
+    fA: object
+    fB: object
+    fluid_type_A: object
+    fluid_type_B: object
+    in_mask_2d: object
+    in_mask_B: object
+    is_reverse: object
+    k_s: object
+    mu_A: object
+    mu_B: object
+    out_mask_2d: object
+    out_mask_B: object
+    perm_B: object
+    rho_A: object
+    rho_B: object
+    rho_B_ltne: object
+    sA: object
+    sB: object
+    sB_info: object
+    solver_to_real_perm: object
+    stream_real_axis: object
+    t_field_3d: object
+    t_wall: object
+    tpms_type: object
+    u_A: object
+    u_B: object
+    ucB: object
+    vcB: object
+    wcB: object
+
+
+@dataclass
+class _HvMachinery:
+    """Seam-B state bundle (P2.0): _build_hv_machinery's return, as fields."""
+    _build_hv_local_3d: object
+    _hv_ratio_A: object
+    _hv_ratio_B: object
+    h_vA_field: object
+    h_vB_field: object
+    u_B_val: object
+
+
+@dataclass
+class _OuterState:
+    """Seam-C state bundle (P2.0): _run_outer_coupling_3d's return, as fields."""
+    K_ffB: object
+    Ta: object
+    Tb: object
+    Ts: object
+    _and_A: object
+    _and_B: object
+    _assemble_real_velocity: object
+    _eps_A_strict: object
+    _eps_A_strict_cellmax: object
+    _eps_B_strict: object
+    _eps_B_strict_cellmax: object
+    _ltne_mask_A: object
+    _ltne_mask_B: object
+    _outer_converged: object
+    _outer_dT_hist: object
+    _outer_last_iter: object
+    _use_outer_and: object
+    chi_B: object
+    h_vA_field: object
+    h_vB_field: object
+    rho_cp_fA: object
+    rho_cp_fB: object
+
+
+@dataclass
+class _Metrics3D:
+    """Seam-D state bundle (P2.0): _extract_3d_metrics's return, as fields."""
+    L_mm: object
+    P_kPa: object
+    P_real: object
+    P_real_B: object
+    Q: object
+    Q_AB_imbalance_rel: object
+    Q_enthalpy_A: object
+    Q_enthalpy_B: object
+    Q_solid_B: object
+    T_A_out: object
+    T_B_out: object
+    T_B_out_no_chi: object
+    cell_vol: object
+    chi_B_out_face: object
+    dP: object
+    dP_B: object
+    m_dot_A_simple: object
+    m_dot_B_phys_in: object
+    m_dot_B_phys_out: object
+    m_dot_B_simple: object
+    uc_real: object
+    vc_real: object
+    vmag: object
+    vmag_B: object
+    wc_real: object
 
 
 def _build_3d_problem(cfg):
@@ -868,95 +1029,121 @@ def _build_3d_problem(cfg):
     from solvers.tpms_calc import chi_s_eff as _chi_s_eff
     K_ss = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
-    return (D_h,
-     G_A,
-     G_B,
-     H,
-     K_disp_A,
-     K_disp_B,
-     K_ffA,
-     K_ffB,
-     K_pred,
-     K_pred_B,
-     K_ss,
-     L,
-     L_mm_field,
-     L_stream,
-     L_stream_B,
-     Lcell,
-     Lz,
-     Nx,
-     Ny,
-     Nz,
-     P_inA,
-     P_inB,
-     T_inA,
-     T_inB,
-     Tb_presc,
-     _compact_diag,
-     _env_mode,
-     _env_warnings,
-     _ltne_info,
-     _ltne_max_iter,
-     _mA,
-     _mB,
-     _max_outer,
-     _outer_tol,
-     _simple_nonconv,
-     axis_map,
-     axis_map_B,
-     cF_pred,
-     cF_pred_B,
-     cfg,
-     cp_A,
-     cp_B,
-     disp_C_A,
-     disp_C_B,
-     dx,
-     dy,
-     dz,
-     eps,
-     eps_arr,
-     eps_fA_arr,
-     eps_fB_arr,
-     fA,
-     fB,
-     fluid_type_A,
-     fluid_type_B,
-     in_mask_2d,
-     in_mask_B,
-     is_reverse,
-     k_s,
-     mu_A,
-     mu_B,
-     out_mask_2d,
-     out_mask_B,
-     perm_B,
-     rho_A,
-     rho_B,
-     rho_B_ltne,
-     sA,
-     sB,
-     sB_info,
-     solver_to_real_perm,
-     stream_real_axis,
-     t_field_3d,
-     t_wall,
-     tpms_type,
-     u_A,
-     u_B,
-     ucB,
-     vcB,
-     wcB)
+    return _Problem3D(
+        D_h=D_h,
+        G_A=G_A,
+        G_B=G_B,
+        H=H,
+        K_disp_A=K_disp_A,
+        K_disp_B=K_disp_B,
+        K_ffA=K_ffA,
+        K_ffB=K_ffB,
+        K_pred=K_pred,
+        K_pred_B=K_pred_B,
+        K_ss=K_ss,
+        L=L,
+        L_mm_field=L_mm_field,
+        L_stream=L_stream,
+        L_stream_B=L_stream_B,
+        Lcell=Lcell,
+        Lz=Lz,
+        Nx=Nx,
+        Ny=Ny,
+        Nz=Nz,
+        P_inA=P_inA,
+        P_inB=P_inB,
+        T_inA=T_inA,
+        T_inB=T_inB,
+        Tb_presc=Tb_presc,
+        _compact_diag=_compact_diag,
+        _env_mode=_env_mode,
+        _env_warnings=_env_warnings,
+        _ltne_info=_ltne_info,
+        _ltne_max_iter=_ltne_max_iter,
+        _mA=_mA,
+        _mB=_mB,
+        _max_outer=_max_outer,
+        _outer_tol=_outer_tol,
+        _simple_nonconv=_simple_nonconv,
+        axis_map=axis_map,
+        axis_map_B=axis_map_B,
+        cF_pred=cF_pred,
+        cF_pred_B=cF_pred_B,
+        cfg=cfg,
+        cp_A=cp_A,
+        cp_B=cp_B,
+        disp_C_A=disp_C_A,
+        disp_C_B=disp_C_B,
+        dx=dx,
+        dy=dy,
+        dz=dz,
+        eps=eps,
+        eps_arr=eps_arr,
+        eps_fA_arr=eps_fA_arr,
+        eps_fB_arr=eps_fB_arr,
+        fA=fA,
+        fB=fB,
+        fluid_type_A=fluid_type_A,
+        fluid_type_B=fluid_type_B,
+        in_mask_2d=in_mask_2d,
+        in_mask_B=in_mask_B,
+        is_reverse=is_reverse,
+        k_s=k_s,
+        mu_A=mu_A,
+        mu_B=mu_B,
+        out_mask_2d=out_mask_2d,
+        out_mask_B=out_mask_B,
+        perm_B=perm_B,
+        rho_A=rho_A,
+        rho_B=rho_B,
+        rho_B_ltne=rho_B_ltne,
+        sA=sA,
+        sB=sB,
+        sB_info=sB_info,
+        solver_to_real_perm=solver_to_real_perm,
+        stream_real_axis=stream_real_axis,
+        t_field_3d=t_field_3d,
+        t_wall=t_wall,
+        tpms_type=tpms_type,
+        u_A=u_A,
+        u_B=u_B,
+        ucB=ucB,
+        vcB=vcB,
+        wcB=wcB,
+    )
 
 
-def _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, eps, fluid_type_A, fluid_type_B, k_s, mu_A, mu_B, rho_A, rho_B, sB, t_field_3d, t_wall, tpms_type, u_A, cfg):
+def _build_hv_machinery(prob: _Problem3D):
     """Seam-B extraction (P1.5, 2026-07-20): h_v machinery factory --
     the five h_v/transport closures (now capturing THIS function's
     read-only params) + the initial bulk h_v fields. Moved VERBATIM
     from _run_3d_stack; returns callables + fields as the cross-seam
     bundle. Contract: bit-identical behavior (golden gate).
     """
+    D_h = prob.D_h
+    L_mm_field = prob.L_mm_field
+    Lcell = prob.Lcell
+    Nx = prob.Nx
+    Ny = prob.Ny
+    Nz = prob.Nz
+    P_inA = prob.P_inA
+    P_inB = prob.P_inB
+    T_inA = prob.T_inA
+    T_inB = prob.T_inB
+    eps = prob.eps
+    fluid_type_A = prob.fluid_type_A
+    fluid_type_B = prob.fluid_type_B
+    k_s = prob.k_s
+    mu_A = prob.mu_A
+    mu_B = prob.mu_B
+    rho_A = prob.rho_A
+    rho_B = prob.rho_B
+    sB = prob.sB
+    t_field_3d = prob.t_field_3d
+    t_wall = prob.t_wall
+    tpms_type = prob.tpms_type
+    u_A = prob.u_A
+    cfg = prob.cfg
     # Conditionally-bound cross-seam names (surgery tool definite-
     # assignment pass): None-init so the unconditional return below
     # cannot raise UnboundLocalError on guarded paths. Downstream
@@ -1149,21 +1336,60 @@ def _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA,
         # to the single-fluid LTNE limit driven only by Q_sA.
         h_vB_field = np.zeros((Nx, Ny, Nz), dtype=np.float64)
 
-    return (_build_hv_local_3d,
-     _hv_ratio_A,
-     _hv_ratio_B,
-     h_vA_field,
-     h_vB_field,
-     u_B_val)
+    return _HvMachinery(
+        _build_hv_local_3d=_build_hv_local_3d,
+        _hv_ratio_A=_hv_ratio_A,
+        _hv_ratio_B=_hv_ratio_B,
+        h_vA_field=h_vA_field,
+        h_vB_field=h_vB_field,
+        u_B_val=u_B_val,
+    )
 
 
-def _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Ta, Tb, Ts, _assemble_real_velocity, chi_B, cp_A, cp_B, dx, dy, dz, eps, fA, fB, fluid_type_A, fluid_type_B, h_vB_field, is_reverse, sA, sB, sB_info, solver_to_real_perm, stream_real_axis, t_wall, tpms_type, ucB, vcB, wcB, cfg):
+def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
     """Seam-D extraction (P1.5, 2026-07-20): metric/field extraction --
     converged solvers + T fields -> Q (enthalpy + solid-side), dP, m_dot,
     outlet temperatures, real-coord P/velocity fields. Near-pure reads of
     converged state. Moved VERBATIM from _run_3d_stack; returns the
     cross-seam bundle. Contract: bit-identical behavior (golden gate).
     """
+    L_mm_field = prob.L_mm_field
+    Lcell = prob.Lcell
+    Nx = prob.Nx
+    Ny = prob.Ny
+    Nz = prob.Nz
+    P_inA = prob.P_inA
+    P_inB = prob.P_inB
+    T_inA = prob.T_inA
+    T_inB = prob.T_inB
+    Ta = outer.Ta
+    Tb = outer.Tb
+    Ts = outer.Ts
+    _assemble_real_velocity = outer._assemble_real_velocity
+    chi_B = outer.chi_B
+    cp_A = prob.cp_A
+    cp_B = prob.cp_B
+    dx = prob.dx
+    dy = prob.dy
+    dz = prob.dz
+    eps = prob.eps
+    fA = prob.fA
+    fB = prob.fB
+    fluid_type_A = prob.fluid_type_A
+    fluid_type_B = prob.fluid_type_B
+    h_vB_field = outer.h_vB_field
+    is_reverse = prob.is_reverse
+    sA = prob.sA
+    sB = prob.sB
+    sB_info = prob.sB_info
+    solver_to_real_perm = prob.solver_to_real_perm
+    stream_real_axis = prob.stream_real_axis
+    t_wall = prob.t_wall
+    tpms_type = prob.tpms_type
+    ucB = prob.ucB
+    vcB = prob.vcB
+    wcB = prob.wcB
+    cfg = prob.cfg
     # Conditionally-bound cross-seam names (surgery tool definite-
     # assignment pass): None-init so the unconditional return below
     # cannot raise UnboundLocalError on guarded paths. Downstream
@@ -1379,40 +1605,127 @@ def _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_in
         vmag_B = None
         dP_B = 0.0
 
-    return (L_mm,
-     P_kPa,
-     P_real,
-     P_real_B,
-     Q,
-     Q_AB_imbalance_rel,
-     Q_enthalpy_A,
-     Q_enthalpy_B,
-     Q_solid_B,
-     T_A_out,
-     T_B_out,
-     T_B_out_no_chi,
-     cell_vol,
-     chi_B_out_face,
-     dP,
-     dP_B,
-     m_dot_A_simple,
-     m_dot_B_phys_in,
-     m_dot_B_phys_out,
-     m_dot_B_simple,
-     uc_real,
-     vc_real,
-     vmag,
-     vmag_B,
-     wc_real)
+    return _Metrics3D(
+        L_mm=L_mm,
+        P_kPa=P_kPa,
+        P_real=P_real,
+        P_real_B=P_real_B,
+        Q=Q,
+        Q_AB_imbalance_rel=Q_AB_imbalance_rel,
+        Q_enthalpy_A=Q_enthalpy_A,
+        Q_enthalpy_B=Q_enthalpy_B,
+        Q_solid_B=Q_solid_B,
+        T_A_out=T_A_out,
+        T_B_out=T_B_out,
+        T_B_out_no_chi=T_B_out_no_chi,
+        cell_vol=cell_vol,
+        chi_B_out_face=chi_B_out_face,
+        dP=dP,
+        dP_B=dP_B,
+        m_dot_A_simple=m_dot_A_simple,
+        m_dot_B_phys_in=m_dot_B_phys_in,
+        m_dot_B_phys_out=m_dot_B_phys_out,
+        m_dot_B_simple=m_dot_B_simple,
+        uc_real=uc_real,
+        vc_real=vc_real,
+        vmag=vmag,
+        vmag_B=vmag_B,
+        wc_real=wc_real,
+    )
 
 
-def _assemble_3d_verdict(H, K_ffA, K_ffB, K_ss, L, L_mm, Lz, P_inA, P_inB, P_kPa, P_real, P_real_B, Q, Q_AB_imbalance_rel, Q_enthalpy_A, Q_enthalpy_B, Q_solid_B, T_A_out, T_B_out, T_B_out_no_chi, T_inA, T_inB, Ta, Tb, Ts, _and_A, _and_B, _compact_diag, _env_mode, _env_warnings, _eps_A_strict, _eps_A_strict_cellmax, _eps_B_strict, _eps_B_strict_cellmax, _ltne_info, _ltne_mask_A, _ltne_mask_B, _ltne_max_iter, _max_outer, _outer_converged, _outer_dT_hist, _outer_last_iter, _simple_nonconv, _use_outer_and, cell_vol, chi_B, chi_B_out_face, cp_A, cp_B, dP, dP_B, dx, dy, dz, eps, eps_arr, fA, fB, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, m_dot_A_simple, m_dot_B_phys_in, m_dot_B_phys_out, m_dot_B_simple, out_mask_2d, out_mask_B, rho_cp_fA, rho_cp_fB, sA, sB, sB_info, solver_to_real_perm, u_A, u_B, ucB, uc_real, vcB, vc_real, vmag, vmag_B, wcB, wc_real, cfg):
+def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState, met: _Metrics3D):
     """Seam-E extraction (P1.5, 2026-07-20): verdict + assembly tail --
     conservation diagnostics, post-solve envelope gate, convergence
     verdict/truth table, result-dict assembly, opt-in audit exports.
     Moved VERBATIM from _run_3d_stack; returns the cross-seam
     bundle. Contract: bit-identical behavior (golden gate).
     """
+    H = prob.H
+    K_ffA = prob.K_ffA
+    K_ffB = outer.K_ffB
+    K_ss = prob.K_ss
+    L = prob.L
+    L_mm = met.L_mm
+    Lz = prob.Lz
+    P_inA = prob.P_inA
+    P_inB = prob.P_inB
+    P_kPa = met.P_kPa
+    P_real = met.P_real
+    P_real_B = met.P_real_B
+    Q = met.Q
+    Q_AB_imbalance_rel = met.Q_AB_imbalance_rel
+    Q_enthalpy_A = met.Q_enthalpy_A
+    Q_enthalpy_B = met.Q_enthalpy_B
+    Q_solid_B = met.Q_solid_B
+    T_A_out = met.T_A_out
+    T_B_out = met.T_B_out
+    T_B_out_no_chi = met.T_B_out_no_chi
+    T_inA = prob.T_inA
+    T_inB = prob.T_inB
+    Ta = outer.Ta
+    Tb = outer.Tb
+    Ts = outer.Ts
+    _and_A = outer._and_A
+    _and_B = outer._and_B
+    _compact_diag = prob._compact_diag
+    _env_mode = prob._env_mode
+    _env_warnings = prob._env_warnings
+    _eps_A_strict = outer._eps_A_strict
+    _eps_A_strict_cellmax = outer._eps_A_strict_cellmax
+    _eps_B_strict = outer._eps_B_strict
+    _eps_B_strict_cellmax = outer._eps_B_strict_cellmax
+    _ltne_info = prob._ltne_info
+    _ltne_mask_A = outer._ltne_mask_A
+    _ltne_mask_B = outer._ltne_mask_B
+    _ltne_max_iter = prob._ltne_max_iter
+    _max_outer = prob._max_outer
+    _outer_converged = outer._outer_converged
+    _outer_dT_hist = outer._outer_dT_hist
+    _outer_last_iter = outer._outer_last_iter
+    _simple_nonconv = prob._simple_nonconv
+    _use_outer_and = outer._use_outer_and
+    cell_vol = met.cell_vol
+    chi_B = outer.chi_B
+    chi_B_out_face = met.chi_B_out_face
+    cp_A = prob.cp_A
+    cp_B = prob.cp_B
+    dP = met.dP
+    dP_B = met.dP_B
+    dx = prob.dx
+    dy = prob.dy
+    dz = prob.dz
+    eps = prob.eps
+    eps_arr = prob.eps_arr
+    fA = prob.fA
+    fB = prob.fB
+    h_vA_field = outer.h_vA_field
+    h_vB_field = outer.h_vB_field
+    in_mask_2d = prob.in_mask_2d
+    in_mask_B = prob.in_mask_B
+    m_dot_A_simple = met.m_dot_A_simple
+    m_dot_B_phys_in = met.m_dot_B_phys_in
+    m_dot_B_phys_out = met.m_dot_B_phys_out
+    m_dot_B_simple = met.m_dot_B_simple
+    out_mask_2d = prob.out_mask_2d
+    out_mask_B = prob.out_mask_B
+    rho_cp_fA = outer.rho_cp_fA
+    rho_cp_fB = outer.rho_cp_fB
+    sA = prob.sA
+    sB = prob.sB
+    sB_info = prob.sB_info
+    solver_to_real_perm = prob.solver_to_real_perm
+    u_A = prob.u_A
+    u_B = prob.u_B
+    ucB = prob.ucB
+    uc_real = met.uc_real
+    vcB = prob.vcB
+    vc_real = met.vc_real
+    vmag = met.vmag
+    vmag_B = met.vmag_B
+    wcB = prob.wcB
+    wc_real = met.wc_real
+    cfg = prob.cfg
     # Conditionally-bound cross-seam names (surgery tool definite-
     # assignment pass): None-init so the unconditional return below
     # cannot raise UnboundLocalError on guarded paths. Downstream
@@ -1822,13 +2135,94 @@ def _assemble_3d_verdict(H, K_ffA, K_ffB, K_ss, L, L_mm, Lz, P_inA, P_inB, P_kPa
     return (_result)
 
 
-def _run_outer_coupling_3d(D_h, G_A, G_B, H, K_disp_A, K_disp_B, K_ffA, K_ffB, K_pred, K_pred_B, K_ss, L, L_mm_field, L_stream, L_stream_B, Lcell, Lz, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Tb_presc, _build_hv_local_3d, _env_mode, _env_warnings, _hv_ratio_A, _hv_ratio_B, _ltne_info, _ltne_max_iter, _mA, _mB, _max_outer, _outer_tol, _simple_nonconv, axis_map, axis_map_B, cF_pred, cF_pred_B, cp_A, cp_B, disp_C_A, disp_C_B, dx, dy, dz, eps, eps_arr, eps_fA_arr, eps_fB_arr, fA, fB, fluid_type_A, fluid_type_B, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, k_s, mu_A, mu_B, out_mask_B, perm_B, rho_A, rho_B, rho_B_ltne, sA, sB, solver_to_real_perm, t_field_3d, t_wall, tpms_type, u_A, u_B, u_B_val, ucB, vcB, wcB, cfg):
+def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     """Seam-C extraction (P1.5, 2026-07-20): the outer coupling engine --
     outer-loop state init, the step/post closures (their nonlocals now
     bind THIS function's locals) and the run_outer_coupling drive.
     Moved VERBATIM from _run_3d_stack; returns the cross-seam
     bundle. Contract: bit-identical behavior (golden gate).
     """
+    D_h = prob.D_h
+    G_A = prob.G_A
+    G_B = prob.G_B
+    H = prob.H
+    K_disp_A = prob.K_disp_A
+    K_disp_B = prob.K_disp_B
+    K_ffA = prob.K_ffA
+    K_ffB = prob.K_ffB
+    K_pred = prob.K_pred
+    K_pred_B = prob.K_pred_B
+    K_ss = prob.K_ss
+    L = prob.L
+    L_mm_field = prob.L_mm_field
+    L_stream = prob.L_stream
+    L_stream_B = prob.L_stream_B
+    Lcell = prob.Lcell
+    Lz = prob.Lz
+    Nx = prob.Nx
+    Ny = prob.Ny
+    Nz = prob.Nz
+    P_inA = prob.P_inA
+    P_inB = prob.P_inB
+    T_inA = prob.T_inA
+    T_inB = prob.T_inB
+    Tb_presc = prob.Tb_presc
+    _build_hv_local_3d = hv._build_hv_local_3d
+    _env_mode = prob._env_mode
+    _env_warnings = prob._env_warnings
+    _hv_ratio_A = hv._hv_ratio_A
+    _hv_ratio_B = hv._hv_ratio_B
+    _ltne_info = prob._ltne_info
+    _ltne_max_iter = prob._ltne_max_iter
+    _mA = prob._mA
+    _mB = prob._mB
+    _max_outer = prob._max_outer
+    _outer_tol = prob._outer_tol
+    _simple_nonconv = prob._simple_nonconv
+    axis_map = prob.axis_map
+    axis_map_B = prob.axis_map_B
+    cF_pred = prob.cF_pred
+    cF_pred_B = prob.cF_pred_B
+    cp_A = prob.cp_A
+    cp_B = prob.cp_B
+    disp_C_A = prob.disp_C_A
+    disp_C_B = prob.disp_C_B
+    dx = prob.dx
+    dy = prob.dy
+    dz = prob.dz
+    eps = prob.eps
+    eps_arr = prob.eps_arr
+    eps_fA_arr = prob.eps_fA_arr
+    eps_fB_arr = prob.eps_fB_arr
+    fA = prob.fA
+    fB = prob.fB
+    fluid_type_A = prob.fluid_type_A
+    fluid_type_B = prob.fluid_type_B
+    h_vA_field = hv.h_vA_field
+    h_vB_field = hv.h_vB_field
+    in_mask_2d = prob.in_mask_2d
+    in_mask_B = prob.in_mask_B
+    k_s = prob.k_s
+    mu_A = prob.mu_A
+    mu_B = prob.mu_B
+    out_mask_B = prob.out_mask_B
+    perm_B = prob.perm_B
+    rho_A = prob.rho_A
+    rho_B = prob.rho_B
+    rho_B_ltne = prob.rho_B_ltne
+    sA = prob.sA
+    sB = prob.sB
+    solver_to_real_perm = prob.solver_to_real_perm
+    t_field_3d = prob.t_field_3d
+    t_wall = prob.t_wall
+    tpms_type = prob.tpms_type
+    u_A = prob.u_A
+    u_B = prob.u_B
+    u_B_val = hv.u_B_val
+    ucB = prob.ucB
+    vcB = prob.vcB
+    wcB = prob.wcB
+    cfg = prob.cfg
     # Conditionally-bound cross-seam names (surgery tool definite-
     # assignment pass): None-init so the unconditional return below
     # cannot raise UnboundLocalError on guarded paths. Downstream
@@ -2564,28 +2958,30 @@ def _run_outer_coupling_3d(D_h, G_A, G_B, H, K_disp_A, K_disp_B, K_ffA, K_ffB, K
     _outer_last_iter, _outer_converged = run_outer_coupling(
         max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
 
-    return (K_ffB,
-     Ta,
-     Tb,
-     Ts,
-     _and_A,
-     _and_B,
-     _assemble_real_velocity,
-     _eps_A_strict,
-     _eps_A_strict_cellmax,
-     _eps_B_strict,
-     _eps_B_strict_cellmax,
-     _ltne_mask_A,
-     _ltne_mask_B,
-     _outer_converged,
-     _outer_dT_hist,
-     _outer_last_iter,
-     _use_outer_and,
-     chi_B,
-     h_vA_field,
-     h_vB_field,
-     rho_cp_fA,
-     rho_cp_fB)
+    return _OuterState(
+        K_ffB=K_ffB,
+        Ta=Ta,
+        Tb=Tb,
+        Ts=Ts,
+        _and_A=_and_A,
+        _and_B=_and_B,
+        _assemble_real_velocity=_assemble_real_velocity,
+        _eps_A_strict=_eps_A_strict,
+        _eps_A_strict_cellmax=_eps_A_strict_cellmax,
+        _eps_B_strict=_eps_B_strict,
+        _eps_B_strict_cellmax=_eps_B_strict_cellmax,
+        _ltne_mask_A=_ltne_mask_A,
+        _ltne_mask_B=_ltne_mask_B,
+        _outer_converged=_outer_converged,
+        _outer_dT_hist=_outer_dT_hist,
+        _outer_last_iter=_outer_last_iter,
+        _use_outer_and=_use_outer_and,
+        chi_B=chi_B,
+        h_vA_field=h_vA_field,
+        h_vB_field=h_vB_field,
+        rho_cp_fA=rho_cp_fA,
+        rho_cp_fB=rho_cp_fB,
+    )
 
 
 def _run_3d_stack(cfg):
@@ -2602,145 +2998,16 @@ def _run_3d_stack(cfg):
       'full_validate' — cfg grid,  outer cap 12, max_iter=50000, full diag
       None (default)  — cfg values, outer cap 12 (_MAX_OUTER), full diagnostic
     """
-    (D_h,
-     G_A,
-     G_B,
-     H,
-     K_disp_A,
-     K_disp_B,
-     K_ffA,
-     K_ffB,
-     K_pred,
-     K_pred_B,
-     K_ss,
-     L,
-     L_mm_field,
-     L_stream,
-     L_stream_B,
-     Lcell,
-     Lz,
-     Nx,
-     Ny,
-     Nz,
-     P_inA,
-     P_inB,
-     T_inA,
-     T_inB,
-     Tb_presc,
-     _compact_diag,
-     _env_mode,
-     _env_warnings,
-     _ltne_info,
-     _ltne_max_iter,
-     _mA,
-     _mB,
-     _max_outer,
-     _outer_tol,
-     _simple_nonconv,
-     axis_map,
-     axis_map_B,
-     cF_pred,
-     cF_pred_B,
-     cfg,
-     cp_A,
-     cp_B,
-     disp_C_A,
-     disp_C_B,
-     dx,
-     dy,
-     dz,
-     eps,
-     eps_arr,
-     eps_fA_arr,
-     eps_fB_arr,
-     fA,
-     fB,
-     fluid_type_A,
-     fluid_type_B,
-     in_mask_2d,
-     in_mask_B,
-     is_reverse,
-     k_s,
-     mu_A,
-     mu_B,
-     out_mask_2d,
-     out_mask_B,
-     perm_B,
-     rho_A,
-     rho_B,
-     rho_B_ltne,
-     sA,
-     sB,
-     sB_info,
-     solver_to_real_perm,
-     stream_real_axis,
-     t_field_3d,
-     t_wall,
-     tpms_type,
-     u_A,
-     u_B,
-     ucB,
-     vcB,
-     wcB) = _build_3d_problem(cfg)
+    prob = _build_3d_problem(cfg)
+    cfg = prob.cfg   # fast_sweep profile may rebind cfg inside seam A
+    hv = _build_hv_machinery(prob)
 
-    (_build_hv_local_3d,
-     _hv_ratio_A,
-     _hv_ratio_B,
-     h_vA_field,
-     h_vB_field,
-     u_B_val) = _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, eps, fluid_type_A, fluid_type_B, k_s, mu_A, mu_B, rho_A, rho_B, sB, t_field_3d, t_wall, tpms_type, u_A, cfg)
+    outer = _run_outer_coupling_3d(prob, hv)
 
-    (K_ffB,
-     Ta,
-     Tb,
-     Ts,
-     _and_A,
-     _and_B,
-     _assemble_real_velocity,
-     _eps_A_strict,
-     _eps_A_strict_cellmax,
-     _eps_B_strict,
-     _eps_B_strict_cellmax,
-     _ltne_mask_A,
-     _ltne_mask_B,
-     _outer_converged,
-     _outer_dT_hist,
-     _outer_last_iter,
-     _use_outer_and,
-     chi_B,
-     h_vA_field,
-     h_vB_field,
-     rho_cp_fA,
-     rho_cp_fB) = _run_outer_coupling_3d(D_h, G_A, G_B, H, K_disp_A, K_disp_B, K_ffA, K_ffB, K_pred, K_pred_B, K_ss, L, L_mm_field, L_stream, L_stream_B, Lcell, Lz, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Tb_presc, _build_hv_local_3d, _env_mode, _env_warnings, _hv_ratio_A, _hv_ratio_B, _ltne_info, _ltne_max_iter, _mA, _mB, _max_outer, _outer_tol, _simple_nonconv, axis_map, axis_map_B, cF_pred, cF_pred_B, cp_A, cp_B, disp_C_A, disp_C_B, dx, dy, dz, eps, eps_arr, eps_fA_arr, eps_fB_arr, fA, fB, fluid_type_A, fluid_type_B, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, k_s, mu_A, mu_B, out_mask_B, perm_B, rho_A, rho_B, rho_B_ltne, sA, sB, solver_to_real_perm, t_field_3d, t_wall, tpms_type, u_A, u_B, u_B_val, ucB, vcB, wcB, cfg)
-
-    (L_mm,
-     P_kPa,
-     P_real,
-     P_real_B,
-     Q,
-     Q_AB_imbalance_rel,
-     Q_enthalpy_A,
-     Q_enthalpy_B,
-     Q_solid_B,
-     T_A_out,
-     T_B_out,
-     T_B_out_no_chi,
-     cell_vol,
-     chi_B_out_face,
-     dP,
-     dP_B,
-     m_dot_A_simple,
-     m_dot_B_phys_in,
-     m_dot_B_phys_out,
-     m_dot_B_simple,
-     uc_real,
-     vc_real,
-     vmag,
-     vmag_B,
-     wc_real) = _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Ta, Tb, Ts, _assemble_real_velocity, chi_B, cp_A, cp_B, dx, dy, dz, eps, fA, fB, fluid_type_A, fluid_type_B, h_vB_field, is_reverse, sA, sB, sB_info, solver_to_real_perm, stream_real_axis, t_wall, tpms_type, ucB, vcB, wcB, cfg)
+    met = _extract_3d_metrics(prob, hv, outer)
 
     # Conservation diagnostics (energy + mass balance + interior-corrected Q) —
     # extracted to _conservation_diagnostics_3d (F1). Always computed so the
     # user spots non-physical regressions without re-running validation.
-    (_result) = _assemble_3d_verdict(H, K_ffA, K_ffB, K_ss, L, L_mm, Lz, P_inA, P_inB, P_kPa, P_real, P_real_B, Q, Q_AB_imbalance_rel, Q_enthalpy_A, Q_enthalpy_B, Q_solid_B, T_A_out, T_B_out, T_B_out_no_chi, T_inA, T_inB, Ta, Tb, Ts, _and_A, _and_B, _compact_diag, _env_mode, _env_warnings, _eps_A_strict, _eps_A_strict_cellmax, _eps_B_strict, _eps_B_strict_cellmax, _ltne_info, _ltne_mask_A, _ltne_mask_B, _ltne_max_iter, _max_outer, _outer_converged, _outer_dT_hist, _outer_last_iter, _simple_nonconv, _use_outer_and, cell_vol, chi_B, chi_B_out_face, cp_A, cp_B, dP, dP_B, dx, dy, dz, eps, eps_arr, fA, fB, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, m_dot_A_simple, m_dot_B_phys_in, m_dot_B_phys_out, m_dot_B_simple, out_mask_2d, out_mask_B, rho_cp_fA, rho_cp_fB, sA, sB, sB_info, solver_to_real_perm, u_A, u_B, ucB, uc_real, vcB, vc_real, vmag, vmag_B, wcB, wc_real, cfg)
+    _result = _assemble_3d_verdict(prob, hv, outer, met)
     return _result
