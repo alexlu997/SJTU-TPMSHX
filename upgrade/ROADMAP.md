@@ -18,7 +18,7 @@
       升级为 `_log.warning` + 显著横幅（找不到 Excel 校准源 = 数字口径变化，必须喊出来）；
       加数据仓钉扎记录 `data/raw_data/.data-repo-pin`（记 SJTU-TPMSHX-data 的 commit，HANDOFF §8）。
       验证：suite + golden 位同（行为只在缺数据场景变化）
-- [ ] P0.4 测试基建入库：`scripts/run_tests_server.ps1` 提交进仓库；给 `golden_3d.json` 建
+- [x] P0.4 测试基建入库（`6521ba7`，iter 4；golden json 本体 → DECISIONS D1 待决）：`scripts/run_tests_server.ps1` 提交进仓库；给 `golden_3d.json` 建
       meta 侧车 `golden_3d.meta.json`（生成 commit / env 指纹 / 日期——HANDOFF §9 "零版本记录"）；
       golden json 本体是否入库 → DECISIONS-NEEDED 问 Alex
 - [ ] P0.5 文档纠偏：`.claude/commands/check.md` 死路径 `D:\Postgraduate` → `E:\LWH`、

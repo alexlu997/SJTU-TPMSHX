@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 3
-- next: P0.4
+- iteration: 4
+- next: P0.5
 - in_progress: （空）
 - armed_at: 2026-07-19（job 224f9aa6；>5 天须按 PROTOCOL §8 重建）
 - cron_spec: `4,29,54 * * * *`
