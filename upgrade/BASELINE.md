@@ -23,7 +23,9 @@
 - **RMSRE_dP = 4.88%**（gate 限 12.0%；2D 基线 8.62%），max|err_dP| = 15.97%
 - **RMSRE_Q = 2.12%**（gate 限 6.0%；2D 基线 2.49%），max|err_Q| = 7.16%
 - **GATE PASS**
-- 产物：validation 下 shanghai_3d_baseline.csv（脚本自写，未跟踪，不入库）
+- 产物：`sjtu_tpmshx/validation/shanghai_3d_baseline.csv`——**被 git 跟踪**且脚本每次运行都改写；
+  本轮复现到 ULP 级（第 13–16 位有效数字尾噪，1e-13 相对），已 `git checkout --` 回退工作树噪声。
+  "tracked 产物被 bare 运行自改写"是个设计小味道，P1.2 动该脚本时一并处理（check 模式不落盘或写 _out/）
 - ⚠ 口径注记：bare 调用走 production Pipeline3D dual-solve（脚本自述 "NOT the gate runner"）——
   正是 HANDOFF §1 的 max_outer 透传缺陷所在路径（本次外循环 max_outer=12 显示、各工况 outer=3 收敛）。
   P1.2 修复透传后本节数字可能移动，届时按 PROTOCOL §5 流程重记并说明

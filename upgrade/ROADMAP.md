@@ -5,7 +5,7 @@
 
 ## Phase 0 — 安全网（架构手术前的地基）
 
-- [ ] P0.1 基线快照：写 `upgrade/BASELINE.md`——suite 精确计数、`--durations` 前 15、
+- [x] P0.1 基线快照（`2c51eca`，iter 1）：写 `upgrade/BASELINE.md`——suite 精确计数、`--durations` 前 15、
       golden_3d --check 结果、`validate_shanghai_3d_real.py` 与 `validate_shanghai_lumped_dual_nu.py`
       的 headline 数字（Δp / Q / RMSRE）、`pip freeze` 指纹。此后所有"数字没变"的断言都对照它。
       ⚠ 长命令输出必须 `| Tee-Object 日志文件` 落盘后读文件——PowerShell 后台任务捕获会丢
