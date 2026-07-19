@@ -2,6 +2,19 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 20 · 2026-07-20 · P1.9 分层裁决 ✅（`c43c7db`）—— **Phase 1 主线收官**
+
+- 两修：polygon_calc（Qt 耦合 UI 代码）迁回 ui/；__version__ 抽 _version.py 叶子
+  （ui→main 环消除，pyproject 转 dynamic 版本单源）
+- 两裁：solvers↔df_surrogate 闭合边界互依对、domain→_domain 叶子常量——SANCTIONED
+  清单内置工具（附理由），报告单列
+- 层级门常驻：test_import_layering 进套件、/check §2b；**VIOLATIONS = 0**
+- 门禁：suite 1256+10 绿、golden 位同；19 分钟套件尖峰确认为瞬时负载（本轮回落 10:31）
+- **Phase 1 战报（iter 6-20）**：审计 → 验证收案 ×1 → envelope 权威+门 ×2 切片 →
+  契约测试 → 五缝拆解（1955→156）→ 缓存卫生 → 死路径 → 打包 → 分层裁决；
+  全程 golden 位同、零带病提交；待决 D2/D3 不阻塞
+- 下一步：Phase 2 开工，P2.0 = §10 委托首战
+
 ## iter 19 · 2026-07-20 · P1.8 打包地基 ✅（`827bee9`）
 
 - pyproject（extras 分组、包数据、诚实的 P1.8b 注记）+ tpmshx-run headless CLI

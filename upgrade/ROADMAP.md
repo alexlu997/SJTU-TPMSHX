@@ -24,7 +24,8 @@
 - [x] P0.5 文档纠偏（`059d306` + D1 执行 `c4cccb7`，iter 5）：`.claude/commands/check.md` 死路径 `D:\Postgraduate` → `E:\LWH`、
       补 server runner 指引；HANDOFF §9d 的 CI=true 精确门语义写进 `pytest.ini` 头注
 
-## Phase 1 — 架构（Alex 指定的最高优先级）
+## Phase 1 — 架构（Alex 指定的最高优先级）**主线完成 2026-07-20（iter 6-20）**
+（余留：P1.3-C 待 D3 拍板；P1.8b 为立项波次——不阻塞 Phase 2 开工）
 
 - [x] P1.1 架构审计（iter 6：工具+文档，见 `docs/ARCHITECTURE-AUDIT-2026-07.md`）：实测 import 图
       （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、
@@ -61,9 +62,9 @@
 - [ ] P1.8b 导入风格迁移波次（顶层 `from solvers...` → `sjtu_tpmshx.*` 全库扫 + 分波删
       约百处 sys.path 引导 + 工作 venv 转 editable）：大扫荡，openspec change + §10 委托候选；
       迁移前双风格混用危险已注记 pyproject
-- [ ] P1.9 分层违规裁决（审计 §1）：solvers→df_surrogate 倒置或正式背书、
-      domain/validator→df_surrogate、run_controller→runs、main↔ui 环；
-      收尾把 `audit_import_graph.py --fail-on-violations` 挂进 /check 或 CI
+- [x] P1.9 分层违规裁决（`c43c7db`，iter 20）：两修（polygon_calc 迁 ui、_version 叶子）
+      两裁（SANCTIONED 清单内置理由）；test_import_layering 常驻套件 + /check §2b；
+      VIOLATIONS = 0
 
 ## Phase 2 — 代码质量
 
