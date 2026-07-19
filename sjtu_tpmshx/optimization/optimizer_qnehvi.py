@@ -97,6 +97,22 @@ progress: dict = {
 }
 
 
+def _reset_warn_registries() -> None:
+    """Fresh warn-dedup state per BO campaign (P1.3).
+
+    The extrapolation / choke warn registries are process-global; without a
+    reset here a warning latched by a PREVIOUS campaign (or a stray evaluation)
+    silences the same warning for this one. Per-campaign — not per-eval — so a
+    500-eval run still dedups instead of spamming 500 lines. Mirrors
+    ComputePipeline.run (compute_pipeline.py:120-123), which resets per user
+    action for the same reason.
+    """
+    from solvers.nu_correlations import reset_extrap_warn_registry
+    from df_surrogate.predict import reset_choke_warn_registry
+    reset_extrap_warn_registry()
+    reset_choke_warn_registry()
+
+
 def request_cancel() -> None:
     """UI button → set this; the BO loop checks at every iteration boundary."""
     progress['cancel_requested'] = True
@@ -227,6 +243,8 @@ def run_qnehvi(config: Optional[dict] = None,
     from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
     cfg = {**EVAL_DEFAULT_CONFIG, **(config or {})}
+
+    _reset_warn_registries()
 
     # 1. Decision space
     D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])

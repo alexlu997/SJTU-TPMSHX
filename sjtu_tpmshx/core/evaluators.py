@@ -43,12 +43,15 @@ from solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
 from solvers.continuous_field import from_decision_vector
+from solvers.envelope import R_AIR_DEFAULT, predict_outlet_p_sq
 from logutil import get_logger
 
 _log = get_logger(__name__)
 
 
-R_AIR = 287.05
+# Re-exported for verify_pareto_3d et al.; the value lives in solvers/envelope
+# (single authority for the 1D compressible D-F seed — P1.3, was a local copy).
+R_AIR = R_AIR_DEFAULT
 
 
 __all__ = ["evaluate_3d", "_build_3d_arrays", "R_AIR"]
@@ -221,13 +224,13 @@ def evaluate_3d(x_decision: np.ndarray,
     cF_mean_A = float(np.mean(cF_A))
     G_A = rho_A0 * u_A
     C_A = mu_A0 * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-    P_out_sq_A = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_A * L_dom
+    P_out_sq_A = predict_outlet_p_sq(P_inA, T_inA, C_A, L_dom)
 
     K_mean_B = float(np.mean(K_B))
     cF_mean_B = float(np.mean(cF_B))
     G_B = rho_B0 * u_B
     C_B = mu_B0 * G_B / max(K_mean_B, 1e-16) + cF_mean_B * G_B * G_B
-    P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * H_dom
+    P_out_sq_B = predict_outlet_p_sq(P_inB, T_inB, C_B, H_dom)
 
     # 2026-05-20 UI sweep (Tier 17, user re-audit): strict-mode contract
     # from `tests/test_pressure_invalid_flag.py`. The compressible D-F
@@ -469,7 +472,7 @@ def evaluate_3d(x_decision: np.ndarray,
         T_avg = float(Ta_sA.mean())
         mu_avg = float(air_viscosity(T_avg))
         C_avg = mu_avg * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-        P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_dom
+        P_out_sq_new = predict_outlet_p_sq(P_inA, T_avg, C_avg, L_dom)
         if P_out_sq_new <= 0.0:
             # Hot-state choke (2026-07-13 audit): the COLD seed above passed,
             # but the heated T_avg raised 2RT·C·L past P_in². This used to be
