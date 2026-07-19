@@ -1,0 +1,56 @@
+# SJTU-TPMSHX packaging (P1.8, 2026-07-20 — upgrade/loop 分支立的地基).
+#
+# 现状约束（诚实注记）：包内部统一使用顶层导入风格（`from solvers import ...`，
+# 由各处 sys.path 引导支撑）。本文件让 `pip install -e .` 暴露 `sjtu_tpmshx`
+# 包与 tpmshx-run 入口；顶层风格 → `sjtu_tpmshx.*` 的全库导入迁移是后续波次
+# （ROADMAP P1.8b），迁移完成前请勿在同一进程混用两种风格导入同一模块
+# （双模块对象会复制模块级缓存/注册表状态）。
+#
+# 版本号 0.1.0.dev0 为升级分支占位；对外版本语义合并时由 Alex 定。
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sjtu-tpmshx"
+version = "0.1.0.dev0"
+description = "Compressible SIMPLE/LTNE solver suite for TPMS heat exchangers (SJTU)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    # 与 requirements.txt 同源的宽松下界（服务器精确复刻用
+    # requirements-lock-server.txt，见其头注）
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pandas>=2.0",
+    "sympy>=1.13",
+    "pyamg>=5.2",
+    "joblib>=1.3",
+    "numba>=0.60",
+    "scikit-learn>=1.5",
+    "matplotlib>=3.8",
+    "openpyxl>=3.1",
+    "CoolProp>=6.4",
+    "scikit-image>=0.24",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.7", "pyvista>=0.45", "pyvistaqt>=0.11"]
+bo = ["torch>=2.2", "botorch>=0.10", "gpytorch>=1.11"]
+test = ["pytest>=8.0", "pytest-xdist>=3.5"]
+
+[project.scripts]
+tpmshx-run = "sjtu_tpmshx.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sjtu_tpmshx*"]
+
+[tool.setuptools.package-data]
+sjtu_tpmshx = [
+    "configs/*.json",
+    "df_surrogate/_prebuilt/*.csv",
+    "validation/*.meta.json",
+    "tests/_data_*.json",
+]
