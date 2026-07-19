@@ -10,6 +10,7 @@ W7: two cache-key hazards —
   (b) tpms_calc.compute's lru_cache ignored the DF-backend env state and
       returned the same mutable dict on every hit.
 """
+import logging
 import os
 import pathlib
 import sys
@@ -45,6 +46,27 @@ def test_df_source_parity(monkeypatch):
             f"K diverged at (L={L}, t={t}): xlsx {K1:.6e} vs csv {K2:.6e}"
         assert cF1 == pytest.approx(cF2, rel=1e-6), \
             f"cF diverged at (L={L}, t={t}): xlsx {cF1:.6e} vs csv {cF2:.6e}"
+
+
+def test_df_prebuilt_fallback_warns(monkeypatch, caplog):
+    """The prebuilt-CSV fallback must be LOUD. The info-level version let a
+    machine silently compute from a different calibration source (the
+    riskiest trap of the 2026-07 server port, HANDOFF §8)."""
+    import df_surrogate.surrogate_v3 as sv3mod
+    monkeypatch.setattr(sv3mod, 'XLSX',
+                        pathlib.Path('__nonexistent_p03_probe__.xlsx'))
+    # tpmshx's namespaced root logger has propagate=False, so caplog's
+    # root-attached handler never sees these records — attach directly.
+    sv3mod._log.addHandler(caplog.handler)
+    try:
+        m = sv3mod.SurrogateV3(tpms='Gyroid')
+    finally:
+        sv3mod._log.removeHandler(caplog.handler)
+    assert m._source == 'prebuilt_csv'
+    banner = [r for r in caplog.records
+              if r.levelno >= logging.WARNING
+              and 'CALIBRATION SOURCE FALLBACK' in r.getMessage()]
+    assert banner, "prebuilt fallback must log a WARNING banner"
 
 
 # ── W7a: geometry LUT cache honours kwargs ──────────────────────────

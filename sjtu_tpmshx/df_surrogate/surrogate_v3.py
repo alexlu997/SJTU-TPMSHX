@@ -160,9 +160,17 @@ class SurrogateV3:
             self._build()                 # authoritative: calibrate from Excel
         else:
             self._source = 'prebuilt_csv'
-            _log.info("[SurrogateV3 %s/%s] local Excel absent - using "
-                      "committed prebuilt CSV calibration", self.tpms,
-                      self.method)
+            _log.warning(
+                "[SurrogateV3 %s/%s]\n"
+                "=============== CALIBRATION SOURCE FALLBACK ===============\n"
+                "local experiment Excel NOT FOUND (data/raw_data/) - using\n"
+                "the committed prebuilt CSV calibration instead. Numbers can\n"
+                "differ from the authoritative Excel-calibrated ones with no\n"
+                "further notice (the production GammaDF anchor derives from\n"
+                "this instance). Fix: copy raw_data/ from the SJTU-TPMSHX-data\n"
+                "repo at the commit recorded in data-repo.pin (repo root).\n"
+                "===========================================================",
+                self.tpms, self.method)
             self._build_from_prebuilt()   # fallback: committed calibrated CSV
 
     def _build(self) -> None:
