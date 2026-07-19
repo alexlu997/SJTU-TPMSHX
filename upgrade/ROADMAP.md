@@ -53,7 +53,7 @@
       writeable=False（两个 W7b 同族潜伏隐患，照 _FIELD_CACHE 标杆）；`TPMSHX_CHI_S` 改 per-call
       （import 冻结影响 K_ss）；`_LAPLACIAN_AMG_CACHE` 只读性查证 + reset 钩；各配 W7 风格测试。
       全程 golden 位同
-- [ ] P1.7 死路径清理（审计 §4 注）：smooth_df.py AIR_XLSX_DEFAULT 显式守卫；
+- [x] P1.7 死路径清理（`dd598d9`，iter 18）：smooth_df.py AIR_XLSX_DEFAULT 显式守卫；
       runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化（archive/ 只标注 frozen）。
       sys.path 引导**不零星清理**（回归面大收益负），等 P1.8 结构性根治
 - [ ] P1.8 pyproject.toml 打包 + editable install + headless CLI entry points（审计 §4 根治：

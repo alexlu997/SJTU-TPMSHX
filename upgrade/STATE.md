@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 17
-- next: P1.7（死路径清理：smooth_df AIR_XLSX 守卫 + runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化，archive/ 只标注）
+- iteration: 18
+- next: P1.8（pyproject.toml 打包 + editable install + headless CLI entry points——审计 §4 结构性根治的地基；引导删除分波另行）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

@@ -2,6 +2,15 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 18 · 2026-07-20 · P1.7 死路径清理 ✅（`dd598d9`）
+
+- smooth_df rebuild 死路径：显式 FileNotFoundError 守卫（溯源+修法）+ env 覆盖口
+- 4 工具脚本 Desktop/D:\ → env 覆盖 + runs/_out 默认；vault 输入指向现实布局
+- archive/ 增补"死路径故意不改"证据链声明（尊重既有 frozen README）
+- 门禁：suite 1255+10 绿、golden 位同。注意：全量套件连续三轮 ~19 分钟
+  （高负载 or 用例增长），P3.1 fast-tier 优先级↑
+- 下一步：P1.8 pyproject 打包（P1 尾声）
+
 ## iter 17 · 2026-07-20 · P1.6 缓存与 env 卫生 ✅（`7d70227`）
 
 - 两个 W7b 潜伏炸弹拆除：compute_geometry 共享 dict → 浅拷贝入口；_phi_grid 共享
