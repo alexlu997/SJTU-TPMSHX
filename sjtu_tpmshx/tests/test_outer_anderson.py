@@ -49,7 +49,10 @@ def test_default_off_and_production_blend_is_untouched():
 
     import inspect
     from pipelines import run_stack_3d as _r3
-    src = inspect.getsource(_r3._run_3d_stack)
+    # Seam-C extraction (P1.5, 2026-07-20): the outer-loop closures (and the
+    # production Picard blend inside _outer_post_3d) now live in
+    # _run_outer_coupling_3d, not _run_3d_stack.
+    src = inspect.getsource(_r3._run_outer_coupling_3d)
     # The damped-Picard expression must still be present as the fallback.
     assert '_ALPHA_T * rho_new + (1.0 - _ALPHA_T) * sA.rho_field' in src
     assert "_use_outer_and = bool(cfg.get('outer_anderson', False))" in src

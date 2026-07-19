@@ -14,8 +14,8 @@ import ast
 import sys
 
 PATH = r'E:\LWH\SJTU-TPMSHX-upgrade\sjtu_tpmshx\pipelines\run_stack_3d.py'
-A_LO, A_HI = 2271, 2671
-NEW_NAME = '_assemble_3d_verdict'
+A_LO, A_HI = 1927, 2656
+NEW_NAME = '_run_outer_coupling_3d'
 
 src = open(PATH, encoding='utf-8').read()
 lines = src.splitlines(keepends=True)
@@ -26,6 +26,7 @@ fn = next(n for n in tree.body
 fn_end = fn.end_lineno
 
 assigned_a, loaded_a = set(), set()
+nonlocal_names = set()
 used_after, returns_in_a, defs_in_a = set(), [], []
 
 
@@ -77,6 +78,15 @@ for st in fn.body:
             assigned_a.add(st.name)
             defs_in_a.append(f"{st.name}:{st.lineno}")
             loaded_a |= _fn_free_loads(st)
+            # nonlocal-REBOUND names in region closures are region
+            # assignments for bundle purposes: the rebind happens against
+            # the moved function's scope, so the FINAL value must flow out
+            # through the return tuple (in-place [:] mutation flows through
+            # the input arrays regardless).
+            for n2 in ast.walk(st):
+                if isinstance(n2, ast.Nonlocal):
+                    assigned_a.update(n2.names)
+                    nonlocal_names.update(n2.names)
         else:
             used_after |= (_fn_free_loads(st)
                            if st.lineno > A_HI else set())
@@ -180,6 +190,10 @@ def _scan_order(node, suppress=frozenset()):
         for b in node.body + node.orelse:
             _scan_order(b, suppress)
         return
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        for a in node.names:
+            _note_first((a.asname or a.name).split('.')[0], 'store')
+        return
     if isinstance(node, ast.Name):
         if node.id not in suppress:
             _note_first(node.id,
@@ -192,27 +206,6 @@ def _scan_order(node, suppress=frozenset()):
 for st in fn.body:
     if A_LO <= st.lineno <= A_HI:
         _scan_order(st)
-
-closure_free = set()
-for st in fn.body:
-    if A_LO <= st.lineno <= A_HI and isinstance(st, ast.FunctionDef):
-        closure_free |= _fn_free_loads(st)
-inputs = sorted((({n for n, k2 in first_kind.items() if k2 == 'load'}
-                  | (closure_free - assigned_a))
-                 - module_names - set(dir(__builtins__)) - {'cfg'}))
-
-print(f"function span: {fn.lineno}-{fn_end}")
-print(f"RETURNS inside A: {returns_in_a or 'NONE'}")
-print(f"nested defs in A: {defs_in_a or 'NONE'}")
-print(f"BUNDLE ({len(bundle)}): {bundle}")
-print(f"EXTRA INPUTS beyond cfg (must be empty): {inputs}")
-
-if '--apply' not in sys.argv:
-    sys.exit(0)
-if returns_in_a:
-    sys.exit('ABORT: return statements inside the seam')
-# Seam B: nested defs are the POINT (closures become factory-made callables),
-# and extra inputs become the factory signature.
 
 # Definite-assignment at the A block's TOP statement level: names bound by an
 # unconditional top-level statement are safe; everything else (bound only
@@ -235,16 +228,40 @@ for st in fn.body:
     elif isinstance(st, ast.FunctionDef):
         definite.add(st.name)
 params = {a.arg for a in fn.args.args}
-preinit = sorted(set(bundle) - definite - params)
+
+closure_free = set()
+for st in fn.body:
+    if A_LO <= st.lineno <= A_HI and isinstance(st, ast.FunctionDef):
+        closure_free |= _fn_free_loads(st)
+inputs = sorted((({n for n, k2 in first_kind.items() if k2 == 'load'}
+                  | (closure_free - assigned_a)
+                  | (nonlocal_names - definite))
+                 - module_names - set(dir(__builtins__)) - {'cfg'}))
+preinit = sorted(set(bundle) - definite - params - set(inputs))
 print(f"PRE-INIT (conditionally bound, {len(preinit)}): {preinit}")
+
+
+print(f"function span: {fn.lineno}-{fn_end}")
+print(f"RETURNS inside A: {returns_in_a or 'NONE'}")
+print(f"nested defs in A: {defs_in_a or 'NONE'}")
+print(f"BUNDLE ({len(bundle)}): {bundle}")
+print(f"EXTRA INPUTS beyond cfg (must be empty): {inputs}")
+
+if '--apply' not in sys.argv:
+    sys.exit(0)
+if returns_in_a:
+    sys.exit('ABORT: return statements inside the seam')
+# Seam B: nested defs are the POINT (closures become factory-made callables),
+# and extra inputs become the factory signature.
+
 
 sig = ", ".join(inputs + ['cfg'] if 'cfg' in loaded_a else inputs)
 tup = "(" + ",\n     ".join(bundle) + ")"
 new_fn = (
     f"def {NEW_NAME}({sig}):\n"
-    '    """Seam-E extraction (P1.5, 2026-07-20): verdict + assembly tail --\n'
-    "    conservation diagnostics, post-solve envelope gate, convergence\n"
-    "    verdict/truth table, result-dict assembly, opt-in audit exports.\n"
+    '    """Seam-C extraction (P1.5, 2026-07-20): the outer coupling engine --\n'
+    "    outer-loop state init, the step/post closures (their nonlocals now\n"
+    "    bind THIS function's locals) and the run_outer_coupling drive.\n"
     "    Moved VERBATIM from _run_3d_stack; returns the cross-seam\n"
     "    bundle. Contract: bit-identical behavior (golden gate).\n"
     '    """\n'
