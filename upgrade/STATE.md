@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 15
-- next: P1.5 C 缝（外循环 step/post 闭包——最难：8 nonlocal + 原位突变；需显式耦合态对象；工具已具 Nonlocal 能力；若一轮拆不完按 §1.5 切片）
+- iteration: 16
+- next: P1.5 收尾切片（评估是否值得：mega-tuple → dataclass 状态包 + 五函数迁至 run_stack_3d_stages.py；或直接判 P1.5 完成转 P1.6 缓存卫生——开工时现场评估定夺）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

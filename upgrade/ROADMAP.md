@@ -45,7 +45,8 @@
       主规则"Pareto 须经 Pipeline 复核"入档；openspec D5 节（并入 evaluator-envelope-authority
       变更而非新开——同能力域，偏离原"openspec change"字面已记）
 - [ ] P1.5 run_stack_3d 五缝拆分（审计 §3；**A ✓ iter 12、B ✓ `ddf9c64` iter 13**——
-      _run_3d_stack 1955→~750 行；**D ✓ iter 14、E ✓ `694e5fa` iter 15**）：只剩 C(外循环闭包)；
+      **五缝全收官 iter 12-16（C ✓ `2549a79`）：_run_3d_stack 1955→156 行纯编排器**；
+      余一个收尾切片：mega-tuple 数据类化 + 五函数文件级迁移（可选，见下）；
       每步 golden 位同 + 全套件；stages_3d 的 re-export 面 = raw-cfg 直调方的兼容层，必须保持；
       C 缝需显式耦合态对象保 nonlocal 语义。预计 3-5 轮
 - [ ] P1.6 缓存与 env 卫生（审计 §5b/§5d）：`compute_geometry` 返回浅拷贝、`_phi_grid` 冻结
