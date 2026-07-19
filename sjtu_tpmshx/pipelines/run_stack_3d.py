@@ -1157,6 +1157,255 @@ def _build_hv_machinery(D_h, L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA,
      u_B_val)
 
 
+def _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Ta, Tb, Ts, _assemble_real_velocity, chi_B, cp_A, cp_B, dx, dy, dz, eps, fA, fB, fluid_type_A, fluid_type_B, h_vB_field, is_reverse, sA, sB, sB_info, solver_to_real_perm, stream_real_axis, t_wall, tpms_type, ucB, vcB, wcB, cfg):
+    """Seam-D extraction (P1.5, 2026-07-20): metric/field extraction --
+    converged solvers + T fields -> Q (enthalpy + solid-side), dP, m_dot,
+    outlet temperatures, real-coord P/velocity fields. Near-pure reads of
+    converged state. Moved VERBATIM from _run_3d_stack; returns the
+    cross-seam bundle. Contract: bit-identical behavior (golden gate).
+    """
+    # Conditionally-bound cross-seam names (surgery tool definite-
+    # assignment pass): None-init so the unconditional return below
+    # cannot raise UnboundLocalError on guarded paths. Downstream
+    # reads keep their original guards.
+    P_real_B = None
+    Q_enthalpy_A = None
+    T_B_out_no_chi = None
+    dP_B = None
+    m_dot_B_phys_in = None
+    m_dot_B_phys_out = None
+    m_dot_B_simple = None
+    vmag_B = None
+    # ── Extract metrics + fields ──
+    # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
+    # 2D UI path (run_calculation.py:_store_results.Q_total) and the
+    # optimizer (both 2D and 3D). This makes Q comparable across the
+    # three paths without a unit-mismatch penalty. (#5 / v1.0.10 #6)
+    #
+    # Q_enthalpy_A (m_dot × cp × ΔT) is kept as a secondary reading;
+    # it uses inlet-plane ρ from the solver's rho_field (not a stale
+    # cold-seed scalar) and respects the solver's inlet mask via
+    # v_inlet_field. (v1.0.10 #2)
+    # NOTE: despite the legacy comment above, the returned Q is assigned from
+    # the enthalpy balance below; Q_solid_B remains diagnostic only.
+    cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
+    Q_solid_B = float(np.sum(h_vB_field * (Ts - Tb) * cell_vol))
+
+    out_idx = 0 if is_reverse else -1
+    T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
+    T_B_out = None
+    if sB is not None:
+        axis_B = sB_info['axis_map']['stream_real_axis']
+        out_idx_B = 0 if sB_info['axis_map']['is_reverse'] else -1
+        T_B_out = float(np.mean(np.take(Tb, out_idx_B, axis=axis_B)))
+    # Mass flow from the solver's actual inlet face: ρ·v_in × open-area.
+    # sA.v has shape (solver Nx, solver Ny+1, solver Nz); inlet face is
+    # j=0. Use rho_field[:, 0, :] × v[:, 0, :] × (dx × dz) with open-area
+    # fraction `inlet_frac` so partial-inlet geometries are honoured.
+    # Q_enthalpy via **SIMPLE-native** mass flow (2026-04-25 FV hardening).
+    # Earlier used cell-centered ucA/vcA/wcA reconstructed via
+    # _solver_velocity_to_real, but that cell-averaged interpolation lost
+    # ~40% mass flow on wall-refined grids (the averaging leaked no-slip
+    # wall cells into the mean). Now m_dot comes directly from the SIMPLE
+    # staggered v-face + ρ-face which the pressure-correction enforces to
+    # be divergence-free. T_out is a pipe-masked mean on the real outlet
+    # face using Ta/Tb cell-centered values.
+    #
+    # _face_flux_weights / _mass_weighted_T_out / _real_outlet_slice /
+    # _simple_mass_flow are now module-level (hoisted 2026-05-15) so they can
+    # be unit-tested for stagnant-cell suppression. `eps_f_per_side` is
+    # passed explicitly instead of captured by closure.
+
+    # LTNE uses ε_A = ε_B = ε/2 per side (symmetric 2-fluid split). Metric
+    # must mirror that so m_dot ≡ ∫ ε_A·ρ·u·dA matches the solver's
+    # internal advective mass flow.
+    eps_f_per_side = 0.5 * float(eps)   # ε_A (symmetric)
+    # Asymmetric per-side single-channel void fractions (offset-isosurface δ).
+    # None at δ=0 → symmetric 0.5·ε path (bit-identical). δ≠0 → per-side ε_side
+    # so m_dot/Q weight by the actual channel void fraction, not 0.5·ε
+    # (else ṁ_A/ṁ_B mis-scale by split/0.5 on the asymmetric geometry).
+    _eps_ov_A, _eps_ov_B = _per_side_eps_override(
+        cfg, tpms_type, Lcell, t_wall, eps)
+
+    # Fluid A — unified face-flux weights for T_out and m_dot consistency
+    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side,
+                                       eps_side_override=_eps_ov_A)
+    T_A_out_face = _real_outlet_slice(Ta, fA['dir'])
+    T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side,
+                                   eps_side_override=_eps_ov_A)
+    # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
+    #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
+    # sCO2: true enthalpy duty ṁ·Δh (cp varies strongly with T,P → cp·ΔT is
+    # wrong); air/water keep cp·ΔT (constant cp ⇒ value-identical, golden-safe).
+    if fluid_type_A == 'sco2':
+        # D2 (audit 2026-06-28): mass-weighted mean OUTLET enthalpy ⟨h(T)⟩,
+        # NOT h(⟨T⟩_out) — h(T) is strongly nonlinear across the pseudocritical
+        # spike (Jensen). Inlet is a uniform Dirichlet T so h(T_inA) is exact.
+        h_A_out = _mass_weighted_h_out(
+            T_A_out_face, P_inA, sco2_props.sco2_enthalpy_field, sA, fA['dir'],
+            eps_f_per_side, eps_side_override=_eps_ov_A)
+        Q_enthalpy_A = abs(m_dot_A_simple * (
+            sco2_props.sco2_enthalpy(float(T_inA), P_inA) - h_A_out))
+    else:
+        Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
+
+    # Fluid B
+    Q_enthalpy_B = 0.0
+    chi_B_out_face = None
+    if sB is not None:
+        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'], eps_f_per_side=eps_f_per_side,
+                                           eps_side_override=_eps_ov_B)
+        T_B_out_face = _real_outlet_slice(Tb, fB['dir'])
+        # χ_B at outlet face for ghost-B suppression
+        if chi_B is not None:
+            chi_B_out_face = _real_outlet_slice(chi_B, fB['dir'])
+        # T_out with and without χ_B for diagnostic comparison
+        T_B_out_no_chi = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'],
+                                               eps_f_per_side,
+                                               eps_side_override=_eps_ov_B)
+        T_B_out = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'], eps_f_per_side,
+                                        chi_face=chi_B_out_face,
+                                        eps_side_override=_eps_ov_B)
+        # m_dot variants for diagnostic
+        m_dot_B_phys_in = float(np.sum(_face_flux_weights(
+            sB, fB['dir'], face='real_inlet', eps_mode='physical')))
+        m_dot_B_phys_out = float(np.sum(_face_flux_weights(
+            sB, fB['dir'], face='real_outlet', eps_mode='physical',
+            chi_face=chi_B_out_face)))
+        if fluid_type_B == 'sco2':
+            # D2: mass-weighted mean outlet enthalpy ⟨h(T)⟩ (with χ_B ghost
+            # suppression), not h(⟨T⟩_out). Inlet uniform Dirichlet → exact.
+            h_B_out = _mass_weighted_h_out(
+                T_B_out_face, P_inB, sco2_props.sco2_enthalpy_field, sB, fB['dir'],
+                eps_f_per_side, chi_face=chi_B_out_face,
+                eps_side_override=_eps_ov_B)
+            Q_enthalpy_B = abs(m_dot_B_simple * (
+                sco2_props.sco2_enthalpy(float(T_inB), P_inB) - h_B_out))
+        else:
+            Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
+
+    # #5 guard (2026-06-28 audit): the 3D conservative LTNE kernel conserves the
+    # ε·ρcp·u·A energy mass-flux, which is inconsistent with true enthalpy ṁ·Δh
+    # for a STRONGLY VARYING-cp fluid (sCO2). The reverse-dir density-frame fix
+    # above removed the dominant ~2× ṁ_B under-read (75 %→41 % on the 703
+    # recuperator), but a residual enthalpy-vs-(cp·T) gap remains (the kernel
+    # transports cp·T, not ∫cp dT) → the cold-side duty still under-reads. Flag
+    # it so the 3D coupled-Q / cold-outlet are not trusted for sCO2 (full fix =
+    # enthalpy-form LTNE kernel; use the 2D double-live solve for the coupled
+    # duty). Air/water (near-constant cp) are unaffected. The imbalance is also
+    # surfaced as the `Q_AB_imbalance_rel` result field for downstream callers.
+    Q_AB_imbalance_rel = float('nan')
+    if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
+            and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
+        Q_AB_imbalance_rel = (abs(Q_enthalpy_A - Q_enthalpy_B)
+                              / max(Q_enthalpy_A, Q_enthalpy_B))
+        if Q_AB_imbalance_rel > 0.10:
+            import warnings as _w5
+            _w5.warn(
+                f"[sCO2 3D energy] A/B enthalpy duties differ by "
+                f"{Q_AB_imbalance_rel*100:.0f}% (Q_A={Q_enthalpy_A/1e6:.2f} MW, "
+                f"Q_B={Q_enthalpy_B/1e6:.2f} MW): the conservative LTNE kernel "
+                "transports ρcp·u·A·T, not true enthalpy, for varying-cp sCO2. "
+                "The 3D coupled Q / cold-outlet are NOT trustworthy — use the 2D "
+                "double-live solve for the coupled duty. dP + hot-side duty are "
+                "still reliable.", stacklevel=2)
+
+    # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
+    # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
+    # bound to within engineering tolerance (e.g. Shanghai Air-Air NORM:
+    # Q_A=323W, Q_B=374W, NTU_max=333W — both sides physical).
+    #
+    # **|Q_solid_B| = ∫h_vB(Ts−Tb)dV** is KEPT as a diagnostic but NO LONGER
+    # primary: the homogenised h_v applied uniformly over all cells spuriously
+    # counts stagnant wall-BL zones where no real flow carries heat, pushing
+    # |Q_sB| ~25% above the NTU upper bound. The LTNE Q_sA+Q_sB ≈ 0 internal
+    # check still holds (<1%) — it's the magnitude that over-estimates, not
+    # the conservation.
+    # Headline heat duty = AIR/A-side advective enthalpy ONLY. The B/water-side
+    # advective enthalpy (Q_enthalpy_B = m_B·cp·ΔT_B) drops the boundary-
+    # conduction flux, so it over/under-reads by ~8 % even when the scheme
+    # conserves. The old 0.5·(Q_A+Q_B) average therefore drifted non-physically
+    # (e.g. the displayed Q ROSE when coolant flow FELL — the B term polluting
+    # it). Q_enthalpy_A matches the experiment-validated duty: validation/
+    # validate_shanghai_3d_real computes the same m_air·cp·ΔT_A (RMSRE ~3 %).
+    # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
+    Q = Q_enthalpy_A
+
+    dP = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
+
+    uc_real, vc_real, wc_real = _assemble_real_velocity()
+    vmag = np.sqrt(uc_real ** 2 + vc_real ** 2 + wc_real ** 2)
+
+    # P field → real coords via solver perm. DISPLAY ABSOLUTE pressure anchored
+    # so the INLET reads exactly the user-input P_in — identical convention to
+    # the 2D-native path (run_calculation.py:821, P_fA = P_inA + (P_g - P_ref
+    # _inlet)). SIMPLE's self.P is the gauge field (outlet pinned ~0, inlet ≈
+    # dP); abs = (P_in - dP) + gauge ⇒ inlet=P_in, outlet=P_in-dP. Pure baseline
+    # shift, physics-free — dP itself is reported via extract_dP_face_extrap
+    # (line above), and this anchor does NOT depend on the P_ref_abs
+    # reconstruction (which for
+    # water is a fixed 1D seed, not loop-converged → would over-shoot the inlet).
+    P_disp_A = (P_inA - dP) + sA.P
+    P_real = np.ascontiguousarray(P_disp_A.transpose(solver_to_real_perm))
+    P_kPa = P_real / 1000.0
+    L_mm = (L_mm_field.copy() if L_mm_field is not None
+            else np.full((Nx, Ny, Nz), Lcell, dtype=np.float64))
+
+    # Fluid B fields (if sB solved): real-coord P + velocity magnitude
+    if sB is not None:
+        axis_map_B = sB_info['axis_map']
+        perm_B = axis_map_B['solver_to_real_perm']
+        dP_B = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
+        # ABSOLUTE pressure anchored so inlet == input P_inB (same convention as
+        # fluid A and the 2D path). Works for both water (incompressible) and
+        # air B without depending on the P_ref_abs reconstruction.
+        P_disp_B = (P_inB - dP_B) + sB.P
+        P_real_B = np.ascontiguousarray(P_disp_B.transpose(perm_B))
+        # approach-(a) reverse convention: sB.P is in SOLVER coords (inlet at
+        # solver y=0, high P). For a reverse-dir fluid the real inlet is at the
+        # OPPOSITE stream end, so the pressure must be spatially flipped along
+        # the real stream axis — exactly like _solver_velocity_to_real and the
+        # LTNE temperature solve. Pressure is a scalar, so NO sign change
+        # (unlike the stream velocity component). Without this flip the
+        # displayed P_B put the inlet's high pressure at the real OUTLET end.
+        # The constant baseline shift commutes with transpose+flip.
+        # Display-only field (feeds the vis panels; no physics consumes it).
+        if axis_map_B.get('is_reverse'):
+            P_real_B = np.ascontiguousarray(
+                np.flip(P_real_B, axis=axis_map_B['stream_real_axis']))
+        vmag_B = np.sqrt(ucB ** 2 + vcB ** 2 + wcB ** 2)
+    else:
+        P_real_B = None
+        vmag_B = None
+        dP_B = 0.0
+
+    return (L_mm,
+     P_kPa,
+     P_real,
+     P_real_B,
+     Q,
+     Q_AB_imbalance_rel,
+     Q_enthalpy_A,
+     Q_enthalpy_B,
+     Q_solid_B,
+     T_A_out,
+     T_B_out,
+     T_B_out_no_chi,
+     cell_vol,
+     chi_B_out_face,
+     dP,
+     dP_B,
+     m_dot_A_simple,
+     m_dot_B_phys_in,
+     m_dot_B_phys_out,
+     m_dot_B_simple,
+     uc_real,
+     vc_real,
+     vmag,
+     vmag_B,
+     wc_real)
+
+
 def _run_3d_stack(cfg):
     """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
 
@@ -1990,208 +2239,31 @@ def _run_3d_stack(cfg):
     _outer_last_iter, _outer_converged = run_outer_coupling(
         max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
 
-    # ── Extract metrics + fields ──
-    # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
-    # 2D UI path (run_calculation.py:_store_results.Q_total) and the
-    # optimizer (both 2D and 3D). This makes Q comparable across the
-    # three paths without a unit-mismatch penalty. (#5 / v1.0.10 #6)
-    #
-    # Q_enthalpy_A (m_dot × cp × ΔT) is kept as a secondary reading;
-    # it uses inlet-plane ρ from the solver's rho_field (not a stale
-    # cold-seed scalar) and respects the solver's inlet mask via
-    # v_inlet_field. (v1.0.10 #2)
-    # NOTE: despite the legacy comment above, the returned Q is assigned from
-    # the enthalpy balance below; Q_solid_B remains diagnostic only.
-    cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
-    Q_solid_B = float(np.sum(h_vB_field * (Ts - Tb) * cell_vol))
-
-    out_idx = 0 if is_reverse else -1
-    T_A_out = float(np.mean(np.take(Ta, out_idx, axis=stream_real_axis)))
-    T_B_out = None
-    if sB is not None:
-        axis_B = sB_info['axis_map']['stream_real_axis']
-        out_idx_B = 0 if sB_info['axis_map']['is_reverse'] else -1
-        T_B_out = float(np.mean(np.take(Tb, out_idx_B, axis=axis_B)))
-    # Mass flow from the solver's actual inlet face: ρ·v_in × open-area.
-    # sA.v has shape (solver Nx, solver Ny+1, solver Nz); inlet face is
-    # j=0. Use rho_field[:, 0, :] × v[:, 0, :] × (dx × dz) with open-area
-    # fraction `inlet_frac` so partial-inlet geometries are honoured.
-    # Q_enthalpy via **SIMPLE-native** mass flow (2026-04-25 FV hardening).
-    # Earlier used cell-centered ucA/vcA/wcA reconstructed via
-    # _solver_velocity_to_real, but that cell-averaged interpolation lost
-    # ~40% mass flow on wall-refined grids (the averaging leaked no-slip
-    # wall cells into the mean). Now m_dot comes directly from the SIMPLE
-    # staggered v-face + ρ-face which the pressure-correction enforces to
-    # be divergence-free. T_out is a pipe-masked mean on the real outlet
-    # face using Ta/Tb cell-centered values.
-    #
-    # _face_flux_weights / _mass_weighted_T_out / _real_outlet_slice /
-    # _simple_mass_flow are now module-level (hoisted 2026-05-15) so they can
-    # be unit-tested for stagnant-cell suppression. `eps_f_per_side` is
-    # passed explicitly instead of captured by closure.
-
-    # LTNE uses ε_A = ε_B = ε/2 per side (symmetric 2-fluid split). Metric
-    # must mirror that so m_dot ≡ ∫ ε_A·ρ·u·dA matches the solver's
-    # internal advective mass flow.
-    eps_f_per_side = 0.5 * float(eps)   # ε_A (symmetric)
-    # Asymmetric per-side single-channel void fractions (offset-isosurface δ).
-    # None at δ=0 → symmetric 0.5·ε path (bit-identical). δ≠0 → per-side ε_side
-    # so m_dot/Q weight by the actual channel void fraction, not 0.5·ε
-    # (else ṁ_A/ṁ_B mis-scale by split/0.5 on the asymmetric geometry).
-    _eps_ov_A, _eps_ov_B = _per_side_eps_override(
-        cfg, tpms_type, Lcell, t_wall, eps)
-
-    # Fluid A — unified face-flux weights for T_out and m_dot consistency
-    m_dot_A_simple = _simple_mass_flow(sA, fA['dir'], eps_f_per_side=eps_f_per_side,
-                                       eps_side_override=_eps_ov_A)
-    T_A_out_face = _real_outlet_slice(Ta, fA['dir'])
-    T_A_out = _mass_weighted_T_out(T_A_out_face, sA, fA['dir'], eps_f_per_side,
-                                   eps_side_override=_eps_ov_A)
-    # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
-    #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
-    # sCO2: true enthalpy duty ṁ·Δh (cp varies strongly with T,P → cp·ΔT is
-    # wrong); air/water keep cp·ΔT (constant cp ⇒ value-identical, golden-safe).
-    if fluid_type_A == 'sco2':
-        # D2 (audit 2026-06-28): mass-weighted mean OUTLET enthalpy ⟨h(T)⟩,
-        # NOT h(⟨T⟩_out) — h(T) is strongly nonlinear across the pseudocritical
-        # spike (Jensen). Inlet is a uniform Dirichlet T so h(T_inA) is exact.
-        h_A_out = _mass_weighted_h_out(
-            T_A_out_face, P_inA, sco2_props.sco2_enthalpy_field, sA, fA['dir'],
-            eps_f_per_side, eps_side_override=_eps_ov_A)
-        Q_enthalpy_A = abs(m_dot_A_simple * (
-            sco2_props.sco2_enthalpy(float(T_inA), P_inA) - h_A_out))
-    else:
-        Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
-
-    # Fluid B
-    Q_enthalpy_B = 0.0
-    chi_B_out_face = None
-    if sB is not None:
-        m_dot_B_simple = _simple_mass_flow(sB, fB['dir'], eps_f_per_side=eps_f_per_side,
-                                           eps_side_override=_eps_ov_B)
-        T_B_out_face = _real_outlet_slice(Tb, fB['dir'])
-        # χ_B at outlet face for ghost-B suppression
-        if chi_B is not None:
-            chi_B_out_face = _real_outlet_slice(chi_B, fB['dir'])
-        # T_out with and without χ_B for diagnostic comparison
-        T_B_out_no_chi = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'],
-                                               eps_f_per_side,
-                                               eps_side_override=_eps_ov_B)
-        T_B_out = _mass_weighted_T_out(T_B_out_face, sB, fB['dir'], eps_f_per_side,
-                                        chi_face=chi_B_out_face,
-                                        eps_side_override=_eps_ov_B)
-        # m_dot variants for diagnostic
-        m_dot_B_phys_in = float(np.sum(_face_flux_weights(
-            sB, fB['dir'], face='real_inlet', eps_mode='physical')))
-        m_dot_B_phys_out = float(np.sum(_face_flux_weights(
-            sB, fB['dir'], face='real_outlet', eps_mode='physical',
-            chi_face=chi_B_out_face)))
-        if fluid_type_B == 'sco2':
-            # D2: mass-weighted mean outlet enthalpy ⟨h(T)⟩ (with χ_B ghost
-            # suppression), not h(⟨T⟩_out). Inlet uniform Dirichlet → exact.
-            h_B_out = _mass_weighted_h_out(
-                T_B_out_face, P_inB, sco2_props.sco2_enthalpy_field, sB, fB['dir'],
-                eps_f_per_side, chi_face=chi_B_out_face,
-                eps_side_override=_eps_ov_B)
-            Q_enthalpy_B = abs(m_dot_B_simple * (
-                sco2_props.sco2_enthalpy(float(T_inB), P_inB) - h_B_out))
-        else:
-            Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
-
-    # #5 guard (2026-06-28 audit): the 3D conservative LTNE kernel conserves the
-    # ε·ρcp·u·A energy mass-flux, which is inconsistent with true enthalpy ṁ·Δh
-    # for a STRONGLY VARYING-cp fluid (sCO2). The reverse-dir density-frame fix
-    # above removed the dominant ~2× ṁ_B under-read (75 %→41 % on the 703
-    # recuperator), but a residual enthalpy-vs-(cp·T) gap remains (the kernel
-    # transports cp·T, not ∫cp dT) → the cold-side duty still under-reads. Flag
-    # it so the 3D coupled-Q / cold-outlet are not trusted for sCO2 (full fix =
-    # enthalpy-form LTNE kernel; use the 2D double-live solve for the coupled
-    # duty). Air/water (near-constant cp) are unaffected. The imbalance is also
-    # surfaced as the `Q_AB_imbalance_rel` result field for downstream callers.
-    Q_AB_imbalance_rel = float('nan')
-    if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
-            and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
-        Q_AB_imbalance_rel = (abs(Q_enthalpy_A - Q_enthalpy_B)
-                              / max(Q_enthalpy_A, Q_enthalpy_B))
-        if Q_AB_imbalance_rel > 0.10:
-            import warnings as _w5
-            _w5.warn(
-                f"[sCO2 3D energy] A/B enthalpy duties differ by "
-                f"{Q_AB_imbalance_rel*100:.0f}% (Q_A={Q_enthalpy_A/1e6:.2f} MW, "
-                f"Q_B={Q_enthalpy_B/1e6:.2f} MW): the conservative LTNE kernel "
-                "transports ρcp·u·A·T, not true enthalpy, for varying-cp sCO2. "
-                "The 3D coupled Q / cold-outlet are NOT trustworthy — use the 2D "
-                "double-live solve for the coupled duty. dP + hot-side duty are "
-                "still reliable.", stacklevel=2)
-
-    # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
-    # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
-    # bound to within engineering tolerance (e.g. Shanghai Air-Air NORM:
-    # Q_A=323W, Q_B=374W, NTU_max=333W — both sides physical).
-    #
-    # **|Q_solid_B| = ∫h_vB(Ts−Tb)dV** is KEPT as a diagnostic but NO LONGER
-    # primary: the homogenised h_v applied uniformly over all cells spuriously
-    # counts stagnant wall-BL zones where no real flow carries heat, pushing
-    # |Q_sB| ~25% above the NTU upper bound. The LTNE Q_sA+Q_sB ≈ 0 internal
-    # check still holds (<1%) — it's the magnitude that over-estimates, not
-    # the conservation.
-    # Headline heat duty = AIR/A-side advective enthalpy ONLY. The B/water-side
-    # advective enthalpy (Q_enthalpy_B = m_B·cp·ΔT_B) drops the boundary-
-    # conduction flux, so it over/under-reads by ~8 % even when the scheme
-    # conserves. The old 0.5·(Q_A+Q_B) average therefore drifted non-physically
-    # (e.g. the displayed Q ROSE when coolant flow FELL — the B term polluting
-    # it). Q_enthalpy_A matches the experiment-validated duty: validation/
-    # validate_shanghai_3d_real computes the same m_air·cp·ΔT_A (RMSRE ~3 %).
-    # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
-    Q = Q_enthalpy_A
-
-    dP = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
-
-    uc_real, vc_real, wc_real = _assemble_real_velocity()
-    vmag = np.sqrt(uc_real ** 2 + vc_real ** 2 + wc_real ** 2)
-
-    # P field → real coords via solver perm. DISPLAY ABSOLUTE pressure anchored
-    # so the INLET reads exactly the user-input P_in — identical convention to
-    # the 2D-native path (run_calculation.py:821, P_fA = P_inA + (P_g - P_ref
-    # _inlet)). SIMPLE's self.P is the gauge field (outlet pinned ~0, inlet ≈
-    # dP); abs = (P_in - dP) + gauge ⇒ inlet=P_in, outlet=P_in-dP. Pure baseline
-    # shift, physics-free — dP itself is reported via extract_dP_face_extrap
-    # (line above), and this anchor does NOT depend on the P_ref_abs
-    # reconstruction (which for
-    # water is a fixed 1D seed, not loop-converged → would over-shoot the inlet).
-    P_disp_A = (P_inA - dP) + sA.P
-    P_real = np.ascontiguousarray(P_disp_A.transpose(solver_to_real_perm))
-    P_kPa = P_real / 1000.0
-    L_mm = (L_mm_field.copy() if L_mm_field is not None
-            else np.full((Nx, Ny, Nz), Lcell, dtype=np.float64))
-
-    # Fluid B fields (if sB solved): real-coord P + velocity magnitude
-    if sB is not None:
-        axis_map_B = sB_info['axis_map']
-        perm_B = axis_map_B['solver_to_real_perm']
-        dP_B = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
-        # ABSOLUTE pressure anchored so inlet == input P_inB (same convention as
-        # fluid A and the 2D path). Works for both water (incompressible) and
-        # air B without depending on the P_ref_abs reconstruction.
-        P_disp_B = (P_inB - dP_B) + sB.P
-        P_real_B = np.ascontiguousarray(P_disp_B.transpose(perm_B))
-        # approach-(a) reverse convention: sB.P is in SOLVER coords (inlet at
-        # solver y=0, high P). For a reverse-dir fluid the real inlet is at the
-        # OPPOSITE stream end, so the pressure must be spatially flipped along
-        # the real stream axis — exactly like _solver_velocity_to_real and the
-        # LTNE temperature solve. Pressure is a scalar, so NO sign change
-        # (unlike the stream velocity component). Without this flip the
-        # displayed P_B put the inlet's high pressure at the real OUTLET end.
-        # The constant baseline shift commutes with transpose+flip.
-        # Display-only field (feeds the vis panels; no physics consumes it).
-        if axis_map_B.get('is_reverse'):
-            P_real_B = np.ascontiguousarray(
-                np.flip(P_real_B, axis=axis_map_B['stream_real_axis']))
-        vmag_B = np.sqrt(ucB ** 2 + vcB ** 2 + wcB ** 2)
-    else:
-        P_real_B = None
-        vmag_B = None
-        dP_B = 0.0
+    (L_mm,
+     P_kPa,
+     P_real,
+     P_real_B,
+     Q,
+     Q_AB_imbalance_rel,
+     Q_enthalpy_A,
+     Q_enthalpy_B,
+     Q_solid_B,
+     T_A_out,
+     T_B_out,
+     T_B_out_no_chi,
+     cell_vol,
+     chi_B_out_face,
+     dP,
+     dP_B,
+     m_dot_A_simple,
+     m_dot_B_phys_in,
+     m_dot_B_phys_out,
+     m_dot_B_simple,
+     uc_real,
+     vc_real,
+     vmag,
+     vmag_B,
+     wc_real) = _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_inB, Ta, Tb, Ts, _assemble_real_velocity, chi_B, cp_A, cp_B, dx, dy, dz, eps, fA, fB, fluid_type_A, fluid_type_B, h_vB_field, is_reverse, sA, sB, sB_info, solver_to_real_perm, stream_real_axis, t_wall, tpms_type, ucB, vcB, wcB, cfg)
 
     # Conservation diagnostics (energy + mass balance + interior-corrected Q) —
     # extracted to _conservation_diagnostics_3d (F1). Always computed so the
