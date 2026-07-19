@@ -26,32 +26,38 @@
 
 ## Phase 1 — 架构（Alex 指定的最高优先级）
 
-- [ ] P1.1 架构审计：产出 `docs/ARCHITECTURE-AUDIT-2026-07.md`——
-      实测 import 依赖图（写脚本生成，别靠目测）；分层现状（数值核心已 Qt-free 是重要资产，写清楚
-      controllers/compute_pipeline.py 这个接缝）；**双 evaluator 分歧清单**（core/evaluators.py 578 行
-      vs optimization/evaluator.py 799 行，逐能力 diff）；run_stack_3d.py 2380 行职责分解图；
-      sys.path munging 清单（main.py:9-14、df_surrogate/load_sco2_cfd.py 等）；模块级可变全局态清单
-      （_geom 缓存 bug 的同族隐患）。**产出 P1 子项细化，回填本路线图**
+- [x] P1.1 架构审计（iter 6：工具+文档，见 `docs/ARCHITECTURE-AUDIT-2026-07.md`）：实测 import 图
+      （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、
+      run_stack_3d 五缝、sys.path 5 模式约百处、可变态 a/b/c/d 分级（两个 W7b 同族潜伏隐患）。
+      P1.3-P1.9 已按审计重写
 - [ ] P1.2 正确性架构债（HANDOFF §1）：`validate_shanghai_3d_real.py` `--runner pipeline` 丢
       `max_outer`（:461-531，SolverConfig 缺 max_outer_ltne 字段）；`pressure_clip_hits` /
       `pressure_state_valid` 是硬编码字面量（:529-530）→ 压力有效性过滤静默 no-op。
       修透传链 `stages_3d._finalize_3d_cfg` → ComputeResult。
       ⚠ 可能改 validate 脚本输出口径 → 按 PROTOCOL §5 走
-- [ ] P1.3 优化器 envelope 门（HANDOFF §2）：`optimization/evaluator.py` 接入
-      `envelope.check_compressible_envelope` / `gate_solution`；choked 点的处理策略
-      （罚值 vs 排除 vs 约束）是行为设计 → 走 openspec change
-- [ ] P1.4 evaluator 契约统一（HANDOFF §3）：第一步加**契约测试**把 core/evaluators.py 与
-      optimization/evaluator.py 的现有分歧显式锁定（暴露差异而非掩盖）；第二步收敛单一权威 + 薄适配。
-      大项（预计 2-3 轮），openspec change
-- [ ] P1.5 run_stack_3d.py（2380 行）分解：按既有 stages_3d 边界拆阶段模块，行为位同；
-      每拆一块过一次全门禁再拆下一块
-- [ ] P1.6 路径与引导统一：`df_surrogate/smooth_df.py:56` AIR_XLSX_DEFAULT（D:\ 死路径，
-      rebuild-only 资产未迁移）加显式守卫与说明；runs/tools|diagnostics|cfd_asym 里的
-      `D:\` 与 `C:\Users\ALEX` 死路径参数化（runs/archive/ 只标注 frozen 不改）；
-      sys.path munging 收敛
-- [ ] P1.7 pyproject.toml 打包 + headless CLI entry points（把 compute_pipeline 接缝正式化为
-      对外入口；requirements 三档随之收编）
-- [ ] （P1.1 审计后回填）
+- [ ] P1.3 评估器 envelope 权威统一 + post-solve 门（审计 §2；HANDOFF §2a 预解部分已过时）：
+      3D 评估器改 import `envelope.predict_outlet_p_sq`（弃 :224,230 手抄代数与本地 R_AIR）；
+      两评估器补 post-solve `gate_solution`（失败→invalid/罚值的语义设计走 openspec）；
+      补传 `rho_inlet_ref`（对齐 stages_2d:546,561）；评估器入口 reset 警告注册表
+      （对齐 compute_pipeline:120-123）。"Pareto 选点须经 Pipeline 复核后引用数字"写入文档契约
+- [ ] P1.4 evaluator 契约测试（审计 §2）：显式锁定**有意差异**（legacy 收敛模式、B 侧冷解、
+      目标整形——BO 吞吐预算）与**事故差异**归零验证（P1.3 余项）；明确不做"全路由进 Pipeline"。
+      openspec change
+- [ ] P1.5 run_stack_3d 五缝拆分（审计 §3）：顺序 A(setup)→B(h_v)→D(提取)→E(裁决)→C(外循环闭包)；
+      每步 golden 位同 + 全套件；stages_3d 的 re-export 面 = raw-cfg 直调方的兼容层，必须保持；
+      C 缝需显式耦合态对象保 nonlocal 语义。预计 3-5 轮
+- [ ] P1.6 缓存与 env 卫生（审计 §5b/§5d）：`compute_geometry` 返回浅拷贝、`_phi_grid` 冻结
+      writeable=False（两个 W7b 同族潜伏隐患，照 _FIELD_CACHE 标杆）；`TPMSHX_CHI_S` 改 per-call
+      （import 冻结影响 K_ss）；`_LAPLACIAN_AMG_CACHE` 只读性查证 + reset 钩；各配 W7 风格测试。
+      全程 golden 位同
+- [ ] P1.7 死路径清理（审计 §4 注）：smooth_df.py AIR_XLSX_DEFAULT 显式守卫；
+      runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化（archive/ 只标注 frozen）。
+      sys.path 引导**不零星清理**（回归面大收益负），等 P1.8 结构性根治
+- [ ] P1.8 pyproject.toml 打包 + editable install + headless CLI entry points（审计 §4 根治：
+      装包后分波删除 5 模式约百处引导；compute_pipeline 接缝正式化；requirements 三档收编）
+- [ ] P1.9 分层违规裁决（审计 §1）：solvers→df_surrogate 倒置或正式背书、
+      domain/validator→df_surrogate、run_controller→runs、main↔ui 环；
+      收尾把 `audit_import_graph.py --fail-on-violations` 挂进 /check 或 CI
 
 ## Phase 2 — 代码质量
 

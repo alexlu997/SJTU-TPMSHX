@@ -1,10 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 5
-- next: P1.1（架构审计——Phase 1 开篇，预留整轮，产出 docs/ARCHITECTURE-AUDIT-2026-07.md 并回填 P1 子项）
+- iteration: 6
+- next: P1.2（HANDOFF §1 正确性债——max_outer 透传 + 压力有效性字面量；可能动 validate 口径，PROTOCOL §5 伺候）
 - in_progress: （空）
-- armed_at: 2026-07-19（job 224f9aa6；>5 天须按 PROTOCOL §8 重建）
-- cron_spec: `4,29,54 * * * *`
+- armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
+- cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
 
 ## cron 提示词（重建定时器时逐字使用）
