@@ -2,6 +2,16 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 9 · 2026-07-20 · P1.3 切片 B ✅（`2ea1d37`）
+
+- 3D 评估器 post-solve envelope 门上线：与生产管线同判据（压力地板 + 逐格 Mach），
+  失败走既有 NaN+invalid → BO 罚值通道，零新语义
+- **范围修正**：2D 管线自身无 post-solve 门（ledger O1）——2D 侧要不要引入是物理政策，
+  登记 **DECISIONS D2**（循环建议 c 维持现状），不替 Alex 决定
+- 假求解器单元测试 ×3 + wiring（8/8）；期间修了一处测试断言字符串错误（supersonic ≠ Mach）
+- 门禁：suite 1244+10 绿 / 0 败、golden 位同、frozen-values 未动（健康工况零影响实证）
+- 下一步：P1.3 切片 C（rho_inlet_ref）——第一个预期动数字的切片，§5 重基准流程伺候
+
 ## iter 8 · 2026-07-19/20 · P1.3 切片 A ✅（`7cbeee1`）
 
 - 三处手抄 1D D-F 种子代数收归 `envelope.predict_outlet_p_sq`（位同：同式同序同常数 +

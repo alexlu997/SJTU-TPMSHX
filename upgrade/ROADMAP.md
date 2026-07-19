@@ -34,9 +34,9 @@
       （max_outer_ltne 自 `8ea7ce5` 活、压力字面量 2026-07-11 改真实转发，_CSV_STATUS.md:315
       记载）且已被 `test_validate_pipeline_runner_wiring.py` 四断言锁死；本轮实跑 19 个
       锁定测试全绿（6.13s）作为证据。审计报告 §0/§6 勘误同步
-- [ ] P1.3 评估器 envelope 权威统一 + post-solve 门（**切片 A ✓ `7cbeee1` iter 8**——种子权威
-      + 战役重置 + openspec 三件套；余切片 B post-solve 门、切片 C rho_inlet_ref，按
-      openspec/changes/evaluator-envelope-authority/design.md D3/D4 执行）：
+- [ ] P1.3 评估器 envelope 权威统一 + post-solve 门（**A ✓ `7cbeee1` iter 8；B ✓ `2ea1d37`
+      iter 9**——3D 门已上线，2D 政策转 D2 待决；余**切片 C** rho_inlet_ref，按 openspec D4 执行，
+      预期动 frozen-values → PROTOCOL §5）：
       3D 评估器改 import `envelope.predict_outlet_p_sq`（弃 :224,230 手抄代数与本地 R_AIR）；
       两评估器补 post-solve `gate_solution`（失败→invalid/罚值的语义设计走 openspec）；
       补传 `rho_inlet_ref`（对齐 stages_2d:546,561）；评估器入口 reset 警告注册表
