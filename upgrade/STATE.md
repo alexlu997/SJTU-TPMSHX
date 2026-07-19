@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 11
-- next: P1.5（run_stack_3d 五缝拆分，顺序 A→B→D→E→C，每步 golden 位同；预计 3-5 轮）
+- iteration: 12
+- next: P1.5 B 缝（h_v 闭包群 :862-1040 原位置——手术工具改 A_LO/A_HI 复用；闭包提升为带 ctx 的模块函数）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
