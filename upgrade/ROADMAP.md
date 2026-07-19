@@ -55,6 +55,8 @@
 
 ## Phase 2 — 代码质量
 
+（本 Phase 起按 PROTOCOL §10 模型分层：机械项派 Sonnet 5/Opus 子代理执行 + Fable 5 复核提交；判断型 Fable 5 直做）
+
 - [ ] P2.1 ruff format + lint 引入（配置从宽起步；机械 diff 独立 commit，绝不与语义改动混提交）
 - [ ] P2.2 核心公共面类型注解（solvers/pipelines 对外 API）+ mypy 宽松档
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、
