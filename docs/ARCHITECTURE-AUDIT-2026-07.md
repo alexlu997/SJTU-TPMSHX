@@ -11,8 +11,10 @@
 是承重墙、logutil 纯汇点）、run_stack_3d 与 stages_3d/flux_3d 之间**没有逻辑重复**（2026-07-03
 拆分已收尾成 re-export 树）、W7 缓存修复到位且有测试锁定。真实的债，按险级排序：
 
-1. **正确性级**：validate 的 pipeline runner 丢 `max_outer` + 压力有效性字面量（HANDOFF §1，仍在）；
-   两个 BO 评估器都缺 post-solve `gate_solution`（Mach/正压门）。
+1. **正确性级**：两个 BO 评估器都缺 post-solve `gate_solution`（Mach/正压门）。
+   *（勘误 iter 7：本行原引 HANDOFF §1 的 max_outer/压力字面量为"仍在"——实测已全修
+   （SolverConfig.max_outer_ltne 自 8ea7ce5 起活、压力字面量 2026-07-11 改真实转发）且已被
+   `test_validate_pipeline_runner_wiring.py` 四断言锁死。教训：审计条目须现场核实，不得转述文档。）*
 2. **潜伏炸弹级**：`compute_geometry` 返回共享可变 dict、`_phi_grid` 返回未冻结共享 ndarray
    （W7b 同族，当前调用方只读所以未爆）；`TPMSHX_CHI_S` import 时冻结（影响 K_ss 的 reload 隐患）。
 3. **结构级**：`_run_3d_stack` 单函数 1955 行；3 条实测分层违规 + main↔ui 组合环；
@@ -120,6 +122,7 @@ Pipeline.run 会 reset 其中两类，**评估器不 reset**（BO 下警告闩�
 
 ## 6. P1 子项回填（已写回 ROADMAP，此处为依据）
 
-P1.2 不变（HANDOFF §1 仍有效）。P1.3/P1.4 按 §2 重写（权威统一 + 契约测试，放弃"全路由"）。
+P1.2 已验证为"上游已修+已锁定"收案（iter 7；HANDOFF §1 整节过时）。P1.3/P1.4 按 §2 重写
+（权威统一 + 契约测试，放弃"全路由"）。
 P1.5 按 §3 五缝定序。P1.6 新增缓存加固与 env 冻结修复（§5b/§5d）。P1.7 死路径清理维持。
 P1.8 打包（§4 的根治）。P1.9 新增分层违规裁决（§1），收尾把 `--fail-on-violations` 挂进 CI/check。

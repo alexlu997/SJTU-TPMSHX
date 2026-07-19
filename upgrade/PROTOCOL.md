@@ -14,6 +14,8 @@
 
 1. 读 `upgrade/STATE.md`：若 `in_progress` 非空 → 先按 §6 恢复
 2. 从 `upgrade/ROADMAP.md` 取**第一个**未勾选且未标 BLOCKED 的条目；把本轮目标写入 STATE.md `in_progress`
+   —— **开工先现场核实条目前提**（文档会过时、代码在前进，HANDOFF/审计/路线图皆可能滞后）：
+   前提已不成立 → 本轮转"验证 + 锁定 + 记账"，跑现有锁定测试留证据、勘误相关文档，绝不硬做
 3. 实现（时刻对照 §3 红线）
 4. 过 §4 验证门 → `git commit`（§7 风格）→ 勾选 ROADMAP 条目（附 commit 短哈希）→ PROGRESS.md 追加一段 → 清空 `in_progress`、`iteration` +1
 5. 条目太大做不完一轮 → 把**已验证**的切片提交为阶段性 commit，剩余拆成子条目写回 ROADMAP（拆分也是产出）

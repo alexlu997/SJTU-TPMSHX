@@ -30,11 +30,10 @@
       （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、
       run_stack_3d 五缝、sys.path 5 模式约百处、可变态 a/b/c/d 分级（两个 W7b 同族潜伏隐患）。
       P1.3-P1.9 已按审计重写
-- [ ] P1.2 正确性架构债（HANDOFF §1）：`validate_shanghai_3d_real.py` `--runner pipeline` 丢
-      `max_outer`（:461-531，SolverConfig 缺 max_outer_ltne 字段）；`pressure_clip_hits` /
-      `pressure_state_valid` 是硬编码字面量（:529-530）→ 压力有效性过滤静默 no-op。
-      修透传链 `stages_3d._finalize_3d_cfg` → ComputeResult。
-      ⚠ 可能改 validate 脚本输出口径 → 按 PROTOCOL §5 走
+- [x] P1.2 正确性架构债（iter 7 验证收案，无码可写）：HANDOFF §1 两缺陷**均已在上游修复**
+      （max_outer_ltne 自 `8ea7ce5` 活、压力字面量 2026-07-11 改真实转发，_CSV_STATUS.md:315
+      记载）且已被 `test_validate_pipeline_runner_wiring.py` 四断言锁死；本轮实跑 19 个
+      锁定测试全绿（6.13s）作为证据。审计报告 §0/§6 勘误同步
 - [ ] P1.3 评估器 envelope 权威统一 + post-solve 门（审计 §2；HANDOFF §2a 预解部分已过时）：
       3D 评估器改 import `envelope.predict_outlet_p_sq`（弃 :224,230 手抄代数与本地 R_AIR）；
       两评估器补 post-solve `gate_solution`（失败→invalid/罚值的语义设计走 openspec）；
@@ -84,7 +83,9 @@
 - [ ] P4.1 atlas 漂移收编：DRIFT.md 累计条目写回受影响卷；PROJECT_MANUAL §6 对齐新结构
 - [ ] P4.2 README / 手册数字口径复核（1.71/1.73 类问题的当前状态确认）
 - [ ] P4.3 CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）
-- [ ] P4.4 HANDOFF-windows-server.md 刷新（§1-3 修复后如实改写）
+- [ ] P4.4 HANDOFF-windows-server.md 刷新——已确认过时处：§1 整节（max_outer + 压力字面量，
+      已修已锁，iter 7 证据）、§2a 预解 choke（aa3f477 已加 raise→罚值）、§3a 热重播种地板
+      （aa3f477 已改严格 NaN）；其余节随 P1 推进逐条核实后改写
 
 ## 收尾（触发时机：Phase 4 完成，或 Alex 喊停）
 
