@@ -56,8 +56,11 @@
 - [x] P1.7 死路径清理（`dd598d9`，iter 18）：smooth_df.py AIR_XLSX_DEFAULT 显式守卫；
       runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化（archive/ 只标注 frozen）。
       sys.path 引导**不零星清理**（回归面大收益负），等 P1.8 结构性根治
-- [ ] P1.8 pyproject.toml 打包 + editable install + headless CLI entry points（审计 §4 根治：
-      装包后分波删除 5 模式约百处引导；compute_pipeline 接缝正式化；requirements 三档收编）
+- [x] P1.8 打包地基（`827bee9`，iter 19）：pyproject + tpmshx-run CLI + controllers 惰性导出
+      （接缝零 Qt 实证；工作 venv 未动）
+- [ ] P1.8b 导入风格迁移波次（顶层 `from solvers...` → `sjtu_tpmshx.*` 全库扫 + 分波删
+      约百处 sys.path 引导 + 工作 venv 转 editable）：大扫荡，openspec change + §10 委托候选；
+      迁移前双风格混用危险已注记 pyproject
 - [ ] P1.9 分层违规裁决（审计 §1）：solvers→df_surrogate 倒置或正式背书、
       domain/validator→df_surrogate、run_controller→runs、main↔ui 环；
       收尾把 `audit_import_graph.py --fail-on-violations` 挂进 /check 或 CI

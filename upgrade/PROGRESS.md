@@ -2,6 +2,15 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 19 · 2026-07-20 · P1.8 打包地基 ✅（`827bee9`）
+
+- pyproject（extras 分组、包数据、诚实的 P1.8b 注记）+ tpmshx-run headless CLI
+  （--dry-run 实测 Pipeline2D）+ controllers PEP 562 惰性导出（接缝零 Qt 实证）
+- 一次性 venv editable 安装冒烟全过；**工作 venv 未动**（循环环境稳定优先）
+- P1.8b 立项（导入风格全库迁移 + 引导分波删除 + venv 转 editable——§10 委托候选）
+- 门禁：suite 1255+10 绿、golden 位同
+- 下一步：P1.9 分层违规裁决（P1 收官项）
+
 ## iter 18 · 2026-07-20 · P1.7 死路径清理 ✅（`dd598d9`）
 
 - smooth_df rebuild 死路径：显式 FileNotFoundError 守卫（溯源+修法）+ env 覆盖口

@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 18
-- next: P1.8（pyproject.toml 打包 + editable install + headless CLI entry points——审计 §4 结构性根治的地基；引导删除分波另行）
+- iteration: 19
+- next: P1.9（分层违规裁决：solvers→df_surrogate 倒置或背书、domain/validator→df_surrogate、run_controller→runs、main↔ui 环；收尾挂 --fail-on-violations 进 /check）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
