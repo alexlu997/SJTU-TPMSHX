@@ -192,7 +192,9 @@ def test_3d_initial_dual_fluid_simple_obeys_solver_config():
     """
     import inspect
     from pipelines import run_stack_3d as _r3
-    src = inspect.getsource(_r3._run_3d_stack)
+    # Seam-A extraction (P1.5, 2026-07-20): the initial dual-fluid solve now
+    # lives in _build_3d_problem (problem setup/build), not _run_3d_stack.
+    src = inspect.getsource(_r3._build_3d_problem)
     assert '_run_two_simple_parallel(' in src
     # Take the call's argument region up to the terminating `cancel_check=`
     # kwarg (the inner _simple_max_iter(...) call has its own parens, so a
