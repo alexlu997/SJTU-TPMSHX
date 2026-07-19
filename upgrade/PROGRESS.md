@@ -2,6 +2,16 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 8 · 2026-07-19/20 · P1.3 切片 A ✅（`7cbeee1`）
+
+- 三处手抄 1D D-F 种子代数收归 `envelope.predict_outlet_p_sq`（位同：同式同序同常数 +
+  frozen-values rel=1e-12 未动实证）；R_AIR 改权威别名
+- BO 战役入口重置 extrap/choke 警告注册表（每战役粒度，设计理由记 openspec D2）
+- openspec 变更 evaluator-envelope-authority 落档（切片 B/C 设计已定：post-solve 门复用
+  罚值通道不 raise；rho_inlet_ref 预期动数字走 §5）
+- 门禁：suite 1240+10 绿 / 0 败（+4 新守卫）、golden 位同
+- 下一步：P1.3 切片 B（post-solve 门）
+
 ## iter 7 · 2026-07-19 · P1.2 验证收案 ✅（docs-only）
 
 - **现场核实推翻条目前提**：HANDOFF §1 的两个缺陷（max_outer 静默丢弃、压力有效性字面量）

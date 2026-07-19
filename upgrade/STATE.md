@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 7
-- next: P1.3（评估器 envelope 权威统一 + post-solve 门；openspec change）
+- iteration: 8
+- next: P1.3 切片 B（post-solve 门→既有罚值通道，设计见 openspec D3）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
