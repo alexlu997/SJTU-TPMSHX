@@ -4,10 +4,16 @@ Phase 0 完整流程报告：读 asym_geom_scan CSV → 自包含 HTML（手绘 
 """
 import csv
 import html as _html
+import os
 from pathlib import Path
 
 CSV = Path(__file__).resolve().parents[2] / "runs" / "_out" / "asym_geom_scan_2026-06-05.csv"
-OUT_HTML = Path(r"C:\Users\ALEX\Desktop") / "TPMS-非对称孔隙率-Phase0-扫描图.html"
+# P1.7: was a dead C:\Users\ALEX\Desktop path. Default to gitignored
+# runs/_out; TPMSHX_TOOL_OUT_DIR overrides.
+_OUT_DIR = Path(os.environ.get('TPMSHX_TOOL_OUT_DIR',
+                               str(Path(__file__).resolve().parents[1] / "_out")))
+_OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_HTML = _OUT_DIR / "TPMS-非对称孔隙率-Phase0-扫描图.html"
 
 A_COL, B_COL = "#2563eb", "#94a3b8"                 # 流体 A 得益 / B 挤压
 TP_COL = {"Diamond": "#2563eb", "Gyroid": "#0ea5e9"}  # 两族（双蓝）

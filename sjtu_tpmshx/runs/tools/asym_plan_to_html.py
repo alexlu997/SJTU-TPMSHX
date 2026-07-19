@@ -10,15 +10,25 @@ Output: C:/Users/ALEX/Desktop/asym-porosity-phase1-CFD-plan-CN.html
 Usage:  python -u runs/asym_plan_to_html.py
 """
 import base64
+import os
 import re
 from pathlib import Path
 
 import markdown
 
-MD = Path(r"D:\Postgraduate\vault\reports\engineering\asym-porosity-phase1\2026-06-05-asym-porosity-phase1-CFD-plan-CN.md")
-TPL = Path(r"D:\Postgraduate\vault\templates\academic-report-template-CN.html")
+# P1.7: inputs live in the research vault (a plain-file tree OUTSIDE this
+# repo). The old defaults pointed at the dead D:\Postgraduate layout; the
+# vault now sits at E:\LWH\vault on this box — TPMSHX_VAULT_DIR overrides.
+_VAULT = Path(os.environ.get('TPMSHX_VAULT_DIR', r"E:\LWH\vault"))
+MD = _VAULT / "reports" / "engineering" / "asym-porosity-phase1" / "2026-06-05-asym-porosity-phase1-CFD-plan-CN.md"
+TPL = _VAULT / "templates" / "academic-report-template-CN.html"
 ASSETS = TPL.parent / "assets"
-OUT = Path(r"C:\Users\ALEX\Desktop\asym-porosity-phase1-CFD-plan-CN.html")
+# Output: was a dead C:\Users\ALEX\Desktop path. Default to gitignored
+# runs/_out; TPMSHX_TOOL_OUT_DIR overrides.
+_OUT_DIR = Path(os.environ.get('TPMSHX_TOOL_OUT_DIR',
+                               str(Path(__file__).resolve().parents[1] / "_out")))
+_OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT = _OUT_DIR / "asym-porosity-phase1-CFD-plan-CN.html"
 
 
 def _b64(p: Path) -> str:

@@ -33,6 +33,7 @@ Rebuild the prebuilt table:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -52,8 +53,13 @@ PREBUILT_CSV = _THIS.parent / "_prebuilt" / "smooth_df_coeffs.csv"
 WATER_XLSX = _PROJECT_ROOT.parent / "data" / "raw_data" / "water-cfd-raw.xlsx"
 # Relocated+renamed ~2026-07 (was server-pyfluent\Data_All_1,0.xlsx); shape
 # verified 2026-07-07: All_Cases_Combined, 840 data rows x 106 cols.
-AIR_XLSX_DEFAULT = Path(
-    r"D:\Postgraduate\server-pyfluent\Air\Cfd-air-raw-old-new.xlsx")
+# REBUILD-ONLY asset, never migrated off the old dev box (it is NOT in the
+# SJTU-TPMSHX-data repo): normal inference reads PREBUILT_CSV and never
+# touches this. The dead default is kept as provenance; point
+# TPMSHX_AIR_CFD_XLSX at the file if the asset ever lands (P1.7).
+AIR_XLSX_DEFAULT = Path(os.environ.get(
+    'TPMSHX_AIR_CFD_XLSX',
+    r"D:\Postgraduate\server-pyfluent\Air\Cfd-air-raw-old-new.xlsx"))
 
 _K_S_DEFAULT = 16.0
 
@@ -197,6 +203,14 @@ def _fit_geom(d: pd.DataFrame, m: float | None):
 
 def build_table(air_xlsx: Path = AIR_XLSX_DEFAULT) -> pd.DataFrame:
     """Full pipeline: pooled m per lattice -> per-geometry (K,B) -> fluid-avg."""
+    if not Path(air_xlsx).exists():
+        raise FileNotFoundError(
+            f"air smooth-CFD source XLSX not found: {air_xlsx} — this "
+            "REBUILD-ONLY asset was never migrated off the old dev box (not "
+            "in the SJTU-TPMSHX-data repo), so the air smooth basis cannot "
+            "be re-fit on this machine. Normal inference reads the committed "
+            "_prebuilt/smooth_df_coeffs.csv and never hits this path. Set "
+            "TPMSHX_AIR_CFD_XLSX when the asset lands.")
     D = _load_points(air_xlsx)
     mfits: dict[str, list] = {"Diamond": [], "Gyroid": []}
     for (tp, L, t, fl), d in D.groupby(["tp", "L", "t", "fluid"]):

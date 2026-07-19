@@ -62,9 +62,10 @@ WATER = dict(name="water", Tref=325.0, P_MPa=0.101325, rho=987.11, mu=5.33e-4,
              cp=4180.9, k=0.643, Pr=3.4657, Twall=375.0)
 
 # Output → workspace-level dedicated folder for porosity-offset generated DATA.
-# parents[4] = D:\Postgraduate (workspace root); folder is gitignored (not committed).
-# Derived (not hardcoded absolute) so it self-locates as long as the solver repo
-# stays nested under the workspace.
+# parents[4] = the workspace root HOLDING the repo (old dev box: D:\Postgraduate;
+# this server: E:\LWH); folder is gitignored (not committed). Derived (not
+# hardcoded absolute) so it self-locates as long as the solver repo stays
+# nested under the workspace.
 OUT = Path(__file__).resolve().parents[4] / "asym-porosity-data"
 XLSX = OUT / "asym_cfd_worklist.xlsx"
 
