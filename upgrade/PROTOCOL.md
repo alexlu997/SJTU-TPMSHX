@@ -52,6 +52,7 @@
 | 触及 solvers/ pipelines/ df_surrogate/ design/ optimization/ 数值路径 | 上行 + `python -u sjtu_tpmshx\runs\_out\_golden_3d.py --check golden_3d.json` 位同 |
 | 触及闭合/surrogate/物性 | 上两行 + `validate_shanghai_3d_real.py` 与 `validate_shanghai_lumped_dual_nu.py`，数字对照 `upgrade/BASELINE.md` |
 | 纯 docs / upgrade/ 协议文件 | 免测，commit 注明 docs-only |
+| 依赖元数据的注释级改动（requirements* 头注、锁文件新增，无运行时路径） | 免套件，但须 pip --dry-run 解析通过 + 指纹核对，证据入 commit |
 
 - 报告**真实计数**（passed/failed/skipped），禁"基本通过"
 - 红了就修或回退，绝不在红套件上宣称完成；连续 2 轮修不绿 → stash + DECISIONS + 跳条目
