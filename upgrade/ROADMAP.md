@@ -70,9 +70,8 @@
 
 （本 Phase 起按 PROTOCOL §10 模型分层：机械项派 Sonnet 5/Opus 子代理执行 + Fable 5 复核提交；判断型 Fable 5 直做）
 
-- [ ] P2.0 run_stack_3d 阶段函数收整（P1.5 收尾评估降级至此，iter 17 定）：mega-tuple →
-      dataclass 状态包 + 五阶段函数迁 run_stack_3d_stages.py（stages_3d re-export 面保持）；
-      按 PROTOCOL §10 属机械型——派子代理执行、Fable 复核
+- [x] P2.0 数据类化（`d0238e6`，iter 21——**§10 委托首战成功**：Sonnet 执行/Fable 复核签发）；
+      文件级迁移（五阶段函数 → run_stack_3d_stages.py）并入 P1.8b 波次一起做（同属大搬迁）
 - [ ] P2.1 ruff format + lint 引入（配置从宽起步；机械 diff 独立 commit，绝不与语义改动混提交）
 - [ ] P2.2 核心公共面类型注解（solvers/pipelines 对外 API）+ mypy 宽松档
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、

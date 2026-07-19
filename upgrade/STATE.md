@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 20
-- next: P2.0（run_stack_3d 阶段函数收整——**§10 模型分层首次委托实战**：机械型，派 Sonnet 子代理执行、Fable 复核+门禁+提交）
+- iteration: 21
+- next: P2.1（ruff format+lint 引入——机械型，§10 委托候选；配置从宽、机械 diff 独立 commit）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
