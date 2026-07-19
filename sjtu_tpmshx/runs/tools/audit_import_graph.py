@@ -35,6 +35,21 @@ LAYERS = {
 }
 FREE = {"validation", "runs", "tests", "poc"}       # may import anything
 
+# Adjudicated upward edges (P1.9, 2026-07-20) — ACCEPTED with rationale,
+# reported separately, never counted as violations. Adding an entry here is
+# an architecture decision: cite it in docs/ARCHITECTURE-AUDIT-2026-07.md.
+SANCTIONED = {
+    ("solvers", "df_surrogate"):
+        "closure boundary: solvers consume predict_K_cF* and the _domain "
+        "training-hull constants, while df_surrogate imports solvers "
+        "geometry helpers (a mutual pair). Extracting a closure-interface "
+        "layer is P1.8b-scale restructuring - deliberately accepted as-is.",
+    ("domain", "df_surrogate"):
+        "df_surrogate/_domain.py is a leaf constants module (training-grid "
+        "nodes); domain/validator reads the single source. Direction is "
+        "nominal, no behavior coupling.",
+}
+
 
 def discover_units() -> set[str]:
     units = set()
@@ -104,9 +119,14 @@ def main() -> int:
     core_edges = {e: n for e, n in edges.items()
                   if e[0] not in FREE and e[1] not in FREE}
     violations: list[str] = []
+    sanctioned_hits: list[str] = []
     for (src, dst), n in sorted(edges.items()):
         if src in FREE:
             continue                                        # free consumers
+        if (src, dst) in SANCTIONED:
+            sanctioned_hits.append(
+                f"{src} -> {dst} ({n}x): {SANCTIONED[(src, dst)]}")
+            continue
         if dst in FREE:
             violations.append(
                 f"{src} -> {dst} ({n}x): non-free unit imports a free tier "
@@ -130,6 +150,9 @@ def main() -> int:
     for (src, dst), n in sorted(edges.items()):
         if src in FREE and dst not in FREE:
             print(f"  {src:14s} -> {dst:14s} {n:4d}")
+    print(f"\n== SANCTIONED edges ({len(sanctioned_hits)}) ==")
+    for s_ in sanctioned_hits:
+        print(f"  {s_}")
     print(f"\n== VIOLATIONS ({len(violations)}) ==")
     for v in violations:
         print(f"  {v}")

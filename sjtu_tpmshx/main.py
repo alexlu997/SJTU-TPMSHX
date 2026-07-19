@@ -41,7 +41,9 @@ from ui.theme import (
     apply_mpl_theme, get_density, set_density,
 )
 
-__version__ = "1.5.0"
+# Version lives in _version.py (P1.9): a leaf module UI widgets can import
+# without pulling in this composition root. Re-exported here for back-compat.
+from _version import __version__  # noqa: E402
 
 
 def _git_commit_hash():

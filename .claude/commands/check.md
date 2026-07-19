@@ -52,6 +52,15 @@ python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d.json   # → GOL
 
 - If no pre-change baseline exists (2D), say so — a golden check with no baseline is meaningless; don't fabricate a pass.
 
+## 2b. Import-layering gate (P1.9 — runs inside the suite via test_import_layering)
+
+```bash
+python -u sjtu_tpmshx/runs/tools/audit_import_graph.py --fail-on-violations
+```
+
+- Exit 0 = clean（SANCTIONED 边单列，见工具内裁决清单 + 审计文档 §1）。
+- 新的向上导入要么修掉，要么走"有意 SANCTIONED 条目"流程——绝不静默合入。
+
 ## 3. Validation cases (run when a closure / surrogate / solver path changed)
 
 ```bash

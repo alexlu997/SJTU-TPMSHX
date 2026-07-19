@@ -34,7 +34,9 @@ L5 ui · main
 free validation · runs · tests · poc
 ```
 
-**实测违规（3 + 1）**：
+**实测违规（3 + 1）——P1.9 裁决结果（iter 20）：前两条 SANCTIONED（工具内附理由）、
+后两条已修（polygon_calc 迁 ui/、__version__ 抽 _version.py 叶子）；
+`--fail-on-violations` 已由 test_import_layering 常驻套件**：
 - `solvers → df_surrogate`（6 处：continuous_field.py / df_projection.py / polygon_fvm.py）——
   求解器层 import 闭合提供方。属**依赖倒置候选**：要么闭合注入化，要么正式承认 df_surrogate
   位于 solvers 之下（改分层模型 + 注释背书）。→ P1.9

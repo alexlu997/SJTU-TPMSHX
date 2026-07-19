@@ -14,7 +14,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sjtu-tpmshx"
-version = "0.1.0.dev0"
+dynamic = ["version"]   # 单源：sjtu_tpmshx/_version.py（P1.9）
 description = "Compressible SIMPLE/LTNE solver suite for TPMS heat exchangers (SJTU)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,9 @@ test = ["pytest>=8.0", "pytest-xdist>=3.5"]
 
 [project.scripts]
 tpmshx-run = "sjtu_tpmshx.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "sjtu_tpmshx._version.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["sjtu_tpmshx*"]

@@ -341,7 +341,11 @@ class RunControllerMixin:
         return
 
     def _run_polygon_calculation(self):
-        from runs.polygon_calc import run_polygon_calculation
+        # P1.9: relocated runs/polygon_calc.py -> ui/polygon_calc.py — it is
+        # Qt-coupled UI code (takes the main window, uses ui.theme) that
+        # lived in the free scripts tier; GUI importing runs/ was a layering
+        # violation flagged by the import audit.
+        from ui.polygon_calc import run_polygon_calculation
         return run_polygon_calculation(self)
 
     def _finalize_plots(self):
