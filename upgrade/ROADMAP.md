@@ -3,7 +3,7 @@
 排序即优先级，从上往下做。勾选 = 完成（附 commit 短哈希）。BLOCKED 条目跳过并在 DECISIONS-NEEDED.md 说明。
 一条 ≈ 一轮的量；太大的先拆再做。P1.1 审计完成后**回填细化**后续条目是预期行为。
 
-## Phase 0 — 安全网（架构手术前的地基）
+## Phase 0 — 安全网（架构手术前的地基）✅ 完成于 2026-07-19（iter 1–5）
 
 - [x] P0.1 基线快照（`2c51eca`，iter 1）：写 `upgrade/BASELINE.md`——suite 精确计数、`--durations` 前 15、
       golden_3d --check 结果、`validate_shanghai_3d_real.py` 与 `validate_shanghai_lumped_dual_nu.py`
@@ -21,7 +21,7 @@
 - [x] P0.4 测试基建入库（`6521ba7`，iter 4；golden json 本体 → DECISIONS D1 待决）：`scripts/run_tests_server.ps1` 提交进仓库；给 `golden_3d.json` 建
       meta 侧车 `golden_3d.meta.json`（生成 commit / env 指纹 / 日期——HANDOFF §9 "零版本记录"）；
       golden json 本体是否入库 → DECISIONS-NEEDED 问 Alex
-- [ ] P0.5 文档纠偏：`.claude/commands/check.md` 死路径 `D:\Postgraduate` → `E:\LWH`、
+- [x] P0.5 文档纠偏（`059d306` + D1 执行 `c4cccb7`，iter 5）：`.claude/commands/check.md` 死路径 `D:\Postgraduate` → `E:\LWH`、
       补 server runner 指引；HANDOFF §9d 的 CI=true 精确门语义写进 `pytest.ini` 头注
 
 ## Phase 1 — 架构（Alex 指定的最高优先级）

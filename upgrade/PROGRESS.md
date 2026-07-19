@@ -2,6 +2,17 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 5 · 2026-07-19 · P0.5 文档纠偏 + D1 执行 ✅（`c4cccb7`, `059d306`）—— **Phase 0 收官**
+
+- **D1（Alex 拍板：a）**：golden_3d.json（2 KB）入库，meta 侧车同步，重基准规矩定为
+  "json+meta 同 commit 带 `!`"
+- /check：死路径 D:\Postgraduate → 中性仓库根表述；runner 入库注记；§2 按 D1 改写
+  （3D 直接 --check 入库基线；2D 仍本地捕获）
+- pytest.ini 头注：128 核 -n auto 警告 + CI=true 精确门语义（HANDOFF §9d 收编进配置现场）
+- 验证：strict-markers 收集 + 定点 1 passed；meta json 解析过
+- **Phase 0 安全网 5/5 完成**（基线快照、依赖锁、响亮回退、测试基建、文档纠偏）；
+  下一步 P1.1 架构审计（Phase 1 开篇）
+
 ## iter 4 · 2026-07-19 · P0.4 测试基建入库 ✅（`6521ba7`）
 
 - `scripts/run_tests_server.ps1` 入库——官方跑法结束"untracked by choice"状态

@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 4
-- next: P0.5
+- iteration: 5
+- next: P1.1（架构审计——Phase 1 开篇，预留整轮，产出 docs/ARCHITECTURE-AUDIT-2026-07.md 并回填 P1 子项）
 - in_progress: （空）
 - armed_at: 2026-07-19（job 224f9aa6；>5 天须按 PROTOCOL §8 重建）
 - cron_spec: `4,29,54 * * * *`
