@@ -63,6 +63,10 @@ free validation · runs · tests · poc
 | 收敛模式 | 默认 legacy（管线 f2；**有意**，BO 吞吐） | 结构与管线一致 |
 | 目标整形 | 无罚值/无 dp_cap（wrapper 只处理 invalid） | 制造性罚值 + dp_cap + reject_unconverged |
 
+**追加（iter 10）**：rho_inlet_ref 一行的深挖发现**管线间口径不一致**——2D 管线显式钉物理
+ρ(T_in,P_in)·u，3D 求解器无该旋钮、首解捕获 ρ(T_in,P_out_seed)（亏空冻结点 7.4%/19.3%，
+且与 validate 的实验 ṁ→u 换算相悖，已被 γ_df 锚定部分吸收）。标定级决策 → DECISIONS D3。
+
 **结论**：evaluate_design 离 Pipeline2D 近（共享 extract_dP_from_simple、同一 envelope 权威）；
 evaluate_3d 离 Pipeline3D **最远**（完整的第三套物理装配）。收敛方向不是"全部路由进 Pipeline"
 （会毁掉 BO 吞吐预算——legacy 模式与 B 侧冷解是有意设计），而是：

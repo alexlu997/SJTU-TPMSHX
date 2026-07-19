@@ -32,11 +32,13 @@ R_AIR 保留在 `__all__`（`verify_pareto_3d.py:74` 在用），赋值改
 - 失败 → 既有 NaN+invalid 契约（与冷/热 choke 同形 dict；质量保真实几何值）——
   verify_pareto 排除、BO wrapper 映射有界罚值，零新语义。
 
-## D4 rho_inlet_ref（切片 C，未实施）
+## D4 rho_inlet_ref（切片 C —— **BLOCKED，前提坍缩为 DECISIONS D3**）
 
-口径对齐 stages_2d:475（入口密度 = ρ(T_in, P_in_abs)）。2D 默认 `n_rho_loops` 路径上惰性
-（等温快路无感）；3D var-ρ 外循环可能移动 `test_evaluator_frozen_values` 的 rel=1e-12 锁
-⇒ 实施轮按 PROTOCOL §5：根因（本设计）+ 全 V&V 重跑 + `!` commit + DECISIONS 登记。
+iter 10 现场核实推翻本节原设计："补传即对齐"的前提不成立——**2D 与 3D 管线自身的 G 口径
+就不一致**（2D 显式物理 ρ(T_in,P_in)；3D 求解器无此旋钮、首解捕获 ρ(T_in,P_out_seed)），
+且 3D 口径与 validate 的实验 ṁ→u 换算相悖（亏空 2D 冻结点 7.38% / 3D 冻结点 19.30%），
+已被 γ_df 标定部分吸收。统一方向是标定级决策 → `upgrade/DECISIONS-NEEDED.md` **D3**。
+本变更的切片 C 冻结，待 D3 拍板后按其选项执行（(c) 时仅动 2D 评估器 + frozen 2D 重基准）。
 
 ## 验证
 

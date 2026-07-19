@@ -12,7 +12,6 @@
 - [x] 2D：**不做**——2D 管线自身无 post-solve 门（ledger O1），政策问题转 DECISIONS D2
 - [x] 假求解器单元测试 ×3（clean / 超音速 / 地板钳制）+ wiring 断言
 
-## 切片 C（待排）
-- [ ] 两评估器补传 rho_inlet_ref（D4 口径）
-- [ ] frozen-values 影响评估；若动走 PROTOCOL §5 重基准
-- [ ] 文档契约："Pareto 选点须经 Pipeline 复核"落 README/手册相应节
+## 切片 C（**BLOCKED on DECISIONS D3**——iter 10 发现管线间 G 口径不一致 + 标定纠缠）
+- [ ] 待 D3 拍板后按选项执行（(c)：仅 2D 评估器 + frozen 2D 重基准；(a)：另立 ledger 级调查）
+- [ ] 文档契约："Pareto 选点须经 Pipeline 复核"落 README/手册相应节（不依赖 D3，可随 P4 做）

@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 9
-- next: P1.3 切片 C（rho_inlet_ref，openspec D4；预期动 frozen-values → §5 重基准流程）
+- iteration: 10
+- next: P1.4（evaluator 契约测试；G 口径差异按"待决 D3"记为已知差异，不锁死方向）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
