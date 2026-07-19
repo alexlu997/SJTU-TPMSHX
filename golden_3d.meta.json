@@ -1,0 +1,24 @@
+{
+  "artifact": "golden_3d.json",
+  "sha256": "4ae326dc6df62a002df05992d20e8b5bedb3e2d49b31f1e6732ec151185e5ff8",
+  "size_bytes": 2037,
+  "generator": "sjtu_tpmshx/runs/_out/_golden_3d.py",
+  "attested": {
+    "date": "2026-07-19",
+    "code_commit": "4b32da4",
+    "check_result": "PASS (bit-identical)",
+    "check_runs": [
+      "worktree readiness chain 2026-07-19",
+      "P0.1 baseline chain (upgrade/logs/p01-golden3d.log)",
+      "P0.3 gates (upgrade/logs/p03-golden3d.log)"
+    ],
+    "env": {
+      "python": "3.12.10 (C:\\Python312 base venv)",
+      "pip_freeze_sha256": "76b60e323ffff2ef7095e9b058973e4fbaef27401e82e58721b90a99e5f555a6",
+      "PYTHONHASHSEED": "0",
+      "thread_pins": "OMP/OPENBLAS/MKL/NUMEXPR/NUMBA=1",
+      "QT_QPA_PLATFORM": "offscreen"
+    }
+  },
+  "history_note": "golden_3d.json itself is (as of 2026-07-19) deliberately untracked; this sidecar closes the HANDOFF §9 'zero version records for golden numbers' gap: verify a local copy with sha256 before trusting --check results. Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update this file in the same commit (upgrade/PROTOCOL.md §5)."
+}
