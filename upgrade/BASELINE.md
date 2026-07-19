@@ -1,0 +1,44 @@
+# 基线快照（BASELINE）— 2026-07-19 · iter 1 · P0.1
+
+代码态 = master `4b32da4`（分支 upgrade/loop）。此后所有"数字没变"的断言对照本文件。
+环境：venv C:\Python312 底座；冻结指纹 sha256 `76b60e32…f555a6`（80 包，torch==2.11.0+cpu 装自 pytorch cpu 索引）；PYTHONHASHSEED=0、OMP/OPENBLAS/MKL/NUMEXPR/NUMBA 线程全钉 1、QT_QPA_PLATFORM=offscreen；AMD EPYC 7B13 ×2、高性能电源计划。
+证据日志：`upgrade/logs/p01-*.log`（gitignored，本地留存）。
+
+## 1. 测试套件（scripts/run_tests_server.ps1，双 pass）
+
+- Pass 1（-n 64 worksteal，除顺序敏感模块）：**1235 passed, 4 skipped**，161 warnings，641.58s（10:41）
+- Pass 2（test_df_projection_equivalence.py 串行原序）：**10 passed**，9.32s
+- 合计 **1245 通过 / 4 skip / 0 失败**，runner 判 READY
+- 注：2026-07-13 迁移基线为 1245 passed / **3** skipped——skip 多了 1 个，后续轮次顺手查明是哪个用例、何条件触发（不阻塞）
+- slowest 15 概览（P3.1 fast-tier 的输入）：conservation_3d_energy[T4_partial_offset] 602s、[T3_partial_aligned] 513s、wall_refine_3d 459s、partial_bc_ghost_b 组 141–308s、asym_porosity_3d 组 168–303s、conservation[T2_full_cross] 116s；完整清单见 p01-suite.log
+
+## 2. Golden 3D（_golden_3d.py --check golden_3d.json）
+
+- **PASS（bit-identical）**
+- 伴随良性 UserWarning（water Nu extrap，Re 低端越窗）——正常运行即有，非本轮新增
+
+## 3. validate_shanghai_3d_real.py（bare 调用，Grid 20×10×3，Gyroid L=7.0 t=0.6）
+
+- 16 工况全部 valid，0 个 pressure-INVALID（clip fired）
+- **RMSRE_dP = 4.88%**（gate 限 12.0%；2D 基线 8.62%），max|err_dP| = 15.97%
+- **RMSRE_Q = 2.12%**（gate 限 6.0%；2D 基线 2.49%），max|err_Q| = 7.16%
+- **GATE PASS**
+- 产物：validation 下 shanghai_3d_baseline.csv（脚本自写，未跟踪，不入库）
+- ⚠ 口径注记：bare 调用走 production Pipeline3D dual-solve（脚本自述 "NOT the gate runner"）——
+  正是 HANDOFF §1 的 max_outer 透传缺陷所在路径（本次外循环 max_outer=12 显示、各工况 outer=3 收敛）。
+  P1.2 修复透传后本节数字可能移动，届时按 PROTOCOL §5 流程重记并说明
+
+## 4. validate_shanghai_lumped_dual_nu.py（16 工况 ε-NTU 双 Nu）
+
+- cross-flow（primary，Shanghai air⊥water）：**vs Q_air RMSRE 1.73%**（bias −1.29%，max 3.80%）；
+  vs Q_water 17.00%（bias +15.72%，已知单侧口径差）；vs Q_avg 6.84%
+- counter-flow（敏感性）：vs Q_air 1.51% / vs Q_water 17.30% / vs Q_avg 7.10%
+- 与 2026-07-13 重基线口径一致（1.73%，f9a44a8 体素 N=128 后）✓
+- 产物：data/shanghai_lumped_dual_nu.csv（脚本写入 data/，gitignored）
+
+## 5. 观察（不阻塞，供后续条目引用）
+
+- validate_3d_real 每工况打印大量 ConstDF-v1 / Nu 外推 UserWarning——P2.4 日志策略的现成素材
+- 工具链教训：PowerShell 后台任务的控制台回显会丢 pytest 尾巴；Tee-Object 各阶段编码不一
+  （suite 段 UTF-16LE、python 段 UTF-8）。规矩：证据一律读落盘日志文件，别信回显；
+  必要时 iconv 探测两种编码
