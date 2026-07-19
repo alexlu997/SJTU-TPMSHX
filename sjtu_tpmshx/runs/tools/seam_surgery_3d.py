@@ -14,8 +14,8 @@ import ast
 import sys
 
 PATH = r'E:\LWH\SJTU-TPMSHX-upgrade\sjtu_tpmshx\pipelines\run_stack_3d.py'
-A_LO, A_HI = 1048, 1233
-NEW_NAME = '_build_hv_machinery'
+A_LO, A_HI = 2271, 2671
+NEW_NAME = '_assemble_3d_verdict'
 
 src = open(PATH, encoding='utf-8').read()
 lines = src.splitlines(keepends=True)
@@ -58,9 +58,15 @@ def _fn_locals(fnode):
 
 def _fn_free_loads(fnode):
     loc = _fn_locals(fnode)
-    return {n.id for n in ast.walk(fnode)
+    free = {n.id for n in ast.walk(fnode)
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
             and n.id not in loc}
+    # nonlocal names are free by definition (they bind to the enclosing
+    # scope even though the def also Stores them locally).
+    for n in ast.walk(fnode):
+        if isinstance(n, ast.Nonlocal):
+            free.update(n.names)
+    return free
 
 
 # Scope-aware region pass over _run_3d_stack's TOP-LEVEL statements.
@@ -82,6 +88,14 @@ for st in fn.body:
         if isinstance(n, ast.FunctionDef):
             # non-def top statement can't nest defs except lambdas; guard
             continue
+        if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
+            # x += y both LOADS and STORES x, but the AST carries only a
+            # Store ctx on the target — record the load half explicitly.
+            if in_a:
+                assigned_a.add(n.target.id)
+                loaded_a.add(n.target.id)
+            elif st.lineno > A_HI:
+                used_after.add(n.target.id)
         if isinstance(n, ast.Name):
             if in_a:
                 (assigned_a if isinstance(n.ctx, ast.Store)
@@ -106,8 +120,86 @@ for n in tree.body:
                 module_names.add((a.asname or a.name).split('.')[0])
 
 bundle = sorted(assigned_a & used_after)
-inputs = sorted((loaded_a - assigned_a - module_names)
-                - set(dir(__builtins__)) - {'cfg'})
+# Execution-order first-occurrence scan over the region's TOP-LEVEL
+# statements: a name whose FIRST top-level occurrence is a Load is an
+# in(-out) parameter even if the region later rebinds it (the
+# load-then-store case: e.g. `x.append(...)` ... `x = dedup(x)`).
+first_kind = {}
+
+
+def _note_first(nm, kind):
+    if nm not in first_kind:
+        first_kind[nm] = kind
+
+
+def _scan_store_t(node):
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name):
+            _note_first(n.id, 'store')
+
+
+def _scan_order(node, suppress=frozenset()):
+    if isinstance(node, ast.FunctionDef):
+        _note_first(node.name, 'store')
+        return
+    if isinstance(node, ast.Lambda):
+        return
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                         ast.DictComp)):
+        comp_locals = set(suppress)
+        for g in node.generators:
+            _scan_order(g.iter, frozenset(comp_locals))
+            comp_locals |= {n.id for n in ast.walk(g.target)
+                            if isinstance(n, ast.Name)}
+        rest = ([node.key, node.value] if isinstance(node, ast.DictComp)
+                else [node.elt])
+        for g in node.generators:
+            rest += list(g.ifs)
+        for r_ in rest:
+            _scan_order(r_, frozenset(comp_locals))
+        return
+    if isinstance(node, ast.Assign):
+        _scan_order(node.value, suppress)
+        for t in node.targets:
+            _scan_store_t(t)
+        return
+    if isinstance(node, ast.AugAssign):
+        _scan_order(node.value, suppress)
+        if isinstance(node.target, ast.Name):
+            _note_first(node.target.id, 'load')
+            _note_first(node.target.id, 'store')
+        return
+    if isinstance(node, ast.AnnAssign):
+        if node.value is not None:
+            _scan_order(node.value, suppress)
+        _scan_store_t(node.target)
+        return
+    if isinstance(node, ast.For):
+        _scan_order(node.iter, suppress)
+        _scan_store_t(node.target)
+        for b in node.body + node.orelse:
+            _scan_order(b, suppress)
+        return
+    if isinstance(node, ast.Name):
+        if node.id not in suppress:
+            _note_first(node.id,
+                        'load' if isinstance(node.ctx, ast.Load) else 'store')
+        return
+    for ch in ast.iter_child_nodes(node):
+        _scan_order(ch, suppress)
+
+
+for st in fn.body:
+    if A_LO <= st.lineno <= A_HI:
+        _scan_order(st)
+
+closure_free = set()
+for st in fn.body:
+    if A_LO <= st.lineno <= A_HI and isinstance(st, ast.FunctionDef):
+        closure_free |= _fn_free_loads(st)
+inputs = sorted((({n for n, k2 in first_kind.items() if k2 == 'load'}
+                  | (closure_free - assigned_a))
+                 - module_names - set(dir(__builtins__)) - {'cfg'}))
 
 print(f"function span: {fn.lineno}-{fn_end}")
 print(f"RETURNS inside A: {returns_in_a or 'NONE'}")
@@ -150,10 +242,10 @@ sig = ", ".join(inputs + ['cfg'] if 'cfg' in loaded_a else inputs)
 tup = "(" + ",\n     ".join(bundle) + ")"
 new_fn = (
     f"def {NEW_NAME}({sig}):\n"
-    '    """Seam-B extraction (P1.5, 2026-07-20): h_v machinery factory --\n'
-    "    the five h_v/transport closures (now capturing THIS function's\n"
-    "    read-only params) + the initial bulk h_v fields. Moved VERBATIM\n"
-    "    from _run_3d_stack; returns callables + fields as the cross-seam\n"
+    '    """Seam-E extraction (P1.5, 2026-07-20): verdict + assembly tail --\n'
+    "    conservation diagnostics, post-solve envelope gate, convergence\n"
+    "    verdict/truth table, result-dict assembly, opt-in audit exports.\n"
+    "    Moved VERBATIM from _run_3d_stack; returns the cross-seam\n"
     "    bundle. Contract: bit-identical behavior (golden gate).\n"
     '    """\n'
     + "    # Conditionally-bound cross-seam names (surgery tool definite-\n"

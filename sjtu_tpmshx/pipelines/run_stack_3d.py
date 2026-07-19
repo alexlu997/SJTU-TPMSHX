@@ -1406,6 +1406,422 @@ def _extract_3d_metrics(L_mm_field, Lcell, Nx, Ny, Nz, P_inA, P_inB, T_inA, T_in
      wc_real)
 
 
+def _assemble_3d_verdict(H, K_ffA, K_ffB, K_ss, L, L_mm, Lz, P_inA, P_inB, P_kPa, P_real, P_real_B, Q, Q_AB_imbalance_rel, Q_enthalpy_A, Q_enthalpy_B, Q_solid_B, T_A_out, T_B_out, T_B_out_no_chi, T_inA, T_inB, Ta, Tb, Ts, _and_A, _and_B, _compact_diag, _env_mode, _env_warnings, _eps_A_strict, _eps_A_strict_cellmax, _eps_B_strict, _eps_B_strict_cellmax, _ltne_info, _ltne_mask_A, _ltne_mask_B, _ltne_max_iter, _max_outer, _outer_converged, _outer_dT_hist, _outer_last_iter, _simple_nonconv, _use_outer_and, cell_vol, chi_B, chi_B_out_face, cp_A, cp_B, dP, dP_B, dx, dy, dz, eps, eps_arr, fA, fB, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, m_dot_A_simple, m_dot_B_phys_in, m_dot_B_phys_out, m_dot_B_simple, out_mask_2d, out_mask_B, rho_cp_fA, rho_cp_fB, sA, sB, sB_info, solver_to_real_perm, u_A, u_B, ucB, uc_real, vcB, vc_real, vmag, vmag_B, wcB, wc_real, cfg):
+    """Seam-E extraction (P1.5, 2026-07-20): verdict + assembly tail --
+    conservation diagnostics, post-solve envelope gate, convergence
+    verdict/truth table, result-dict assembly, opt-in audit exports.
+    Moved VERBATIM from _run_3d_stack; returns the cross-seam
+    bundle. Contract: bit-identical behavior (golden gate).
+    """
+    # Conditionally-bound cross-seam names (surgery tool definite-
+    # assignment pass): None-init so the unconditional return below
+    # cannot raise UnboundLocalError on guarded paths. Downstream
+    # reads keep their original guards.
+    _cdiag = _conservation_diagnostics_3d(
+        Ta, Tb, Ts, h_vA_field, h_vB_field, sA, sB, fA, fB, dx, dy, dz)
+    Q_sA = _cdiag['Q_sA']; Q_sB = _cdiag['Q_sB']; Q_net = _cdiag['Q_net']
+    energy_rel = _cdiag['energy_rel']
+    mass_rel_A = _cdiag['mass_rel_A']; mass_rel_B = _cdiag['mass_rel_B']
+    Q_sA_interior = _cdiag['Q_sA_interior']
+    Q_sB_interior = _cdiag['Q_sB_interior']
+    Q_interior_primary = _cdiag['Q_interior_primary']
+    AB_interior = _cdiag['AB_interior']
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Phase 2 diagnostics (Plan A v3): REQ_1–4 data dump
+    # ═══════════════════════════════════════════════════════════════════
+    if _compact_diag:
+        # Fast sweep: single CSV-style row, skip full diagnostic dump
+        _ltne_iters = [d['iters'] for d in _ltne_info]
+        _ltne_conv = [d['converged'] for d in _ltne_info]
+        _ltne_hit_max = [d['iters'] >= _ltne_max_iter for d in _ltne_info]
+        eps_obs = ((T_B_out - T_inB) / (T_inA - T_inB)
+                   if sB is not None and T_inA != T_inB else 0.0)
+        chi_p50 = float(np.percentile(chi_B, 50)) if chi_B is not None else 1.0
+        _log.info(f"[SWEEP-CSV] {cfg.get('_case_label','?')},"
+                  f"{len(_ltne_info)},{_ltne_iters},{_ltne_conv},"
+                  f"{any(_ltne_hit_max)},{_ltne_info[-1]['residual']:.2e},"
+                  f"{T_A_out:.1f},{T_B_out:.1f},{Q:.1f},"
+                  f"{Q_sA:.1f},{Q_sB:.1f},{Q_sA+Q_sB:.1f},"
+                  f"{energy_rel:.6f},{eps_obs:.4f},{chi_p50:.4f}")
+    # Run diagnostics (Q-DIAG / CHI / CHI-BC) — OPT-IN, skipped in production.
+    # None of these locals feed the return dict; gating avoids the extra
+    # _face_flux_weights / percentile / histogram recompute + ~30 lines of
+    # console spam on every run. Enable via the 3D profiler (.profile_3d /
+    # TPMSHX_PROFILE_3D=1) or cfg['_verbose_diag']=True. 2026-06-09 perf B2.
+    if _prof_3d_enabled() or bool(cfg.get('_verbose_diag', False)):
+        _dbg = np
+        Q_solid_A_val = float(_dbg.sum(h_vA_field * (Ts - Ta) * cell_vol))
+        Q_solid_B_val = float(_dbg.sum(h_vB_field * (Ts - Tb) * cell_vol))
+
+        # Group 1: LTNE-effective Q (uses eps_f, chi_face, LTNE volume source)
+        Q_enth_A_ltne = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
+        Q_enth_B_ltne = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out)) if sB is not None else 0.0
+
+        # Group 2: Physical-boundary Q (no eps_f, physical m_dot at inlet)
+        m_A_phys_in = float(_dbg.sum(_face_flux_weights(
+            sA, fA['dir'], face='real_inlet', eps_mode='physical')))
+        Q_enth_A_phys = abs(m_A_phys_in * cp_A * (T_inA - T_A_out))
+        if sB is not None:
+            Q_enth_B_phys = abs(m_dot_B_phys_in * cp_B * (T_inB - T_B_out))
+        else:
+            Q_enth_B_phys = 0.0
+
+        _log.info(f"[Q-DIAG] === LTNE-effective group ===")
+        _log.info(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
+                  f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
+        if sB is not None:
+            _log.info(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
+                      f"T_B_out={T_B_out:.1f} K (chi)  "
+                      f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
+                      f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
+        _log.info(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
+                  f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
+        _log.info(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
+                  f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
+                  f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
+
+        _log.info(f"[Q-DIAG] === Physical-boundary group ===")
+        _log.info(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
+                  f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
+        if sB is not None:
+            _log.info(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
+                      f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
+                      f"T_B_out={T_B_out:.1f} K")
+            _log.info(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
+
+        # ── REQ_2: χ_B distribution histogram ──
+        if chi_B is not None:
+            chi_flat = chi_B.ravel()
+            _log.info(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
+                      f"mean={chi_flat.mean():.3f}")
+            _log.info(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
+                      f"p25={_dbg.percentile(chi_flat,25):.3f} "
+                      f"p50={_dbg.percentile(chi_flat,50):.3f} "
+                      f"p75={_dbg.percentile(chi_flat,75):.3f} "
+                      f"p90={_dbg.percentile(chi_flat,90):.3f}")
+            hist, bin_edges = _dbg.histogram(chi_flat, bins=10, range=(0, 1))
+            _log.info("[CHI] histogram bins:")
+            for i, c in enumerate(hist):
+                _log.info(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
+                          f"{c} ({100*c/chi_flat.size:.1f}%)")
+
+        # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
+        if chi_B is not None and sB is not None:
+            # B inlet face slice in real coords (single dir source).
+            chi_B_in_face = _face_slice(chi_B, fB['dir'], 'inlet')
+            # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
+            # (in_mask_B; approach-(a), no in/out swap).
+            _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
+            if _ltne_mask_B_val is not None:
+                chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
+                if len(chi_in_patch) > 0:
+                    _log.info(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
+                              f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
+                              f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
+                              f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
+            # Outlet patch
+            if chi_B_out_face is not None:
+                chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
+                if len(chi_out_patch) > 0:
+                    _log.info(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
+                              f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
+                              f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
+                              f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
+    # ═══════════════════════════════════════════════════════════════════
+
+    _result = dict(
+        Ta=Ta, Tb=Tb, Ts=Ts,
+        vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
+        P_Pa=P_real,
+        uc_real=uc_real, vc_real=vc_real, wc_real=wc_real,
+        # Fluid B (None if frozen)
+        P_Pa_B=P_real_B,
+        uc_real_B=ucB, vc_real_B=vcB, wc_real_B=wcB,
+        vmag_B=vmag_B, dP_B=dP_B,
+        dx=dx, dy=dy, dz=dz,
+        Lx=L, Ly=H, Lz=Lz,
+        Q=Q, Q_total=Q, Q_enthalpy_A=Q_enthalpy_A, Q_enthalpy_B=Q_enthalpy_B,
+        Q_solid_B=Q_solid_B,
+        dP=dP, dP_A=dP, u_A=u_A, T_in=T_inA,
+        T_A_out=T_A_out, T_B_out=T_B_out,
+        T_out_A=T_A_out, T_out_B=T_B_out,
+        dir_A=fA['dir'], dir_B=(fB['dir'] if fB is not None else None),
+        # Conservation diagnostics
+        Q_sA=Q_sA, Q_sB=Q_sB, Q_net=Q_net,
+        energy_imbalance_rel=energy_rel,
+        mass_imbalance_rel_A=mass_rel_A,
+        mass_imbalance_rel_B=mass_rel_B,
+        # #5: sCO2 A/B enthalpy-duty imbalance (nan for air/water) — the residual
+        # after the reverse-dir mass-flow fix; >10% ⇒ trust 2D coupled duty.
+        Q_AB_imbalance_rel=Q_AB_imbalance_rel,
+        # h_v fields for BC-layer split diagnostic (path 0' v3)
+        h_vA_field=h_vA_field, h_vB_field=h_vB_field,
+        # Path 0' interior-corrected metrics (BC layer excluded)
+        Q_sA_interior=Q_sA_interior,
+        Q_sB_interior=Q_sB_interior,
+        Q_interior=Q_interior_primary,
+        AB_interior=AB_interior,
+        # B2 strict-conservation certificate (None unless conservative_ltne)
+        eps_A_strict=_eps_A_strict,
+        eps_B_strict=_eps_B_strict,
+        eps_A_strict_cellmax=_eps_A_strict_cellmax,
+        eps_B_strict_cellmax=_eps_B_strict_cellmax,
+        # Plan C v2: B flow-path indicator field (χ_B) for visualization
+        chi_B=chi_B,
+        # Sweep profile diagnostics
+        _ltne_info=_ltne_info,
+        _max_outer=_max_outer,
+        _ltne_max_iter=_ltne_max_iter,
+        _needs_full_validate=(_compact_diag and not all(
+            d['converged'] for d in _ltne_info)),
+    )
+
+    # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
+    # Catches dynamic choking the 1D pre-seed missed: a supersonic |v| or a
+    # pressure clipped to the floor in the converged field. Mach is the load-
+    # bearing signal (the _update_density floor bounds the stored gauge, but a
+    # choked solve still drives v=G/rho supersonic); it is computed per-cell
+    # against the LOCAL temperature so a cold low-density region isn't missed.
+    # BOTH ideal-gas sides are checked — fluid B (air-air) can choke too.
+    _clip_hits = int(getattr(sA, '_p_clip_hits', 0))
+    if sB is not None:
+        _clip_hits += int(getattr(sB, '_p_clip_hits', 0))
+    _env_valid, _env_reasons = True, []
+    if cfg.get('fluid_type_A', 'air') == 'air':
+        _vA, _rA = gate_solution(
+            float((sA.P_ref_abs + sA.P).min()), float(vmag.max()),
+            float(T_inA), mode=_env_mode, dims='3D-A',
+            ma_max=mach_field_max(vmag, Ta))
+        _env_valid = _env_valid and _vA
+        _env_reasons += [f"[A] {r}" for r in _rA]
+    if (sB is not None and vmag_B is not None
+            and cfg.get('fluid_type_B', 'air') == 'air'):
+        _vB, _rB = gate_solution(
+            float((sB.P_ref_abs + sB.P).min()), float(vmag_B.max()),
+            float(T_inB), mode=_env_mode, dims='3D-B',
+            ma_max=mach_field_max(vmag_B, Tb))
+        _env_valid = _env_valid and _vB
+        _env_reasons += [f"[B] {r}" for r in _rB]
+    # ── SIMPLE verdict: judge the FINAL solve, not the whole history ─────────
+    # `_simple_nonconv` is a STICKY list of every SIMPLE solve that failed,
+    # including the cold-start one. But outer iteration 0 can never satisfy the
+    # coupling criterion (there is no previous iterate to diff against), so
+    # `post(0)` ALWAYS runs and ALWAYS re-solves SIMPLE — the cold-start
+    # velocity/pressure field is therefore ALWAYS superseded before anything is
+    # reported. Gating the verdict on the sticky list meant a run whose every
+    # reported field came from a converged solve still said converged=False
+    # because a transient warm-up solve had stalled. (Shanghai: the u≈22 m/s
+    # cases log `A@init[stall]` while every subsequent re-solve exits
+    # 'velocity'.) The verdict now measures the state that produced the answer;
+    # the full history stays in convergence_detail for diagnosis, and a
+    # superseded stall still raises a (differently worded) warning.
+    #
+    # `SIMPLESolver3D.solve` returns converged=True for exit_reason 'tol' or
+    # 'velocity' (LowReExit's velocity-stability criterion) and False for
+    # 'stall' / 'max_iter' / 'cancelled'. `exit_reason` holds the LAST solve.
+    _OK_EXITS = ('tol', 'velocity')
+
+    def _final_ok(s):
+        return s is None or getattr(s, 'exit_reason', None) in _OK_EXITS
+    _simple_final_ok = _final_ok(sA) and _final_ok(sB)
+    _simple_nonconv_transient = [
+        t for t in _simple_nonconv if t.startswith(('A@init', 'B@init'))]
+    _simple_nonconv_final = [
+        t for t in _simple_nonconv if t not in _simple_nonconv_transient]
+
+    if not _simple_final_ok:
+        _env_warnings.append(
+            "SIMPLE momentum solve did not converge in the FINAL solve: "
+            + ", ".join(_simple_nonconv_final or _simple_nonconv)
+            + " — the reported velocity/pressure field is not converged (raise "
+              "max_iter or relax tol).")
+    elif _simple_nonconv_transient:
+        _env_warnings.append(
+            "SIMPLE momentum solve stalled in a TRANSIENT (superseded) solve: "
+            + ", ".join(_simple_nonconv_transient)
+            + " — the cold-start field was re-solved by the outer loop and the "
+              "reported field DID converge, so this is informational. It does "
+              "flag a hard cold start (typically high u).")
+    _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
+    _result['envelope_valid'] = _env_valid
+    _result['envelope_reasons'] = _env_reasons
+    _result['envelope_warnings'] = _env_warnings
+    _result['p_clip_hits'] = _clip_hits
+    # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
+    # robustness-hardening (2026-07-03) introduced this key but only ANDed
+    # SIMPLE with the FINAL outer LTNE pass. Three ways a bad solve could still
+    # report success, all closed here:
+    #   (a) outer coupling never converged  — the skeleton's verdict was
+    #       discarded at the call site (see run_outer_coupling above);
+    #   (b) `max_outer_ltne=0` → zero iterations → `_ltne_info` empty → the
+    #       `not _ltne_info` short-circuit returned True on a run that solved
+    #       nothing;
+    #   (c) a non-finite (NaN/inf) temperature or velocity field — the envelope
+    #       gate flags non-finite P/Mach, but a NaN inside Ta/Tb/Ts alone did
+    #       not touch the verdict.
+    # Only the verdict changes; no numeric field is touched (golden gates hash
+    # fields + headline scalars, not this key).
+    _fields_finite = bool(
+        np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
+        and np.all(np.isfinite(Ts)) and np.all(np.isfinite(vmag))
+        and (vmag_B is None or np.all(np.isfinite(vmag_B))))
+    if not _fields_finite:
+        _env_warnings.append(
+            "Non-finite (NaN/inf) cells in the converged temperature or "
+            "velocity field — the result is not physical; solver_converged "
+            "is forced False.")
+        _env_warnings = list(dict.fromkeys(_env_warnings))
+        _result['envelope_warnings'] = _env_warnings
+    _ltne_ok = bool(_ltne_info) and bool(
+        _ltne_info[-1].get('converged', False))
+    _result['solver_converged'] = bool(
+        _simple_final_ok               # the FINAL SIMPLE solve on EACH side
+        and _ltne_ok                   # FINAL outer LTNE inner pass converged
+        and bool(_outer_converged)     # outer coupling converged (not capped)
+        and _fields_finite             # no NaN/inf in the reported fields
+        and bool(_env_valid))          # post-solve compressible envelope gate
+    # A2 (2026-07-06): structured convergence detail. Additive result keys
+    # only (the golden gate hashes fields + headline scalars, not these).
+    #   simple_*   : final SIMPLE exit per solver — reason ('tol'|'velocity'|
+    #                'stall'|'max_iter'|'cancelled'), final normalised
+    #                residual, and the kg/s normalisation reference.
+    #   outer_dT   : per-outer-iteration {Ta,Tb,Ts: max|Δ| [K]} history.
+    #   outer_converged : the tracked-field AND-gate verdict of the LAST
+    #                outer iteration (False when the loop hit _MAX_OUTER).
+    def _simple_detail(s):
+        if s is None:
+            return None
+        return dict(exit_reason=getattr(s, 'exit_reason', None),
+                    # LEGACY mass residual. Ledger C6: on 3D this is the
+                    # Dirichlet-outlet-row artifact, NOT a convergence measure.
+                    # Kept because it still drives the adaptive-AMG scheduler and
+                    # every historical number was produced against it.
+                    final_res=getattr(s, 'final_res', None),
+                    res_norm_ref=getattr(s, 'res_norm_ref', None),
+                    iterations=len(getattr(s, 'residuals', []) or []),
+                    # F2 gates (ledger C7). None in convergence_mode='legacy'
+                    # unless track_momentum_residual was set.
+                    convergence_mode=getattr(s, 'convergence_mode', 'legacy'),
+                    final_res_mom=getattr(s, 'final_res_mom', None),
+                    final_res_mass_local=getattr(
+                        s, 'final_res_mass_local', None),
+                    final_res_mass_global=getattr(
+                        s, 'final_res_mass_global', None),
+                    outlet_backflow_frac=getattr(
+                        s, 'outlet_backflow_frac', None))
+    _result['convergence_detail'] = dict(
+        simple_A=_simple_detail(sA),
+        simple_B=_simple_detail(sB),
+        simple_nonconv=list(_simple_nonconv),
+        outer_dT=[{k: float(v) for k, v in d.items()}
+                  for d in _outer_dT_hist],
+        # The skeleton's OWN verdict, not a reconstruction from the ΔT history
+        # (the reconstruction could disagree with the loop that actually ran —
+        # e.g. it returned True for a converged-on-the-first-pass run whose
+        # history the skeleton never marks). Also records WHY it stopped.
+        outer_converged=bool(_outer_converged),
+        outer_iters=int(_outer_last_iter) + 1,
+        outer_hit_cap=bool(not _outer_converged),
+        # Per-gate breakdown so a caller can see WHICH gate failed rather than
+        # just that the AND is False (convergence truth-table, 2026-07-12).
+        # simple_ok gates the verdict and judges the FINAL solve on each side.
+        # simple_nonconv (above) stays the FULL sticky history; the two lists
+        # below split it, so a caller can tell "the reported field is bad" from
+        # "a superseded warm-up solve stalled" — they used to be indistinguishable
+        # and both forced converged=False.
+        simple_ok=bool(_simple_final_ok),
+        simple_nonconv_final=list(_simple_nonconv_final),
+        simple_nonconv_transient=list(_simple_nonconv_transient),
+        simple_exit_A=getattr(sA, 'exit_reason', None),
+        simple_exit_B=getattr(sB, 'exit_reason', None) if sB is not None else None,
+        ltne_ok=_ltne_ok,
+        fields_finite=_fields_finite,
+        envelope_ok=bool(_env_valid),
+        # Outer-coupling Anderson (None when the opt-in knob is off). Records
+        # how many candidates were accepted / rejected by the admissibility
+        # gate / dropped by the staleness reset, plus the fixed-point residual
+        # history — so the acceleration is auditable, never a black box.
+        outer_anderson=(None if not _use_outer_and else dict(
+            A=_and_A.stats(), B=(_and_B.stats() if sB is not None else None))),
+    )
+
+    # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
+    # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
+    # LTNE conservation audit (validation/cases/audit_partial_b_ltne.py).
+    # 2026-06-09 perf C1: gated behind cfg['_emit_audit'] (default False) —
+    # these deep-copy both solvers' full u/v/w/ρ fields + K/eps/rho_cp/χ arrays,
+    # a large memory + wall-time cost paid on EVERY run. Only the audit scripts
+    # and test_partial_bc_ghost_b consume them, so those callers set
+    # _emit_audit=True. Consumers must not mutate. No physics change.
+    if cfg.get('_emit_audit', False):
+        _result.update(
+        _audit_sA_face=dict(
+            u=sA.u.copy(), v=sA.v.copy(), w=sA.w.copy(),
+            rho=sA.rho_field.copy(),
+            inlet_frac=(np.asarray(sA.inlet_frac).copy()
+                        if getattr(sA, 'inlet_frac', None) is not None else None),
+            outlet_frac=(np.asarray(sA.outlet_frac).copy()
+                         if getattr(sA, 'outlet_frac', None) is not None else None),
+            eps=(np.asarray(sA.eps_field).copy()
+                 if getattr(sA, 'eps_field', None) is not None else None),
+            dx=sA.dx.copy(), dy=sA.dy.copy(), dz=sA.dz.copy(),
+            dir_real=fA['dir'],
+            solver_to_real_perm=solver_to_real_perm,
+        ),
+        _audit_sB_face=(dict(
+            u=sB.u.copy(), v=sB.v.copy(), w=sB.w.copy(),
+            rho=sB.rho_field.copy(),
+            inlet_frac=(np.asarray(sB.inlet_frac).copy()
+                        if getattr(sB, 'inlet_frac', None) is not None else None),
+            outlet_frac=(np.asarray(sB.outlet_frac).copy()
+                         if getattr(sB, 'outlet_frac', None) is not None else None),
+            eps=(np.asarray(sB.eps_field).copy()
+                 if getattr(sB, 'eps_field', None) is not None else None),
+            dx=sB.dx.copy(), dy=sB.dy.copy(), dz=sB.dz.copy(),
+            dir_real=fB['dir'],
+            solver_to_real_perm=sB_info['axis_map']['solver_to_real_perm'],
+        ) if sB is not None else None),
+        _audit_ltne_mask_B=(np.asarray(_ltne_mask_B).copy()
+                             if _ltne_mask_B is not None else None),
+        _audit_ltne_mask_A=(np.asarray(_ltne_mask_A).copy()
+                             if _ltne_mask_A is not None else None),
+        _audit_in_mask_B=(np.asarray(in_mask_B).copy()
+                          if (sB is not None and in_mask_B is not None) else None),
+        _audit_out_mask_B=(np.asarray(out_mask_B).copy()
+                           if (sB is not None and out_mask_B is not None) else None),
+        _audit_in_mask_2d=(np.asarray(in_mask_2d).copy()
+                           if in_mask_2d is not None else None),
+        _audit_out_mask_2d=(np.asarray(out_mask_2d).copy()
+                            if out_mask_2d is not None else None),
+        _audit_m_dot_A_simple=float(m_dot_A_simple),
+        _audit_m_dot_B_simple=(float(m_dot_B_simple) if sB is not None else None),
+        _audit_m_dot_B_phys_in=(float(m_dot_B_phys_in) if sB is not None else None),
+        _audit_m_dot_B_phys_out=(float(m_dot_B_phys_out) if sB is not None else None),
+        _audit_cp_A=float(cp_A),
+        _audit_cp_B=(float(cp_B) if sB is not None else None),
+        _audit_T_inA=float(T_inA),
+        _audit_T_inB=(float(T_inB) if sB is not None else None),
+        _audit_u_A=float(u_A),
+        _audit_u_B=(float(u_B) if sB is not None else None),
+        _audit_eps=float(eps),
+        _audit_fA=dict(fA),
+        _audit_fB=(dict(fB) if fB is not None else None),
+        # Phase 2 conservation-residual exports (post-χ_B for K_ffB)
+        _audit_K_ffA=K_ffA.copy(),
+        _audit_K_ffB=K_ffB.copy(),
+        _audit_K_ss=K_ss.copy(),
+        _audit_eps_arr=eps_arr.copy(),
+        _audit_rho_cp_fA=rho_cp_fA.copy(),
+        _audit_rho_cp_fB=rho_cp_fB.copy(),
+        _audit_chi_B=(chi_B.copy() if chi_B is not None else None),
+        _audit_P_inA=float(P_inA),
+        _audit_P_inB=float(P_inB),
+        )
+
+    return (_result)
+
+
 def _run_3d_stack(cfg):
     """Unified 3D stack: SIMPLE3D (A) + frozen Tb + LTNE3D.
 
@@ -2268,405 +2684,5 @@ def _run_3d_stack(cfg):
     # Conservation diagnostics (energy + mass balance + interior-corrected Q) —
     # extracted to _conservation_diagnostics_3d (F1). Always computed so the
     # user spots non-physical regressions without re-running validation.
-    _cdiag = _conservation_diagnostics_3d(
-        Ta, Tb, Ts, h_vA_field, h_vB_field, sA, sB, fA, fB, dx, dy, dz)
-    Q_sA = _cdiag['Q_sA']; Q_sB = _cdiag['Q_sB']; Q_net = _cdiag['Q_net']
-    energy_rel = _cdiag['energy_rel']
-    mass_rel_A = _cdiag['mass_rel_A']; mass_rel_B = _cdiag['mass_rel_B']
-    Q_sA_interior = _cdiag['Q_sA_interior']
-    Q_sB_interior = _cdiag['Q_sB_interior']
-    Q_interior_primary = _cdiag['Q_interior_primary']
-    AB_interior = _cdiag['AB_interior']
-
-    # ═══════════════════════════════════════════════════════════════════
-    # Phase 2 diagnostics (Plan A v3): REQ_1–4 data dump
-    # ═══════════════════════════════════════════════════════════════════
-    if _compact_diag:
-        # Fast sweep: single CSV-style row, skip full diagnostic dump
-        _ltne_iters = [d['iters'] for d in _ltne_info]
-        _ltne_conv = [d['converged'] for d in _ltne_info]
-        _ltne_hit_max = [d['iters'] >= _ltne_max_iter for d in _ltne_info]
-        eps_obs = ((T_B_out - T_inB) / (T_inA - T_inB)
-                   if sB is not None and T_inA != T_inB else 0.0)
-        chi_p50 = float(np.percentile(chi_B, 50)) if chi_B is not None else 1.0
-        _log.info(f"[SWEEP-CSV] {cfg.get('_case_label','?')},"
-                  f"{len(_ltne_info)},{_ltne_iters},{_ltne_conv},"
-                  f"{any(_ltne_hit_max)},{_ltne_info[-1]['residual']:.2e},"
-                  f"{T_A_out:.1f},{T_B_out:.1f},{Q:.1f},"
-                  f"{Q_sA:.1f},{Q_sB:.1f},{Q_sA+Q_sB:.1f},"
-                  f"{energy_rel:.6f},{eps_obs:.4f},{chi_p50:.4f}")
-    # Run diagnostics (Q-DIAG / CHI / CHI-BC) — OPT-IN, skipped in production.
-    # None of these locals feed the return dict; gating avoids the extra
-    # _face_flux_weights / percentile / histogram recompute + ~30 lines of
-    # console spam on every run. Enable via the 3D profiler (.profile_3d /
-    # TPMSHX_PROFILE_3D=1) or cfg['_verbose_diag']=True. 2026-06-09 perf B2.
-    if _prof_3d_enabled() or bool(cfg.get('_verbose_diag', False)):
-        _dbg = np
-        Q_solid_A_val = float(_dbg.sum(h_vA_field * (Ts - Ta) * cell_vol))
-        Q_solid_B_val = float(_dbg.sum(h_vB_field * (Ts - Tb) * cell_vol))
-
-        # Group 1: LTNE-effective Q (uses eps_f, chi_face, LTNE volume source)
-        Q_enth_A_ltne = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
-        Q_enth_B_ltne = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out)) if sB is not None else 0.0
-
-        # Group 2: Physical-boundary Q (no eps_f, physical m_dot at inlet)
-        m_A_phys_in = float(_dbg.sum(_face_flux_weights(
-            sA, fA['dir'], face='real_inlet', eps_mode='physical')))
-        Q_enth_A_phys = abs(m_A_phys_in * cp_A * (T_inA - T_A_out))
-        if sB is not None:
-            Q_enth_B_phys = abs(m_dot_B_phys_in * cp_B * (T_inB - T_B_out))
-        else:
-            Q_enth_B_phys = 0.0
-
-        _log.info(f"[Q-DIAG] === LTNE-effective group ===")
-        _log.info(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
-                  f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
-        if sB is not None:
-            _log.info(f"[Q-DIAG] m_dot_B_ltne={m_dot_B_simple:.5f} kg/s  "
-                      f"T_B_out={T_B_out:.1f} K (chi)  "
-                      f"T_B_out_no_chi={T_B_out_no_chi:.1f} K  "
-                      f"Q_enth_B_ltne={Q_enth_B_ltne:.1f} W")
-        _log.info(f"[Q-DIAG] Q_solid_A={Q_solid_A_val:.1f}  Q_solid_B={Q_solid_B_val:.1f}  "
-                  f"balance={Q_solid_A_val+Q_solid_B_val:.1f} W")
-        _log.info(f"[Q-DIAG] Q_ltne_consistency: |Q_sA|-Q_enth_A_ltne="
-                  f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
-                  f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
-
-        _log.info(f"[Q-DIAG] === Physical-boundary group ===")
-        _log.info(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
-                  f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
-        if sB is not None:
-            _log.info(f"[Q-DIAG] m_B_phys_in={m_dot_B_phys_in:.5f}  "
-                      f"m_B_phys_out_chi={m_dot_B_phys_out:.5f} kg/s  "
-                      f"T_B_out={T_B_out:.1f} K")
-            _log.info(f"[Q-DIAG] Q_enth_B_phys={Q_enth_B_phys:.1f} W")
-
-        # ── REQ_2: χ_B distribution histogram ──
-        if chi_B is not None:
-            chi_flat = chi_B.ravel()
-            _log.info(f"[CHI] min={chi_flat.min():.3f} max={chi_flat.max():.3f} "
-                      f"mean={chi_flat.mean():.3f}")
-            _log.info(f"[CHI] p10={_dbg.percentile(chi_flat,10):.3f} "
-                      f"p25={_dbg.percentile(chi_flat,25):.3f} "
-                      f"p50={_dbg.percentile(chi_flat,50):.3f} "
-                      f"p75={_dbg.percentile(chi_flat,75):.3f} "
-                      f"p90={_dbg.percentile(chi_flat,90):.3f}")
-            hist, bin_edges = _dbg.histogram(chi_flat, bins=10, range=(0, 1))
-            _log.info("[CHI] histogram bins:")
-            for i, c in enumerate(hist):
-                _log.info(f"  [{bin_edges[i]:.1f}, {bin_edges[i+1]:.1f}): "
-                          f"{c} ({100*c/chi_flat.size:.1f}%)")
-
-        # ── REQ_4: χ_B on B inlet/outlet patches (masked, not full face) ──
-        if chi_B is not None and sB is not None:
-            # B inlet face slice in real coords (single dir source).
-            chi_B_in_face = _face_slice(chi_B, fB['dir'], 'inlet')
-            # Inlet patch mask: _ltne_mask_B is the physical inlet patch in 2D
-            # (in_mask_B; approach-(a), no in/out swap).
-            _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
-            if _ltne_mask_B_val is not None:
-                chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
-                if len(chi_in_patch) > 0:
-                    _log.info(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
-                              f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
-                              f"p50={_dbg.percentile(chi_in_patch,50):.3f} "
-                              f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
-            # Outlet patch
-            if chi_B_out_face is not None:
-                chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
-                if len(chi_out_patch) > 0:
-                    _log.info(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
-                              f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
-                              f"p50={_dbg.percentile(chi_out_patch,50):.3f} "
-                              f"p90={_dbg.percentile(chi_out_patch,90):.3f}")
-    # ═══════════════════════════════════════════════════════════════════
-
-    _result = dict(
-        Ta=Ta, Tb=Tb, Ts=Ts,
-        vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
-        P_Pa=P_real,
-        uc_real=uc_real, vc_real=vc_real, wc_real=wc_real,
-        # Fluid B (None if frozen)
-        P_Pa_B=P_real_B,
-        uc_real_B=ucB, vc_real_B=vcB, wc_real_B=wcB,
-        vmag_B=vmag_B, dP_B=dP_B,
-        dx=dx, dy=dy, dz=dz,
-        Lx=L, Ly=H, Lz=Lz,
-        Q=Q, Q_total=Q, Q_enthalpy_A=Q_enthalpy_A, Q_enthalpy_B=Q_enthalpy_B,
-        Q_solid_B=Q_solid_B,
-        dP=dP, dP_A=dP, u_A=u_A, T_in=T_inA,
-        T_A_out=T_A_out, T_B_out=T_B_out,
-        T_out_A=T_A_out, T_out_B=T_B_out,
-        dir_A=fA['dir'], dir_B=(fB['dir'] if fB is not None else None),
-        # Conservation diagnostics
-        Q_sA=Q_sA, Q_sB=Q_sB, Q_net=Q_net,
-        energy_imbalance_rel=energy_rel,
-        mass_imbalance_rel_A=mass_rel_A,
-        mass_imbalance_rel_B=mass_rel_B,
-        # #5: sCO2 A/B enthalpy-duty imbalance (nan for air/water) — the residual
-        # after the reverse-dir mass-flow fix; >10% ⇒ trust 2D coupled duty.
-        Q_AB_imbalance_rel=Q_AB_imbalance_rel,
-        # h_v fields for BC-layer split diagnostic (path 0' v3)
-        h_vA_field=h_vA_field, h_vB_field=h_vB_field,
-        # Path 0' interior-corrected metrics (BC layer excluded)
-        Q_sA_interior=Q_sA_interior,
-        Q_sB_interior=Q_sB_interior,
-        Q_interior=Q_interior_primary,
-        AB_interior=AB_interior,
-        # B2 strict-conservation certificate (None unless conservative_ltne)
-        eps_A_strict=_eps_A_strict,
-        eps_B_strict=_eps_B_strict,
-        eps_A_strict_cellmax=_eps_A_strict_cellmax,
-        eps_B_strict_cellmax=_eps_B_strict_cellmax,
-        # Plan C v2: B flow-path indicator field (χ_B) for visualization
-        chi_B=chi_B,
-        # Sweep profile diagnostics
-        _ltne_info=_ltne_info,
-        _max_outer=_max_outer,
-        _ltne_max_iter=_ltne_max_iter,
-        _needs_full_validate=(_compact_diag and not all(
-            d['converged'] for d in _ltne_info)),
-    )
-
-    # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
-    # Catches dynamic choking the 1D pre-seed missed: a supersonic |v| or a
-    # pressure clipped to the floor in the converged field. Mach is the load-
-    # bearing signal (the _update_density floor bounds the stored gauge, but a
-    # choked solve still drives v=G/rho supersonic); it is computed per-cell
-    # against the LOCAL temperature so a cold low-density region isn't missed.
-    # BOTH ideal-gas sides are checked — fluid B (air-air) can choke too.
-    _clip_hits = int(getattr(sA, '_p_clip_hits', 0))
-    if sB is not None:
-        _clip_hits += int(getattr(sB, '_p_clip_hits', 0))
-    _env_valid, _env_reasons = True, []
-    if cfg.get('fluid_type_A', 'air') == 'air':
-        _vA, _rA = gate_solution(
-            float((sA.P_ref_abs + sA.P).min()), float(vmag.max()),
-            float(T_inA), mode=_env_mode, dims='3D-A',
-            ma_max=mach_field_max(vmag, Ta))
-        _env_valid = _env_valid and _vA
-        _env_reasons += [f"[A] {r}" for r in _rA]
-    if (sB is not None and vmag_B is not None
-            and cfg.get('fluid_type_B', 'air') == 'air'):
-        _vB, _rB = gate_solution(
-            float((sB.P_ref_abs + sB.P).min()), float(vmag_B.max()),
-            float(T_inB), mode=_env_mode, dims='3D-B',
-            ma_max=mach_field_max(vmag_B, Tb))
-        _env_valid = _env_valid and _vB
-        _env_reasons += [f"[B] {r}" for r in _rB]
-    # ── SIMPLE verdict: judge the FINAL solve, not the whole history ─────────
-    # `_simple_nonconv` is a STICKY list of every SIMPLE solve that failed,
-    # including the cold-start one. But outer iteration 0 can never satisfy the
-    # coupling criterion (there is no previous iterate to diff against), so
-    # `post(0)` ALWAYS runs and ALWAYS re-solves SIMPLE — the cold-start
-    # velocity/pressure field is therefore ALWAYS superseded before anything is
-    # reported. Gating the verdict on the sticky list meant a run whose every
-    # reported field came from a converged solve still said converged=False
-    # because a transient warm-up solve had stalled. (Shanghai: the u≈22 m/s
-    # cases log `A@init[stall]` while every subsequent re-solve exits
-    # 'velocity'.) The verdict now measures the state that produced the answer;
-    # the full history stays in convergence_detail for diagnosis, and a
-    # superseded stall still raises a (differently worded) warning.
-    #
-    # `SIMPLESolver3D.solve` returns converged=True for exit_reason 'tol' or
-    # 'velocity' (LowReExit's velocity-stability criterion) and False for
-    # 'stall' / 'max_iter' / 'cancelled'. `exit_reason` holds the LAST solve.
-    _OK_EXITS = ('tol', 'velocity')
-
-    def _final_ok(s):
-        return s is None or getattr(s, 'exit_reason', None) in _OK_EXITS
-    _simple_final_ok = _final_ok(sA) and _final_ok(sB)
-    _simple_nonconv_transient = [
-        t for t in _simple_nonconv if t.startswith(('A@init', 'B@init'))]
-    _simple_nonconv_final = [
-        t for t in _simple_nonconv if t not in _simple_nonconv_transient]
-
-    if not _simple_final_ok:
-        _env_warnings.append(
-            "SIMPLE momentum solve did not converge in the FINAL solve: "
-            + ", ".join(_simple_nonconv_final or _simple_nonconv)
-            + " — the reported velocity/pressure field is not converged (raise "
-              "max_iter or relax tol).")
-    elif _simple_nonconv_transient:
-        _env_warnings.append(
-            "SIMPLE momentum solve stalled in a TRANSIENT (superseded) solve: "
-            + ", ".join(_simple_nonconv_transient)
-            + " — the cold-start field was re-solved by the outer loop and the "
-              "reported field DID converge, so this is informational. It does "
-              "flag a hard cold start (typically high u).")
-    _env_warnings = list(dict.fromkeys(_env_warnings))   # dedup, keep order
-    _result['envelope_valid'] = _env_valid
-    _result['envelope_reasons'] = _env_reasons
-    _result['envelope_warnings'] = _env_warnings
-    _result['p_clip_hits'] = _clip_hits
-    # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
-    # robustness-hardening (2026-07-03) introduced this key but only ANDed
-    # SIMPLE with the FINAL outer LTNE pass. Three ways a bad solve could still
-    # report success, all closed here:
-    #   (a) outer coupling never converged  — the skeleton's verdict was
-    #       discarded at the call site (see run_outer_coupling above);
-    #   (b) `max_outer_ltne=0` → zero iterations → `_ltne_info` empty → the
-    #       `not _ltne_info` short-circuit returned True on a run that solved
-    #       nothing;
-    #   (c) a non-finite (NaN/inf) temperature or velocity field — the envelope
-    #       gate flags non-finite P/Mach, but a NaN inside Ta/Tb/Ts alone did
-    #       not touch the verdict.
-    # Only the verdict changes; no numeric field is touched (golden gates hash
-    # fields + headline scalars, not this key).
-    _fields_finite = bool(
-        np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
-        and np.all(np.isfinite(Ts)) and np.all(np.isfinite(vmag))
-        and (vmag_B is None or np.all(np.isfinite(vmag_B))))
-    if not _fields_finite:
-        _env_warnings.append(
-            "Non-finite (NaN/inf) cells in the converged temperature or "
-            "velocity field — the result is not physical; solver_converged "
-            "is forced False.")
-        _env_warnings = list(dict.fromkeys(_env_warnings))
-        _result['envelope_warnings'] = _env_warnings
-    _ltne_ok = bool(_ltne_info) and bool(
-        _ltne_info[-1].get('converged', False))
-    _result['solver_converged'] = bool(
-        _simple_final_ok               # the FINAL SIMPLE solve on EACH side
-        and _ltne_ok                   # FINAL outer LTNE inner pass converged
-        and bool(_outer_converged)     # outer coupling converged (not capped)
-        and _fields_finite             # no NaN/inf in the reported fields
-        and bool(_env_valid))          # post-solve compressible envelope gate
-    # A2 (2026-07-06): structured convergence detail. Additive result keys
-    # only (the golden gate hashes fields + headline scalars, not these).
-    #   simple_*   : final SIMPLE exit per solver — reason ('tol'|'velocity'|
-    #                'stall'|'max_iter'|'cancelled'), final normalised
-    #                residual, and the kg/s normalisation reference.
-    #   outer_dT   : per-outer-iteration {Ta,Tb,Ts: max|Δ| [K]} history.
-    #   outer_converged : the tracked-field AND-gate verdict of the LAST
-    #                outer iteration (False when the loop hit _MAX_OUTER).
-    def _simple_detail(s):
-        if s is None:
-            return None
-        return dict(exit_reason=getattr(s, 'exit_reason', None),
-                    # LEGACY mass residual. Ledger C6: on 3D this is the
-                    # Dirichlet-outlet-row artifact, NOT a convergence measure.
-                    # Kept because it still drives the adaptive-AMG scheduler and
-                    # every historical number was produced against it.
-                    final_res=getattr(s, 'final_res', None),
-                    res_norm_ref=getattr(s, 'res_norm_ref', None),
-                    iterations=len(getattr(s, 'residuals', []) or []),
-                    # F2 gates (ledger C7). None in convergence_mode='legacy'
-                    # unless track_momentum_residual was set.
-                    convergence_mode=getattr(s, 'convergence_mode', 'legacy'),
-                    final_res_mom=getattr(s, 'final_res_mom', None),
-                    final_res_mass_local=getattr(
-                        s, 'final_res_mass_local', None),
-                    final_res_mass_global=getattr(
-                        s, 'final_res_mass_global', None),
-                    outlet_backflow_frac=getattr(
-                        s, 'outlet_backflow_frac', None))
-    _result['convergence_detail'] = dict(
-        simple_A=_simple_detail(sA),
-        simple_B=_simple_detail(sB),
-        simple_nonconv=list(_simple_nonconv),
-        outer_dT=[{k: float(v) for k, v in d.items()}
-                  for d in _outer_dT_hist],
-        # The skeleton's OWN verdict, not a reconstruction from the ΔT history
-        # (the reconstruction could disagree with the loop that actually ran —
-        # e.g. it returned True for a converged-on-the-first-pass run whose
-        # history the skeleton never marks). Also records WHY it stopped.
-        outer_converged=bool(_outer_converged),
-        outer_iters=int(_outer_last_iter) + 1,
-        outer_hit_cap=bool(not _outer_converged),
-        # Per-gate breakdown so a caller can see WHICH gate failed rather than
-        # just that the AND is False (convergence truth-table, 2026-07-12).
-        # simple_ok gates the verdict and judges the FINAL solve on each side.
-        # simple_nonconv (above) stays the FULL sticky history; the two lists
-        # below split it, so a caller can tell "the reported field is bad" from
-        # "a superseded warm-up solve stalled" — they used to be indistinguishable
-        # and both forced converged=False.
-        simple_ok=bool(_simple_final_ok),
-        simple_nonconv_final=list(_simple_nonconv_final),
-        simple_nonconv_transient=list(_simple_nonconv_transient),
-        simple_exit_A=getattr(sA, 'exit_reason', None),
-        simple_exit_B=getattr(sB, 'exit_reason', None) if sB is not None else None,
-        ltne_ok=_ltne_ok,
-        fields_finite=_fields_finite,
-        envelope_ok=bool(_env_valid),
-        # Outer-coupling Anderson (None when the opt-in knob is off). Records
-        # how many candidates were accepted / rejected by the admissibility
-        # gate / dropped by the staleness reset, plus the fixed-point residual
-        # history — so the acceleration is auditable, never a black box.
-        outer_anderson=(None if not _use_outer_and else dict(
-            A=_and_A.stats(), B=(_and_B.stats() if sB is not None else None))),
-    )
-
-    # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
-    # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
-    # LTNE conservation audit (validation/cases/audit_partial_b_ltne.py).
-    # 2026-06-09 perf C1: gated behind cfg['_emit_audit'] (default False) —
-    # these deep-copy both solvers' full u/v/w/ρ fields + K/eps/rho_cp/χ arrays,
-    # a large memory + wall-time cost paid on EVERY run. Only the audit scripts
-    # and test_partial_bc_ghost_b consume them, so those callers set
-    # _emit_audit=True. Consumers must not mutate. No physics change.
-    if cfg.get('_emit_audit', False):
-        _result.update(
-        _audit_sA_face=dict(
-            u=sA.u.copy(), v=sA.v.copy(), w=sA.w.copy(),
-            rho=sA.rho_field.copy(),
-            inlet_frac=(np.asarray(sA.inlet_frac).copy()
-                        if getattr(sA, 'inlet_frac', None) is not None else None),
-            outlet_frac=(np.asarray(sA.outlet_frac).copy()
-                         if getattr(sA, 'outlet_frac', None) is not None else None),
-            eps=(np.asarray(sA.eps_field).copy()
-                 if getattr(sA, 'eps_field', None) is not None else None),
-            dx=sA.dx.copy(), dy=sA.dy.copy(), dz=sA.dz.copy(),
-            dir_real=fA['dir'],
-            solver_to_real_perm=solver_to_real_perm,
-        ),
-        _audit_sB_face=(dict(
-            u=sB.u.copy(), v=sB.v.copy(), w=sB.w.copy(),
-            rho=sB.rho_field.copy(),
-            inlet_frac=(np.asarray(sB.inlet_frac).copy()
-                        if getattr(sB, 'inlet_frac', None) is not None else None),
-            outlet_frac=(np.asarray(sB.outlet_frac).copy()
-                         if getattr(sB, 'outlet_frac', None) is not None else None),
-            eps=(np.asarray(sB.eps_field).copy()
-                 if getattr(sB, 'eps_field', None) is not None else None),
-            dx=sB.dx.copy(), dy=sB.dy.copy(), dz=sB.dz.copy(),
-            dir_real=fB['dir'],
-            solver_to_real_perm=sB_info['axis_map']['solver_to_real_perm'],
-        ) if sB is not None else None),
-        _audit_ltne_mask_B=(np.asarray(_ltne_mask_B).copy()
-                             if _ltne_mask_B is not None else None),
-        _audit_ltne_mask_A=(np.asarray(_ltne_mask_A).copy()
-                             if _ltne_mask_A is not None else None),
-        _audit_in_mask_B=(np.asarray(in_mask_B).copy()
-                          if (sB is not None and in_mask_B is not None) else None),
-        _audit_out_mask_B=(np.asarray(out_mask_B).copy()
-                           if (sB is not None and out_mask_B is not None) else None),
-        _audit_in_mask_2d=(np.asarray(in_mask_2d).copy()
-                           if in_mask_2d is not None else None),
-        _audit_out_mask_2d=(np.asarray(out_mask_2d).copy()
-                            if out_mask_2d is not None else None),
-        _audit_m_dot_A_simple=float(m_dot_A_simple),
-        _audit_m_dot_B_simple=(float(m_dot_B_simple) if sB is not None else None),
-        _audit_m_dot_B_phys_in=(float(m_dot_B_phys_in) if sB is not None else None),
-        _audit_m_dot_B_phys_out=(float(m_dot_B_phys_out) if sB is not None else None),
-        _audit_cp_A=float(cp_A),
-        _audit_cp_B=(float(cp_B) if sB is not None else None),
-        _audit_T_inA=float(T_inA),
-        _audit_T_inB=(float(T_inB) if sB is not None else None),
-        _audit_u_A=float(u_A),
-        _audit_u_B=(float(u_B) if sB is not None else None),
-        _audit_eps=float(eps),
-        _audit_fA=dict(fA),
-        _audit_fB=(dict(fB) if fB is not None else None),
-        # Phase 2 conservation-residual exports (post-χ_B for K_ffB)
-        _audit_K_ffA=K_ffA.copy(),
-        _audit_K_ffB=K_ffB.copy(),
-        _audit_K_ss=K_ss.copy(),
-        _audit_eps_arr=eps_arr.copy(),
-        _audit_rho_cp_fA=rho_cp_fA.copy(),
-        _audit_rho_cp_fB=rho_cp_fB.copy(),
-        _audit_chi_B=(chi_B.copy() if chi_B is not None else None),
-        _audit_P_inA=float(P_inA),
-        _audit_P_inB=float(P_inB),
-        )
+    (_result) = _assemble_3d_verdict(H, K_ffA, K_ffB, K_ss, L, L_mm, Lz, P_inA, P_inB, P_kPa, P_real, P_real_B, Q, Q_AB_imbalance_rel, Q_enthalpy_A, Q_enthalpy_B, Q_solid_B, T_A_out, T_B_out, T_B_out_no_chi, T_inA, T_inB, Ta, Tb, Ts, _and_A, _and_B, _compact_diag, _env_mode, _env_warnings, _eps_A_strict, _eps_A_strict_cellmax, _eps_B_strict, _eps_B_strict_cellmax, _ltne_info, _ltne_mask_A, _ltne_mask_B, _ltne_max_iter, _max_outer, _outer_converged, _outer_dT_hist, _outer_last_iter, _simple_nonconv, _use_outer_and, cell_vol, chi_B, chi_B_out_face, cp_A, cp_B, dP, dP_B, dx, dy, dz, eps, eps_arr, fA, fB, h_vA_field, h_vB_field, in_mask_2d, in_mask_B, m_dot_A_simple, m_dot_B_phys_in, m_dot_B_phys_out, m_dot_B_simple, out_mask_2d, out_mask_B, rho_cp_fA, rho_cp_fB, sA, sB, sB_info, solver_to_real_perm, u_A, u_B, ucB, uc_real, vcB, vc_real, vmag, vmag_B, wcB, wc_real, cfg)
     return _result
