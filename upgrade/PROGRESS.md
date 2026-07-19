@@ -2,6 +2,15 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 2 · 2026-07-19 · P0.2 依赖锁定 ✅（`abaa348`）
+
+- `requirements-lock-server.txt` 入库：80 包完整闭包（含 BO 栈），--extra-index-url 内置可一条直装，
+  指纹与基线同源（76b60e32…）
+- `requirements.txt` 三档头注：裸下界 / devbox constraints / server lock 各自用途；
+  纠正 torch "Optional/GPU" 过时注释、写明 BO 栈缺席事实（HANDOFF §9e）
+- 验证：pip --dry-run 双文件 exit 0（PROTOCOL §4 新增"依赖元数据"行，免套件有据）
+- 下一步：P0.3 raw_data 静默回退改响亮（首个碰运行时代码的条目，全门禁伺候）
+
 ## iter 1 · 2026-07-19 · P0.1 基线快照 ✅（`2c51eca`）
 
 - 四门证据链（suite → golden → 3D real → lumped）串行跑完全绿，日志落盘 upgrade/logs/p01-*

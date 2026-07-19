@@ -10,7 +10,7 @@
       的 headline 数字（Δp / Q / RMSRE）、`pip freeze` 指纹。此后所有"数字没变"的断言都对照它。
       ⚠ 长命令输出必须 `| Tee-Object 日志文件` 落盘后读文件——PowerShell 后台任务捕获会丢
       pytest 进度流的尾巴（2026-07-19 两次实测，靠 exit code 才判的绿）
-- [ ] P0.2 依赖锁定：`requirements-lock-server.txt`（本机验证过的 80 包冻结，torch==2.11.0+cpu
+- [x] P0.2 依赖锁定（`abaa348`，iter 2）：`requirements-lock-server.txt`（本机验证过的 80 包冻结，torch==2.11.0+cpu
       需注明 pytorch cpu 索引）入库；`requirements.txt` 头注说明三档清单
       （裸 requirements / constraints-devbox-2026-07-11 / server lock）各自的用途与适用机器；
       写明 torch/botorch 栈不在 requirements.txt 的事实（HANDOFF §9e）
