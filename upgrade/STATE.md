@@ -1,11 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 39 ——**Phase 4 全部完成（P0–P4 五阶段主线全绿）**
-- next: 收尾轮（ROADMAP 末节两项合并为一轮做：①合并前清单——upgrade/ 目录处置方案、
-  与 master 合并策略（rebase 优先）、给 Alex 的终审报告；②Phase 5 候选池评审选单——
-  A/B/C/D 四池附工作量与风险注记，连同 D2/D3 待决一起交 Alex 拍板。产出 = 终审报告文档
-  （建议 upgrade/FINAL-REPORT.md + 进度页链接）+ PushNotification；收尾轮后循环转
-  待命模式：不拆定时器但每 tick 只查 DECISIONS-NEEDED 有无新 `已决`，有则执行对应项）
+- iteration: 40 ——**收尾轮完成，ROADMAP 全清，循环转待命模式**
+- next: 【待命模式】每 tick 流程：①读 upgrade/DECISIONS-NEEDED.md——出现新 `已决` →
+  按该条目选项执行（恢复正常轮次纪律：STATE 标记/全门/簿记）；②读本文件 next 是否被
+  Alex 改写（Alex 可直接写"启动候选 X"）；③均无 → 静默吸收，不产生提交、不回复长文。
+  待命期间照常维护 §8 定时器（armed_at 超 5 天重建）。终审报告：upgrade/FINAL-REPORT.md
 - in_progress: 无
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
