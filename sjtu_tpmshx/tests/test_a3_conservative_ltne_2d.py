@@ -135,7 +135,11 @@ def test_fine_grid_outer_coupling_stability():
 
 
 if __name__ == '__main__':
-    test_interior_budget_closes_on_nonuniform_flux()
+    # P2.1 lint (F821): the old first entry referenced a test renamed/removed
+    # long ago — this direct-run convenience block had gone stale. Now lists
+    # the file's actual tests.
+    test_uniform_temperature_is_fixed_point()
     test_sou_b_default_off_and_switch_runs()
     test_serial_and_redblack_agree_on_b_and_solid()
+    test_fine_grid_outer_coupling_stability()
     print("ALL DIRECT-RUN TESTS PASS")

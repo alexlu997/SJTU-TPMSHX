@@ -35,12 +35,15 @@ Future passes (incremental, post-P5) can:
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:                      # annotation-only; runtime import stays
+    from .builders_base import _ResultLabel   # local to avoid P5-era cycles
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout,
+    QFrame, QGridLayout, QLabel, QLineEdit, QVBoxLayout,
     QWidget,
 )
 

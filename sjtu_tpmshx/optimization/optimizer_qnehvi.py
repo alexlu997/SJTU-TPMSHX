@@ -32,7 +32,10 @@ import json
 import os
 import time
 import warnings
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:                      # annotation-only; torch stays lazy
+    import torch
 
 import numpy as np
 
