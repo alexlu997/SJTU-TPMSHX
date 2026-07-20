@@ -706,7 +706,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | 冒烟与集成 | 界面实例化、流水线端到端 | `test_main_smoke.py`、`test_pipeline_2d_smoke.py`、`test_evaluator_sanity.py` |
 | design 子模块（`tests/design/`，15 文件） | 定尺、枚举、工况读取 | `test_cases.py`、`test_sizing_inner.py`、`test_optimize.py` |
 
-运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。
+运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（桌面机全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。**多核服务器（2026-07-20 增）**：`-n auto` 在 128 逻辑核上会超额订阅卡死——标准全量门用 `scripts/run_tests_server.ps1`（双 pass，~11–19 min）；开发内循环用 `scripts/run_tests_fast.ps1`（~56 s，排除 census 标记的 21 个 heavy 测试，**非验证门**）。
 
 ---
 
