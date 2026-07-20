@@ -780,7 +780,6 @@ def _run_solvers(window, cfg, fields):
     tpms_type = cfg['tpms_type']
     Lcell = cfg['Lcell']; t_wall = cfg['t_wall']; k_s = cfg['k_s']
 
-    rho_A, rho_B = window._rho_A, window._rho_B
     mu_A, mu_B = window._mu_A, window._mu_B
     P_inA_val = cfg['compute_cfg'].fluid_A.P_in_Pa
     P_inB_val = cfg['compute_cfg'].fluid_B.P_in_Pa

@@ -43,7 +43,7 @@ def test_main_menu_no_qt_parse_warnings():
         captured.append((msg_type, str(message)))
     qInstallMessageHandler(_handler)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    _app = QApplication.instance() or QApplication(sys.argv)
     from main import Main_Menu
     w = Main_Menu()
     w.close()

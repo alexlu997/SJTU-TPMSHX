@@ -712,20 +712,14 @@ def _build_3d_problem(cfg):
 
     # Resolve streamwise geometry from dir_A
     axis_map = _resolve_axis_map(fA, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
-    is_x_stream = axis_map['is_x_stream']
-    is_y_stream = axis_map['is_y_stream']
-    is_z_stream = axis_map['is_z_stream']
     is_reverse = axis_map['is_reverse']
     N_cross1, N_cross2 = axis_map['N_cross1'], axis_map['N_cross2']
-    L_cross1, L_cross2 = axis_map['L_cross1'], axis_map['L_cross2']
     L_stream = axis_map['L_stream']
     dcross1, dcross2 = axis_map['dcross1'], axis_map['dcross2']
     stream_real_axis = axis_map['stream_real_axis']
     solver_init = axis_map['solver_init']
     N_stream = axis_map['N_stream']
     solver_to_real_perm = axis_map['solver_to_real_perm']
-    # Back-compat: L_cross alias for mass-flow area calc (uses both cross axes)
-    L_cross = axis_map['L_cross']
 
     # Fluid A properties at inlet — via the registry (parity with side B, B1 1.1).
     # air: rho=air_density(T,P), cp/mu/k ignore P (value-identical to the old
@@ -858,7 +852,6 @@ def _build_3d_problem(cfg):
     # ── Fluid B: cross-flow SIMPLE — BUILD ONLY (solve in parallel with A) ──
     fB = cfg.get('fluid_B_cfg')
     fluid_type_B = cfg.get('fluid_type_B', 'air')
-    is_water_B = fluid_type_B == 'water'
     # B1 1.1: property primitives + flow model for side B via the registry
     # (frozen-B / stiffness semantics keep using is_water_B).
     _mB = fluid_props.get(fluid_type_B)
@@ -869,9 +862,6 @@ def _build_3d_problem(cfg):
         rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
         mu_B = float(_mB.mu(T_inB, P_inB))     # air/water ignore P; sco2 needs P
         axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
-        is_x_stream_B = axis_map_B['is_x_stream']
-        is_y_stream_B = axis_map_B['is_y_stream']
-        is_z_stream_B = axis_map_B['is_z_stream']
         is_reverse_B = axis_map_B['is_reverse']
         N_stream_B = axis_map_B['N_stream']
         N_cross2_B = axis_map_B['N_cross2']
@@ -2817,7 +2807,6 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # this scope) and a scalar mean T, which both crashed for zoned
         # runs and flattened any non-uniform K_ff / h_v / rho_cp back to
         # a uniform field.
-        T_avgA = float(Ta.mean())
         # FIX (2026-06-24 audit): rebuild K_ffA from the per-side asymmetric void
         # fraction (eps_fA_arr), NOT the symmetric eps_f_arr — otherwise the δ≠0
         # offset-isosurface path reverts to the eps/2 split after outer iter 0.
@@ -2845,7 +2834,6 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # h_v rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         if Tb is not None:
-            T_avgB = float(Tb.mean())
             # B1 1.1: per-fluid primitives via registry; the local-P
             # rho·cp path is compressible-only physics (water keeps ρ(T)).
             K_ffB[:] = eps_fB_arr * _mB.k(Tb, P_inB)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above); P for sco2

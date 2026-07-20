@@ -33,7 +33,6 @@ def install_field_menus(window):
 
 
 def _attach_context_menu(window, le, attr):
-    orig = le.contextMenuEvent
 
     def _ctx(event):
         # Pull the stock menu (cut/copy/paste/select-all) and append ours.

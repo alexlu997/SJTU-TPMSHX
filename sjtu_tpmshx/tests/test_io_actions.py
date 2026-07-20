@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 @pytest.fixture(scope="module")
 def win(tmp_path_factory):
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(
+    _app = QApplication.instance() or QApplication(
         ['pytest', '-platform', 'offscreen'])
     # Redirect SessionManager's default base_dir before Main_Menu is built:
     # closeEvent auto-saves the session, and without this the teardown

@@ -260,8 +260,6 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     """
     L = cfg['L']; H = cfg['H']
     N_x = cfg['N_x']; N_y = cfg['N_y']
-    u_A = cfg['u_A']; u_B = cfg['u_B']
-    T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     cfgA = cfg['cfgA']; cfgB = cfg['cfgB']
     tpms_type = cfg['tpms_type']
     Lcell = cfg['Lcell']; t_wall = cfg['t_wall']; k_s = cfg['k_s']
@@ -278,14 +276,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         ln_eps = np.empty(N_flow, dtype=np.float64)
         ln_tL  = np.empty(N_flow, dtype=np.float64)
         ln_XSa = np.empty(N_flow, dtype=np.float64)
-        eps_2d = za_dict['eps_arr']
         for j in range(N_flow):
-            if is_x_flow:
-                # SIMPLE y-axis = real x-axis; average over real y
-                e = eps_2d[j, :].mean()
-            else:
-                # SIMPLE y-axis = real y-axis; average over real x
-                e = eps_2d[:, j].mean()
             # Find matching grid cell for representative L/t
             gc = za_dict.get('grid_cells', za_dict.get('zone_params', []))
             if gc:

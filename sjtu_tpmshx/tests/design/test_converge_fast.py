@@ -16,7 +16,7 @@ def _case():
 
 def _ref_Tout(arrangement):
     """满迭代参考解 (默认收敛参数 + 大 max_iter), 不早停。"""
-    c = _case(); topo, l, t, s, Lx = "Diamond", 7., 0.5, 0.084, 0.084
+    _case(); topo, l, t, s, Lx = "Diamond", 7., 0.5, 0.084, 0.084
     geo = tg(topo, l, t, K_STEEL, N=GEOM_N)
     EPS, EPS_A, A0, Dh = geo["epsilon"], geo["epsilon_A"], geo["A_0"], geo["D_h"]
     arr = _ARR[arrangement]; Ny, Nz = arr["ny"], arr["nz"]

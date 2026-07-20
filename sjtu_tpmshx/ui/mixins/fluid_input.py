@@ -67,8 +67,6 @@ class FluidInputMixin:
         # delegated to domain.compute_volumetric_htc (Phase 4 #4).
         from domain.validator import compute_volumetric_htc
         h_v_vol = compute_volumetric_htc(r['A_0'], r['H_sf'])
-        u_val = float(le_u.text())
-        U_sf = u_val * r['epsilon']
 
         # Re range check against Nu v4.1 calibration window.
         Re = r['Re']

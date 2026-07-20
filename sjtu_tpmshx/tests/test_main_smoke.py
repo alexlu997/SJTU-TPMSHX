@@ -34,7 +34,7 @@ def _isolate_session_dir(tmp_path, monkeypatch):
 
 def test_main_menu_startup():
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(sys.argv)
+    _app = QApplication.instance() or QApplication(sys.argv)
     from main import Main_Menu
     w = Main_Menu()
     # Key widgets that every refactor step must preserve
@@ -50,7 +50,7 @@ def test_main_menu_startup():
 def test_cpu_cores_spinbox_sets_threads():
     """The 'CPU cores (energy ‖)' spinbox drives solvers.threads at runtime."""
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(sys.argv)
+    _app = QApplication.instance() or QApplication(sys.argv)
     from main import Main_Menu
     import solvers.threads as th
     w = Main_Menu()

@@ -53,10 +53,10 @@ target-version = "py311"
 exclude = ["sjtu_tpmshx/runs/archive"]   # frozen 历史归档（见其 README）
 
 [tool.ruff.lint]
-# F = pyflakes（真错误类），E9 = 语法级。F841（未用变量，67 处存量）
-# 需逐个人工判读 —— P2.1b 单列，暂 ignore。
+# F = pyflakes（真错误类），E9 = 语法级。F841 存量 52 处已于 P2.1b（iter 23）
+# 逐案清偿（死拉取删除 / Qt keep-alive 改 _ 前缀 / 副作用调用去名留调），
+# 自此全量执法。
 select = ["F", "E9"]
-ignore = ["F841"]
 
 [tool.ruff.lint.per-file-ignores]
 # 再导出面（拆分兼容层）与引导型导入：F401 是其存在方式

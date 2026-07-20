@@ -189,7 +189,6 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     vol = dxi * dyj
                     K = K_ffA_arr[i, j]
                     hvA = h_vA_arr[i, j] * vol
-                    ef = eps_fA_arr[i, j]
 
                     # Face spacing δx_e = 0.5·(dx_P + dx_E) ensures conservative
                     # diffusion stencil — same value used by cell P (as east-flux)
@@ -289,7 +288,6 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         vol_b = dxi * dyj
                         K = K_ffB_arr[i, j]
                         hvB = h_vB_arr[i, j] * vol_b
-                        ef = eps_fB_arr[i, j]
 
                         # Face spacing for B diffusion stencil (conservative)
                         dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
@@ -439,7 +437,6 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     vol = dxi * dyj
                     K = K_ffA_arr[i, j]
                     hvA = h_vA_arr[i, j] * vol
-                    ef = eps_fA_arr[i, j]
                     dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
                     dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
                     dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
@@ -519,7 +516,6 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         vol_b = dxi * dyj
                         K = K_ffB_arr[i, j]
                         hvB = h_vB_arr[i, j] * vol_b
-                        ef = eps_fB_arr[i, j]
                         dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
                         dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
                         dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj

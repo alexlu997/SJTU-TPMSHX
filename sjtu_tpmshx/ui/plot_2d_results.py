@@ -135,7 +135,6 @@ def finalize_plots(window):
             "\n\n".join(window._compute_warnings))
         window._compute_warnings = None
     r = window._compute_results
-    Ta, Tb, Ts = r['Ta'], r['Tb'], r['Ts']
     # N5 (2026-07-07): prefer the display-smoothed copies on partial-BC runs;
     # the physics keys ('ucA' …) now stay raw / mass-conserving.
     def _vel(key):
@@ -146,7 +145,6 @@ def finalize_plots(window):
     dP_A, dP_B = r['dP_A'], r['dP_B']
     N_x, N_y, L, H = r['N_x'], r['N_y'], r['L'], r['H']
     dir_A, dir_B = r['dir_A'], r['dir_B']
-    zone_config, za = r['zone_config'], r['za']
 
     dir_flow_A = window._DIR_MAP[dir_A]
     dir_flow_B = window._DIR_MAP[dir_B]

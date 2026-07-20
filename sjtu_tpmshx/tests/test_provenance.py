@@ -66,7 +66,7 @@ def test_write_csv_pandas_can_still_read_with_comment(tmp_path):
 def test_backfill_prepends_header_to_existing_csv(tmp_path):
     out = tmp_path / 'legacy.csv'
     out.write_text('a,b\n1,2\n3,4\n', encoding='utf-8')
-    meta = backfill_provenance(out, 'tests/legacy.py')
+    backfill_provenance(out, 'tests/legacy.py')
     lines = out.read_text(encoding='utf-8').splitlines()
     assert lines[0].startswith('# script:')
     assert lines[3] == 'a,b'

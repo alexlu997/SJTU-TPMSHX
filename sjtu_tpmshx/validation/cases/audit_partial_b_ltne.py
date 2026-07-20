@@ -346,7 +346,6 @@ def p2_face_flux_enthalpy(res: dict, case: dict) -> dict:
     rho_A_in = float(air_density(T_inA, P_inA))
     rho_B_in = float(air_density(T_inB, P_inB)) if T_inB is not None else None
 
-    sA_face = res['_audit_sA_face']
     sB_face = res.get('_audit_sB_face')
 
     # ── A side ──
@@ -519,7 +518,6 @@ def p5_outlet_distribution(res: dict) -> dict:
     flux_mag_2d, area_outlet_2d = _solver_signed_outflow_2d(sB_face)
     pos_total = float(np.sum(flux_mag_2d))
     pos_inside = float(np.sum(flux_mag_2d * (out_mask_B > 0.5)))
-    pos_outside = pos_total - pos_inside
     inside_frac = pos_inside / max(pos_total, 1e-30)
     outside_frac = 1.0 - inside_frac if pos_total > 1e-30 else 0.0
 
@@ -596,8 +594,6 @@ def diagnose(p1: dict, p2: dict, p3: dict, p4: dict,
     """
     excel_face_A = p2['A']['rel']
     excel_face_B = p2['B']['rel'] if p2['B']['Q_face'] == p2['B']['Q_face'] else float('nan')
-    Q_A_face = p2['A']['Q_face']
-    Q_B_face = p2['B']['Q_face']
 
     # internal LTNE closure (interior only)
     Q_sA_int = p3['A']['interior']
@@ -610,7 +606,6 @@ def diagnose(p1: dict, p2: dict, p3: dict, p4: dict,
 
     # ── ghost-B fraction
     Q_sB_ghost = (p3['B']['ghost'] if p3['B'] is not None else 0.0)
-    Q_sB_part = (p3['B']['participating'] if p3['B'] is not None else 0.0)
     ghost_frac = (abs(Q_sB_ghost) / max(abs(Q_sB_all), 1e-30)
                   if p3['B'] is not None else 0.0)
 

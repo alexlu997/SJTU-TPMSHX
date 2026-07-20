@@ -1040,7 +1040,6 @@ class RunControllerMixin:
         _bad = _gt().get('err_soft', '#F87171')
         _neutral = _t.get('sub_fg', '#94A3B8')
 
-        shown_any = False
         for key, attr, direction, rec_key in pairs:
             chip = chips.get(key)
             if chip is None:
@@ -1053,7 +1052,6 @@ class RunControllerMixin:
                 if _dl is not None:
                     _dl.setText('')
                 continue
-            shown_any = True
             chip.setText(v)
             _dl = getattr(chip, '_delta_label', None)
             if _dl is None or prev is None or direction == 'neutral':

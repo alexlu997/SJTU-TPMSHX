@@ -1239,7 +1239,7 @@ class SIMPLESolver:
           - Lalot et al. (1999): relative std dev for HX flow distribution
           - ~5% is the standard HX threshold; the code default is 0.045 (4.5%)
         """
-        Nx, Ny = self.Nx, self.Ny
+        Nx = self.Nx
         v_row = self.v[:, j]
         v_mean = v_row.mean()
         if v_mean < 1e-10:

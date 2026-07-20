@@ -766,7 +766,6 @@ def main():
     err_dP_all = np.array([r['err_dP%'] for r in results])
     err_Q_all = np.array([r['err_Q%'] for r in results])
     # Re>600 filter via u_air (matches 2D convention)
-    u_arr = np.array([r['u_air'] for r in results])
 
     if valid_mask.any():
         err_dP = err_dP_all[valid_mask]

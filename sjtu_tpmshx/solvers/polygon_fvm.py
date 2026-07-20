@@ -84,8 +84,6 @@ def _assemble_momentum(mesh, u_cell, v_cell, P, face_flux,
             bc   = mesh.bc_type[ci, fi]
             fl   = mesh.face_len[ci, fi]
             d    = max(mesh.dCF[ci, fi], 1e-12)
-            nx   = mesh.face_nx[ci, fi]
-            ny   = mesh.face_ny[ci, fi]
             Df   = mu_eff * fl / d
             Ff   = face_flux[ci, fi]  # rho * U_n * S_f
 

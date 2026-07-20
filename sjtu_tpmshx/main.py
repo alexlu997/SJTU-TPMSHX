@@ -406,7 +406,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         # user's current unit (avoids the silent 273.15 bug where a preset
         # dumps "422" into a °C field and compute then reads 695 K).
         temp_fields = {'le_TinA', 'le_TinB'}
-        unit = getattr(self, '_temp_unit', 'K')
         for attr, val in presets.items():
             w = getattr(self, attr, None)
             if w is None:

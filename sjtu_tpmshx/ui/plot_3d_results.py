@@ -210,7 +210,6 @@ def _render_2d_slices_from_3d(window, res):
 
     # Fluid B optional (cross-flow). Detect by presence of P_fB
     P_Pa_B = f.get('P_fB')
-    vmag_B = f.get('vmag_B')
     uc_B = f.get('ucB')
     vc_B = f.get('vcB')
     wc_B = f.get('wcB')

@@ -409,7 +409,6 @@ def compute_phase2a_surface(res):
     Ta = res['Ta']; Tb = res['Tb']; Ts = res['Ts']
     h_vA = res['h_vA_field']; h_vB = res['h_vB_field']
     K_ffA = res['_audit_K_ffA']; K_ffB = res['_audit_K_ffB']
-    K_ss = res['_audit_K_ss']
     eps_arr = res['_audit_eps_arr']
     rho_cp_A = res['_audit_rho_cp_fA']; rho_cp_B = res['_audit_rho_cp_fB']
     uc_A = res['uc_real']; vc_A = res['vc_real']; wc_A = res['wc_real']
@@ -648,7 +647,6 @@ def compute_phase2c_h3(res):
     perm_A = sA['solver_to_real_perm']
     inv_A = tuple(np.argsort(perm_A))
     Ta_solver = np.ascontiguousarray(np.transpose(Ta, inv_A))
-    rho_cp_A_solver = np.ascontiguousarray(np.transpose(rho_cp_A, inv_A))
 
     # Spurious enthalpy contamination
     # Per cell α: ΔE_cell = T_cell · NET_OUT · ε_α · cp
@@ -710,7 +708,6 @@ def compute_phase3(res):
     K_ffA = res['_audit_K_ffA']; K_ffB = res['_audit_K_ffB']
     K_ss = res['_audit_K_ss']
     dx = res['dx']; dy = res['dy']; dz = res['dz']
-    fA = res['_audit_fA']; fB = res.get('_audit_fB')
     cp_A = res['_audit_cp_A']
     cp_B = res.get('_audit_cp_B')
     T_inA = res['_audit_T_inA']; T_inB = res.get('_audit_T_inB')
