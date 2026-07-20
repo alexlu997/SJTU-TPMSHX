@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 22
-- next: P2.1b（F841 人审 67 处——判断型）；注意 cron armed_at 2026-07-19，>5 天须 07-24 前重建（§8）
+- iteration: 23
+- next: P2.2（核心公共面类型注解 + mypy 宽松档——设计判断 + 机械铺注解，可拆两波）
 - in_progress: （空）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
