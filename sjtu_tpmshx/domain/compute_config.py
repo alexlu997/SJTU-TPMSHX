@@ -90,7 +90,10 @@ but were missing above:
 - ``TPMSHX_ASYM_KAPPA`` (0) — activate the asym per-side κ correction
   after ``ingest_cfd_kappa``; ``df_surrogate/kappa_asym.py``.
 - ``TPMSHX_NUM_THREADS`` (unset → numba default) — headless/script numba
-  thread count; ``solvers/threads.py`` (GUI spinbox is primary).
+  thread count; ``solvers/threads.py`` (GUI spinbox is primary). Unset on a
+  many-core box + grid ≥ TPMSHX_PARALLEL_THRESHOLD → one-shot advisory log
+  recommends ``recommend_solver_threads()`` (≈ min(64, physical cores);
+  bandwidth-bound kernels; P3.2 — advisory only, pool never auto-changed).
 - ``TPMSHX_SCO2_COMPRESSIBLE`` (0, experimental) — opt-in sCO2
   compressible path; ``pipelines/run_stack_3d.py``.
 - ``TPMSHX_MAX_CELLS_3D`` (2000000) — hard 3D cell cap;

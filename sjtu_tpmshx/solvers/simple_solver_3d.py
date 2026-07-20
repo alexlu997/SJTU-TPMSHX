@@ -118,6 +118,7 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 _AMG_GATE = 30_000
 
 from .tpms_calc import P_atm
+from .threads import warn_if_default_pool as _warn_if_default_pool
 from ._solve_common import LowReExit, F2Monitor
 
 
@@ -898,6 +899,9 @@ class SIMPLESolver3D:
         # ordering GS; large grids use red-black GS on prange. Break-even
         # ~200k cells where Numba thread-launch overhead no longer dominates.
         if _should_parallelize(Nx, Ny, Nz):
+            # P3.2: one-shot thread-count advisory on the unpinned all-cores
+            # default (bandwidth-bound kernels; advisory only, pool untouched).
+            _warn_if_default_pool(Nx * Ny * Nz)
             _sweep_u = _sweep_u_jit_df_3d_parallel
             _sweep_v = _sweep_v_jit_df_3d_parallel
             _sweep_w = _sweep_w_jit_df_3d_parallel
