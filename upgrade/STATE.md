@@ -1,13 +1,13 @@
 # 循环状态（STATE）
 
-- iteration: 36 ——P4.1 整项收案（10 卷收编 + §6 增量索引）
-- next: P4.2（README/手册数字口径复核：1.71/1.73 类 headline 数字的当前状态确认——
-  对照 BASELINE.md 实测（dP 4.88%/Q 2.12%/lumped 1.73%）逐处核对 README/PROJECT_MANUAL
-  引用的数字与措辞；预期小轮 docs-only，若发现代码级数字源漂移则停下立项）
+- iteration: 37
+- next: P4.3（CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性——重测试仍本地；
+  评估轮：读现 ci.yml，判断 ruff/mypy/import-layering/fast-tier 四门哪些能在 ubuntu CI 跑
+  （注意 heavy manifest 的 nodeid 平台无关性、CI=true 对 ULP 钉定的既有 skip 语义）；
+  产出改 ci.yml 的方案或"不改"裁决——**改 ci.yml 本身不触发本地门**（CI 配置不在套件疆域），
+  但方案若含 workflow 文件改动需注意绝不 push 红线：改动只入库不推送，Alex 合并后才生效）
 - in_progress: 无
-- ⚠ cron 重建窗口：armed_at 2026-07-19，§8 五日规则 → **2026-07-24 前必须 CronDelete+CronCreate**
-  （建议 07-22/23 执行，用 STATE 提示词逐字重建，spec `7,22,37,52 * * * *`，完成后更新 armed_at）
-- armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
+- armed_at: 2026-07-20（job ef9566f6，iter 37 重建；>5 天须按 PROTOCOL §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
 

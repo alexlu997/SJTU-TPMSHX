@@ -141,7 +141,9 @@
         （threads 102 行+P3.2 机制）/ solvers-closures（chi_s "导入时读取一次"过时断言改正+
         geometry 缓存拷贝语义收编节）/ PROJECT_MANUAL §6 节首增量索引（含 cli.py 撞名辨析）
       （HANDOFF 卷单列 P4.4 不并入；各轮 docs-only 门）
-- [ ] P4.2 README / 手册数字口径复核（1.71/1.73 类问题的当前状态确认）
+- [x] P4.2 README/手册数字口径复核（`978c066`，iter 37）：**数字零漂移**——全部 headline
+      （1.73/≈10/≈3/4.88/2.12/8.62/2.49/p_obs≥2.07）与 BASELINE 实测一致；修正的是
+      平台行（+Server 2022）与测试命令区（服务器双跑脚本+56s 快档入 README/手册）
 - [ ] P4.3 CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）
 - [ ] P4.4 HANDOFF-windows-server.md 刷新——已确认过时处：§1 整节（max_outer + 压力字面量，
       已修已锁，iter 7 证据）、§2a 预解 choke（aa3f477 已加 raise→罚值）、§3a 热重播种地板
