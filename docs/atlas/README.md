@@ -93,7 +93,7 @@ design 模块为快速反向定尺工具，与主管线解耦，测试用最小 
 
 ### ui-core.md — ui — 主窗口与 mixins
 
-该文档描述桌面 GUI 主窗口层：Main_Menu 由 13 个 mixin 多重继承组装，config_from_window 为控件到 ComputeConfig 的唯一转换器；覆盖计算入口分派、结果桥、session/preset 恢复策略、默认值表、点文件持久化及服务器移植注意。
+该文档描述桌面 GUI 主窗口层：Main_Menu 由 14 个 mixin 多重继承组装（⟨07-20⟩ +RunResultsMixin），config_from_window 为控件到 ComputeConfig 的唯一转换器；覆盖计算入口分派、结果桥、session/preset 恢复策略、默认值表、点文件持久化及服务器移植注意。
 
 ### ui-widgets.md — ui — 其余组件
 
@@ -109,4 +109,4 @@ design 模块为快速反向定尺工具，与主管线解耦，测试用最小 
 
 ### runs.md — runs — 入口脚本目录
 
-编目 sjtu_tpmshx/runs/ 全部49个脚本(根/_out/archive/demos/diagnostics/smokes/tools/cfd_asym)，标出生产入口polygon_calc、优化器M0-M4系列、golden gate，并核实出1处确认死链接导入+2处过期usage文档。
+编目 sjtu_tpmshx/runs/ 全部49个脚本(根/_out/archive/demos/diagnostics/smokes/tools/cfd_asym)，优化器M0-M4系列、golden gate（⟨07-20⟩ polygon_calc 已迁 ui/，生产入口条目撤销），并核实出1处确认死链接导入+2处过期usage文档。
