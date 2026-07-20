@@ -1,11 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 35
-- next: P4.1c（atlas 外围域收编：ui-core（run_results mixin + polygon_calc 迁入）/
-  runs（tools 三件 + polygon_calc 迁出）/ solvers 卷小修（threads advisory / tpms_geometry
-  拷贝语义 / chi_s 每调用读取——分布在 solvers-2d/3d/closures/fields-mesh 四卷，逐卷
-  grep 定位受影响段）/ PROJECT_MANUAL §6 对齐；完成后 P4.1 整项收案）
+- iteration: 36 ——P4.1 整项收案（10 卷收编 + §6 增量索引）
+- next: P4.2（README/手册数字口径复核：1.71/1.73 类 headline 数字的当前状态确认——
+  对照 BASELINE.md 实测（dP 4.88%/Q 2.12%/lumped 1.73%）逐处核对 README/PROJECT_MANUAL
+  引用的数字与措辞；预期小轮 docs-only，若发现代码级数字源漂移则停下立项）
 - in_progress: 无
+- ⚠ cron 重建窗口：armed_at 2026-07-19，§8 五日规则 → **2026-07-24 前必须 CronDelete+CronCreate**
+  （建议 07-22/23 执行，用 STATE 提示词逐字重建，spec `7,22,37,52 * * * *`，完成后更新 armed_at）
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`

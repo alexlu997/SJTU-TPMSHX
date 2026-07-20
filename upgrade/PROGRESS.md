@@ -2,6 +2,22 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 36 · 2026-07-20 · P4.1c 外围域收编 ✅（`006e99f`+README 补丁）——**P4.1 整项收案**
+
+- ui-core：13→14 mixin（MRO 全列更新）、run_controller 912+run_results 328、write_result
+  迁址、行号影响边界（≤350 安全）；收编节含 iter 28 依赖测绘结论与 except 政策
+- runs：**"唯一被 UI import 的例外"条目消除**（polygon_calc 迁 ui/）、根目录 14→13、
+  tools 5→8（审计/manifest/缝手术三件入册，缝手术标注"一次性工具留档"）
+- solvers-2d：threads 52→102 + P3.2 机制全记（含 caplog/tpmshx. 前缀陷阱）；
+  solvers-closures：chi_s "导入时读取一次"**过时断言改正**（P1.6 每调用读）+
+  geometry 缓存拷贝语义（W7b 防御两件）收编节
+- PROJECT_MANUAL §6 节首挂 07-20 增量索引（8 组新增/迁移一句话 + cli.py 与 design/cli.py
+  撞名辨析，细节指向 atlas）；atlas README 收案状态 + 摘要区两处回声修正
+- 工艺教训：heredoc 传中文 python 脚本再遇 GBK 损坏——改走 Write 工具落盘执行（稳定复现
+  的环境约束，已是第二次踩，此后一律 Write+执行）
+- **P4.1 战果**：10 卷收编、7 卷盘点判定无分支级失准；三轮 docs-only 全程零代码风险
+- 下一步：P4.2 README 数字口径复核
+
 ## iter 35 · 2026-07-20 · P4.1b atlas 架构域收编 ✅（`0fad954`，docs-only）
 
 - pipelines.md：run_stack_3d 重组入册的关键决策——**不逐行重标定**（2107→3001 行全漂移），

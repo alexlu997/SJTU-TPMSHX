@@ -127,18 +127,19 @@
 
 ## Phase 4 — 文档与交付
 
-- [~] P4.1 atlas 漂移收编（iter 33 盘点：**DRIFT.md 从未存在**——ROADMAP 播种时的臆想
-      产物，前提修正为"分支漂移直接写回卷 + 各卷加'2026-07 升级分支收编'节"；
-      分支 vs 基点 164 文件变更，结构性漂移映射完毕，卷合计仅 3571 行可控）：
+- [x] P4.1 atlas 漂移收编 **✓ 收案 iter 36**（iter 33 盘点：**DRIFT.md 从未存在**——前提
+      修正为"分支漂移直接写回卷 + 各卷收编节"；三域三轮共收编 10 卷 + PROJECT_MANUAL §6
+      增量索引 + README 滚动状态；未收编 7 卷经盘点无分支级失准，HANDOFF 单列 P4.4）：
   - [x] P4.1a 基建域（`433eb2b`，iter 34）：tests/repo-infra 两卷失准就地改正
         （151→162 文件、marker+heavy、conftest 三副作用、-n auto→双跑脚本、threads 路径
         笔误、pyproject 断言过时）+ 文末收编节；README 滚动状态注记；修正标 ⟨07-20 更新⟩
   - [x] P4.1b 架构域（`0fad954`，iter 35）：四卷收编——pipelines（重组映射表+⚠旧行号
         声明）/ controllers（PEP 562+cli 消费方）/ core-domain（evaluators 639 行新结构+
         D3 绊线）/ optimization（P3.3 预算段重写+BLAS 时序缺陷"仍未修"注记留 Phase 5）
-  - [ ] P4.1c 外围域：ui-core（run_results mixin+polygon_calc 迁入）/ runs（tools 三件+
-        polygon_calc 迁出）/ solvers 卷小修（threads advisory/tpms_geometry 拷贝语义/
-        chi_s 每调用读取）/ PROJECT_MANUAL §6 对齐
+  - [x] P4.1c 外围域（`006e99f`，iter 36）：ui-core（14 mixin/912+328 行/write_result 迁址）/
+        runs（polygon_calc "唯一 UI import 例外"条目消除、tools 5→8）/ solvers-2d
+        （threads 102 行+P3.2 机制）/ solvers-closures（chi_s "导入时读取一次"过时断言改正+
+        geometry 缓存拷贝语义收编节）/ PROJECT_MANUAL §6 节首增量索引（含 cli.py 撞名辨析）
       （HANDOFF 卷单列 P4.4 不并入；各轮 docs-only 门）
 - [ ] P4.2 README / 手册数字口径复核（1.71/1.73 类问题的当前状态确认）
 - [ ] P4.3 CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）
