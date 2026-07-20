@@ -1,9 +1,9 @@
 # 循环状态（STATE）
 
-- iteration: 28
-- next: P2.5a（run_controller 切结果呈现区 → ui/mixins/run_results.py：五方法逐字节搬移
-  write_result/_finalize_plots/_update_result_summary/_diag_summary_text/_show_diag_dialog，
-  Main_Menu MRO 插位 + mixins/__init__ 导出；全门 + 直击三测试重点看；Fable 直做）
+- iteration: 29 ——**Phase 2 全部完成**（P2.0–P2.5，iter 21–29）
+- next: P3.1（suite fast-tier：--durations 实测定义 duration-based 标记 + run_tests_fast.ps1；
+  **不碰 slow 标记语义**（CI skip 清单，非时长普查，v1 教训）；先取数轮——durations 数据
+  可从既有全量日志提取或单独跑一次采集）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

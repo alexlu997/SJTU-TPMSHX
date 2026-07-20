@@ -100,16 +100,15 @@
       库内 144 处 print 实测 0 处在活求解路径（95 处 __main__ 区 + 其余在
       _self_test()/main()/demo 函数——分类探针的"活路径"桶系统性高估，逐函数复核归零）。
       **ui 的 273 处 except Exception 移交 P2.5 章程**（GUI 防御捕获政策随减脂轮就地处理）。
-- [~] P2.5 GUI 巨物减脂（iter 28 测绘完毕，章程收窄）：**mixin 架构本身判定健康**——
+- [x] P2.5 GUI 巨物减脂（iter 28 测绘 + iter 29 单刀完成）：**mixin 架构本身判定健康**——
       AST 交叉引用矩阵显示耦合低（多数 mixin 依赖 0–3 个同伴；zone_panel/io_actions 零 fan-in
       枢纽仅 shortcuts/session_presets/main），13-mixin 分层不动。真靶标唯 run_controller
       1215 行，四责任区：启动/预检 ~315、orch 信号处理 ~305（_on_orch_finished 独占 188 行）、
       结果呈现 ~370（write_result 122 行）、计算 UI 状态 ~250。保护面：3 个直击测试
       （finalize_3d_result_sync / orch_finished_3d_state / run_controller_preflight）+ 17 Qt 测试。
-  - [ ] P2.5a 切结果呈现区 → 新 mixin `ui/mixins/run_results.py`（write_result/_finalize_plots/
-        _update_result_summary/_diag_summary_text/_show_diag_dialog 逐字节搬移，Main_Menu MRO
-        插位，1215→~845；Qt keep-alive 语义照 W7b 教训核对）——**只切这一刀**，无 golden
-        保护的 GUI 不做多级切片
+  - [x] P2.5a 切结果呈现区（`86b12e4`，iter 29）：五方法逐字节（AST 比对 HEAD 位同）→
+        RunResultsMixin 328 行，run_controller 1215→912，MRO 插位 + 冒烟全解析；
+        套件 1258+10 绿、golden 位同、直击三测试绿——**单刀即收**，Phase 2 完
   - [x] ui 273 处 except Exception 政策（P2.4 移交）：**存量不动**（Qt 防御捕获合法，273 站
         改写的 churn 风险 >> 收益）；新代码要求 logutil 记录。政策即此行，不另立扫改波次。
 

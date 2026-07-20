@@ -2,6 +2,22 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 29 · 2026-07-20 · P2.5a run_controller 单刀 ✅（`86b12e4`）——**Phase 2 收官**
+
+- 五方法（write_result/_finalize_plots/_update_result_summary/_diag_summary_text/
+  _show_diag_dialog）逐字节搬至新 RunResultsMixin（AST 比对 HEAD 五方法体位同）；
+  run_controller 1215→912 行，头注清单 18→13 并注明去向；MRO 插位紧随 RunController
+- 冒烟：五方法经 Main_Menu MRO 全解析至新 mixin、旧 mixin 不再定义；ruff 绿；
+  唯一模块级依赖 TOAST_MS_SHORT 随迁
+- 门禁：双 pass 1258+4skip / 10 绿（19:03）、golden 位同、直击三测试
+  （finalize_3d_result_sync/orch_finished_3d_state/run_controller_preflight）绿
+- 轮中插曲（用户请求，两个独立 docs 提交）：进度页 render_progress.py + progress.html
+  入库（d7c948b，PROTOCOL §9 增每轮重渲）；Phase 5 候选池立项（f8b06d9，Alex 批准，
+  三池选单，候选不计完成度）
+- **Phase 2 全线完成**（P2.0 数据类化 / P2.1+b+c lint 三波 / P2.2 类型门 / P2.3 死代码 /
+  P2.4 异常日志 / P2.5 GUI 减脂——iter 21–29，其中四轮为证据确凿的零改动裁决）
+- 下一步：P3.1 fast-tier（先取 --durations 数据）
+
 ## iter 28 · 2026-07-20 · P2.5 首轮：mixin 依赖测绘 ✅（docs-only，章程收窄）
 
 - AST 交叉引用矩阵（14 文件：13 mixin + main）：**耦合低，架构判定健康**——多数 mixin
