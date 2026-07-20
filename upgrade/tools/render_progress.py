@@ -47,10 +47,10 @@ def parse_roadmap() -> list[dict]:
     """→ [{title, items:[{mark,text,sub:[...]}, ...]}, ...]（含收尾节）。"""
     phases, cur, item = [], None, None
     for ln in _read('ROADMAP.md').splitlines():
-        m = re.match(r'^## (Phase \d+ — .+|收尾（.+)$', ln)
+        m = re.match(r'^## (Phase \d+.+|收尾（.+)$', ln)
         if m:
             cur = {'title': m.group(1).rstrip('）') + ('）' if '（' in m.group(1) and not m.group(1).endswith('）') else ''),
-                   'items': []}
+                   'items': [], 'candidate': '候选池' in m.group(1)}
             phases.append(cur)
             item = None
             continue
@@ -160,18 +160,20 @@ def render(out_path: Path) -> None:
     gate = latest_gate_evidence(iters)
     n_pending = sum(1 for d in decisions if '待决' in d['status'])
 
-    done_all = sum(1 for p in phases for i in p['items'] if i['mark'] == 'x')
-    tot_all = sum(len(p['items']) for p in phases)
+    done_all = sum(1 for p in phases for i in p['items']
+                   if i['mark'] == 'x' and not p.get('candidate'))
+    tot_all = sum(len(p['items']) for p in phases if not p.get('candidate'))
 
     # 02 路线图
     ph_html = []
     for k, p in enumerate(phases):
+        cand = p.get('candidate', False)
         done = sum(1 for i in p['items'] if i['mark'] == 'x')
         tot = len(p['items'])
         pct = int(round(100 * done / tot)) if tot else 0
         rows = []
         for it in p['items']:
-            cls, lab = _MARK[it['mark']]
+            cls, lab = ('todo', '候选') if cand else _MARK[it['mark']]
             first = re.split(r'[：:]', it['text'], 1)[0]
             rest = it['text'][len(first):].lstrip('：:').strip()
             if len(rest) > 150:
@@ -187,10 +189,12 @@ def render(out_path: Path) -> None:
                 f"<tr><td class='pid'>{_fmt(first)}</td>"
                 f"<td class='pst'><span class='chip {cls}'>{lab}</span></td>"
                 f"<td>{_fmt(rest)}{sub}</td></tr>")
+        meter = (f"<span class='ph-n'>未章程化 · 收尾时挑选</span>" if cand else
+                 f"<span class='ph-n'>{done}/{tot}</span>"
+                 f"<span class='bar'><span class='fill' style='width:{pct}%'></span></span>")
         ph_html.append(
             f"<div class='phase rv'><div class='ph-head'><h3>{_fmt(p['title'])}</h3>"
-            f"<div class='ph-meter'><span class='ph-n'>{done}/{tot}</span>"
-            f"<span class='bar'><span class='fill' style='width:{pct}%'></span></span></div></div>"
+            f"<div class='ph-meter'>{meter}</div></div>"
             f"<table class='spec ptable'><thead><tr><th style='width:96px'>条目</th>"
             f"<th style='width:92px'>状态</th><th>内容</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table></div>")
