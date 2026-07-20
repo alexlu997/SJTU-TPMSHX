@@ -24,7 +24,7 @@ from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
 from ui.mixins import (RunHistoryMixin, DialogsMixin, ZonePanelMixin,
                        OptimizeUIMixin, TabViewMixin, UIBuilderMixin,
-                       FluidInputMixin, RunControllerMixin,
+                       FluidInputMixin, RunControllerMixin, RunResultsMixin,
                        AppearanceMixin, SessionPresetsMixin,
                        ShortcutsMixin, IOActionsMixin, ResultBridgeMixin)
 from ui.ui_constants import (
@@ -112,7 +112,8 @@ from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 # ── Main window ───────────────────────────────────────────────
 class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
                 TabViewMixin, UIBuilderMixin, FluidInputMixin,
-                RunControllerMixin, AppearanceMixin, SessionPresetsMixin,
+                RunControllerMixin, RunResultsMixin,
+                AppearanceMixin, SessionPresetsMixin,
                 ShortcutsMixin, IOActionsMixin, ResultBridgeMixin,
                 QMainWindow):
     def __init__(self):
