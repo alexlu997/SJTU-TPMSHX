@@ -1,10 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 38
-- next: P4.4（HANDOFF-windows-server.md 刷新：已确认过时处——§1 整节（max_outer + 压力
-  字面量，iter 7 证据"上游均已修复"）、§2a 预解 choke（aa3f477 已加 raise→罚值）、
-  §3a 热重播种地板（aa3f477 已改严格 NaN）；其余节逐条核实后改写；另核 AGENTS.md
-  过期路径是否同步（P4.1a 收编节留的尾巴）；docs-only，完成后 Phase 4 收官 → 收尾轮）
+- iteration: 39 ——**Phase 4 全部完成（P0–P4 五阶段主线全绿）**
+- next: 收尾轮（ROADMAP 末节两项合并为一轮做：①合并前清单——upgrade/ 目录处置方案、
+  与 master 合并策略（rebase 优先）、给 Alex 的终审报告；②Phase 5 候选池评审选单——
+  A/B/C/D 四池附工作量与风险注记，连同 D2/D3 待决一起交 Alex 拍板。产出 = 终审报告文档
+  （建议 upgrade/FINAL-REPORT.md + 进度页链接）+ PushNotification；收尾轮后循环转
+  待命模式：不拆定时器但每 tick 只查 DECISIONS-NEEDED 有无新 `已决`，有则执行对应项）
 - in_progress: 无
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
