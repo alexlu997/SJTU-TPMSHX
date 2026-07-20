@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 24
-- next: P2.1c（ruff format 评估——先盘点行号腐蚀受影响面：atlas file:line 引用 + 源码标记 wiring 测试断言，再决定做/不做/怎么做；纯评估轮，产出决策记录，可能与 P4.1 同轮）
+- iteration: 25
+- next: P2.3（死代码处置：zone_config/zone_table 已标 DEPRECATED、runs/archive 标 frozen；删除类动作先过 DECISIONS-NEEDED——本轮预期先盘点引用面，删除项立 D 条目、标注项直接做）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

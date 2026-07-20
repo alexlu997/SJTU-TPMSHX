@@ -2,6 +2,21 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 25 · 2026-07-20 · P2.1c ruff format 评估 ✅（纯评估轮，docs-only）
+
+- **裁决：不做全库 format（本分支阶段性关闭）**。全部探测只读（--check/--diff），零代码改动
+- 硬证据：①`ruff format` 影响 359/370 文件、3214 hunk、−20517/+38878 行（包总 87369 行，
+  ~45% 搅动）；②atlas file:line 引用 2355 处 / 376 个唯一文件路径，全面腐蚀；③12 个测试文件
+  读源码断言，23 处 quoted marker 中 ≥3 处引号敏感（`e_info.get('converged'`、
+  `cfg.get('outer_anderson', False)`、`'p_clip_hits'`——format 把 ' 翻成 " 即断）+
+  长表达式 marker（`_ALPHA_T * rho_new + ...`）有反流断裂风险；④调参救不回：
+  quote-style=single + line-length=200 仍 360 文件重排（搅动源自缩进/空格/尾逗号归一）
+- 附带成本盘点：git blame 断代（ledger/报告溯源链依赖 file:line 考古）；numba 磁盘缓存
+  一次性全失效（无害）；merge-to-master diff 被排版噪声淹没（升级分支"每个 diff 可审"承诺破）
+- 未来重启三前置（写入 ROADMAP 条目）：atlas 锚点化或同波重基线；marker 全改 AST/标识符级；
+  master 合并后独立 format-only 提交 + .git-blame-ignore-revs
+- 下一步：P2.3 死代码处置（先盘点，删除项过 DECISIONS-NEEDED）
+
 ## iter 24 · 2026-07-20 · P2.2 mypy 核心面门 ✅（`464076d`）
 
 - 宽松档 [tool.mypy] + 七文件核心面清单（envelope/compute_pipeline/domain 配置结果/

@@ -75,8 +75,14 @@
 - [x] P2.1 ruff lint 引入（`121413d` 机械波 + `6e65487` 语义波，iter 22）：F+E9 清零、
       三真雷（QInputDialog/coord_inspector/_直跑块）、门面豁免两教训、lint 门常驻
 - [x] P2.1b F841 清偿（`581e790`，iter 23）：52+5 级联逐案（净 −46 行死代码），全量执法开启
-- [ ] P2.1c ruff format 评估（行号腐蚀 atlas 引用 + 源码标记测试断言——先盘点受影响面
-      再决定做不做/怎么做，可能与 P4.1 atlas 收编同轮）
+- [x] P2.1c ruff format 评估（iter 25，纯评估轮）：**裁决 = 不做全库 format**。
+      实测四条硬证据：①359/370 文件、−20.5k/+38.9k 行（87k 行包 ~45% 搅动，blame/考古链毁）；
+      ②atlas 2355 处 file:line 引用（376 文件）全面腐蚀；③wiring 测试 23 处 quoted marker 中
+      ≥3 处引号敏感断言直接断（调参变体 quote=single+line-length=200 仍 360 文件重排，救不回）；
+      ④merge-to-master diff 被排版噪声淹没，破坏"每个 diff 可审"承诺。
+      **未来若做的三前置**：atlas 引用改锚点式或同波重基线；wiring marker 全改 AST/标识符级；
+      在 master 合并后作为独立 format-only 提交 + .git-blame-ignore-revs 登记。现行策略照旧：
+      F+E9 管真错误，排版跟随周边风格（CLAUDE.md 约定）。
 - [x] P2.2 mypy 宽松档核心面门（`464076d`，iter 24）：七文件圈（envelope/compute_pipeline/
       domain 配置结果/configs/_version/cli）清零 + test_type_gate 常驻；扩圈 = 加清单同 commit 清零
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、
