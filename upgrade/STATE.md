@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 26
-- next: P2.4（异常与日志策略统一：清点裸 except / print / 静默 fallback——P0.3 同族问题全库扫；先盘点分类，改动按批次过全门）
+- iteration: 27
+- next: P2.5（GUI 巨物减脂：main.py 13-mixin、run_controller.py 1213 行——无 golden 保护、小步慢走；首轮先测绘 mixin 依赖图与切分方案，含 ui 273 处 except 政策的顺路处置章程）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

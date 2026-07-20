@@ -2,6 +2,22 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 27 · 2026-07-20 · P2.4 异常/日志策略 ✅（盘点轮，docs-only，零批次）
+
+- 人口普查：0 裸 except；400 处 except Exception（ui 独占 273 = 68%）；库内 print 144
+- 核心三目录 28 处逐站分类：全为存证故意——发现 **2026-07-03 已做过一轮 except-audit**
+  （sigmoid_field/flux_3d 留有审计注释，静默 fallback 当时已放响）；余为 warmup 尽力型（注释在）、
+  CoolProp 能力探测、线程 err[i] 捕获后重浮、UI 回调护栏（吞对：坏回调不该杀数值解）、
+  traceback 打响型。无 P0.3 族潜伏故障
+- print 双层复核：95/144 在 __main__ 区；分类探针"活路径 49 处"系统性高估——逐函数核查
+  全在 _self_test()/main()/demo（residual_correction 13 处全在 _self_test:263、
+  surrogate_v3 11 处全在 main:619、predict 2 处在演示函数、parallel_runner 1 处是 CLI 输出）。
+  **活求解路径 print = 0**
+- 处置：ui 273 处移交 P2.5 章程（GUI 域政策，随减脂就地办）；无独立代码批次立项——
+  连续第三轮"零改动"裁决，佐证历史审计（06-16 死代码、07-03 except、P0.3、P2.1/b）
+  已把卫生欠账付清，Phase 2 剩余价值集中在 P2.5
+- 下一步：P2.5 首轮（mixin 依赖测绘）
+
 ## iter 26 · 2026-07-20 · P2.3 死代码处置 ✅（盘点轮，docs-only，零处置）
 
 - 命名靶标现场核实全部"活"：zone_config（104 引用/17 文件，ZoneInputConfig 是 2D 计算路径

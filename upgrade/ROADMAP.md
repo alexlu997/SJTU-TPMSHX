@@ -93,8 +93,13 @@
       **0 真孤儿**；13 个未被导入者均为 V&V/构建入口脚本（正常）。细粒度死代码由
       ruff F 门持续执法。未来孤儿检查应挂 audit_import_graph（真图，正确处理相对导入），
       不用正则探针。
-- [ ] P2.4 异常与日志策略统一（logutil 已有基础；清点裸 except / print / 静默 fallback——
-      P0.3 的同族问题全库扫一遍）
+- [x] P2.4 异常与日志策略（iter 27，盘点轮）：**已在政策内，零代码批次**。
+      全库 0 裸 except；核心三目录（solvers/pipelines/controllers）28 处 except Exception
+      逐处分类全为存证故意（warmup 尽力 ×3、能力探测、**2026-07-03 已有 except-audit**
+      的放响 fallback ×6、线程错误捕获重抛、回调护栏 ×5、traceback 打响 ×3）；
+      库内 144 处 print 实测 0 处在活求解路径（95 处 __main__ 区 + 其余在
+      _self_test()/main()/demo 函数——分类探针的"活路径"桶系统性高估，逐函数复核归零）。
+      **ui 的 273 处 except Exception 移交 P2.5 章程**（GUI 防御捕获政策随减脂轮就地处理）。
 - [ ] P2.5 GUI 巨物减脂：main.py 13-mixin、ui/mixins/run_controller.py 1213 行
       （GUI 无 golden 保护、依赖 ui 测试，小步慢走，放本 Phase 最后）
 
