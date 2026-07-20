@@ -2,6 +2,18 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 34 · 2026-07-20 · P4.1a atlas 基建域收编 ✅（`433eb2b`，docs-only）
+
+- tests.md 六处失准就地改正：文件数 151→162、marker 两→三（+heavy）、conftest 两→三件
+  副作用、`-n auto loadscope`+"≈1037" → 双跑脚本+1268+10 现况、"精读 151"回声；
+  文末收编节：五常驻门/fast-tier 机制/golden 入库(D1)/双脚本/计数沿革
+- repo-infra.md 五处改正含一处**原生错误**（threads 包路径笔误 df_surrogate→solvers，
+  非漂移是笔误）+"未发现 pyproject"过时断言；文件表 +7 行；收编节：打包地基/CLI/
+  质量门四件套/锁 83 包/环境变量新增/upgrade 目录
+- 打法定型：失准处就地改正标 ⟨07-20 更新⟩（保考古线索），结构性新增进文末收编节；
+  atlas README 加滚动收编状态行
+- 下一步：P4.1b 架构域四卷
+
 ## iter 33 · 2026-07-20 · P4.1 atlas 盘点 ✅（docs-only，前提修正）——Phase 4 开张
 
 - **前提坍塌（第二例，处置同 P2.3）**：ROADMAP 所称 DRIFT.md 全库不存在——播种时臆想

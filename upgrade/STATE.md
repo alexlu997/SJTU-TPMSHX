@@ -1,9 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 33
-- next: P4.1a（atlas 基建域写回：repo-infra.md / tests.md / README.md——packaging、
-  四常驻门、双跑脚本、套件计数、cli+_version；写回时逐段核对卷内既有断言是否已失准，
-  失准处就地改正并注记；docs-only 门）
+- iteration: 34
+- next: P4.1b（atlas 架构域写回：pipelines.md（run_stack_3d 156 行编排器+五阶段+四数据类）/
+  controllers.md（PEP 562 惰性 + cli）/ core-domain.md（envelope 权威 + _post_solve_gate_3d +
+  compute_config env 索引扩容）/ optimization.md（BO 预算 + 契约测试 + D3 绊线）；
+  同款打法：失准就地改正标 ⟨07-20 更新⟩ + 文末收编节；docs-only 门）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

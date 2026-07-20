@@ -130,9 +130,9 @@
 - [~] P4.1 atlas 漂移收编（iter 33 盘点：**DRIFT.md 从未存在**——ROADMAP 播种时的臆想
       产物，前提修正为"分支漂移直接写回卷 + 各卷加'2026-07 升级分支收编'节"；
       分支 vs 基点 164 文件变更，结构性漂移映射完毕，卷合计仅 3571 行可控）：
-  - [ ] P4.1a 基建域：repo-infra / tests / atlas-README——packaging（pyproject/extras/
-        锁 83 包）、四常驻门（lint/type/layering/fast-tier）、双跑脚本、套件 1245→1268、
-        cli+_version 入口
+  - [x] P4.1a 基建域（`433eb2b`，iter 34）：tests/repo-infra 两卷失准就地改正
+        （151→162 文件、marker+heavy、conftest 三副作用、-n auto→双跑脚本、threads 路径
+        笔误、pyproject 断言过时）+ 文末收编节；README 滚动状态注记；修正标 ⟨07-20 更新⟩
   - [ ] P4.1b 架构域：pipelines（run_stack_3d 156 行编排器+五阶段+四数据类）/
         controllers（PEP 562 惰性）/ core-domain（envelope 权威+_post_solve_gate_3d）/
         optimization（BO 预算+契约测试）
