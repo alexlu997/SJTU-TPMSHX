@@ -1,10 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 34
-- next: P4.1b（atlas 架构域写回：pipelines.md（run_stack_3d 156 行编排器+五阶段+四数据类）/
-  controllers.md（PEP 562 惰性 + cli）/ core-domain.md（envelope 权威 + _post_solve_gate_3d +
-  compute_config env 索引扩容）/ optimization.md（BO 预算 + 契约测试 + D3 绊线）；
-  同款打法：失准就地改正标 ⟨07-20 更新⟩ + 文末收编节；docs-only 门）
+- iteration: 35
+- next: P4.1c（atlas 外围域收编：ui-core（run_results mixin + polygon_calc 迁入）/
+  runs（tools 三件 + polygon_calc 迁出）/ solvers 卷小修（threads advisory / tpms_geometry
+  拷贝语义 / chi_s 每调用读取——分布在 solvers-2d/3d/closures/fields-mesh 四卷，逐卷
+  grep 定位受影响段）/ PROJECT_MANUAL §6 对齐；完成后 P4.1 整项收案）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

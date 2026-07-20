@@ -133,9 +133,9 @@
   - [x] P4.1a 基建域（`433eb2b`，iter 34）：tests/repo-infra 两卷失准就地改正
         （151→162 文件、marker+heavy、conftest 三副作用、-n auto→双跑脚本、threads 路径
         笔误、pyproject 断言过时）+ 文末收编节；README 滚动状态注记；修正标 ⟨07-20 更新⟩
-  - [ ] P4.1b 架构域：pipelines（run_stack_3d 156 行编排器+五阶段+四数据类）/
-        controllers（PEP 562 惰性）/ core-domain（envelope 权威+_post_solve_gate_3d）/
-        optimization（BO 预算+契约测试）
+  - [x] P4.1b 架构域（`0fad954`，iter 35）：四卷收编——pipelines（重组映射表+⚠旧行号
+        声明）/ controllers（PEP 562+cli 消费方）/ core-domain（evaluators 639 行新结构+
+        D3 绊线）/ optimization（P3.3 预算段重写+BLAS 时序缺陷"仍未修"注记留 Phase 5）
   - [ ] P4.1c 外围域：ui-core（run_results mixin+polygon_calc 迁入）/ runs（tools 三件+
         polygon_calc 迁出）/ solvers 卷小修（threads advisory/tpms_geometry 拷贝语义/
         chi_s 每调用读取）/ PROJECT_MANUAL §6 对齐

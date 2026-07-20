@@ -2,6 +2,19 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 35 · 2026-07-20 · P4.1b atlas 架构域收编 ✅（`0fad954`，docs-only）
+
+- pipelines.md：run_stack_3d 重组入册的关键决策——**不逐行重标定**（2107→3001 行全漂移），
+  改为 ⚠ 头注声明 + 编排链新行号（:586/:1106/:2128/:1339/:1627/:2975）+ 旧行号段→新函数
+  归属映射表；"逻辑逐字节未动（golden 位同护航）"是给读者的定心锚
+- controllers.md：PEP 562 惰性（cli 零 Qt 的关键一环）、pipeline_for 有了首个生产消费方、
+  P2.5a 行号影响面（≤350 不受影响的精确边界）
+- core-domain.md：evaluators 433→639 新结构（:46 envelope 导入/:59 R_AIR 再导出/
+  :66 后解门/:145 evaluate_3d）；D3 绊线与契约测试入册
+- optimization.md：P3.3 重写"BO 内层线程"段；**诚实注记**：本卷 07-12 审计指出的
+  parallel_runner BLAS 钳制时序缺陷分支未修（与 numba 主热点不相干，留 Phase 5 候选）
+- 下一步：P4.1c 外围域（ui-core/runs/solvers 小修/PROJECT_MANUAL §6），P4.1 收案
+
 ## iter 34 · 2026-07-20 · P4.1a atlas 基建域收编 ✅（`433eb2b`，docs-only）
 
 - tests.md 六处失准就地改正：文件数 151→162、marker 两→三（+heavy）、conftest 两→三件
