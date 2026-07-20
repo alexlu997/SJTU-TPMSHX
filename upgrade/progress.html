@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SJTU-TPMSHX 升级循环 · 迭代进度</title>
+<style>
+:root {
+  /* 瑞士网格编辑风——版式令牌与 sco2_exp_vs_cfd.v2.html 同源 */
+  --paper:#FFFFFF; --ink:#141414; --red:#E2001A;
+  --g50:#FAFAF9; --g100:#F4F3F0; --g200:#E7E5DF; --g300:#CFCBC2;
+  --g500:#78746C; --g700:#3E3C37;
+  --head:"Microsoft YaHei","Segoe UI",sans-serif;
+  --body:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  --mono:Consolas,"Cascadia Mono",ui-monospace,monospace;
+  --measure:46em;
+}
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--paper); color:var(--ink);
+       font-family:var(--body); font-size:16px; line-height:1.65;
+       -webkit-font-smoothing:antialiased; }
+::selection { background:var(--red); color:#fff; }
+a { color:inherit; }
+code { font-family:var(--mono); font-size:.86em; background:var(--g100); padding:1px 5px; }
+.progress { position:fixed; top:0; left:0; right:0; height:2.5px; z-index:70;
+            background:var(--red); transform-origin:0 50%; transform:scaleX(0); }
+.minibar { position:fixed; top:0; left:0; right:0; z-index:60; height:54px;
+           display:flex; align-items:center; gap:28px; padding:0 44px;
+           background:rgba(255,255,255,.94); border-bottom:1px solid var(--g200);
+           transform:translateY(-100%); transition:transform .35s cubic-bezier(.2,.65,.25,1); }
+.minibar.on { transform:none; }
+.minibar .mt { font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+               color:var(--g500); white-space:nowrap; }
+.minibar nav { display:flex; gap:2px; margin-left:auto; }
+.minibar nav a { font-family:var(--head); font-weight:700; font-size:12.5px;
+                 color:var(--g500); text-decoration:none; padding:6px 10px;
+                 border-bottom:2px solid transparent; transition:.2s; }
+.minibar nav a:hover { color:var(--ink); }
+.minibar nav a.active { color:var(--ink); border-bottom-color:var(--red); }
+@media (max-width:900px){ .minibar{padding:0 18px} .minibar .mt{display:none} }
+.wrap { max-width:1180px; margin:0 auto; padding:0 44px 110px; }
+@media (max-width:640px){ .wrap{ padding:0 20px 80px; } }
+.masthead { padding:76px 0 0; }
+.eyebrow { font-family:var(--mono); font-size:11.5px; letter-spacing:.1em;
+           color:var(--g500); display:flex; align-items:center; gap:12px; margin-bottom:26px; }
+.eyebrow::before { content:""; width:30px; height:3px; background:var(--red); }
+h1 { font-family:var(--head); font-weight:700; margin:0;
+     font-size:clamp(36px,5.4vw,60px); line-height:1.08; letter-spacing:-.015em;
+     max-width:24ch; text-wrap:balance; }
+h1 em { font-style:normal; color:var(--red); }
+.intro { font-size:15.5px; color:var(--g700); max-width:var(--measure); margin:24px 0 0; }
+.facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+         border-top:2.5px solid var(--ink); margin-top:46px; }
+.facts .row { padding:14px 18px 12px 0; }
+.facts .row + .row { border-left:1px solid var(--g200); padding-left:18px; }
+.facts .k { display:block; font-family:var(--mono); font-size:10.5px;
+            letter-spacing:.07em; color:var(--g500); margin-bottom:4px; }
+.facts .v { font-size:14px; font-variant-numeric:tabular-nums; }
+.facts .v b { color:var(--red); font-weight:700; }
+@media (max-width:640px){
+  .facts{ grid-template-columns:1fr 1fr; }
+  .facts .row + .row{ border-left:none; padding-left:0; }
+  .facts .row:nth-child(even){ border-left:1px solid var(--g200); padding-left:18px; } }
+.tocpage { margin-top:84px; }
+.tocpage .lab { font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+                color:var(--g500); margin-bottom:6px; }
+.tocpage ol { list-style:none; margin:0; padding:0; border-bottom:1px solid var(--g200); }
+.tocpage li { border-top:1px solid var(--g200); }
+.tocpage li:first-child { border-top:2.5px solid var(--ink); }
+.tocpage a { display:grid; grid-template-columns:70px 1fr 30px; gap:18px;
+             align-items:baseline; padding:20px 0; text-decoration:none; }
+.tocpage .n { font-family:var(--mono); font-size:13px; color:var(--red); }
+.tocpage .t { font-family:var(--head); font-weight:700; font-size:22px;
+              transition:transform .25s cubic-bezier(.2,.65,.25,1); display:block; }
+.tocpage .tdesc { display:block; font-size:12.5px; color:var(--g500); margin-top:3px; }
+.tocpage .arr { color:var(--g300); font-size:18px; justify-self:end; transition:.25s; }
+.tocpage a:hover .t { transform:translateX(8px); }
+.tocpage a:hover .arr { color:var(--red); transform:translateX(4px); }
+@media (max-width:640px){ .tocpage a{ grid-template-columns:48px 1fr 24px; padding:14px 0; }
+  .tocpage .t{ font-size:17px; } }
+section { margin-top:110px; scroll-margin-top:76px; }
+.sec-head { display:flex; align-items:baseline; gap:26px;
+            border-bottom:2.5px solid var(--ink); padding-bottom:16px; margin-bottom:30px; }
+.sec-head .idx { font-family:var(--head); font-weight:700;
+                 font-size:clamp(64px,8vw,96px); line-height:.8; color:var(--g200);
+                 letter-spacing:-.04em; user-select:none; }
+.sec-head h2 { font-family:var(--head); font-weight:700; font-size:26px; margin:0; }
+.sec-intro { font-size:15px; color:var(--g700); max-width:var(--measure); margin:-8px 0 36px; }
+.speclist { border-top:2px solid var(--ink); margin:26px 0 18px; }
+.speclist .srow { display:grid; grid-template-columns:112px 1fr; gap:26px;
+                  padding:15px 0; border-bottom:1px solid var(--g200); }
+.speclist .srow:last-child { border-bottom:none; }
+.speclist .sk { font-family:var(--mono); font-size:11px; color:var(--red);
+                letter-spacing:.05em; padding-top:2px; }
+.speclist .sv { font-size:14px; color:var(--g700); }
+@media (max-width:560px){ .speclist .srow{ grid-template-columns:1fr; gap:4px; } }
+.callout { border-left:4px solid var(--red); background:var(--g50);
+           padding:14px 18px; margin-top:14px; font-size:13.5px;
+           color:var(--g700); max-width:var(--measure); }
+.callout b { color:var(--ink); }
+table.spec { width:100%; border-collapse:collapse; font-size:13.5px; margin:0; }
+.spec th { text-align:left; font-family:var(--mono); font-size:11px;
+           color:var(--g500); font-weight:400; padding:8px 14px 8px 0;
+           border-bottom:1.5px solid var(--ink); }
+.spec td { padding:11px 14px 11px 0; border-bottom:1px solid var(--g200); vertical-align:top; }
+.spec tr:hover td { background:var(--g50); }
+.chip { display:inline-block; font-family:var(--mono); font-size:10.5px;
+        letter-spacing:.04em; padding:2px 8px; white-space:nowrap; }
+.chip.done { background:var(--ink); color:#fff; }
+.chip.prog { background:var(--red); color:#fff; }
+.chip.todo { background:var(--g100); color:var(--g500); border:1px solid var(--g200); }
+.phase { margin-bottom:44px; }
+.ph-head { display:flex; align-items:baseline; gap:22px; margin-bottom:10px; }
+.ph-head h3 { font-family:var(--head); font-size:17px; margin:0; }
+.ph-meter { display:flex; align-items:center; gap:10px; margin-left:auto; min-width:210px; }
+.ph-n { font-family:var(--mono); font-size:11.5px; color:var(--g500); }
+.bar { flex:1; height:6px; background:var(--g100); position:relative; }
+.bar .fill { position:absolute; inset:0 auto 0 0; background:var(--ink); }
+.ptable td.pid { font-family:var(--mono); font-size:12px; white-space:nowrap; color:var(--ink); font-weight:700; }
+.ptable td { font-size:13px; color:var(--g700); }
+ul.subitems { margin:8px 0 0; padding-left:2px; list-style:none; }
+ul.subitems li { margin-top:6px; font-size:12.5px; }
+.iters { border-top:2.5px solid var(--ink); }
+.iter { display:grid; grid-template-columns:120px 1fr; gap:26px;
+        padding:24px 0 20px; border-bottom:1px solid var(--g200); }
+.iter .ino .n { display:block; font-family:var(--head); font-weight:700;
+                font-size:44px; line-height:.9; color:var(--g200); letter-spacing:-.03em; }
+.iter.code .ino .n { color:var(--red); }
+.iter .idate { display:block; font-family:var(--mono); font-size:10.5px;
+               color:var(--g500); margin-top:8px; letter-spacing:.05em; }
+.iter h3 { font-family:var(--head); font-size:15.5px; margin:2px 0 10px; }
+.iter ul { margin:0; padding-left:18px; }
+.iter li { font-size:13px; color:var(--g700); margin-top:5px; }
+@media (max-width:640px){ .iter{ grid-template-columns:1fr; gap:8px; }
+  .iter .ino { display:flex; align-items:baseline; gap:12px; } .iter .ino .n{font-size:30px} }
+.leg { font-family:var(--mono); font-size:11px; color:var(--g500); margin:0 0 14px; }
+.leg .sw { display:inline-block; width:9px; height:9px; margin:0 4px 0 14px; vertical-align:baseline; }
+.dcard { border-top:2px solid var(--ink); padding:16px 0 18px; }
+.dcard + .dcard { border-top:1px solid var(--g200); }
+.dcard.open .did { color:var(--red); }
+.dhead { display:flex; align-items:center; gap:14px; }
+.did { font-family:var(--head); font-weight:700; font-size:22px; }
+.ddate { font-family:var(--mono); font-size:11px; color:var(--g500); margin-left:auto; }
+.dtitle { font-size:14.5px; font-weight:700; margin-top:10px; max-width:var(--measure); }
+.drec { font-size:13px; color:var(--g700); margin-top:8px; max-width:var(--measure); }
+.drec .k { font-family:var(--mono); font-size:10.5px; color:var(--red); margin-right:10px; }
+footer { margin-top:110px; border-top:2.5px solid var(--ink); padding-top:18px;
+         font-family:var(--mono); font-size:11px; color:var(--g500); line-height:2; }
+.rv { opacity:0; transform:translateY(14px);
+      transition:opacity .6s cubic-bezier(.16,.68,.3,1), transform .6s cubic-bezier(.16,.68,.3,1); }
+.rv.in { opacity:1; transform:none; }
+@media (prefers-reduced-motion: reduce) { .rv { opacity:1; transform:none; transition:none; } }
+</style></head><body>
+<div class="progress" aria-hidden="true"></div>
+<div class="minibar"><span class="mt">SJTU-TPMSHX · 升级循环进度 · 2026-07-20 11:26</span><nav>
+<a href="#s1">当前状态</a><a href="#s2">路线图</a><a href="#s3">迭代时间线</a><a href="#s4">待决事项</a></nav></div>
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">SJTU-TPMSHX · UPGRADE LOOP · 生成于 2026-07-20 11:26</div>
+  <h1>升级循环推进到<em>第 28 轮</em></h1>
+  <p class="intro">自迭代升级循环的实时进度页：当前做到哪一步、每一轮具体做了什么、哪些事项在等
+  Alex 拍板。数据直接解析自 <code>upgrade/</code> 状态文件与 git，本页由
+  <code>upgrade/tools/render_progress.py</code> 重渲，不手工维护。</p>
+  <div class="facts"><div class="row"><span class="k">当前迭代</span>
+      <span class="v"><b>iter 28</b> 已完结</span></div>
+    <div class="row"><span class="k">路线图完成度</span>
+      <span class="v"><b>19</b> / 31 项</span></div>
+    <div class="row"><span class="k">分支 · 领先 master</span>
+      <span class="v"><code>upgrade/loop</code> · <b>57</b> commits</span></div>
+    <div class="row"><span class="k">HEAD</span>
+      <span class="v"><code>8748dbd</code> · 2026-07-20 11:00</span></div>
+    <div class="row"><span class="k">最近门禁</span>
+      <span class="v">套件 1258+10 绿（iter 24） · golden 位同</span></div>
+    <div class="row"><span class="k">待 Alex 决策</span>
+      <span class="v"><b>2</b> 项</span></div></div>
+</header>
+<nav class="tocpage" aria-label="目录">
+  <div class="lab">目录 · CONTENTS</div>
+  <ol>
+  <li><a href="#s1"><span class="n">01</span><span class="td"><span class="t">当前状态</span><span class="tdesc">循环游标：在做什么、下一项是什么、定时器与边界</span></span><span class="arr">→</span></a></li>
+  <li><a href="#s2"><span class="n">02</span><span class="td"><span class="t">路线图</span><span class="tdesc">Phase 0–4 全部条目与完成度，含每项的一句话结论</span></span><span class="arr">→</span></a></li>
+  <li><a href="#s3"><span class="n">03</span><span class="td"><span class="t">迭代时间线</span><span class="tdesc">每一轮做了什么、验证证据、教训——新的在前</span></span><span class="arr">→</span></a></li>
+  <li><a href="#s4"><span class="n">04</span><span class="td"><span class="t">待决事项</span><span class="tdesc">等 Alex 拍板的 D 条目与循环建议</span></span><span class="arr">→</span></a></li>
+  </ol>
+</nav>
+<section id="s1">
+  <div class="sec-head rv"><span class="idx">01</span><h2>当前状态</h2></div>
+  <p class="sec-intro rv">循环游标来自 <code>upgrade/STATE.md</code>——每轮开工第一笔、收尾最后一笔都写它。</p>
+  <div class="speclist rv">
+    <div class="srow"><div class="sk">进行中</div><div class="sv">P2.5a（2026-07-20：编辑毕——五方法逐字节搬至 run_results.py（AST 比对 HEAD 位同）、MRO 插位 RunController 后、冒烟+ruff 绿、run_controller 1215→912；全门后台任务 b1z1ujvzr 在跑，日志 upgrade/logs/p25a-*.log；<b>收轮动作=看门绿后提交代码+簿记</b>，中途 tick 请勿另起条目）</div></div>
+    <div class="srow"><div class="sk">下一项</div><div class="sv">P2.5a（run_controller 切结果呈现区 → ui/mixins/run_results.py：五方法逐字节搬移</div></div>
+    <div class="srow"><div class="sk">定时器</div><div class="sv">cron <code>7,22,37,52 * * * *</code>（每 15 分钟检查一次）· 布防 2026-07-19（job d7888157；&gt;5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）</div></div>
+    <div class="srow"><div class="sk">基点</div><div class="sv">master <code>4b32da4</code>（含 sCO2 光滑壁闭合提交）；分支 <code>upgrade/loop</code></div></div>
+  </div>
+  <div class="callout rv">循环铁律：<b>绝不 push</b>；<b>绝不写主检出</b> <code>E:\LWH\SJTU-TPMSHX</code>；
+  vault 只读；一轮只做一项；代码改动必过全套件门（数值路径另加 golden 位同门）；
+  数值/物理政策变更一律先立 D 条目等 Alex 决策。</div>
+</section>
+<section id="s2">
+  <div class="sec-head rv"><span class="idx">02</span><h2>路线图</h2></div>
+  <p class="sec-intro rv">解析自 <code>upgrade/ROADMAP.md</code>。黑 = 完成，红 = 进行中，灰 = 待办；
+  每项保留原文的一句话结论（含验证证据与提交哈希）。</p>
+  <div class='phase rv'><div class='ph-head'><h3>Phase 0 — 安全网（架构手术前的地基）✅ 完成于 2026-07-19（iter 1–5</h3><div class='ph-meter'><span class='ph-n'>5/5</span><span class='bar'><span class='fill' style='width:100%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>P0.1 基线快照（<code>2c51eca</code>，iter 1）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>写 <code>upgrade/BASELINE.md</code>——suite 精确计数、<code>--durations</code> 前 15、 golden_3d --check 结果、<code>validate_shanghai_3d_real.py</code> 与 <code>validate_shanghai_lumped_dual_nu.py</code> 的 …</td></tr><tr><td class='pid'>P0.2 依赖锁定（<code>abaa348</code>，iter 2）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><code>requirements-lock-server.txt</code>（本机验证过的 80 包冻结，torch==2.11.0+cpu 需注明 pytorch cpu 索引）入库；<code>requirements.txt</code> 头注说明三档清单 （裸 requirements / constraints-devbox-…</td></tr><tr><td class='pid'>P0.3 raw_data 静默回退改响亮（<code>cdbe14e</code>，iter 3；pin 改放仓库根 data-repo.pin——data/ 整目录 gitignore 所致）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><code>df_surrogate/surrogate_v3.py:156</code> 的 <code>_log.info</code> 回退 升级为 <code>_log.warning</code> + 显著横幅（找不到 Excel 校准源 = 数字口径变化，必须喊出来）； 加数据仓钉扎记录 <code>data/raw_data/.data-repo-pin</code>（记…</td></tr><tr><td class='pid'>P0.4 测试基建入库（<code>6521ba7</code>，iter 4；golden json 本体 → DECISIONS D1 待决）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><code>scripts/run_tests_server.ps1</code> 提交进仓库；给 <code>golden_3d.json</code> 建 meta 侧车 <code>golden_3d.meta.json</code>（生成 commit / env 指纹 / 日期——HANDOFF §9 "零版本记录"）； golden json 本体是否…</td></tr><tr><td class='pid'>P0.5 文档纠偏（<code>059d306</code> + D1 执行 <code>c4cccb7</code>，iter 5）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><code>.claude/commands/check.md</code> 死路径 <code>D:\Postgraduate</code> → <code>E:\LWH</code>、 补 server runner 指引；HANDOFF §9d 的 CI=true 精确门语义写进 <code>pytest.ini</code> 头注</td></tr></tbody></table></div><div class='phase rv'><div class='ph-head'><h3>Phase 1 — 架构（Alex 指定的最高优先级）<b>主线完成 2026-07-20（iter 6-20）</b>）</h3><div class='ph-meter'><span class='ph-n'>7/10</span><span class='bar'><span class='fill' style='width:70%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>P1.1 架构审计（iter 6</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>工具+文档，见 <code>docs/ARCHITECTURE-AUDIT-2026-07.md</code>）：实测 import 图 （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、 run_stack_3d 五缝、sys.pa…</td></tr><tr><td class='pid'>P1.2 正确性架构债（iter 7 验证收案，无码可写）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>HANDOFF §1 两缺陷<b>均已在上游修复</b> （max_outer_ltne 自 <code>8ea7ce5</code> 活、压力字面量 2026-07-11 改真实转发，_CSV_STATUS.md:315 记载）且已被 <code>test_validate_pipeline_runner_wiring.py</code> 四断言…</td></tr><tr><td class='pid'>P1.3 评估器 envelope 权威统一 + post-solve 门（<b>A ✓ iter 8；B ✓ iter 9； C → BLOCKED on D3</b>——iter 10 发现 2D/3D 管线 G 口径不一致 + γ_df 标定纠缠 （亏空 7.4%/19.3%），升级为标定级决策，见 DECISIONS D3 与 openspec D4 修正）</td><td class='pst'><span class='chip todo'>待办</span></td><td>3D 评估器改 import <code>envelope.predict_outlet_p_sq</code>（弃 :224,230 手抄代数与本地 R_AIR）； 两评估器补 post-solve <code>gate_solution</code>（失败→invalid/罚值的语义设计走 openspec）； 补传 `rho_inlet…</td></tr><tr><td class='pid'>P1.4 evaluator 契约测试（<code>6c727dc</code>，iter 11）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>六条有意差异固化为机器断言 + D3 绊线； 主规则"Pareto 须经 Pipeline 复核"入档；openspec D5 节（并入 evaluator-envelope-authority 变更而非新开——同能力域，偏离原"openspec change"字面已记）</td></tr><tr><td class='pid'>P1.5 run_stack_3d 五缝拆分（审计 §3；<b>A ✓ iter 12、B ✓ <code>ddf9c64</code> iter 13</b>—— **五缝全收官 iter 12-16（C ✓ <code>2549a79</code>）</td><td class='pst'><span class='chip todo'>待办</span></td><td>_run_3d_stack 1955→156 行纯编排器**； 余一个收尾切片：mega-tuple 数据类化 + 五函数文件级迁移（可选，见下）； 每步 golden 位同 + 全套件；stages_3d 的 re-export 面 = raw-cfg 直调方的兼容层，必须保持； C 缝需显式耦合…</td></tr><tr><td class='pid'>P1.6 缓存与 env 卫生（<code>7d70227</code>，iter 17）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><code>compute_geometry</code> 返回浅拷贝、<code>_phi_grid</code> 冻结 writeable=False（两个 W7b 同族潜伏隐患，照 _FIELD_CACHE 标杆）；<code>TPMSHX_CHI_S</code> 改 per-call （import 冻结影响 K_ss）；`_LAPLACIAN_AMG_…</td></tr><tr><td class='pid'>P1.7 死路径清理（<code>dd598d9</code>，iter 18）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>smooth_df.py AIR_XLSX_DEFAULT 显式守卫； runs/tools|diagnostics|cfd_asym 的 D:\ 与 C:\Users\ALEX 参数化（archive/ 只标注 frozen）。 sys.path 引导<b>不零星清理</b>（回归面大收益负），等 P1…</td></tr><tr><td class='pid'>P1.8 打包地基（<code>827bee9</code>，iter 19）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>pyproject + tpmshx-run CLI + controllers 惰性导出 （接缝零 Qt 实证；工作 venv 未动）</td></tr><tr><td class='pid'>P1.8b 导入风格迁移波次（顶层 <code>from solvers...</code> → <code>sjtu_tpmshx.*</code> 全库扫 + 分波删 约百处 sys.path 引导 + 工作 venv 转 editable）</td><td class='pst'><span class='chip todo'>待办</span></td><td>大扫荡，openspec change + §10 委托候选； 迁移前双风格混用危险已注记 pyproject</td></tr><tr><td class='pid'>P1.9 分层违规裁决（<code>c43c7db</code>，iter 20）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>两修（polygon_calc 迁 ui、_version 叶子） 两裁（SANCTIONED 清单内置理由）；test_import_layering 常驻套件 + /check §2b； VIOLATIONS = 0</td></tr></tbody></table></div><div class='phase rv'><div class='ph-head'><h3>Phase 2 — 代码质量</h3><div class='ph-meter'><span class='ph-n'>7/8</span><span class='bar'><span class='fill' style='width:88%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>P2.0 数据类化（<code>d0238e6</code>，iter 21——<b>§10 委托首战成功</b></td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>Sonnet 执行/Fable 复核签发）； 文件级迁移（五阶段函数 → run_stack_3d_stages.py）并入 P1.8b 波次一起做（同属大搬迁）</td></tr><tr><td class='pid'>P2.1 ruff lint 引入（<code>121413d</code> 机械波 + <code>6e65487</code> 语义波，iter 22）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>F+E9 清零、 三真雷（QInputDialog/coord_inspector/_直跑块）、门面豁免两教训、lint 门常驻</td></tr><tr><td class='pid'>P2.1b F841 清偿（<code>581e790</code>，iter 23）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>52+5 级联逐案（净 −46 行死代码），全量执法开启</td></tr><tr><td class='pid'>P2.1c ruff format 评估（iter 25，纯评估轮）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><b>裁决 = 不做全库 format</b>。 实测四条硬证据：①359/370 文件、−20.5k/+38.9k 行（87k 行包 ~45% 搅动，blame/考古链毁）； ②atlas 2355 处 file:line 引用（376 文件）全面腐蚀；③wiring 测试 23 处 quoted ma…</td></tr><tr><td class='pid'>P2.2 mypy 宽松档核心面门（<code>464076d</code>，iter 24）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td>七文件圈（envelope/compute_pipeline/ domain 配置结果/configs/_version/cli）清零 + test_type_gate 常驻；扩圈 = 加清单同 commit 清零</td></tr><tr><td class='pid'>P2.3 死代码处置（iter 26，盘点轮）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><b>零处置需要，未立 D 条目</b>。 zone_config 104 引用/17 文件、zone_table 87 引用/8 文件——"DEPRECATED"仅指优化器路径， UI Define-zones 标签页全活，头注已准确；runs/archive README 的 frozen+死路径声明…</td></tr><tr><td class='pid'>P2.4 异常与日志策略（iter 27，盘点轮）</td><td class='pst'><span class='chip done'>✓ 完成</span></td><td><b>已在政策内，零代码批次</b>。 全库 0 裸 except；核心三目录（solvers/pipelines/controllers）28 处 except Exception 逐处分类全为存证故意（warmup 尽力 ×3、能力探测、<b>2026-07-03 已有 except-audit</b> 的…</td></tr><tr><td class='pid'>P2.5 GUI 巨物减脂（iter 28 测绘完毕，章程收窄）</td><td class='pst'><span class='chip prog'>⟳ 进行中</span></td><td><b>mixin 架构本身判定健康</b>—— AST 交叉引用矩阵显示耦合低（多数 mixin 依赖 0–3 个同伴；zone_panel/io_actions 零 fan-in 枢纽仅 shortcuts/session_presets/main），13-mixin 分层不动。真靶标唯 run_con…<ul class='subitems'><li><span class='chip todo'>待办</span> P2.5a 切结果呈现区 → 新 mixin <code>ui/mixins/run_results.py</code>（write_result/_finalize_plots/ _update_result_summary/_diag_summary_text/_show_di…</li><li><span class='chip done'>✓ 完成</span> ui 273 处 except Exception 政策（P2.4 移交）：<b>存量不动</b>（Qt 防御捕获合法，273 站 改写的 churn 风险 &gt;&gt; 收益）；新代码要求 logutil 记录。政策即此行，不另立扫改波次。</li></ul></td></tr></tbody></table></div><div class='phase rv'><div class='ph-head'><h3>Phase 3 — 性能（profile 先行，禁拍脑袋；benchmarks/profiling 有既有基建</h3><div class='ph-meter'><span class='ph-n'>0/3</span><span class='bar'><span class='fill' style='width:0%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>P3.1 suite fast-tier</td><td class='pst'><span class='chip todo'>待办</span></td><td>用 --durations 实测数据定义 duration-based 标记与 <code>run_tests_fast.ps1</code>（<b>不碰 slow 标记语义</b>——它是 CI skip 清单不是时长普查，v1 教训在案）</td></tr><tr><td class='pid'>P3.2 大网格线程默认值</td><td class='pst'><span class='chip todo'>待办</span></td><td>TPMSHX_NUM_THREADS 探测式建议（≤64 / 单 socket / 带宽瓶颈提示）+ 文档</td></tr><tr><td class='pid'>P3.3 BO core budget 工具化（TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics）</td><td class='pst'><span class='chip todo'>待办</span></td><td></td></tr></tbody></table></div><div class='phase rv'><div class='ph-head'><h3>Phase 4 — 文档与交付</h3><div class='ph-meter'><span class='ph-n'>0/4</span><span class='bar'><span class='fill' style='width:0%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>P4.1 atlas 漂移收编</td><td class='pst'><span class='chip todo'>待办</span></td><td>DRIFT.md 累计条目写回受影响卷；PROJECT_MANUAL §6 对齐新结构</td></tr><tr><td class='pid'>P4.2 README / 手册数字口径复核（1.71/1.73 类问题的当前状态确认）</td><td class='pst'><span class='chip todo'>待办</span></td><td></td></tr><tr><td class='pid'>P4.3 CI 增强评估</td><td class='pst'><span class='chip todo'>待办</span></td><td>lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）</td></tr><tr><td class='pid'>P4.4 HANDOFF-windows-server.md 刷新——已确认过时处</td><td class='pst'><span class='chip todo'>待办</span></td><td>§1 整节（max_outer + 压力字面量， 已修已锁，iter 7 证据）、§2a 预解 choke（aa3f477 已加 raise→罚值）、§3a 热重播种地板 （aa3f477 已改严格 NaN）；其余节随 P1 推进逐条核实后改写</td></tr></tbody></table></div><div class='phase rv'><div class='ph-head'><h3>收尾（触发时机：Phase 4 完成，或 Alex 喊停</h3><div class='ph-meter'><span class='ph-n'>0/1</span><span class='bar'><span class='fill' style='width:0%'></span></span></div></div><table class='spec ptable'><thead><tr><th style='width:96px'>条目</th><th style='width:92px'>状态</th><th>内容</th></tr></thead><tbody><tr><td class='pid'>合并前清单</td><td class='pst'><span class='chip todo'>待办</span></td><td>upgrade/ 目录处置方案、与 master 的合并策略（预期 master 只会有 Alex 的 小改动，rebase 优先）、给 Alex 的终审报告</td></tr></tbody></table></div>
+</section>
+<section id="s3">
+  <div class="sec-head rv"><span class="idx">03</span><h2>迭代时间线</h2></div>
+  <p class="sec-intro rv">解析自 <code>upgrade/PROGRESS.md</code>，新的在前。这里是"中间每一轮具体做了什么"
+  的完整记录：做了什么 / 验证证据 / 教训与下一步。</p>
+  <p class="leg rv">迭代号<span class="sw" style="background:var(--red)"></span>红 = 动了代码（过全门）
+  <span class="sw" style="background:var(--g200)"></span>灰 = 盘点 / 评估 / 文档轮</p>
+  <div class="iters">
+  <div class='iter rv'><div class='ino'><span class='n'>28</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.5 首轮：mixin 依赖测绘 （docs-only，章程收窄）</h3><ul><li>AST 交叉引用矩阵（14 文件：13 mixin + main）：<b>耦合低，架构判定健康</b>——多数 mixin 依赖 0–3 个同伴，zone_panel/io_actions 零 fan-in，枢纽 shortcuts(用7)/session_presets(用6)/ main(用7)。原设想"13-mixin 是巨物问题"被证据推翻：mixin 分层本身是合理的责任划分</li><li>真靶标唯 run_controller 1215 行（20 方法），四责任区测绘：启动/预检 35–350、 orch 信号处理 495–801（_on_orch_finished 528–716 独占 188 行）、结果呈现 351–494+1003–1165、 计算 UI 状态 802–1002+1166–1215。保护面 3 直击测试 + 17 Qt 测试，无 golden</li><li>章程裁决：<b>只切一刀</b>（P2.5a 结果呈现区 → run_results.py，1215→~845）；ui 273 except 存量不动（churn 风险&gt;&gt;收益），新代码 logutil——政策一行即收，不立扫改波次</li><li>下一步：P2.5a 执行（Fable 直做——方法搬移涉 MRO/keep-alive 判断，不派机械子代理）</li></ul></div></div><div class='iter rv'><div class='ino'><span class='n'>27</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.4 异常/日志策略 （盘点轮，docs-only，零批次）</h3><ul><li>人口普查：0 裸 except；400 处 except Exception（ui 独占 273 = 68%）；库内 print 144</li><li>核心三目录 28 处逐站分类：全为存证故意——发现 <b>2026-07-03 已做过一轮 except-audit</b> （sigmoid_field/flux_3d 留有审计注释，静默 fallback 当时已放响）；余为 warmup 尽力型（注释在）、 CoolProp 能力探测、线程 err[i] 捕获后重浮、UI 回调护栏（吞对：坏回调不该杀数值解）、 traceback 打响型。无 P0.3 族潜伏故障</li><li>print 双层复核：95/144 在 __main__ 区；分类探针"活路径 49 处"系统性高估——逐函数核查 全在 _self_test()/main()/demo（residual_correction 13 处全在 _self_test:263、 surrogate_v3 11 处全在 main:619、predict 2 处在演示函数、parallel_runner 1 处是 CLI 输出）。 <b>活求解路径 print = 0</b></li><li>处置：ui 273 处移交 P2.5 章程（GUI 域政策，随减脂就地办）；无独立代码批次立项—— 连续第三轮"零改动"裁决，佐证历史审计（06-16 死代码、07-03 except、P0.3、P2.1/b） 已把卫生欠账付清，Phase 2 剩余价值集中在 P2.5</li><li>下一步：P2.5 首轮（mixin 依赖测绘）</li></ul></div></div><div class='iter rv'><div class='ino'><span class='n'>26</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.3 死代码处置 （盘点轮，docs-only，零处置）</h3><ul><li>命名靶标现场核实全部"活"：zone_config（104 引用/17 文件，ZoneInputConfig 是 2D 计算路径 活数据结构）、zone_table（87 引用/8 文件，UI Define-zones 全套）——头注"DEPRECATED for optimizer use"语义准确，无需动；runs/archive frozen 声明 P1.7 已备</li><li>全库孤儿扫描（自写只读探针，165 库模块）：16 未导入者中 13 为入口脚本（正常）， 3 个模块嫌疑逐一复核全为<b>相对导入误报</b>（探针正则不识 <code>from .X import</code>）： _kernels_ltne_3d(1178 行) ← ltne_energy_3d:322；builders_sidebar ← builders_canvas:19； skeleton ← builders_canvas:1079（函数内惰性导入）。<b>0 真孤儿，0 删除候选，未立 D 条目</b></li><li>方法论记录：未来孤儿检查挂 audit_import_graph 的真导入图做（正确处理相对/惰性导入）， 正则探针只配当一次性初筛；细粒度死代码（死名/死导入）已由 ruff F 门持续执法</li><li>下一步：P2.4 异常与日志策略（先盘点分类）</li></ul></div></div><div class='iter rv'><div class='ino'><span class='n'>25</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.1c ruff format 评估 （纯评估轮，docs-only）</h3><ul><li><b>裁决：不做全库 format（本分支阶段性关闭）</b>。全部探测只读（--check/--diff），零代码改动</li><li>硬证据：①<code>ruff format</code> 影响 359/370 文件、3214 hunk、−20517/+38878 行（包总 87369 行， ~45% 搅动）；②atlas file:line 引用 2355 处 / 376 个唯一文件路径，全面腐蚀；③12 个测试文件 读源码断言，23 处 quoted marker 中 ≥3 处引号敏感（<code>e_info.get('converged'</code>、 <code>cfg.get('outer_anderson', False)</code>、<code>'p_clip_hits'</code>——format 把 ' 翻成 " 即断）+ 长表达式 marker（<code>_ALPHA_T * rho_new + ...</code>）有反流断裂风险；④调参救不回： quote-style=single + line-length=200 仍 360 文件重排（搅动源自缩进/空格/尾逗号归一）</li><li>附带成本盘点：git blame 断代（ledger/报告溯源链依赖 file:line 考古）；numba 磁盘缓存 一次性全失效（无害）；merge-to-master diff 被排版噪声淹没（升级分支"每个 diff 可审"承诺破）</li><li>未来重启三前置（写入 ROADMAP 条目）：atlas 锚点化或同波重基线；marker 全改 AST/标识符级； master 合并后独立 format-only 提交 + .git-blame-ignore-revs</li><li>下一步：P2.3 死代码处置（先盘点，删除项过 DECISIONS-NEEDED）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>24</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.2 mypy 核心面门 （<code>464076d</code>）</h3><ul><li>宽松档 [tool.mypy] + 七文件核心面清单（envelope/compute_pipeline/domain 配置结果/ configs/_version/cli）清零：compute_config 3 处注解性修正（异构 dict 先声明后分支赋值、 gate-check 循环变量改名破类型合一、补 Tuple 导入）+ cli warnings_list 收窄——零物理默认值变动</li><li>test_type_gate 常驻（subprocess mypy @清单，cwd=包目录与顶层导入约定一致）；check.md §2a2 入册； 锁文件 80→83 包（ruff/mypy 入锁）</li><li>门禁：suite 1258+10 绿 / 4 skip（19:06，负载偏高段）、golden 3D 位同、 mypy "Success: no issues found in 7 source files"</li><li>流程：开工首个 Edit 即 STATE 标记（iter 23 教训，本轮已守）；轮中撞 /compact 一次， 后台门任务跨压缩存活、凭 task 通知收轮</li><li>勘误：iter 22/23（及 pyproject 内 P2.1/P2.2 溯源注释）曾误记日期 2026-07-21，git 时间戳 实为 07-20——PROGRESS 本轮已改；pyproject 注释留待下次正当编辑该文件时顺手改（避免 纯注释改动空耗一轮套件）</li><li>下一步：P2.1c ruff format 评估（纯评估轮）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>23</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.1b F841 清偿 （<code>581e790</code>）＊日期按 git 时间戳修正（原误记 07-21）</h3><ul><li>52 处初判 + 5 处级联全清（净 −46 行）：死解包/死拉取/jit 内核死载入（A/B 侧 ef ×4， golden 位同护航）/标量旧方案遗骸（T_avgA/B）/整死 if-else（stages_2d 行均孔隙率）/ U_sf 超表速度残迹；Qt keep-alive 语义保全（app→_app）、副作用调用去名留调</li><li>pyproject 移除 F841 ignore——<b>全量执法开启</b>；批量手术脚本逐行断言护航零失配</li><li>流程小疵自纠：开工漏写 in_progress 标记（连续第二次，iter 8 后再犯）——收尾时发现， 下轮起开工首个 Edit 必须是 STATE 标记</li><li>门禁：suite 1257+10 绿、golden 位同</li><li>下一步：P2.2 类型注解</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>22</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P2.1 ruff lint 门 （<code>121413d</code> 机械 + <code>6e65487</code> 语义）＊日期按 git 时间戳修正（原误记 07-21）</h3><ul><li>352 发现 → 0：238 自动修 + 7 F821 逐案（<b>三真雷</b>：Save Preset 即崩的缺导入、 pin 分支未定义变量、直跑块引用已亡测试）+ F841 缓议 P2.1b + format 单列 P2.1c</li><li>两次红灯全是仓库防御工事的胜利：tests/design 收集崩抓住 tpms_calc 门面被删、 test_pipeline_reexports 锁面测试抓住 stages_2d——门面豁免清单由实证驱动补齐； 41 文件被删名属性引用全扫零受害</li><li>lint 门常驻 + /check §2a + 锁刷新（81 包，指纹 0e079835f744709…完整值此处存档）</li><li>门禁：suite 1257+10 绿（第三跑）、golden 位同</li><li>下一步：P2.1b F841 人审</li><li>Sonnet 子代理执行（80/6/22/25 字段四数据类 + 五签名坍缩 + 解包块；自带 AST 交叉核验）， Fable 复核（diff 定点审：残差全在允许模式内、零函数体泄漏）+ 门禁 + 签发</li><li>委托模式验证成功：规格逐名指定 + 禁改函数体 + 禁跑套件禁提交 → 执行方零歧义返工</li><li>门禁：suite 1256+10 绿、golden 位同 ×2；文件级迁移并入 P1.8b</li><li>下一步：P2.1 ruff（继续委托模式）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>20</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.9 分层裁决 （<code>c43c7db</code>）—— <b>Phase 1 主线收官</b></h3><ul><li>两修：polygon_calc（Qt 耦合 UI 代码）迁回 ui/；__version__ 抽 _version.py 叶子 （ui→main 环消除，pyproject 转 dynamic 版本单源）</li><li>两裁：solvers↔df_surrogate 闭合边界互依对、domain→_domain 叶子常量——SANCTIONED 清单内置工具（附理由），报告单列</li><li>层级门常驻：test_import_layering 进套件、/check §2b；<b>VIOLATIONS = 0</b></li><li>门禁：suite 1256+10 绿、golden 位同；19 分钟套件尖峰确认为瞬时负载（本轮回落 10:31）</li><li><b>Phase 1 战报（iter 6-20）</b>：审计 → 验证收案 ×1 → envelope 权威+门 ×2 切片 → 契约测试 → 五缝拆解（1955→156）→ 缓存卫生 → 死路径 → 打包 → 分层裁决； 全程 golden 位同、零带病提交；待决 D2/D3 不阻塞</li><li>下一步：Phase 2 开工，P2.0 = §10 委托首战</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>19</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.8 打包地基 （<code>827bee9</code>）</h3><ul><li>pyproject（extras 分组、包数据、诚实的 P1.8b 注记）+ tpmshx-run headless CLI （--dry-run 实测 Pipeline2D）+ controllers PEP 562 惰性导出（接缝零 Qt 实证）</li><li>一次性 venv editable 安装冒烟全过；<b>工作 venv 未动</b>（循环环境稳定优先）</li><li>P1.8b 立项（导入风格全库迁移 + 引导分波删除 + venv 转 editable——§10 委托候选）</li><li>门禁：suite 1255+10 绿、golden 位同</li><li>下一步：P1.9 分层违规裁决（P1 收官项）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>18</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.7 死路径清理 （<code>dd598d9</code>）</h3><ul><li>smooth_df rebuild 死路径：显式 FileNotFoundError 守卫（溯源+修法）+ env 覆盖口</li><li>4 工具脚本 Desktop/D:\ → env 覆盖 + runs/_out 默认；vault 输入指向现实布局</li><li>archive/ 增补"死路径故意不改"证据链声明（尊重既有 frozen README）</li><li>门禁：suite 1255+10 绿、golden 位同。注意：全量套件连续三轮 ~19 分钟 （高负载 or 用例增长），P3.1 fast-tier 优先级↑</li><li>下一步：P1.8 pyproject 打包（P1 尾声）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>17</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.6 缓存与 env 卫生 （<code>7d70227</code>）</h3><ul><li>两个 W7b 潜伏炸弹拆除：compute_geometry 共享 dict → 浅拷贝入口；_phi_grid 共享 ndarray → writeable=False（写入即炸）</li><li>TPMSHX_CHI_S 改 per-call（import 冻结的 K_ss reload 隐患）；AMG 缓存补 reset 钩子</li><li>+5 守卫测试；chi_s 优先级测试从"patch 模块全局"改为 setenv——旧写法正是冻结 逼出的变通，佐证修复价值</li><li>P1.5 收尾评估定案：五缝判完成；数据类化+文件迁移降为 <b>P2.0</b>（首个 §10 委托候选）</li><li>门禁：suite 1255+10 绿（重跑全量）、golden 位同；invariant-guard 钩子首次触发（合规）</li><li>下一步：P1.7 死路径清理</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>16</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.5 C 缝 （<code>2549a79</code>）—— <b>五缝收官</b></h3><ul><li>最难一缝的解法："整块搬移"（状态初始化+闭包+驱动 730 行同走）让 nonlocal 域内自洽， 预想的"显式耦合态对象"根本不需要</li><li>nonlocal 重绑名（Ta/Tb/Ts/chi_B/h_v 场/K_ffB）= <b>in-out 双身份</b>：初值形参进、终值 bundle 出 ——工具为此补最后两刀（条件 import 首现、nonlocal 输入合成），全程 golden 当场纠错</li><li><b>_run_3d_stack：1955 → 156 行</b>（build→hv→outer→extract→verdict 纯编排）； 又一个源码断言随迁（test_outer_anderson）</li><li>门禁：suite 1250+10 绿（重跑全量）、golden 位同 ×2</li><li>五缝总账（iter 12-16）：五段共 ~1930 行逐字节搬移，零行为漂移（每步 golden 位同）， 工具从朴素块搬移进化出七项静态分析能力，全程由门禁当场纠错、零带病提交</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>15</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.5 E 缝 （<code>694e5fa</code>）——工具毕业考</h3><ul><li>裁决尾段（401 行）→ <code>_assemble_3d_verdict</code>（81 输入 → _result；return 留守）</li><li>工具连修三个静态分析盲区（每个都由 golden/运行时当场揪出，零带病提交）： AugAssign 隐式 load、先读后绑 in-out（顺序敏感首现）、嵌套推导式作用域（抑制集穿线）； Nonlocal 自由变量支持顺手装上（C 缝前置）</li><li>_run_3d_stack <b>1955 → ~750 行</b>；门禁 suite 1250+10 绿、golden 位同 ×2</li><li>下一步：P1.5 C 缝（最难的外循环闭包，8 nonlocal）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>14</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.5 D 缝 （<code>b6ce215</code>）</h3><ul><li>指标/场提取段（202 行）→ <code>_extract_3d_metrics</code>（36 输入 → 25 名 bundle）， 工具一次成型（成熟度可见：零试错 apply）</li><li>_run_3d_stack ~1150 行；门禁 suite 1250+10 绿、golden 位同 ×2</li><li>下一步：P1.5 E 缝（裁决+组装尾段），随后只剩最难的 C 缝</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>13</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.5 B 缝 （<code>ddf9c64</code>）</h3><ul><li>h_v 机械群（5 闭包 + 初始场，186 行）→ <code>_build_hv_machinery</code> 工厂（23 显式输入， 闭包捕获工厂形参；6 名 bundle 含跨缝可调用 _build_hv_local_3d）</li><li>工具两级进化并回同步：作用域感知（闭包内 return/形参不误计）+ 嵌套 def/lambda 形参归位（A0/Dh 泄漏）——试运行两轮迭代出正确输入集才 apply</li><li>_run_3d_stack ~1350 行；门禁 suite 1250+10 绿、golden 位同 ×2</li><li>下一步：P1.5 D 缝（指标/场提取，近纯函数段）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>12</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.5 A 缝 （<code>9fcdbcc</code>）</h3><ul><li>415 行 setup/build 段<b>零手抄</b>抽出为 <code>_build_3d_problem(cfg)</code>（AST 名字流算 80 名状态包， 文本手术逐字节搬移，收发元组同名单生成）；_run_3d_stack 1955→~1540 行</li><li>两次现场教训：①条件绑定名（19 个）触发 UnboundLocalError——工具加定赋值分析一次修全； ②一个源码标记 wiring 测试随迁（断言意图不变，指向新家）</li><li>手术工具入库 runs/tools/seam_surgery_3d.py，B/D/E 缝改常量复用</li><li>门禁：suite 1250+10 绿 / 0 败（重跑全量）、golden 位同 ×2</li><li>下一步：P1.5 B 缝（h_v 闭包群提升）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>11</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.4 契约测试 （<code>6c727dc</code>）</h3><ul><li>六条评估器↔管线有意差异 → 机器断言（legacy 默认 / B 冻结 / 整形隔离 / 不路由 / 2D choke 双向现状 / <b>D3 绊线</b>——rho_inlet_ref 四处在缺席断言，决议必触发）</li><li>主规则入档：Pareto 选点须经 Pipeline 复核；处置规则：绝不删断言了事</li><li>途中修正一次自己的断言（choke 词汇出现在管线注释里——改为 raise 语义断言）</li><li>门禁：suite 1250+10 绿 / 0 败（+6 契约测试）</li><li>下一步：P1.5 run_stack_3d 五缝拆分（A 缝先行）</li></ul></div></div><div class='iter rv'><div class='ino'><span class='n'>10</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.3 切片 C → <b>调查升级为 D3</b>（docs-only，无码）</h3><ul><li>现场核实推翻切片前提：不是"评估器缺参数"，是 <b>2D/3D 管线自身 G 口径不一致</b>—— 2D 显式钉物理 ρ(T_in,P_in)·u；3D 求解器根本没有 rho_inlet_ref 旋钮，首解捕获 ρ(T_in,P_out_seed)，且评估器与自己的 choke 种子自相矛盾</li><li>量化（1D 种子，冻结测试点）：2D 亏 <b>7.38%</b>、3D 亏 <b>19.30%</b>；validate 用 ρ(T_in,P_in) 换算实验 ṁ ⇒ 3D 管线系统性低于实验吞吐，偏差已被 γ_df 锚定部分吸收（标定纠缠）</li><li><b>D3 登记</b>（选项 a 全线物理 G / b 现状 / c 分维一致过渡；建议 c 先行 + a 立项调查）； P1.3-C 标 BLOCKED；openspec D4、审计报告 §2 同步修正</li><li>教训沉淀：连续第三轮"现场核实改写条目"（P1.2 已修、P1.3-B 范围、P1.3-C 升级）—— 协议 §1-2a 这步的价值已自证</li><li>下一步：P1.4 evaluator 契约测试（G 口径差异记"待决 D3"，不锁方向）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>9</span><span class='idate'>2026-07-20</span></div><div class='ibody'><h3>P1.3 切片 B （<code>2ea1d37</code>）</h3><ul><li>3D 评估器 post-solve envelope 门上线：与生产管线同判据（压力地板 + 逐格 Mach）， 失败走既有 NaN+invalid → BO 罚值通道，零新语义</li><li><b>范围修正</b>：2D 管线自身无 post-solve 门（ledger O1）——2D 侧要不要引入是物理政策， 登记 <b>DECISIONS D2</b>（循环建议 c 维持现状），不替 Alex 决定</li><li>假求解器单元测试 ×3 + wiring（8/8）；期间修了一处测试断言字符串错误（supersonic ≠ Mach）</li><li>门禁：suite 1244+10 绿 / 0 败、golden 位同、frozen-values 未动（健康工况零影响实证）</li><li>下一步：P1.3 切片 C（rho_inlet_ref）——第一个预期动数字的切片，§5 重基准流程伺候</li><li>三处手抄 1D D-F 种子代数收归 <code>envelope.predict_outlet_p_sq</code>（位同：同式同序同常数 + frozen-values rel=1e-12 未动实证）；R_AIR 改权威别名</li><li>BO 战役入口重置 extrap/choke 警告注册表（每战役粒度，设计理由记 openspec D2）</li><li>openspec 变更 evaluator-envelope-authority 落档（切片 B/C 设计已定：post-solve 门复用 罚值通道不 raise；rho_inlet_ref 预期动数字走 §5）</li><li>门禁：suite 1240+10 绿 / 0 败（+4 新守卫）、golden 位同</li><li>下一步：P1.3 切片 B（post-solve 门）</li></ul></div></div><div class='iter rv'><div class='ino'><span class='n'>7</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P1.2 验证收案 （docs-only）</h3><ul><li><b>现场核实推翻条目前提</b>：HANDOFF §1 的两个缺陷（max_outer 静默丢弃、压力有效性字面量） <b>均已在上游修复</b>（<code>8ea7ce5</code> + 2026-07-11 波），且 <code>test_validate_pipeline_runner_wiring.py</code> 四断言已锁死——连"读 CAP 冒充实际迭代数"的细节（07-12 发现）都有断言</li><li>本轮证据：实跑 19 个锁定测试（wiring + truth-table）全绿 6.13s；无码可写，收案</li><li>勘误：审计报告 §0/§6 曾转述 HANDOFF §1 为"仍在"——已改；P4.4 列明 HANDOFF 三处确认过时</li><li><b>协议进化</b>：§1 新增"开工先现场核实条目前提"步骤（本轮的教训制度化）</li><li>下一步：P1.3 评估器 envelope 权威统一（真·未修的缺口，审计 §2 已核实）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>6</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P1.1 架构审计 （<code>2426861</code> 工具, <code>0aa775e</code> 报告）—— <b>Phase 1 开篇</b></h3><ul><li>三路取证：AST import 图（新工具入库，34 核心边、3 违规 + main↔ui 环）+ 双 evaluator 逐能力 diff + run_stack_3d 解剖/可变态清单（两个只读侦察兵，file:line 全核对到当前代码）</li><li><b>修正性发现</b>：双 evaluator 是 2D/3D 两个 BO 评估器（不是同物两版）；HANDOFF §2a 预解、 §3a 热重播种两行已过时（aa3f477 修过）；真缺口是 post-solve gate 双缺 + 3D 手抄 envelope 代数 + rho_inlet_ref 双缺；run_stack_3d 无重复但单函数 1955 行（五缝已标）； 两个 W7b 同族潜伏缓存隐患（compute_geometry 共享 dict、_phi_grid 未冻结）</li><li>产出 <code>docs/ARCHITECTURE-AUDIT-2026-07.md</code>（后续 P1 的工作底稿，与 HANDOFF 冲突以它为准）； <b>P1.3-P1.9 已按审计重写回填</b></li><li>另：Alex 调频定时器 25→15 分钟档（job d7888157，7/22/37/52）</li><li>下一步：P1.2 正确性债（HANDOFF §1，唯一没被审计推翻的原条目）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>5</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P0.5 文档纠偏 + D1 执行 （<code>c4cccb7</code>, <code>059d306</code>）—— <b>Phase 0 收官</b></h3><ul><li><b>D1（Alex 拍板：a）</b>：golden_3d.json（2 KB）入库，meta 侧车同步，重基准规矩定为 "json+meta 同 commit 带 <code>!</code>"</li><li>/check：死路径 D:\Postgraduate → 中性仓库根表述；runner 入库注记；§2 按 D1 改写 （3D 直接 --check 入库基线；2D 仍本地捕获）</li><li>pytest.ini 头注：128 核 -n auto 警告 + CI=true 精确门语义（HANDOFF §9d 收编进配置现场）</li><li>验证：strict-markers 收集 + 定点 1 passed；meta json 解析过</li><li><b>Phase 0 安全网 5/5 完成</b>（基线快照、依赖锁、响亮回退、测试基建、文档纠偏）； 下一步 P1.1 架构审计（Phase 1 开篇）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>4</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P0.4 测试基建入库 （<code>6521ba7</code>）</h3><ul><li><code>scripts/run_tests_server.ps1</code> 入库——官方跑法结束"untracked by choice"状态</li><li><code>golden_3d.meta.json</code> 侧车入库：sha256 4ae326dc… + 认证 commit 4b32da4 + 三次位同记录 + 环境指纹（HANDOFF §9"golden 零版本记录"缺口关闭；重基准须同 commit 更新侧车）</li><li><b>DECISIONS D1 待 Alex</b>：golden json 本体（2 KB 文本）入库与否，循环建议入库</li><li>验证：json.tool 解析过、sha256 与在盘一致；无运行时路径变化（免套件，PROTOCOL §4 资产级）</li><li>下一步：P0.5 文档纠偏（/check 死路径 + pytest.ini CI 语义头注）——P0 收官项</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>3</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P0.3 回退改响亮 （<code>cdbe14e</code>）</h3><ul><li>prebuilt-CSV 标定回退：info → <b>WARNING + ASCII 横幅</b>（W6 的 ASCII-only 约束遵守； info 在默认 logging 配置下不可见正是陷阱静默的机理）</li><li><code>data-repo.pin</code> 入库（仓库根）：SJTU-TPMSHX-data @ 823847e；原定 data/ 内路径不可版本化，已偏离记档</li><li>新测试锁定 WARNING 级（tpmshx logger propagate=False，测试里显式挂 caplog.handler）</li><li>门禁：suite <b>1236+10 绿 / 4 skip / 0 败</b>（+1 新测试）、golden <b>位同</b>；xlsx 在位行为不变</li><li>下一步：P0.4 测试基建入库（golden meta 侧车 + runner 入库；golden json 入库与否 → DECISIONS）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>2</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P0.2 依赖锁定 （<code>abaa348</code>）</h3><ul><li><code>requirements-lock-server.txt</code> 入库：80 包完整闭包（含 BO 栈），--extra-index-url 内置可一条直装， 指纹与基线同源（76b60e32…）</li><li><code>requirements.txt</code> 三档头注：裸下界 / devbox constraints / server lock 各自用途； 纠正 torch "Optional/GPU" 过时注释、写明 BO 栈缺席事实（HANDOFF §9e）</li><li>验证：pip --dry-run 双文件 exit 0（PROTOCOL §4 新增"依赖元数据"行，免套件有据）</li><li>下一步：P0.3 raw_data 静默回退改响亮（首个碰运行时代码的条目，全门禁伺候）</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>1</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>P0.1 基线快照 （<code>2c51eca</code>）</h3><ul><li>四门证据链（suite → golden → 3D real → lumped）串行跑完全绿，日志落盘 upgrade/logs/p01-*</li><li>基线数字：套件 1245 绿 / 4 skip / 0 败（10:41 + 9.3s）；golden 位同；3D gate PASS （RMSRE_dP 4.88%、RMSRE_Q 2.12%，16/16 valid）；lumped cross-flow vs Q_air 1.73%（与 07-13 口径一致）</li><li>插曲：validate 运行会改写 tracked 的 shanghai_3d_baseline.csv——本轮 diff 为 ULP 尾噪（1e-13）， 已回退；该"自改写 tracked 产物"设计味道移交 P1.2。skip 3→4 的差异待顺手查明</li><li>下一步：P0.2 依赖锁定</li></ul></div></div><div class='iter rv code'><div class='ino'><span class='n'>0</span><span class='idate'>2026-07-19</span></div><div class='ibody'><h3>循环启动（人工，Alex 在场）</h3><ul><li>主检出的 sCO2 光滑壁闭合 WIP 先过全套 suite（双 pass exit 0，lastfailed 空）后提交为 master <code>4b32da4</code>（37 文件 +4471），未 push</li><li>worktree 建立：<code>E:\LWH\SJTU-TPMSHX-upgrade</code>，分支 <code>upgrade/loop</code>，基点 <code>4b32da4</code></li><li>非跟踪资产复制：<code>data\</code>（17 MB，含 raw_data 与 sCO2-CFD）、<code>golden_3d.json</code>、 <code>scripts\run_tests_server.ps1</code></li><li>环境复刻：venv（C:\Python312 底座）+ 80 包精确冻结（torch==2.11.0+cpu 走 pytorch cpu 索引， 其余走 PyPI，--no-deps 装完整闭包）</li><li>就绪门（全部通过，2026-07-19）：<code>pip check</code> 无破损依赖；worktree 内全套 suite 双 pass exit 0 且 <code>.pytest_cache</code> 无 lastfailed（零失败）；<code>_golden_3d.py --check golden_3d.json</code> 位同（链条对 golden 失败有独立 exit 2 出口，走到底即位同）。精确计数因后台输出截断未留存， P0.1 重跑时落盘补记</li><li>决策记录（Alex，2026-07-19）：架构优先；<b>允许有据重基准</b>（PROTOCOL §5 的流程约束）； 全天候 ~25 分钟一轮，撞 5h 限额自动等窗口重置续跑</li><li>决策补充（Alex，2026-07-19）：P0/P1 用 Fable 5 max 直做；P2 起循环自评——机械项派 Sonnet 5/Opus 子代理执行、Fable 5 复核+验证+提交，判断项 Fable 5 直做（PROTOCOL §10）</li></ul></div></div>
+  </div>
+</section>
+<section id="s4">
+  <div class="sec-head rv"><span class="idx">04</span><h2>待决事项</h2></div>
+  <p class="sec-intro rv">解析自 <code>upgrade/DECISIONS-NEEDED.md</code>——循环无权自决的数值 / 物理
+  政策变更都停在这里等拍板；已决条目留档。</p>
+  <div class='dcard closed rv'><div class='dhead'><span class='did'>D1</span><span class='chip done'>已决</span><span class='ddate'>2026-07-19</span></div><div class='dtitle'>golden_3d.json 本体是否入库？</div><div class='drec'><span class='k'>状态</span>已决</div></div><div class='dcard open rv'><div class='dhead'><span class='did'>D2</span><span class='chip prog'>待 Alex 决策</span><span class='ddate'>2026-07-20</span></div><div class='dtitle'>2D 侧要不要引入 post-solve envelope 门？</div><div class='drec'><span class='k'>循环建议</span>(c) 现状 + 把"2D 无 post-solve 门"作为已知边界写进文档（P4.4 顺带）。</div></div><div class='dcard open rv'><div class='dhead'><span class='did'>D3</span><span class='chip prog'>待 Alex 决策</span><span class='ddate'>2026-07-20</span></div><div class='dtitle'>质量流量入口参考密度：2D/3D 管线口径不一致，且与实验换算相悖（标定级纠缠）</div><div class='drec'><span class='k'>循环建议</span><b>(c) 先行 + (a) 立项</b>（调查需评估 γ 重锚成本与 Shanghai 重验证预算）。</div></div>
+</section>
+<footer>
+  SJTU-TPMSHX 升级循环 · 本页生成于 2026-07-20 11:26 · 重渲：仓库根运行
+  <code>python upgrade/tools/render_progress.py</code><br>
+  数据源：upgrade/STATE.md · ROADMAP.md · PROGRESS.md · DECISIONS-NEEDED.md · git（只读，不产生新事实）
+</footer>
+</div>
+<script>
+(() => {
+  const $  = (s, c=document) => c.querySelector(s);
+  const $$ = (s, c=document) => [...c.querySelectorAll(s)];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const rio = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('in'); rio.unobserve(e.target); }
+  }), {threshold:.08, rootMargin:'0px 0px -4% 0px'});
+  $$('.rv').forEach(el => reduced ? el.classList.add('in') : rio.observe(el));
+  const prog = $('.progress'), mini = $('.minibar'), tocp = $('.tocpage');
+  let ticking = false;
+  const onScroll = () => {
+    if (ticking) return; ticking = true;
+    requestAnimationFrame(() => {
+      const h = document.documentElement;
+      prog.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`;
+      if (tocp) mini.classList.toggle('on', tocp.getBoundingClientRect().bottom < 0);
+      ticking = false;
+    });
+  };
+  addEventListener('scroll', onScroll, {passive:true}); onScroll();
+  const spy = new IntersectionObserver(es => es.forEach(e => {
+    const a = $(`.minibar nav a[href="#${e.target.id}"]`);
+    if (a) a.classList.toggle('active', e.isIntersecting);
+  }), {rootMargin:'-40% 0px -55% 0px'});
+  $$('section[id]').forEach(s => spy.observe(s));
+  addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const secs = $$('section[id]');
+    const y = scrollY + 90;
+    let idx = -1;
+    secs.forEach((s, i) => { if (s.offsetTop <= y) idx = i; });
+    idx += e.key === 'ArrowRight' ? 1 : -1;
+    if (idx < 0 || idx >= secs.length) return;
+    e.preventDefault();
+    secs[idx].scrollIntoView({behavior: reduced ? 'auto' : 'smooth'});
+  });
+})();
+</script>
+</body></html>

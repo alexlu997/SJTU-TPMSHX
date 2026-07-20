@@ -93,6 +93,9 @@ e) 向台账 `E:\LWH\vault\reports\_research-ledger-CN.md` 追加条目并署名
 
 - Phase 完成、DECISIONS-NEEDED 出现新条目、或发生重基准 → ToolSearch 加载 `PushNotification` 推送 Alex 一句话摘要
 - `PROGRESS.md` 是 Alex 的阅读界面：每轮一段"做了什么 / 证据 / 下一步"，写人话，别写流水账
+- **进度页**（Alex 2026-07-20 要求）：每轮收尾簿记后运行
+  `python upgrade/tools/render_progress.py` 重渲 `upgrade/progress.html`
+  （<1s，解析状态文件+git，浏览器打开即看；重渲产物随簿记一并提交）
 
 ## 10. 模型分层（Alex 2026-07-19 指示）
 
