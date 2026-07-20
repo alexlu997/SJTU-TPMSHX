@@ -40,9 +40,35 @@ dependencies = [
 gui = ["PySide6>=6.7", "pyvista>=0.45", "pyvistaqt>=0.11"]
 bo = ["torch>=2.2", "botorch>=0.10", "gpytorch>=1.11"]
 test = ["pytest>=8.0", "pytest-xdist>=3.5"]
+dev = ["ruff>=0.15"]
 
 [project.scripts]
 tpmshx-run = "sjtu_tpmshx.cli:main"
+
+[tool.ruff]
+# P2.1（2026-07-21）：lint 门从最小安全集起步。format 全库重排刻意不开
+# （会大规模改行号 → 腐蚀 atlas file:line 引用与源码标记 wiring 测试断言，
+# 需独立评估，见 ROADMAP P2.1c）。行宽不设限（存量长行合法）。
+target-version = "py311"
+exclude = ["sjtu_tpmshx/runs/archive"]   # frozen 历史归档（见其 README）
+
+[tool.ruff.lint]
+# F = pyflakes（真错误类），E9 = 语法级。F841（未用变量，67 处存量）
+# 需逐个人工判读 —— P2.1b 单列，暂 ignore。
+select = ["F", "E9"]
+ignore = ["F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# 再导出面（拆分兼容层）与引导型导入：F401 是其存在方式
+# （test_pipeline_reexports 锁面的两个模块都在内——stages_2d 首轮漏豁免，
+#  被该守卫测试当场抓获，iter 22 实测）
+"sjtu_tpmshx/pipelines/stages_2d.py" = ["F401"]
+"sjtu_tpmshx/pipelines/stages_3d.py" = ["F401"]
+"sjtu_tpmshx/**/__init__.py" = ["F401"]
+# tpms_calc 是文档化的便利门面（tpms_props.py 头注）：Nu 系列/系数表/物性
+# 经它再导出，下游 design/tests/ui 穿透引用——首轮 autofix 铲掉整块导致
+# tests/design 收集崩（iter 22 实测），F401 永久豁免
+"sjtu_tpmshx/solvers/tpms_calc.py" = ["F401"]
 
 [tool.setuptools.dynamic]
 version = { attr = "sjtu_tpmshx._version.__version__" }

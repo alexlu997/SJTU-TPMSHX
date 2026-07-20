@@ -10,12 +10,11 @@ No timers that stick around, no CPU-heavy loops.
 from __future__ import annotations
 
 from PySide6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRect,
-    QAbstractAnimation, QSequentialAnimationGroup,
+    Qt, QPropertyAnimation, QEasingCurve, QPoint, QAbstractAnimation, QSequentialAnimationGroup,
 )
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QGraphicsDropShadowEffect, QLabel, QWidget, QApplication,
+    QGraphicsDropShadowEffect, QLabel, QApplication,
     QGraphicsOpacityEffect,
 )
 

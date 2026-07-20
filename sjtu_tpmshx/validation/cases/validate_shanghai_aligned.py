@@ -52,16 +52,16 @@ warnings.filterwarnings('ignore')
 
 from solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
-    air_density, air_viscosity, air_conductivity, air_cp, P_atm,
+    air_density, air_viscosity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_from_Re, nu_water_topo,
+    nu_water_topo,
 )
 from solvers.simple_solver import SIMPLESolver
 from solvers.ltne_energy import solve_full_domain
 from solvers.df_projection import build_master_refined_grid, extract_dP_from_simple
 from df_surrogate.predict import predict_K_cF
 from solvers.roughness import (f_enhancement, nu_extra_factor,
-                                 apply_to_K_cF, resolve_mode_from_env)
+                                 resolve_mode_from_env)
 
 # 2026-05-13 — roughness mode from env (baseline / norris_1a / bhatti_shah_1b).
 _ROUGH_MODE, _ROUGH_EPS = resolve_mode_from_env()

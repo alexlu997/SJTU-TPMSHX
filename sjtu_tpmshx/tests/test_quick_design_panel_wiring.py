@@ -1,8 +1,6 @@
 from __future__ import annotations
 import types
 from unittest.mock import patch
-import numpy as np
-import pytest
 from PySide6.QtWidgets import QLineEdit, QComboBox, QCheckBox, QLabel
 
 from ui.quick_design_panel import (

@@ -16,7 +16,6 @@ class AppearanceMixin:
         """E13 — let user choose a custom accent_primary override.
         Stored to `.accent` next to main.py; read at startup."""
         from PySide6.QtWidgets import QColorDialog
-        from ui.theme import set_accent_override
         cur = get_theme().get('accent_primary', '#3B82F6')
         from PySide6.QtGui import QColor
         col = QColorDialog.getColor(QColor(cur), self, "Pick accent colour")

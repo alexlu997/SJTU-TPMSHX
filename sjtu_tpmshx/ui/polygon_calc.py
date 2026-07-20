@@ -43,7 +43,7 @@ def run_polygon_calculation(window):
 def _parse_inputs(window, _log):
     """Phase 1: read UI widgets, validate, build mesh. Returns cfg or None."""
     from solvers import unstructured_mesh as um
-    from solvers.unstructured_mesh import BC_INLET_A, BC_OUTLET_A, BC_INLET_B, BC_OUTLET_B
+    from solvers.unstructured_mesh import BC_INLET_A, BC_INLET_B
 
     if not window.compute_tpms():
         return None

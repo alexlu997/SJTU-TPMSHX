@@ -12,7 +12,6 @@ from solvers.tpms_calc import nu_from_Re
 from solvers.nu_correlations import (
     NU_RE_FIT_RANGE,        # air 幂律拟合 Re 窗 (400,16000)
     WATER_NU_RE_RANGE,      # 拓扑专属水侧 Nu 关联式验证 Re 域 (新式)
-    WATER_NU_COEFFS,        # 拓扑专属水侧系数 (单源 re-export)
     SCO2_NU_RE_RANGE,       # sCO2 CFD 拟合 Re 域 (2600,128000), Diamond+Gyroid
     nu_water_topo,
     nu_sco2_topo,

@@ -28,9 +28,8 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from .tpms_calc import (air_density, air_conductivity, P_atm,
-                       Sa_mm as _SA_MM, nu_from_Re)
-from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
-                               BC_INLET_A, BC_OUTLET_A,
+                       nu_from_Re)
+from .unstructured_mesh import (BC_INTERIOR, BC_INLET_A, BC_OUTLET_A,
                                BC_INLET_B, BC_OUTLET_B)
 
 from logutil import get_logger

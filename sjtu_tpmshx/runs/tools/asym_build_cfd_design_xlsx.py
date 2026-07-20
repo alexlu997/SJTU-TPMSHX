@@ -133,10 +133,10 @@ def build():
         ("比值抵消 sym/asym 共有 provenance (网格/湍流/粗糙) → 只留几何偏移效应。δ=0→r=1→κ=1→零回归。", None),
         ("", None),
         ("【设计参数】", Font(bold=True, size=12)),
-        (f"  topology : Diamond + Gyroid", None),
+        ("  topology : Diamond + Gyroid", None),
         (f"  (L, t)   : {L_mm} mm / {t_mm} mm  →  t/L = {t_mm/L_mm:g}  (在 water-cfd-raw 网格内)", None),
         ("            C 由 (topology, t/L) 定死 → 尺度不变, 此点代表所有同比例 (L,t)。", None),
-        (f"  split r  : ε_A/ε_B ∈ {{1, 1.5, 2, 2.5, 3, 3.5}}  (1 = 对称 κ=1 锚)", None),
+        ("  split r  : ε_A/ε_B ∈ {1, 1.5, 2, 2.5, 3, 3.5}  (1 = 对称 κ=1 锚)", None),
         ("            固定 C, 反解 δ 命中 r (每族 δ 不同, 见 geom_cases)。", None),
         (f"  Re sweep : 侧A(大/气) {RE_A}", None),
         (f"             侧B(小/液) {RE_B}", None),
@@ -159,7 +159,7 @@ def build():
         ("  5. $env:TPMSHX_ASYM_KAPPA=1 → 跑 Shanghai 3D (δ=0→κ=1) 必复现 9.82/3.20 (零回归闸)。", None),
         ("", None),
         (f"  Um 名义流体 (仅给入口速度, κ 与流体无关): air ρ={AIR['rho']}/μ={AIR['mu']}, water ρ={WATER['rho']}/μ={WATER['mu']}。", None),
-        (f"  Um = Re·μ/(ρ·D_h)。黄色单元格 = 待 CFD 填。绿色行 = 对称锚 (r=1)。", None),
+        ("  Um = Re·μ/(ρ·D_h)。黄色单元格 = 待 CFD 填。绿色行 = 对称锚 (r=1)。", None),
     ]
     for i, (txt, font) in enumerate(lines, 1):
         c = ws.cell(row=i, column=1, value=txt)
@@ -244,7 +244,7 @@ def build():
     print(f"  geom_cases : {n_geom} 几何 (2 topo × {len(SPLITS)} split)")
     print(f"  cfd_runs   : {n_runs} 行 (每几何 {len(RE_A)}A+{len(RE_B)}B Re)")
     print(f"  results    : {n_geom*2} per-side κ 点")
-    print(f"  → 填 dP / (K,c_F) 后 ingest → 过 Shanghai 闸")
+    print("  → 填 dP / (K,c_F) 后 ingest → 过 Shanghai 闸")
 
 
 if __name__ == "__main__":

@@ -665,7 +665,6 @@ def _run_solvers(window, cfg, fields):
     import warnings as _warn
     from solvers import tpms_calc as _tc
     from solvers import fluid_props
-    from solvers.simple_solver import _aligned_grid
 
     # 2026-05-09 (option B) — per-side fluid property accessors. Air uses
     # ideal-gas density (T, P); water is incompressible so P is ignored.

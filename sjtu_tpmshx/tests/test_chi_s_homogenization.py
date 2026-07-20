@@ -13,14 +13,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 _HERE = Path(__file__).resolve()
 _PROJECT_ROOT = _HERE.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from solvers import tpms_props
 from solvers.tpms_props import chi_s_eff, geometry
 from solvers.tpms_calc import compute as tpms_compute
 

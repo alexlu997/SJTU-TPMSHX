@@ -1,4 +1,3 @@
-import math
 from design.fluids import fluid_props, fluid_nu
 
 def test_air_props_at_645K():

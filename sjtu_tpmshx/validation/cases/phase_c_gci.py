@@ -43,7 +43,7 @@ warnings.filterwarnings('ignore')
 from pipelines.stages_3d import _run_3d_stack
 from validation.harness._provenance import write_csv_with_provenance
 from validation.cases.audit_3d_conservation import (
-    make_T2, make_T4_H8, L_DOM, H_DOM, LZ,
+    make_T2, make_T4_H8,
 )
 
 
@@ -123,7 +123,7 @@ def run_c1(case_id, grids=(12, 16, 20, 30), out_csv=None):
 
     # GCI analysis
     gci = _gci_table(grids, Q_list)
-    print(f"\n  GCI analysis (Q_enthalpy_A as QoI):")
+    print("\n  GCI analysis (Q_enthalpy_A as QoI):")
     print(f"    Q_inf (finest):  {gci['Q_inf']:.2f} W")
     print(f"    order_obs (5pt): {gci['order_obs']:.3f}")
     for g_pair_key in [k for k in gci if k.startswith('GCI_')]:
@@ -209,7 +209,7 @@ def main():
     grids = [int(g) for g in args.grids.split(',')]
 
     print(f"{'='*72}")
-    print(f"  Phase C — Roache GCI + tol audit")
+    print("  Phase C — Roache GCI + tol audit")
     print(f"{'='*72}")
     print(f"  Cases: {cases}  Grids: {grids}\n")
 
@@ -231,12 +231,12 @@ def main():
                               __file__)
 
     print(f"\n{'='*72}")
-    print(f"  GCI summary")
+    print("  GCI summary")
     print(f"{'='*72}")
     print(sdf.to_string(index=False, float_format='%.4g'))
 
     # Hard gate: GCI on grid 20 < 5%
-    print(f"\n  Hard gate: GCI(grid 20) < 5%")
+    print("\n  Hard gate: GCI(grid 20) < 5%")
     fail = []
     for s in summary:
         gci20 = s.get('GCI_g20_pct', float('nan'))

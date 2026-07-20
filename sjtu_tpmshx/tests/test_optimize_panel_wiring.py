@@ -15,9 +15,7 @@ return a synthetic Pareto, so the test runs in <1 s.
 """
 from __future__ import annotations
 
-import os
 import types
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np

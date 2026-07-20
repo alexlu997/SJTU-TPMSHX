@@ -1780,7 +1780,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         else:
             Q_enth_B_phys = 0.0
 
-        _log.info(f"[Q-DIAG] === LTNE-effective group ===")
+        _log.info("[Q-DIAG] === LTNE-effective group ===")
         _log.info(f"[Q-DIAG] m_dot_A_ltne={m_dot_A_simple:.5f} kg/s  "
                   f"T_A_out={T_A_out:.1f} K  Q_enth_A_ltne={Q_enth_A_ltne:.1f} W")
         if sB is not None:
@@ -1794,7 +1794,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
                   f"{abs(Q_solid_A_val)-Q_enth_A_ltne:.1f}  "
                   f"|Q_sB|-Q_enth_B_ltne={abs(Q_solid_B_val)-Q_enth_B_ltne:.1f}")
 
-        _log.info(f"[Q-DIAG] === Physical-boundary group ===")
+        _log.info("[Q-DIAG] === Physical-boundary group ===")
         _log.info(f"[Q-DIAG] m_A_phys_in={m_A_phys_in:.5f} kg/s  "
                   f"Q_enth_A_phys={Q_enth_A_phys:.1f} W")
         if sB is not None:

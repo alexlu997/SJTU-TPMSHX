@@ -9,7 +9,6 @@ on synthetic decision vectors and parsed CSVs.
 from __future__ import annotations
 
 import json
-import os
 
 import numpy as np
 import pytest

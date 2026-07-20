@@ -138,18 +138,18 @@ def main() -> None:
     # manifold shape.
     A_TOT = A_TOT_GEOM   # = A_0 · V_HX_total
 
-    print(f"Shanghai lumped dual-Nu ε-NTU (cross-flow geometry)")
+    print("Shanghai lumped dual-Nu ε-NTU (cross-flow geometry)")
     print(f"  Geom: {TPMS} L_cell={L_CELL}mm t={T_WALL}mm  ε={EPS:.4f}  "
           f"ε_A={EPS_A:.4f}  ε_B={EPS_B:.4f}  D_h={D_H*1000:.3f}mm")
     print(f"  HX dims: L_air={L_AIR*1000:.0f}×L_water={L_WATER*1000:.0f}"
           f"×L_z={L_Z*1000:.0f} mm")
-    print(f"  Re convention: inlet 42×42 manifold")
+    print("  Re convention: inlet 42×42 manifold")
     print(f"  A_flow_air  ={A_FLOW_AIR*1e6:7.2f} mm² (yz · ε_A)")
     print(f"  A_flow_water={A_FLOW_WATER*1e6:7.2f} mm² (xz inlet · ε_B)")
     print(f"  A_0={A_0:.1f} 1/m  V_HX_total={V_HX_TOTAL*1e6:.1f}cm³  "
           f"A_tot={A_TOT:.4f}m² (full sheet HX gyroid wall)")
-    print(f"  Air Nu: nu_from_Re (Gyroid v4.1 ×1.28 roughness)")
-    print(f"  Water Nu: nu_water_topo(Gyroid)  Nu = 0.4445·Re^0.6361·Pr^(1/3)\n")
+    print("  Air Nu: nu_from_Re (Gyroid v4.1 ×1.28 roughness)")
+    print("  Water Nu: nu_water_topo(Gyroid)  Nu = 0.4445·Re^0.6361·Pr^(1/3)\n")
 
     from validation.harness._harness import load_cases_df
     from validation.harness._case_sets import SHANGHAI_XLSX

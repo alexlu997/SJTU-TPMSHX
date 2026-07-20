@@ -13,8 +13,7 @@ import os, sys, traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtWidgets import QPushButton, QToolButton, QTabBar, QComboBox
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QPushButton, QToolButton, QComboBox
 
 app = _smoke_boot.get_app()
 
@@ -52,7 +51,7 @@ def main():
         if not (b.isVisible() and b.isEnabled()): continue
         text = b.text() or b.toolTip() or repr(b.objectName())
         interesting.append((text, b))
-    print(f"\n      first 15 visible+enabled by text:", flush=True)
+    print("\n      first 15 visible+enabled by text:", flush=True)
     for text, b in interesting[:15]:
         oname = b.objectName() or '<no-name>'
         print(f"        - {text!r:<35} obj={oname}", flush=True)
@@ -66,7 +65,7 @@ def main():
                   f"current = {c.currentText()!r}, items = {c.count()}", flush=True)
 
     # Tab switching — try by attribute names
-    print(f"\n[4/5] Tab navigation test", flush=True)
+    print("\n[4/5] Tab navigation test", flush=True)
     tab_attrs = ['btn_tab_params', 'btn_tab_temp', 'btn_tab_pres', 'btn_tab_vel',
                   'btn_tab_3d', 'btn_tab_optimize', 'btn_tab_2d_view']
     for t in tab_attrs:
@@ -86,7 +85,7 @@ def main():
             pass
 
     # Combo dim switch (2D ↔ 3D)
-    print(f"\n[5/5] 2D ↔ 3D switching", flush=True)
+    print("\n[5/5] 2D ↔ 3D switching", flush=True)
     combo_dim = getattr(win, 'combo_dim', None)
     if combo_dim:
         n = combo_dim.count()

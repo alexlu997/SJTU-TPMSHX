@@ -1,11 +1,10 @@
 """快速设计 CLI: auto (枚举选胞元) / fixed (指定胞元只定外形)。"""
 from __future__ import annotations
 import argparse, sys
-import pandas as pd
 
 from .cases import load_cases
 from .sizing import size_fixed_cell
-from .select import enumerate_select, pareto_tags
+from .select import enumerate_select
 
 def _parse_cell(s):           # "Diamond,7,0.5"
     topo, l, t = s.split(","); return topo, float(l), float(t)

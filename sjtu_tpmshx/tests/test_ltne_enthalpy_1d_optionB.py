@@ -14,7 +14,6 @@ de-risking step before porting Option B into solvers/ltne_energy_3d.py.
 import os
 import sys
 
-import numpy as np
 import pytest
 
 # poc/ lives at the repo root (sibling of the sjtu_tpmshx package).

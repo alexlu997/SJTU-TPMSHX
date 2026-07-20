@@ -4,7 +4,6 @@
 (UI 走方形, 此测试保护该路径); height≠s 时水侧迎风/压损必须随之改变 (解耦有效)。
 """
 import math
-import pytest
 
 from design.cases import DesignCase
 from design.forward import forward, dP_fracs

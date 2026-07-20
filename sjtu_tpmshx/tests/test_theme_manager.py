@@ -9,7 +9,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 

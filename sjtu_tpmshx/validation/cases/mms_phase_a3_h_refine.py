@@ -24,7 +24,6 @@ import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +64,7 @@ def main():
     grids = [int(g) for g in args.grids.split(',')]
 
     print(f"{'='*72}")
-    print(f"  MMS Phase A.3 — h-refinement order verification")
+    print("  MMS Phase A.3 — h-refinement order verification")
     print(f"{'='*72}")
     print(f"  Cases:  {cases}")
     print(f"  Grids:  {grids}  (h_x = L/N = {L_DOM:.4f}/N)")
@@ -103,7 +102,7 @@ def main():
 
     # Order fit
     print(f"\n{'='*72}")
-    print(f"  Observed order (log-log fit, all grids)")
+    print("  Observed order (log-log fit, all grids)")
     print(f"{'='*72}")
     order_rows = []
     print(f"  {'case':<6} {'metric':<7} {'p_obs':>8} {'R^2':>7} {'L2(g30)':>10}")
@@ -129,7 +128,7 @@ def main():
 
     # Hard gates
     print(f"\n{'='*72}")
-    print(f"  Hard gates")
+    print("  Hard gates")
     print(f"{'='*72}")
     fail = []
     for c in cases:

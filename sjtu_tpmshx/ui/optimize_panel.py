@@ -409,9 +409,8 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
     try:
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QFormLayout, QSpinBox, QDialogButtonBox,
-            QLabel, QHBoxLayout, QFrame, QCheckBox,
+            QLabel, QFrame,
         )
-        from PySide6.QtCore import Qt
     except Exception as e:
         _log.warning(f"[optimize] dialog unavailable ({e}); using defaults")
         return _qnehvi_param_defaults(window, cfg)
@@ -562,13 +561,13 @@ def show_field_preview(window, x_decision=None) -> None:
     tab), otherwise falls back to ``canvas_pareto`` so users see something.
     """
     try:
-        import matplotlib.pyplot as plt
+        pass
     except Exception as e:
         _set_status(window, f"matplotlib unavailable ({e})")
         return
 
     from solvers.continuous_field import (
-        from_decision_vector, encode_decision_vector, uniform_field,
+        from_decision_vector, uniform_field,
     )
     cfg = _gather_cfg(window)
     L_dom = float(cfg['L_domain']); H_dom = float(cfg['H_domain'])
@@ -599,7 +598,7 @@ def show_field_preview(window, x_decision=None) -> None:
     canvas = (getattr(window, 'canvas_layout', None)
               or getattr(window, 'canvas_pareto', None))
     if canvas is None:
-        _log.info(f"[optimize] field preview (no canvas):")
+        _log.info("[optimize] field preview (no canvas):")
         _log.info(f"  L: {L_field.min():.2f}–{L_field.max():.2f} mm "
                   f"(avg {L_field.mean():.2f})")
         _log.info(f"  t: {t_field.min():.3f}–{t_field.max():.3f} mm "

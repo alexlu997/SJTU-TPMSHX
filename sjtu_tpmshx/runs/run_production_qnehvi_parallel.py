@@ -19,7 +19,6 @@ Outputs (under opt_runs/production_v3_<timestamp>/):
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -73,7 +72,7 @@ def main(argv: Optional[list] = None) -> int:
         verbose=not args.quiet,
     )
 
-    print(f"\n=== Production v3 SUMMARY ===")
+    print("\n=== Production v3 SUMMARY ===")
     print(f"  save_dir:    {out['save_dir']}")
     print(f"  seeds_used:  {out['seeds_used']}")
     print(f"  n_evals:     {out['n_evals']}")

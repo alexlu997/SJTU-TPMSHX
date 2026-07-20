@@ -29,7 +29,7 @@ Usage:
     python -u sjtu_tpmshx\\validation\\audit_partial_b_ltne.py --grid 15
 """
 from __future__ import annotations
-import argparse, os, sys, time, warnings
+import argparse, sys, time, warnings
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -44,7 +44,7 @@ except Exception:
 warnings.filterwarnings('ignore')
 
 from pipelines.stages_3d import _run_3d_stack
-from solvers.tpms_calc import air_density, air_cp
+from solvers.tpms_calc import air_density
 
 
 # ── Shanghai case 1 partial-B baseline (mirror sweep_m4_baseline.py C1) ──
@@ -841,11 +841,11 @@ def write_report(out_path: Path, sections: list, header_meta: dict) -> None:
     lines = []
     lines.append('# Partial-B LTNE Conservation Audit (P1–P7)\n')
     lines.append(f"- Date: {header_meta['date']}")
-    lines.append(f"- Case: Shanghai case 1, B_area_frac ≈ 0.20")
+    lines.append("- Case: Shanghai case 1, B_area_frac ≈ 0.20")
     lines.append(f"- Grid: Nx=Ny=Nz={header_meta['grid']}")
-    lines.append(f"- Audit script: `sjtu_tpmshx/validation/audit_partial_b_ltne.py`")
-    lines.append(f"- Result-dict additive exports: keys prefixed `_audit_*` "
-                 f"in `pipelines/stages_3d.py` (formerly run_calculation_3d)\n")
+    lines.append("- Audit script: `sjtu_tpmshx/validation/audit_partial_b_ltne.py`")
+    lines.append("- Result-dict additive exports: keys prefixed `_audit_*` "
+                 "in `pipelines/stages_3d.py` (formerly run_calculation_3d)\n")
     lines.append('## Scope\n')
     lines.append('- Read-only audit. No solver, M4, M3, K/cF, momentum, or '
                  'closure formula was modified.')
@@ -942,7 +942,7 @@ def main() -> int:
         payload_all.append((closure, payload))
         try:
             _assert_self_consistency(payload)
-            print(f"  self-consistency OK")
+            print("  self-consistency OK")
         except AssertionError as e:
             print(f"  ⚠ self-consistency FAILED: {e}")
 

@@ -1,6 +1,6 @@
 """枚举选型: 遍历 {拓扑×l×t}, 各跑 size_fixed_cell, Pareto-tag。"""
 from __future__ import annotations
-from .sizing import size_fixed_cell, Design, RHO_S
+from .sizing import size_fixed_cell, RHO_S
 from .forward import K_STEEL
 
 # 默认枚举网格 = 2 拓扑 × 5 l × 4 t = 40 构型。

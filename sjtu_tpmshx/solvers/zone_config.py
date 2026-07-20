@@ -33,7 +33,7 @@ Usage:
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 from . import tpms_calc
 
 from logutil import get_logger

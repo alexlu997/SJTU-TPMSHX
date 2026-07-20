@@ -22,7 +22,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -61,7 +60,7 @@ def main():
     # tests/test_mms_b4_conservative_order.py dies with UnicodeDecodeError
     # (found 2026-07-14). Provenance trio per the C.4 convention.
     with open(OUT_CSV, 'w', encoding='utf-8', newline='') as f:
-        f.write(f"# MMS Phase B4 — conservative HO path observed order\n")
+        f.write("# MMS Phase B4 — conservative HO path observed order\n")
         f.write(f"# grids={GRIDS}  case=3d  conservative=1\n")
         f.write(f"# script: {_prov._normalise_script(__file__)}\n")
         f.write(f"# commit: {_prov._git_sha() or '<no-git>'}\n")

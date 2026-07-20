@@ -11,7 +11,6 @@ CONFIG_FIELDS is the single source for scalar field wiring (dataclass slot
      stub-window → cfg → json → cfg equality;
   4. 2D vs 3D required-set parity (Lz/Nz only demanded in 3D).
 """
-import json
 
 import pytest
 

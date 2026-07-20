@@ -11,7 +11,7 @@ This file used to live in `optimization.optimizer` but was hoisted out when the
 patch-zoning optimizer was retired in favor of the continuous-field design.
 """
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List
 
 from solvers.tpms_props import air_density, air_viscosity, geometry as _geom
 

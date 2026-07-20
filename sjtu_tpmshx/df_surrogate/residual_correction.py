@@ -37,7 +37,6 @@ from __future__ import annotations
 import sys
 from math import sqrt
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -275,7 +274,7 @@ def _self_test():
                 print(f"  {k}: {v}")
 
             # Sample queries
-            print(f"\n  Sample corrections:")
+            print("\n  Sample corrections:")
             for Re in [500, 2000, 8000]:
                 for eps_f in [0.30, 0.40]:
                     g = corr.correction(Re, eps_f)
@@ -285,7 +284,7 @@ def _self_test():
             import traceback; traceback.print_exc()
 
     # Test predict_dP_compressible_corrected
-    print(f"\n--- predict_dP_compressible_corrected (Gyroid, 7×0.6, Shanghai-ish) ---")
+    print("\n--- predict_dP_compressible_corrected (Gyroid, 7×0.6, Shanghai-ish) ---")
     try:
         dP = predict_dP_compressible_corrected(
             "Gyroid", 7.0, 0.6, 0.368,

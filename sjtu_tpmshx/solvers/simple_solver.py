@@ -41,9 +41,7 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
 import os
 
 import numpy as np
-from numba import njit
 from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
-from ._kernels_2d import minmod
 from ._solve_common import LowReExit, F2Monitor
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 from logutil import get_logger

@@ -5,7 +5,6 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 _HERE = Path(__file__).resolve()
 _PROJECT_ROOT = _HERE.parent.parent

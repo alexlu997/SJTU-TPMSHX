@@ -8,7 +8,7 @@ the card zoom / re-layout helpers used by TabViewMixin.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QComboBox, QScrollArea, QSplitter, QFrame, QSizePolicy, QSlider,
+    QComboBox, QScrollArea, QFrame, QSizePolicy, QSlider,
     QProgressBar, QCheckBox,
 )
 

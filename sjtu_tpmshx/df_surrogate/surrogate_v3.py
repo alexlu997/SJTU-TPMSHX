@@ -479,7 +479,7 @@ class SurrogateV3:
         _log.info(f"  Geometries: {len(self.ref)}")
         _log.info(f"  Training rows: {len(self.rows_df)}")
         _log.info(f"  K_min: {self.K_min:.0e}")
-        _log.info(f"\n  Per-geometry (K, c_F):")
+        _log.info("\n  Per-geometry (K, c_F):")
         _log.info(f"  {'L':>3} {'t':>4} {'K':>10} {'c_F':>8}")
         for _, r in self.ref.iterrows():
             K_str = f"{r.K:.3e}" if r.K is not None and not np.isnan(r.K) else "N/A"
@@ -643,7 +643,7 @@ def main():
     loo_mape = eval_loo(model)
     print(f"\n  Mean LOO MAPE = {loo_mape:.2f}%")
 
-    print(f"\n=== Final ===")
+    print("\n=== Final ===")
     print(f"  Shanghai RMSRE = {rmsre:.2f}%")
     print(f"  LOO MAPE = {loo_mape:.2f}%")
 

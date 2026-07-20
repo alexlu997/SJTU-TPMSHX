@@ -22,9 +22,6 @@ from optimization.evaluator_3d import (
 from solvers.continuous_field import (
     decision_dim,
     decision_bounds,
-    DEFAULT_N_CTRL_X,
-    DEFAULT_N_CTRL_Y,
-    DEFAULT_SYMMETRIC_Y,
 )
 
 

@@ -15,7 +15,6 @@ ComputeResult, asserts the ComputeResult surfaces the raw headline scalars
 Originally 2026-06-09 G1 (dual-representation sync); upgraded to the
 single-carrier contract guard in B3 C5.
 """
-import os
 import sys
 from pathlib import Path
 

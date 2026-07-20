@@ -17,9 +17,7 @@ no QApplication needed.
 """
 from __future__ import annotations
 
-import pytest
 
-from domain.validator import parse_unit_value
 
 
 # ── Qt-API mocks ────────────────────────────────────────────────────

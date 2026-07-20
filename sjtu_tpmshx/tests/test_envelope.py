@@ -9,7 +9,6 @@ ChokedFlowError (pre-solve) or a flagged-invalid result (post-solve).
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]

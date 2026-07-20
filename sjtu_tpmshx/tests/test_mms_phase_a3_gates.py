@@ -22,7 +22,6 @@ and update the gate constants below to reflect the new ground truth.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 

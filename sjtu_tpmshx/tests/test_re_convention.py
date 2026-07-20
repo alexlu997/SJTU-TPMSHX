@@ -3,7 +3,6 @@
 Ensures `tpms_calc.compute()` and hand-computed Re match — catches any
 regression that reintroduces the legacy r_h = D_h/2 factor-of-two error.
 """
-import numpy as np
 from solvers.tpms_calc import compute, geometry, air_density, air_viscosity
 
 

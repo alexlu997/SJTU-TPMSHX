@@ -24,7 +24,6 @@ Phase 1 additions (2026-04-20):
 """
 
 import numpy as np
-from numba import njit, prange
 
 from solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
@@ -115,7 +114,6 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
     Returns corrected (uf, vf, wf). Forward-dir fluids are already
     solenoidal (D≈0 ⇒ φ≈0 ⇒ ~no change), so this is safe to apply to all.
     """
-    from scipy.sparse import csr_matrix
     from scipy.sparse.linalg import spsolve
 
     Nx, Ny, Nz = eps_f.shape

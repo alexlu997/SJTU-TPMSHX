@@ -14,7 +14,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from solvers.tpms_calc import geometry as tpms_geometry
 from pipelines.stages_3d import _run_3d_stack
 
 

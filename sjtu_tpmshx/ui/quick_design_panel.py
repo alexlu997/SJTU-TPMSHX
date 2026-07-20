@@ -4,8 +4,6 @@
 公开 API: run_quick_design(window) / _gather_inputs(window) / _make_worker_class()。
 """
 from __future__ import annotations
-import os
-from typing import Optional
 
 from logutil import get_logger
 

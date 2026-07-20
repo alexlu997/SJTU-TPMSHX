@@ -12,7 +12,6 @@ dP converges to the exact face-to-face Δp. No solver run — isolates the
 discretisation order of the reduction itself.
 """
 import numpy as np
-import pytest
 from types import SimpleNamespace
 
 from solvers.simple_solver_3d import SIMPLESolver3D

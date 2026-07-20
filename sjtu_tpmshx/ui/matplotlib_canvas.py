@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.ticker import FormatStrFormatter
-from .theme import _THEMES, get_theme
+from .theme import get_theme
 
 
 # ── Contour edge-fill helper ──────────────────────────────────

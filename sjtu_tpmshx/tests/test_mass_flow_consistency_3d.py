@@ -202,7 +202,7 @@ def test_partial_mask_mass_flow_match_inlet_BC():
         sol.v[:, -1, :] * sol.rho_field[:, -1, :] * dx * dz
     ))
 
-    print(f"  partial-mask reproducer:")
+    print("  partial-mask reproducer:")
     print(f"    A_face          = {A_face:.6g}")
     print(f"    A_open          = {A_open:.6g}  (open_frac={open_frac:.4f})")
     print(f"    target (ρ·U_super·A_open):  {m_target_super:.6g}")

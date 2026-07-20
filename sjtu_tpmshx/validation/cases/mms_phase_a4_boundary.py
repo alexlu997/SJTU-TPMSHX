@@ -32,7 +32,6 @@ Output:
 from __future__ import annotations
 import argparse
 import sys
-import time
 import warnings
 from pathlib import Path
 
@@ -106,10 +105,10 @@ def main():
     grids = [int(g) for g in args.grids.split(',')]
 
     print(f"{'='*72}")
-    print(f"  MMS Phase A.4 — boundary-stratified order verification")
+    print("  MMS Phase A.4 — boundary-stratified order verification")
     print(f"{'='*72}")
     print(f"  Case: MMS-{args.case}  Grids: {grids}")
-    print(f"  Regions: inlet_A, outlet_A, inlet_B, outlet_B, lat_z, interior\n")
+    print("  Regions: inlet_A, outlet_A, inlet_B, outlet_B, lat_z, interior\n")
 
     def _row(g, r, dt):
         masks = _region_masks(g, g, g)
@@ -151,7 +150,7 @@ def main():
 
     # Order fit per region per phase (L2)
     print(f"\n{'='*72}")
-    print(f"  Per-region observed order (L2, log-log fit, full grid set)")
+    print("  Per-region observed order (L2, log-log fit, full grid set)")
     print(f"{'='*72}")
     order_rows = []
     print(f"  {'region':<11} {'phase':<6} {'p_obs':>8} {'R^2':>7} "
@@ -175,7 +174,7 @@ def main():
 
     # Hard gates
     print(f"\n{'='*72}")
-    print(f"  Hard gates")
+    print("  Hard gates")
     print(f"{'='*72}")
     fail = []
 

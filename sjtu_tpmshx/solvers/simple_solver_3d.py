@@ -79,9 +79,7 @@ from __future__ import annotations
 import os
 from time import perf_counter as _perf_counter
 import numpy as np
-from numba import njit, prange
 from scipy import sparse
-from scipy.sparse.linalg import bicgstab
 
 try:
     import pyamg
@@ -119,9 +117,7 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 # enable `coarse_bootstrap_3d` warm-start (audit P4 / phase L-d Option B).
 _AMG_GATE = 30_000
 
-from .tpms_calc import air_density, air_viscosity, P_atm
-from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
-from ._kernels_2d import minmod
+from .tpms_calc import P_atm
 from ._solve_common import LowReExit, F2Monitor
 
 

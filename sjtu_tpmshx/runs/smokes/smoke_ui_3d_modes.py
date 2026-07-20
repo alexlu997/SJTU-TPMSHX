@@ -7,7 +7,6 @@ roughness skipped on water side.
 """
 from __future__ import annotations
 import os, sys, warnings
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 warnings.filterwarnings('ignore')
@@ -95,6 +94,6 @@ if __name__ == '__main__':
         ratio = results['norris_1a']['dP_A'] / max(results['baseline']['dP_A'], 1.0)
         print(f"\n  norris_1a / baseline dP_A ratio: {ratio:.3f}  (expect ~ 1.00)", flush=True)
         if 0.97 < ratio < 1.03:
-            print(f"  [OK] norris_1a == baseline for friction (as designed)", flush=True)
+            print("  [OK] norris_1a == baseline for friction (as designed)", flush=True)
         else:
-            print(f"  [WARN] unexpected drift between norris_1a and baseline", flush=True)
+            print("  [WARN] unexpected drift between norris_1a and baseline", flush=True)

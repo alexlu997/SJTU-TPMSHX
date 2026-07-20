@@ -81,7 +81,7 @@ P1b-b (2026-04-20): establishes Shanghai 3D baseline before Phase 2 multi-channe
 """
 
 from __future__ import annotations
-import os, sys, warnings
+import sys, warnings
 from pathlib import Path
 
 import numpy as np
@@ -104,11 +104,11 @@ for _cat in (DeprecationWarning, PendingDeprecationWarning, FutureWarning):
     warnings.filterwarnings('ignore', category=_cat)
 
 from solvers.tpms_calc import (
-    geometry as tpms_geometry, compute as tpms_compute,
+    compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
     nu_water_topo,
-    P_atm, Sa_mm, Pr,
+    P_atm,
 )
 from solvers.simple_solver_3d import SIMPLESolver3D
 from solvers.ltne_energy_3d import (solve_full_domain_3d,

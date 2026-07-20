@@ -24,7 +24,7 @@ import numpy as np
 
 from solvers.sigmoid_field import _sigmoid, _blend_1d, _nu_vec
 from solvers.tpms_calc import (air_density, air_viscosity,
-                                air_conductivity, P_atm)
+                                air_conductivity)
 
 from logutil import get_logger
 

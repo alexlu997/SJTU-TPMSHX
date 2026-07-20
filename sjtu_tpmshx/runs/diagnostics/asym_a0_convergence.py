@@ -14,7 +14,6 @@ A0 网格收敛诊断（非对称孔隙率，极端 δ）。
 import sys
 from pathlib import Path
 
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from solvers.tpms_geometry import _phi_grid, _find_C_for_eps

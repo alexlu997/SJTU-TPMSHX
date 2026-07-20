@@ -383,13 +383,13 @@ def evaluate_3d(x_decision: np.ndarray,
     # verdict is now collected and returned; reporting callers must gate on
     # them (screening callers may ignore them — rankings-only, ledger O2).
     if verbose:
-        _log.info(f"[3D] Solving SIMPLE A (cold) … ")
+        _log.info("[3D] Solving SIMPLE A (cold) … ")
     t0 = time.perf_counter()
     simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
                                  verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
-        _log.info(f"[3D] Solving SIMPLE B (cold) … ")
+        _log.info("[3D] Solving SIMPLE B (cold) … ")
     t0 = time.perf_counter()
     simple_B_ok, _itB = sB.solve(max_iter=max_iter_simple, tol=tol_simple,
                                  verbose=False)
@@ -542,7 +542,7 @@ def evaluate_3d(x_decision: np.ndarray,
         sA.P_ref_abs = float(np.sqrt(P_out_sq_new))
 
         if verbose:
-            _log.info(f"[3D] re-solving SIMPLE A with var-ρ … ")
+            _log.info("[3D] re-solving SIMPLE A with var-ρ … ")
         t0 = time.perf_counter()
         # Last re-solve's verdict overwrites the cold one (the fields returned
         # are the last solve's).

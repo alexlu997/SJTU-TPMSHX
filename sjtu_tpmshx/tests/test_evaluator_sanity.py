@@ -159,7 +159,7 @@ def test_dp_cap_passthrough_when_below():
     _, dP_capped,   _ = evaluate_design(x=None, cfg=cfg_capped,   fc=fc)
     _, dP_uncapped, _ = evaluate_design(x=None, cfg=cfg_uncapped, fc=fc)
     assert abs(dP_capped - dP_uncapped) < 1e-6, \
-        f"natural dP should be unaffected by a non-binding cap"
+        "natural dP should be unaffected by a non-binding cap"
 
 
 # ─── HV-plateau helper (pure-numeric, fast) ─────────────────────────

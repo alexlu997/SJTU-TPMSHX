@@ -355,7 +355,7 @@ def smoke_test() -> None:
     g = tpms_geometry("Gyroid", 7.0, 0.6, 16.0)
     K, cF = predict_K_cF("Gyroid", 7.0, 0.6, g["epsilon"] / 2)
     print(f"\nL=7 t=0.6: K={K:.4e}, c_F={cF:.2f}")
-    print(f"(optimal: K=inf, c_F=372.7)")
+    print("(optimal: K=inf, c_F=372.7)")
 
 
 if __name__ == "__main__":

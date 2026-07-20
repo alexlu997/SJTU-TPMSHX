@@ -18,7 +18,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 

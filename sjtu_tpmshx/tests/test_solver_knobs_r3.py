@@ -23,8 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from domain.compute_config import (ComputeConfig, ExtrapPolicy, FeatureFlags,
                                    FluidConfig, GeometryConfig,
-                                   OptimizerConfig, PartialBCConfig,
-                                   SolverConfig)
+                                   OptimizerConfig, SolverConfig)
 
 
 def test_solver_knobs_default_to_auto():

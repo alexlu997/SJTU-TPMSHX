@@ -11,8 +11,6 @@ and so can be CI-stable on any machine.
 """
 from __future__ import annotations
 
-import os
-import tempfile
 
 import numpy as np
 import pytest

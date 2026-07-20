@@ -15,7 +15,6 @@ import os
 import pathlib
 import sys
 
-import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -94,7 +93,6 @@ def test_phi_grid_cache_is_frozen():
     """The shared cached phi ndarray must be read-only: an in-place write
     would silently corrupt every later geometry computation at that
     (type, N) key."""
-    import numpy as np
     import pytest
     from solvers.tpms_geometry import _phi_grid
     phi = _phi_grid('Diamond', 32)

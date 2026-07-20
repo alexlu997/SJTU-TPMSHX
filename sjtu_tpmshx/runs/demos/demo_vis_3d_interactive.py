@@ -23,11 +23,10 @@ Usage (from the repo root):
 from __future__ import annotations
 import argparse
 import math
-import os, sys, warnings
+import sys, warnings
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pyvista as pv
 
 # Repo-root layout (Batch-5, 2026-06-10): examples/ sits beside the
@@ -45,7 +44,7 @@ warnings.filterwarnings('ignore')
 # Reuse helpers + field loader from demo_vis_3d
 from ui.demo_vis_3d import (
     run_case_8_fields, build_demo_zoning_field,
-    L_DOM, H_DOM, LZ, TPMS, L_CELL, T_WALL,
+    L_DOM, H_DOM, LZ,
 )
 
 
@@ -315,7 +314,7 @@ def main():
     print(f"      |v| range: [{vmag.min():.1f}, {vmag.max():.1f}] m/s")
     print(f"      P range: [{P_real.min():.0f}, {P_real.max():.0f}] Pa")
 
-    print(f"[2/3] Building demo zoning L-field…")
+    print("[2/3] Building demo zoning L-field…")
     L_field = build_demo_zoning_field(Nx, Ny, Nz, dx, dy, dz)
 
     print(f"[3/3] Launching PyVista "

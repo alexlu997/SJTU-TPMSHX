@@ -215,7 +215,7 @@ def run_qnehvi_multiseed(config: Optional[dict] = None,
 
     if verbose:
         _log.info(f"\n[multiseed] DONE in {wall:.0f}s")
-        _log.info(f"  per-seed: " + " ".join(
+        _log.info("  per-seed: " + " ".join(
             f"seed{r['seed']}={len(r['X'])}P/{r['n_evals']}E"
             for r in per_seed_results))
         _log.info(f"  merged Pareto: {len(X_m)} points across "

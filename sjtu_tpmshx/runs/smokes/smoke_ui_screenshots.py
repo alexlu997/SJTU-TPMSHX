@@ -5,7 +5,6 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtCore import QSize
 from pathlib import Path
 
 

@@ -52,6 +52,12 @@ python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d.json   # → GOL
 
 - If no pre-change baseline exists (2D), say so — a golden check with no baseline is meaningless; don't fabricate a pass.
 
+## 2a. Lint gate (P2.1 — runs inside the suite via test_lint_gate)
+
+```bash
+python -m ruff check sjtu_tpmshx     # config: pyproject [tool.ruff]（F+E9 最小集）
+```
+
 ## 2b. Import-layering gate (P1.9 — runs inside the suite via test_import_layering)
 
 ```bash

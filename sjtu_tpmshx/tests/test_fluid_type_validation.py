@@ -8,7 +8,6 @@ longer hard-blocked at validate time.
 
 sCO2 stays blocked pending its own Nu / D-F correlations.
 """
-import pytest
 from solvers.tpms_calc import (
     parse_fluid_type, validate_fluid_type, _SUPPORTED_FLUIDS,
 )

@@ -2,7 +2,6 @@
 
 Per audit Item 3 / AR8 (2026-05-28).
 """
-import pytest
 
 
 def test_load_returns_dict():

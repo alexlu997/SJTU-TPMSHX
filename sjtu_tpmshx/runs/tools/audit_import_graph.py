@@ -146,7 +146,7 @@ def main() -> int:
         fan_out[src] += n; fan_in[dst] += n
     for u in sorted(set(fan_in) | set(fan_out)):
         print(f"  {u:14s} in={fan_in[u]:4d}  out={fan_out[u]:4d}")
-    print(f"\n== free-tier consumption (tests/validation/runs -> core, edges only) ==")
+    print("\n== free-tier consumption (tests/validation/runs -> core, edges only) ==")
     for (src, dst), n in sorted(edges.items()):
         if src in FREE and dst not in FREE:
             print(f"  {src:14s} -> {dst:14s} {n:4d}")

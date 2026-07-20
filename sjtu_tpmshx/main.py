@@ -1,6 +1,4 @@
 import sys
-import json
-import time as _time
 from pathlib import Path as _PathBoot
 
 # Make both import styles work regardless of launch mode:
@@ -13,18 +11,15 @@ for _p in (_BOOT_DIR, _PROJECT_PARENT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QWidget,
+    QApplication, QMainWindow, QMessageBox, QWidget,
 )
 
-from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry, adaptive_grid
+from solvers.tpms_calc import geometry as tpms_geometry, adaptive_grid
 from ui.fmt import duration as _fmt_dur
 from ui.matplotlib_canvas import _label_axes
 from ui.mixins import (RunHistoryMixin, DialogsMixin, ZonePanelMixin,
@@ -34,11 +29,10 @@ from ui.mixins import (RunHistoryMixin, DialogsMixin, ZonePanelMixin,
                        ShortcutsMixin, IOActionsMixin, ResultBridgeMixin)
 from ui.ui_constants import (
     TOAST_MS_BRIEF, TOAST_MS_MED,
-    VV_VELOCITY_LIMIT_MS, RE_NU_LO, RE_NU_HI,
 )
 from ui.theme import (
-    _THEMES, get_theme, get_theme_name, set_theme,
-    apply_mpl_theme, get_density, set_density,
+    get_theme_name, set_theme,
+    apply_mpl_theme, set_density,
 )
 
 # Version lives in _version.py (P1.9): a leaf module UI widgets can import

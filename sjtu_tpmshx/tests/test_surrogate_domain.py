@@ -11,12 +11,11 @@ Covers:
 """
 from __future__ import annotations
 
-import os
 import pytest
 
 from df_surrogate.surrogate_domain import (
     check_surrogate_domain_at_point,
-    _SURROGATE_L_MM, _SURROGATE_T_MM, _SURROGATE_RE,
+    _SURROGATE_L_MM, _SURROGATE_T_MM,
 )
 
 
