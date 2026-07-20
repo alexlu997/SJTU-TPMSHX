@@ -2,7 +2,9 @@
 
 生成日期 2026-07-11，基于 commit f33d30e 附近的 `master`。
 **2026-07-20 起随 upgrade/loop 分支滚动收编**：已收编卷在其头部标注并附文末"2026-07 升级分支收编"节
-（进度：`tests.md`、`repo-infra.md` ✓ iter 34；其余卷见 upgrade/ROADMAP.md P4.1b/c）。
+（进度：`tests.md`、`repo-infra.md` ✓ iter 34；`pipelines.md`、`controllers.md`、`core-domain.md`、
+`optimization.md` ✓ iter 35——⚠ pipelines 卷的 run_stack_3d 行号为拆分前旧值，见该卷头注；
+其余卷见 upgrade/ROADMAP.md P4.1c）。
 
 本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Windows Server 2022 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
 

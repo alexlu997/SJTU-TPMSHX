@@ -1,5 +1,6 @@
 # optimization
 生成日期 2026-07-10，基于 commit f33d30e 附近的 master。
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节；正文失准处标 ⟨07-20 更新⟩）
 
 > 溯源约定：所有 `file:line` 相对仓库根的 `sjtu_tpmshx/` 包目录（如 `optimization/evaluator.py:404` 即 `sjtu_tpmshx/optimization/evaluator.py` 第 404 行）。所有断言均已在代码中核实；无法核实处明确标注「未验证」。
 
@@ -139,8 +140,30 @@
 - **平台无关性良好（Windows→Windows Server 迁移基本无成本）**：六文件路径均用 `os.path.join`，无 GUI import（UI 是 `ui/optimize_panel.py` 反向依赖本模块，服务器无交互桌面会话环境下 optimization/ 可独立使用）。原表述曾以「无硬编码 Windows 路径」佐证跨平台性——**这条已不适用（同为 Windows，无需处理）**：路径分隔符 `/` vs `\`、大小写敏感文件系统这类 Linux↔Windows 差异在 Windows→Windows Server 迁移里不存在，六文件里也确未见 `os.sep`/裸分隔符硬编码脆弱点。日志经 `logutil.get_logger`（`optimization/evaluator.py:77-79` 等），文件内日志文本为 ASCII——与目标平台无关，仍是好习惯，保留。
 - **多进程**：`parallel_runner` 显式用 `spawn` 上下文（`optimization/parallel_runner.py:194-195`），源码注释原文为「Default fork on Linux works too but spawn is portable + safer under nested loky workers」（`optimization/parallel_runner.py:191-193`）。**该注释里的 Linux/fork 对比在 Windows Server 上不成立，但不是风险，而是自动消失**：CPython 的 `multiprocessing` 在 Windows 上从未实现 `fork` 启动方式（无 `fork()` 系统调用，只有 `spawn`），显式 `mp.get_context('spawn')` 与 Windows 平台本就唯一可用的方式一致——没有「不小心继承 fork」这条退路可选，迁移无需改动，**保留 spawn 调用**。内层 joblib 用 loky 后端（`optimization/optimizer_qnehvi.py:294-298`）；loky/`concurrent.futures` 在 Windows 下同样只能走 spawn，与本仓库显式设置的行为一致（loky 内部实现未在本仓库代码中检验——未验证，但为 Python 多进程平台约束的通识）。
 - **线程超订**：⚠️ **本条初版断言有误，且掩盖了一个真实缺陷**（codex 审计 2026-07-12 指出，已核实）。原文称"BLAS/OpenMP 线程钳制必须发生在 numpy import 之前"——**意图正确，但代码没做到**：`parallel_runner.py:37` 的 `import numpy as np` 在**模块级**，而 `_set_thread_caps()`（`:44-53`，`setdefault` 写 `OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS`）要到 `:72` 的子进程入口才调用。spawn 子进程会先 import 本模块（numpy 随之加载、BLAS 线程池已按当时的 env 初始化），**然后**才执行 `_set_thread_caps()` → **对 BLAS 线程池已经太晚，钳制实际无效**。真正被它保护到的只有随后**延迟 import** 的 `optimizer_qnehvi`（及其 numba/torch 栈，`:74` 注释自述 "Heavy import deferred until after thread caps are set"）。**未验证**实际 BLAS 线程数是否因此失控（需实测）。另注该函数的 env 清单**不含 `NUMBA_NUM_THREADS`**——而本项目热点是 numba `parallel=True` 内核而非 BLAS。
-- **BO 内层线程**：`inner_max_num_threads` 由 `optimizer_qnehvi.py:286-311` 计算。默认按整机 `os.cpu_count()` 与 worker 数均分；**多臂启动器必须用 `TPMSHX_BO_CORE_BUDGET` 显式声明本进程的核预算**（2026-07-11 新增），否则每个臂都按整机核数切内层线程，四臂并行时合计约 4× 超订（`scripts/port_retest_server.ps1` 已设）。独立调用 `run_qnehvi(n_jobs>1)` 时调用方需自行先设 `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1`（docstring 要求，`optimization/optimizer_qnehvi.py:193-199`）。此条与操作系统无关，Windows Server 上机制相同。
+- **BO 内层线程** ⟨07-20 更新（P3.3）⟩：预算解析提取为 `_resolve_core_budget()`（模块级、
+  `_eval_worker` 上方）——钳制 [1, cpu_count]（**超机预算不再按声明值超订**）+ 来源标签四态
+  （default/env/env-clamped/invalid-env-default），并行启动时打一行 INFO
+  （`BO parallel eval: N workers × M inner threads (core budget K, source=...)`）使多臂并发可审计；
+  解析矩阵由 `tests/test_optimizer_qnehvi_helpers.py` 钉定。语义不变的部分：默认整机、
+  **多臂启动器必须设 `TPMSHX_BO_CORE_BUDGET`**（`scripts/port_retest_server.ps1` 已设）；
+  `run_qnehvi(n_jobs>1)` 调用方自设 `OMP/MKL_NUM_THREADS=1` 的 docstring 要求不变。
+  原文 `optimizer_qnehvi.py:286-311` 行号已漂移。
 - **重依赖延迟加载**：torch/botorch/gpytorch 仅在 `run_qnehvi` 体内 import（`optimization/optimizer_qnehvi.py:211-227`），评估器仅需 numpy + numba 链（经 solvers/）；joblib 仅 `n_jobs>1` 时 import（`optimization/optimizer_qnehvi.py:286`）。服务器最小安装可先不装 botorch 只跑评估器；torch/botorch/gpytorch/joblib/numba 均有官方 Windows wheel，`pip install` 直装即可，不需要任何 apt 等价物或编译工具链（`scripts/port_retest_server.ps1:57-59` 已验证走的就是纯 `pip install` 路径：CPU 版 torch + botorch/gpytorch）。
 - **可复现性**：仓库运行习惯 `PYTHONHASHSEED=0 OMP_NUM_THREADS=1 python -u`（实例 `runs/run_m2_rerank_m1.py:11-12`），这是 POSIX shell 的行内环境变量写法，**PowerShell 不支持 `VAR=val cmd` 语法，需重写**：Windows Server 上应写成 `$env:PYTHONHASHSEED = "0"; $env:OMP_NUM_THREADS = "1"; python -u ...`（逐条 `$env:` 赋值后再起子命令）。本仓库 `scripts/port_retest_server.ps1:63-67` 已是这个约定的现成范例（`$env:PYTHONHASHSEED`/`$env:PYTHONPATH`/`$env:OMP_NUM_THREADS` 等逐条赋值），服务器批跑可直接照抄该模式。长跑必须 `python -u`（stdout 块缓冲会假死）——这条与操作系统无关，Windows 下重定向到文件/日志时同样会块缓冲，保留。golden 门的 `PYTHONHASHSEED=0` 要求见 `.claude/commands/check.md`（本模块未直接受 golden 钉定，但 `tests/test_evaluator_frozen_values.py` 冻结了评估器数值，重基线历史见其 116-128 行注记）。
 - **数据文件**：本目录不直接读数据文件，但评估链深处 `df_surrogate` 标定依赖 gitignored `data/raw_data`——fresh checkout/worktree 缺该目录时 DF 标定回退 CSV，钉定测试出 ULP 级差异（经验教训，来自项目 memory，代码级根因未在本次核验——未验证）。此条与 Linux/Windows 无关，Windows Server 上同样成立：`scripts/port_retest_server.ps1:42-49` 就是先 clone 私有数据仓再 `Copy-Item` 拼进 `data/raw_data` 来规避这个坑。
 - **CSV/JSON 输出（GBK 风险方向反转，需重写）**：`save_dir` 相对 cwd 自动命名（`optimization/optimizer_qnehvi.py:239-241`），服务器批跑建议显式传绝对路径。`np.savetxt`（`optimization/optimizer_qnehvi.py:154`）与 `open(..., 'w')` 写 `config.json`（`optimization/optimizer_qnehvi.py:250-253`）均**未显式传 `encoding=`**，走 Python/OS 默认编码（`locale.getpreferredencoding()`）。原表述「无 GBK 问题」隐含的前提是「迁移到 Linux 后默认 UTF-8 locale 自然规避」——**目标改成 Windows Server 后这个前提不成立，方向要反过来**：中文区域设置的 Windows Server 默认代码页通常仍是 GBK/CP936，不是 UTF-8，这个坑不会自然消失。本模块目前能侥幸不出编码错误，纯粹是因为写出内容恰好是 ASCII——CSV 表头 `x0,...,Q_W_per_m,dP_Pa` + 数值，`config.json` 的键值已被 `optimization/optimizer_qnehvi.py:250-253` 的 `int/float/str/bool/None` 白名单限制在 ASCII 范围内——不是「平台层面无 GBK 问题」的结论。评估链同一条依赖树上已经真实踩过这坑：`df_surrogate/surrogate_v3.py:151-155` 的代码注释原文记录「the Excel path contains Chinese characters; on a GBK-console Windows a subprocess writes them as GBK bytes while pytest reads its capture stream as UTF-8 — one such line poisons the capture and EVERY later test teardown dies with UnicodeDecodeError（found the hard way, 2026-07-07）」。迁移到 Windows Server 时建议：涉及非纯 ASCII 内容的文件 I/O（尤其新增输出）一律显式传 `encoding='utf-8'`，不要依赖系统区域设置；subprocess/pytest 捕获流同理，不能假定与终端代码页一致。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **评估器 envelope 权威**（P1.3，实施在 core/evaluators.py，本卷消费方视角）：
+  `evaluate_design_3d` 链条的 choke 种子/超音速判定统一走 `solvers/envelope`；3D 评估器新增
+  解后 Mach+正压门 `_post_solve_gate_3d`（失败 → NaN+invalid，保留真实几何质量供 mass 目标）。
+  台账 [O2] 的"无后解 Mach 门"残差已消。守卫：`test_evaluator_envelope_authority.py`。
+- **评估器↔管线契约测试**（P1.4）：`test_evaluator_pipeline_contract.py` 六断言 + **D3 绊线**
+  ——评估器与 3D 管线共有的"首解捕获 ρ(T_in,P_out_seed)"G 口径 vs 2D 管线显式 ρ(T_in,P_in)
+  不一致（实测吞吐亏 7.38%/19.30%），**待 Alex 决策**（upgrade/DECISIONS-NEEDED.md D3）；
+  任何一侧口径变更都会踩线报警。
+- **`_resolve_core_budget`**（P3.3）：见上文 ⟨07-20 更新⟩ 段；env 注册表
+  （domain/compute_config.py docstring）已补录 `TPMSHX_BO_CORE_BUDGET`。
+- 本卷「线程超订」段指出的 parallel_runner BLAS 钳制时序缺陷（codex 2026-07-12）**仍未修**
+  ——分支只动了 lint 级；该缺陷与 numba 主热点不相干故低优先，留待 Phase 5 性能纵深候选。

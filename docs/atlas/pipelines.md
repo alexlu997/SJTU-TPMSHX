@@ -1,5 +1,9 @@
 # pipelines
-生成日期 2026-07-10，基于 commit f33d30e 附近的 master
+生成日期 2026-07-10，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节。⚠ 本卷所有 `run_stack_3d.py:<行号>` 引用
+均为拆分前旧行号——P1.5/P2.0 把该文件重组为编排器+五阶段函数+四数据类（文件 2107→3001 行，含
+docstring/数据类膨胀），**逻辑内容逐字节未动**（golden 位同护航），旧行号所指的代码块都在、
+但位置全部漂移；新结构入口见收编节映射表，逐行号重标定留待下次全卷重生成。）
 
 ## 定位与功能
 
@@ -19,7 +23,7 @@
 | `stages_3d_helpers.py` | 535 | 纯 numpy 帮助函数：方向→轴映射、面切片、staggered↔real 坐标重映、流向出口通量平衡、χ_B 参与场三种构建器（`sjtu_tpmshx/pipelines/stages_3d_helpers.py:10,88,116,195,320,381,493`） |
 | `grid_3d.py` | 169 | 3D 网格/轴映射/分区场构建：`_resolve_axis_map` / `_build_zone_fields_3d` / `_build_grid_3d` / `_solver_spacings`（`sjtu_tpmshx/pipelines/grid_3d.py:15,79,120,159`） |
 | `flux_3d.py` | 270 | 3D 面通量后处理与粗糙度施加：`_face_flux_weights` 及其派生的 T_out/h_out/m_dot 加权、`_apply_roughness_KcF` / `_apply_roughness_h_v`（`sjtu_tpmshx/pipelines/flux_3d.py:46,111,142,215,235,253`） |
-| `run_stack_3d.py` | 2107 | 3D 主栈 `_run_3d_stack`：SIMPLE3D(A/B 并行) + LTNE3D 外循环、包络门、守恒诊断、结果 dict 组装；禁止 import `stages_3d`（防环，`sjtu_tpmshx/pipelines/run_stack_3d.py:4-6`） |
+| `run_stack_3d.py` | 3001 ⟨07-20 更新；原 2107⟩ | 3D 主栈。⟨07-20 结构重组（P1.5+P2.0，逐字节搬移+数据类化）⟩ `_run_3d_stack`（:2975）现为 **156 行編排器**：`_build_3d_problem`(:586)→`_build_hv_machinery`(:1106)→`_run_outer_coupling_3d`(:2128)→`_extract_3d_metrics`(:1339)→`_assemble_3d_verdict`(:1627)，阶段间以四数据类传参（`_Problem3D`:434 80 字段 / `_HvMachinery`:519 / `_OuterState`:530 / `_Metrics3D`:557）；禁止 import `stages_3d` 防环约束不变 |
 
 ## 公开接口
 
@@ -43,7 +47,8 @@
 - `_build_fields_3d_cfg(parsed) -> dict`（`sjtu_tpmshx/pipelines/stages_3d.py:204`）。**纯 passthrough**（`return parsed`，`:212`）——3D 无独立 build 相，仅为保持 Pipeline ABC 契约对称。
 - `_run_solvers_3d_cfg(parsed, fields, *, progress_cb, cancel_token, iter_cb) -> dict`（`sjtu_tpmshx/pipelines/stages_3d.py:215`）。浅拷贝 cfg（`:232`，因 `_run_3d_stack` 会改写少量键），注入 `_progress_cb/_cancel_check/_iter_cb`（`:236-241`），套 `_apply_phase_flags`（`:244`），然后 `return _run_3d_stack(cfg)`（`:246`）。
 - `_finalize_3d_cfg(raw, fields) -> ComputeResult`（`sjtu_tpmshx/pipelines/stages_3d.py:249`）。ComputeResult 组装见 `:285-375`；`diagnostics['mode']='3d'`（`:366`）；warnings 来自 `raw['envelope_warnings']`（`:359`）。渲染/导出契约由 `tests/test_finalize_3d_result_sync.py` 锁定（`:264-265` docstring，测试内容未逐行验证）。
-- `_run_3d_stack(cfg: dict) -> dict`（`sjtu_tpmshx/pipelines/run_stack_3d.py:346`）。3D 主栈，流程：sweep profile 解析（`:359-376`）→ 网格 `_build_grid_3d`（`:415`）→ 硬网格数上限（`:424-433`）→ 轴映射（`:436`）→ D-F surrogate `predict_K_cF`（zoned 走 `predict_K_cF_vec`，`:474-504`）→ 粗糙度施加（`:509`）→ P_ref 1D 种子 + 预解 choke 门 `_seed_p_ref`（`:526,618`）→ SIMPLE3D A/B 构建后**并行**初解 `_run_two_simple_parallel`（`:664`；A-alone 走串行 `:679`）→ K_ff/K_ss/h_v 场构建（`:711-733,901-911`）→ `run_outer_coupling(step=_outer_step_3d, post=_outer_post_3d)`（`:1595-1596`）。step 内：局部 Re 重建 h_v（`:1028`）、partial-B closure 分派（`:1072-1145`）、staggered 面速度提取 + 出流平衡（`:1175-1212`）、`solve_full_domain_3d`（`:1258-1299`）、可选焓形式 LTNE（`:1311-1337`）。post 内：Ta/Tb 回传 SIMPLE 密度场（欠松弛 α=0.6，`:1394-1400`）、P_ref 重播种（`:1408-1449`）、SIMPLE 温启重解（cap 600，`:1456,1575`）。指标提取：`Q = Q_enthalpy_A`（A 侧对流焓为唯一 headline duty，`:1732-1751`）、`dP = extract_dP_face_extrap(sA)`（`:1753`）、后置包络门（`:1964-1989`）、`solver_converged`（`:2006-2009`）。直接调用方：`_run_solvers_3d_cfg`、`validation/cases/validate_shanghai_3d_real.py`、`runs/_out/_golden_3d.py`、多个 tests/demos（grep 名单 46 文件）。
+- `_run_3d_stack(cfg: dict) -> dict`（⟨07-20 更新⟩ 现 `run_stack_3d.py:2975`，原 :346；
+  本条目下述全部行号为拆分前旧行号，逻辑归属见文末收编节映射）。3D 主栈，流程：sweep profile 解析（`:359-376`）→ 网格 `_build_grid_3d`（`:415`）→ 硬网格数上限（`:424-433`）→ 轴映射（`:436`）→ D-F surrogate `predict_K_cF`（zoned 走 `predict_K_cF_vec`，`:474-504`）→ 粗糙度施加（`:509`）→ P_ref 1D 种子 + 预解 choke 门 `_seed_p_ref`（`:526,618`）→ SIMPLE3D A/B 构建后**并行**初解 `_run_two_simple_parallel`（`:664`；A-alone 走串行 `:679`）→ K_ff/K_ss/h_v 场构建（`:711-733,901-911`）→ `run_outer_coupling(step=_outer_step_3d, post=_outer_post_3d)`（`:1595-1596`）。step 内：局部 Re 重建 h_v（`:1028`）、partial-B closure 分派（`:1072-1145`）、staggered 面速度提取 + 出流平衡（`:1175-1212`）、`solve_full_domain_3d`（`:1258-1299`）、可选焓形式 LTNE（`:1311-1337`）。post 内：Ta/Tb 回传 SIMPLE 密度场（欠松弛 α=0.6，`:1394-1400`）、P_ref 重播种（`:1408-1449`）、SIMPLE 温启重解（cap 600，`:1456,1575`）。指标提取：`Q = Q_enthalpy_A`（A 侧对流焓为唯一 headline duty，`:1732-1751`）、`dP = extract_dP_face_extrap(sA)`（`:1753`）、后置包络门（`:1964-1989`）、`solver_converged`（`:2006-2009`）。直接调用方：`_run_solvers_3d_cfg`、`validation/cases/validate_shanghai_3d_real.py`、`runs/_out/_golden_3d.py`、多个 tests/demos（grep 名单 46 文件）。
 - `_run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None, cancel_check=None)`（`sjtu_tpmshx/pipelines/run_stack_3d.py:184`）。两条 OS 线程并行解 A/B；两线程 join 后再抛第一个异常；cancel 以 `InterruptedError` 上抛（`:234-242`）。
 - `_conservation_diagnostics_3d(...) -> dict`（`sjtu_tpmshx/pipelines/run_stack_3d.py:259`）。能量/质量守恒 + BC 层剔除的 interior 修正指标；失败时 warn + NaN，不静默（`:283-290`）。
 
@@ -183,3 +188,29 @@ env > `SolverConfig` > 维度专属 auto。2D：`sjtu_tpmshx/pipelines/stages_2d
 - **数据文件**：pipelines 本身不读数据文件，但下游 `df_surrogate.predict` 的标定依赖 gitignored 的 `data/raw_data`——fresh checkout/worktree 缺该目录时 DF 标定回退 CSV，数值有 ULP 级差异（repo 经验记录，未在本包代码内验证）。
 - **日志与编码（GBK 坑不会因为目标改成 Windows Server 而消失——此前按 Linux 目标写的判断方向是反的，已订正）**：本层 `_log.info` 输出均为 ASCII（如 `[PROF]`、`[SWEEP-CSV]`、`[ZONE]`），这本身是好事，且在 Windows Server 上依然要保持——本包只要坚持 ASCII-only 日志就不会触发下面这条坑。但 repo 其他层已有实证：中文日志经 subprocess 在 GBK 控制台下以 GBK 字节写出，而 pytest 按 UTF-8 读 capture 流，会以 `UnicodeDecodeError` 污染全部后续测试 teardown（`sjtu_tpmshx/df_surrogate/surrogate_v3.py:151-166` 的注释明确记录了这一机制并因此把该模块的日志强制改成 ASCII-only）。中文区域设置的 Windows Server 2022 默认控制台代码页同样是 GBK/CP936（不是 Linux 的 UTF-8 locale），这个坑**不会随平台切换而消失**，服务器批跑仍需显式处理：打印中文前 `sys.stdout.reconfigure(encoding='utf-8')`（repo 内已有多处这种自救模式，如 `sjtu_tpmshx/df_surrogate/predict.py:328`、`sjtu_tpmshx/ui/math_symbols.py:134`），或整体设 `PYTHONIOENCODING=utf-8` 环境变量（后者未在本仓库代码内实际设置过，是通用 Python 方案，未在本项目验证）。长跑请用 `python -u` 防 stdout 块缓冲假死（repo 约定）。
 - **性能剖析**：服务器诊断慢跑首选 `TPMSHX_PROFILE_3D=1`（每个 SIMPLE/LTNE 解的墙钟+迭代数+残差轨迹，零成本关断，`sjtu_tpmshx/pipelines/run_stack_3d.py:117-181`）。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **run_stack_3d.py 结构重组**（P1.5 五缝逐字节搬移 + P2.0 数据类化，全程 golden 位同护航）：
+  旧的单体 `_run_3d_stack` 拆为编排链
+  `prob = _build_3d_problem(cfg)`（问题构建：网格/轴映射/DF/粗糙度/P_ref 种子/SIMPLE 初解/K 场）→
+  `hv = _build_hv_machinery(prob)`（h_v 重建机械）→ `outer = _run_outer_coupling_3d(prob, hv)`
+  （外循环 step/post 全体）→ `met = _extract_3d_metrics(prob, hv, outer)`（Q/dP/守恒诊断）→
+  `_assemble_3d_verdict(...)`（结果 dict + 后置包络门 + solver_converged）。
+  旧行号→新归属速查：`:359-733` 段 → `_build_3d_problem`；`:869-932` h_v 几何比与告警 →
+  `_build_hv_machinery`；`:1010-1596` step/post/温启重解 → `_run_outer_coupling_3d`；
+  `:1641-1751` duty/m_dot/守恒 → `_extract_3d_metrics`；`:1753-2106` dP/包络门/verdict/审计导出 →
+  `_assemble_3d_verdict`。模块级常量（`_MAX_OUTER`、`_OUTER_TOL`、`_ALPHA_T`、`R_AIR`、
+  tol 帮助函数、`_run_two_simple_parallel`、`_conservation_diagnostics_3d`）位置基本未动。
+- **stages_2d/stages_3d 是 ruff F401 豁免的再导出门面**（pyproject per-file-ignores）：
+  `test_pipeline_reexports.py` 锁面——首轮 lint autofix 曾铲掉 stages_2d 门面被该测试当场抓获
+  （iter 22），豁免属**有意设计**，勿"清理"。
+- **新的 Qt-free 消费方**：`sjtu_tpmshx/cli.py`（tpmshx-run）经 `controllers/compute_pipeline.pipeline_for`
+  驱动 Pipeline2D/3D——headless 服务器入口从"手写脚本"升级为正式 CLI（--dry-run/--json，exit 2 =
+  solved-but-flagged）。
+- **P_ref 出口锚定语义强化**（ledger C8，2026-07-12，先于本分支但晚于本卷生成）：`P_ref_abs` 在
+  两个维度都是**出口**绝对压力，一律从 `envelope.predict_outlet_p_sq` 播种——本卷正文未断言旧
+  错误行为故无需改正，但读者须知 stages_2d/evaluator 曾有 `P_ref_abs=P_in` bug（Shanghai case 16
+  实测 Δp 低 43%），已修并有 `test_evaluator_pipeline_contract` 绊线。
+- **fast_sweep/网格上限/环境变量表**：本卷所列语义均未变；`TPMSHX_MAX_CELLS_3D`/`TPMSHX_PROFILE_3D`
+  读取点行号随重组漂移（同上映射）。
