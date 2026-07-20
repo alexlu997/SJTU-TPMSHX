@@ -1,9 +1,8 @@
 # 循环状态（STATE）
 
-- iteration: 29 ——**Phase 2 全部完成**（P2.0–P2.5，iter 21–29）
-- next: P3.1（suite fast-tier：--durations 实测定义 duration-based 标记 + run_tests_fast.ps1；
-  **不碰 slow 标记语义**（CI skip 清单，非时长普查，v1 教训）；先取数轮——durations 数据
-  可从既有全量日志提取或单独跑一次采集）
+- iteration: 30
+- next: P3.2（大网格线程默认值：TPMSHX_NUM_THREADS 探测式建议——≤64 / 单 socket / 带宽
+  瓶颈提示 + 文档；注意套件测试网格全 < 200k 阈值不受影响，这是生产大网格 ergonomics）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

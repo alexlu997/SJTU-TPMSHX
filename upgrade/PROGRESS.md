@@ -2,6 +2,18 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 30 · 2026-07-20 · P3.1 fast-tier ✅（`53431bb`）——Phase 3 开张
+
+- census 轮（--durations=0 镜像服务器环境，双 pass）：265 计时测点 / 4620s 计算量；
+  阈值扫描 300/120/60/30/20/10/5s 全表——**30s 档最优**：21 测试（1.7%）承载 89% 计算量，
+  heavy 全是 3D 积分测试（conservation/partial_bc_ghost_b/asym_porosity 等 6 模块）
+- 机制（零测试文件改动）：manifest 入库（生成器可重生）→ conftest 收集期动态 heavy 标
+  （basename 归一，调用目录无关）→ run_tests_fast.ps1 排除；反选精确 21
+- 实测 **56s vs 19min（20×）**：1237+4skip 46.5s + 串行模块 8.8s，全绿
+- 红线三处写死（脚本/marker 文案/manifest 头注）：快档绿 ≠ 过门；slow 语义未碰
+- 门禁：双 pass 1258+4skip / 10 绿（18:47）、golden 位同
+- 下一步：P3.2 线程默认值
+
 ## iter 29 · 2026-07-20 · P2.5a run_controller 单刀 ✅（`86b12e4`）——**Phase 2 收官**
 
 - 五方法（write_result/_finalize_plots/_update_result_summary/_diag_summary_text/

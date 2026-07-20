@@ -114,8 +114,10 @@
 
 ## Phase 3 — 性能（profile 先行，禁拍脑袋；benchmarks/profiling 有既有基建）
 
-- [ ] P3.1 suite fast-tier：用 --durations 实测数据定义 duration-based 标记与
-      `run_tests_fast.ps1`（**不碰 slow 标记语义**——它是 CI skip 清单不是时长普查，v1 教训在案）
+- [x] P3.1 suite fast-tier（`53431bb`，iter 30）：census 265 测点定阈 30s——21 测试
+      （1.7%）承载 89% 计算量；manifest+conftest 动态 heavy 标（零测试文件改动）+
+      run_tests_fast.ps1 实测 **56s vs 全量 19min（20×）**；slow 语义未碰；
+      红线三处写死：快档绿 ≠ 过门
 - [ ] P3.2 大网格线程默认值：TPMSHX_NUM_THREADS 探测式建议（≤64 / 单 socket / 带宽瓶颈提示）+ 文档
 - [ ] P3.3 BO core budget 工具化（TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics）
 
