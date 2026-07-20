@@ -6,7 +6,7 @@
 `optimization.md` ✓ iter 35——⚠ pipelines 卷的 run_stack_3d 行号为拆分前旧值，见该卷头注；
 `ui-core.md`、`runs.md`、`solvers-2d.md`、`solvers-closures.md` + PROJECT_MANUAL §6 增量索引 ✓ iter 36。
 **P4.1 收案**：未收编卷（dataflow/design/df-surrogate/solvers-3d/solvers-fields-mesh/ui-widgets/
-validation/HANDOFF）经盘点无分支级失准（HANDOFF 单列 P4.4）；ui-widgets/dataflow 的 run_controller
+validation）经盘点无分支级失准；HANDOFF ✓ iter 39（文首状态总更新表 + 三节行内戳，原文证据链不动）；ui-widgets/dataflow 的 run_controller
 行号引用受 P2.5a 位移影响者极少且方向可循，未逐一标注。）
 
 本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Windows Server 2022 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
