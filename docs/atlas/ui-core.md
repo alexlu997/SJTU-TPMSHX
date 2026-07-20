@@ -1,18 +1,19 @@
 # ui — 主窗口与 mixins
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节；正文失准处标 ⟨07-20 更新⟩）
 
 生成日期 2026-07-10，基于 commit f33d30e 附近的 master
 
 ## 定位与功能
 
-本章覆盖桌面 GUI 的主窗口层：`sjtu_tpmshx/main.py`（`Main_Menu` 主窗口 + 程序入口）、`sjtu_tpmshx/ui/mixins/` 全部 13 个 mixin，以及 UI 状态到求解器配置的唯一转换器 `sjtu_tpmshx/ui/window_config.py`。
+本章覆盖桌面 GUI 的主窗口层：`sjtu_tpmshx/main.py`（`Main_Menu` 主窗口 + 程序入口）、`sjtu_tpmshx/ui/mixins/` 全部 14 个 mixin ⟨07-20 更新；原 13，P2.5a 增 RunResultsMixin⟩，以及 UI 状态到求解器配置的唯一转换器 `sjtu_tpmshx/ui/window_config.py`。
 
-主窗口 `Main_Menu` 是历史上的「god object」，现已按行为切片拆分为 13 个 mixin，通过多重继承组装：`class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, AppearanceMixin, SessionPresetsMixin, ShortcutsMixin, IOActionsMixin, ResultBridgeMixin, QMainWindow)`（`sjtu_tpmshx/main.py:117-121`）。每个 mixin 只在调用时依赖 `self`（活动窗口），不在 import 时依赖 `main` 模块全局量，保持 import 图无环：`main` → `ui.mixins.*`，从不反向（`sjtu_tpmshx/ui/mixins/__init__.py:1-9`）。需要 `main` 中符号（`__version__`、`_git_commit_hash`）的 mixin 采用惰性 `__import__` 解析（`sjtu_tpmshx/ui/mixins/io_actions.py:19-29`、`sjtu_tpmshx/ui/mixins/run_history.py:41-51`）。
+主窗口 `Main_Menu` 是历史上的「god object」，现已按行为切片拆分为 14 个 mixin ⟨07-20 更新⟩，通过多重继承组装：`class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, RunResultsMixin, AppearanceMixin, SessionPresetsMixin, ShortcutsMixin, IOActionsMixin, ResultBridgeMixin, QMainWindow)`（`sjtu_tpmshx/main.py:113-118`）。每个 mixin 只在调用时依赖 `self`（活动窗口），不在 import 时依赖 `main` 模块全局量，保持 import 图无环：`main` → `ui.mixins.*`，从不反向（`sjtu_tpmshx/ui/mixins/__init__.py:1-9`）。需要 `main` 中符号（`__version__`、`_git_commit_hash`）的 mixin 采用惰性 `__import__` 解析（`sjtu_tpmshx/ui/mixins/io_actions.py:19-29`、`sjtu_tpmshx/ui/mixins/run_history.py:41-51`）。
 
 计算路径分工（移植时的关键分界）：
 
 - Qt 控件读取只发生一次，在主线程上，由 `ui.window_config.config_from_window` 完成，产出纯数据 `ComputeConfig`（`domain.compute_config` 的 dataclass）；工作线程只见 `ComputeConfig`，不触碰 Qt（`sjtu_tpmshx/ui/mixins/run_controller.py:85-93`、`sjtu_tpmshx/ui/window_config.py:407-485`）。
 - 数值求解在 `controllers/compute_pipeline.py` 的 `Pipeline2D` / `Pipeline3D`（工作线程闭包内构造，`sjtu_tpmshx/ui/mixins/run_controller.py:96-120`、`281-297`），线程生命周期由 `controllers.compute_orchestrator.ComputeOrchestrator` 管理（`sjtu_tpmshx/controllers/compute_orchestrator.py:151`），其 Qt signal（started/progress/finished/error/cancelled）在构造函数中接线（`sjtu_tpmshx/main.py:193-203`）。
-- 结果回写：`write_result` 把 `ComputeResult` dataclass 拷贝到遗留窗口属性（`sjtu_tpmshx/ui/mixins/run_controller.py:368-489`）；这些遗留属性名本身经 `ResultBridgeMixin` 的 property 桥接到 `controllers.result_cache.ResultCache`（`sjtu_tpmshx/ui/mixins/result_bridge.py:22-88`）。
+- 结果回写：`write_result` 把 `ComputeResult` dataclass 拷贝到遗留窗口属性（⟨07-20 更新⟩ 现居 `sjtu_tpmshx/ui/mixins/run_results.py`——P2.5a 呈现区五方法逐字节迁出）；这些遗留属性名本身经 `ResultBridgeMixin` 的 property 桥接到 `controllers.result_cache.ResultCache`（`sjtu_tpmshx/ui/mixins/result_bridge.py:22-88`）。
 
 ## 文件一览
 
@@ -22,12 +23,13 @@
 | --- | --- |
 | `sjtu_tpmshx/main.py`（1604 行） | `Main_Menu` 主窗口类 + `if __name__ == "__main__"` 入口（`main.py:1523`）。保留在此文件的行为：构造与控制器组装（`main.py:122-291`）、拖放加载 preset JSON（`main.py:293-343`）、Shanghai 预设 `_apply_shanghai_defaults`（`main.py:363`）、TPMS 几何计算 `compute_tpms`（`main.py:556`）、输入预检 `_validate_inputs_preflight`（`main.py:698`）/ `_preflight_grid`（`main.py:754`）、统一字段校验器 `_attach_field_validation`（`main.py:1253`）、`closeEvent`（`main.py:915`）、3D 面板懒初始化 `_lazy_init_3d_panel`（`main.py:1414`）、无障碍标注、About/引导对话框。 |
 
-`sjtu_tpmshx/ui/mixins/`（13 个 mixin + `__init__.py`）：
+`sjtu_tpmshx/ui/mixins/`（14 个 mixin + `__init__.py` ⟨07-20 更新⟩）：
 
 | 文件 | 职责 |
 | --- | --- |
-| `__init__.py`（25 行） | 重导出 13 个 mixin；docstring 记录组装契约（`mixins/__init__.py:8`）。 |
-| `run_controller.py`（1213 行） | 计算入口 `run_calculation` / `_run_calculation_3d` / `_run_polygon_calculation`、orchestrator 五个 signal 处理器、结果写入 `write_result`、计算期 UI 生命周期（按钮变取消、进度条、残差 sparkline、诊断摘要对话框）。 |
+| `__init__.py`（26 行）⟨07-20 更新⟩ | 重导出 14 个 mixin；docstring 记录组装契约。 |
+| `run_controller.py`（912 行）⟨07-20 更新；原 1213，P2.5a 切出呈现区⟩ | 计算入口 `run_calculation` / `_run_calculation_3d` / `_run_polygon_calculation`、orchestrator 五个 signal 处理器、计算期 UI 生命周期（按钮变取消、进度条、残差 sparkline）。 |
+| `run_results.py`（328 行）⟨07-20 新增（P2.5a）⟩ | 结果呈现切片：`write_result`（ComputeResult→窗口适配）、`_finalize_plots`、`_update_result_summary`、`_diag_summary_text`、`_show_diag_dialog`；只消费已完成结果，不启动/取消计算。 |
 | `fluid_input.py`（450 行） | 流体 Auto-fill（`_auto_fill_fluid`，调用求解器闭包计算）、K/°C 单位转换（`_temp_to_K` / `_set_temp_K` / `_toggle_temp_unit`）、流向/形状变更处理、遗留 per-side BC 读取 `_fluid_config`、出口温度后处理 `_update_tout`。 |
 | `session_presets.py`（559 行） | 用户 preset、A/B/C 工作区（workspace）切换、会话自动持久化（`_save_session` / `_restore_session`）；持有 `_SESSION_LINE_EDITS/_SESSION_COMBOS/_SESSION_CHECKS` 允许名单。 |
 | `run_history.py`（371 行） | 最近运行环形缓冲（`_push_recent_run`）、持久 JSONL 时间线（`.session_timeline.jsonl`）、可复现链接 token、结果溯源 tooltip、「复制输入为 Python」导出。 |
@@ -161,3 +163,18 @@
 - **编码**：这条方向要反过来——目标是中文区域设置的 Windows Server，GBK/cp936 控制台代码页坑不会因为不是 Linux 而消失，反而要着重提醒。文件 IO 已显式 `encoding='utf-8'`（`main.py:319`、`session_presets` 经 SessionManager，另核实 `mixins/appearance.py:31/79/140`、`mixins/io_actions.py:177/189`、`mixins/run_history.py:91/182` 全部显式传 `utf-8`，不依赖系统默认编码，这部分与目标平台无关）。UI 字符串含大量中文（按钮「取消 · 0.0s」、诊断摘要等，`run_controller.py:840/1108-1126`）——这些文本只经 QWidget 渲染（Qt `QString` 内部即 UTF-16），不经过控制台代码页，与是否 Windows Server 无关，不是风险点。真正的风险点在别处：仓库里已有两处显式绕开控制台默认编码的 `sys.stdout.reconfigure(encoding='utf-8')`（`ui/math_symbols.py:134`、`ui/demo_vis_3d.py:30`，均在各自 `__main__` 冒烟测试打印中文/希腊字母前调用；`math_symbols.py:148` 注释明确写"GBK-locked terminals"），用于防止中文 Windows 默认代码页（GBK/cp936）把 `print` 输出按 GBK 字节写出、与下游按 UTF-8 读取（如 pytest capture）不一致导致的乱码或解码异常。这个坑在 Windows Server 上原样保留，需要继续保留这两处 reconfigure 守卫，未来新增会打印中文的入口脚本也应比照处理；「未验证」：`run_controller.py` 的诊断摘要文本目前只经 QMessageBox 展示，若日后新增导出到控制台/日志文件的路径，需要同样加 UTF-8 守卫或显式 `encoding='utf-8'`。字体链首选 Fira Sans/Inter，全部缺失时退回系统默认并打印告警（`main.py:1502-1511`，该告警文本本身是 ASCII，不受此编码问题影响）——服务器容器常无这些字体，仅影响观感。
 - **PyVista/VTK**：3D 面板懒初始化（`main.py:1414`）且渲染失败不丢数值结果（`run_controller.py:664-675`）；无 GPU/GL 的服务器直接设 `TPMSHX_DISABLE_3D_PANEL=1` 即可保留全部求解与导出能力。
 - **路径处理**：与 Linux 路径分隔符/大小写敏感文件系统的对比已不适用（同为 Windows，无需处理）——`os.path.join`/`pathlib` 与硬编码反斜杠在 Windows Server 上行为与开发机一致。重新核实发现的真实情况是：`ui/panel_vis_3d.py:662-663` 硬编码了 `C:\Windows\Fonts\msyh.ttc` / `msyhl.ttc`（微软雅黑字体文件路径，给 VTK 3D 水印文字设中文字体），带 `os.path.exists` 守卫且找不到时静默回退 VTK 内置 `arial`（`panel_vis_3d.py:660-670`），不会崩溃；但精简安装的 Windows Server（Server Core / 未装"桌面体验"功能）可能没有中文字体包，届时 3D 面板水印文字会回退成 arial——仅影响观感，不影响数值结果。`run_history.py:37` 的 `Path(__file__).resolve().parents[2]` 锚定包根，与盘符/分隔符无关，两端一致，无需处理。「未验证」：`ui/` 其余非本章文件是否还有类似硬编码字体路径。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **RunResultsMixin**（P2.5a）：结果呈现五方法（write_result/_finalize_plots/
+  _update_result_summary/_diag_summary_text/_show_diag_dialog）从 run_controller 逐字节迁出
+  （AST 比对 HEAD 位同），MRO 插位紧随 RunControllerMixin；run_controller 1213→912 行。
+  依赖测绘结论（iter 28 AST 交叉引用矩阵）：14-mixin 分层耦合低（多数 0–3 依赖，
+  zone_panel/io_actions 零 fan-in），架构判定健康，**不再多级切片**。
+- **ui/polygon_calc.py 迁入**（P1.9）：原 `runs/polygon_calc.py`——GUI 导入 runs/ 属分层违规
+  （import 审计抓获），Qt 耦合代码归 ui/；`_run_polygon_calculation` 现
+  `from ui.polygon_calc import run_polygon_calculation`。
+- **ui 273 处 except Exception 政策**（P2.4 裁决）：存量不动（Qt 防御捕获合法），
+  新代码用 logutil；不立扫改波次。
+- run_controller 行号影响面：≤350 的引用（本卷 :35/:66-81/:96-120/:281-297 等）不受 P2.5a
+  影响；>350 的呈现区引用已随迁移失效（见 ⟨07-20 更新⟩ 标注处）。
