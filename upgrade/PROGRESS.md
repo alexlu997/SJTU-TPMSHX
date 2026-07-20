@@ -2,6 +2,18 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 28 · 2026-07-20 · P2.5 首轮：mixin 依赖测绘 ✅（docs-only，章程收窄）
+
+- AST 交叉引用矩阵（14 文件：13 mixin + main）：**耦合低，架构判定健康**——多数 mixin
+  依赖 0–3 个同伴，zone_panel/io_actions 零 fan-in，枢纽 shortcuts(用7)/session_presets(用6)/
+  main(用7)。原设想"13-mixin 是巨物问题"被证据推翻：mixin 分层本身是合理的责任划分
+- 真靶标唯 run_controller 1215 行（20 方法），四责任区测绘：启动/预检 35–350、
+  orch 信号处理 495–801（_on_orch_finished 528–716 独占 188 行）、结果呈现 351–494+1003–1165、
+  计算 UI 状态 802–1002+1166–1215。保护面 3 直击测试 + 17 Qt 测试，无 golden
+- 章程裁决：**只切一刀**（P2.5a 结果呈现区 → run_results.py，1215→~845）；ui 273 except
+  存量不动（churn 风险>>收益），新代码 logutil——政策一行即收，不立扫改波次
+- 下一步：P2.5a 执行（Fable 直做——方法搬移涉 MRO/keep-alive 判断，不派机械子代理）
+
 ## iter 27 · 2026-07-20 · P2.4 异常/日志策略 ✅（盘点轮，docs-only，零批次）
 
 - 人口普查：0 裸 except；400 处 except Exception（ui 独占 273 = 68%）；库内 print 144
