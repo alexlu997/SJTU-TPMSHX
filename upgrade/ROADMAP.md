@@ -77,7 +77,8 @@
 - [x] P2.1b F841 清偿（`581e790`，iter 23）：52+5 级联逐案（净 −46 行死代码），全量执法开启
 - [ ] P2.1c ruff format 评估（行号腐蚀 atlas 引用 + 源码标记测试断言——先盘点受影响面
       再决定做不做/怎么做，可能与 P4.1 atlas 收编同轮）
-- [ ] P2.2 核心公共面类型注解（solvers/pipelines 对外 API）+ mypy 宽松档
+- [x] P2.2 mypy 宽松档核心面门（`464076d`，iter 24）：七文件圈（envelope/compute_pipeline/
+      domain 配置结果/configs/_version/cli）清零 + test_type_gate 常驻；扩圈 = 加清单同 commit 清零
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、
       runs/archive/ 标注 frozen；删除类处置先过 DECISIONS-NEEDED
 - [ ] P2.4 异常与日志策略统一（logutil 已有基础；清点裸 except / print / 静默 fallback——

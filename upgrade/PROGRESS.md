@@ -2,7 +2,23 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
-## iter 23 · 2026-07-21 · P2.1b F841 清偿 ✅（`581e790`）
+## iter 24 · 2026-07-20 · P2.2 mypy 核心面门 ✅（`464076d`）
+
+- 宽松档 [tool.mypy] + 七文件核心面清单（envelope/compute_pipeline/domain 配置结果/
+  configs/_version/cli）清零：compute_config 3 处注解性修正（异构 dict 先声明后分支赋值、
+  gate-check 循环变量改名破类型合一、补 Tuple 导入）+ cli warnings_list 收窄——零物理默认值变动
+- test_type_gate 常驻（subprocess mypy @清单，cwd=包目录与顶层导入约定一致）；check.md §2a2 入册；
+  锁文件 80→83 包（ruff/mypy 入锁）
+- 门禁：suite 1258+10 绿 / 4 skip（19:06，负载偏高段）、golden 3D 位同、
+  mypy "Success: no issues found in 7 source files"
+- 流程：开工首个 Edit 即 STATE 标记（iter 23 教训，本轮已守）；轮中撞 /compact 一次，
+  后台门任务跨压缩存活、凭 task 通知收轮
+- 勘误：iter 22/23（及 pyproject 内 P2.1/P2.2 溯源注释）曾误记日期 2026-07-21，git 时间戳
+  实为 07-20——PROGRESS 本轮已改；pyproject 注释留待下次正当编辑该文件时顺手改（避免
+  纯注释改动空耗一轮套件）
+- 下一步：P2.1c ruff format 评估（纯评估轮）
+
+## iter 23 · 2026-07-20 · P2.1b F841 清偿 ✅（`581e790`）＊日期按 git 时间戳修正（原误记 07-21）
 
 - 52 处初判 + 5 处级联全清（净 −46 行）：死解包/死拉取/jit 内核死载入（A/B 侧 ef ×4，
   golden 位同护航）/标量旧方案遗骸（T_avgA/B）/整死 if-else（stages_2d 行均孔隙率）/
@@ -13,7 +29,7 @@
 - 门禁：suite 1257+10 绿、golden 位同
 - 下一步：P2.2 类型注解
 
-## iter 22 · 2026-07-21 · P2.1 ruff lint 门 ✅（`121413d` 机械 + `6e65487` 语义）
+## iter 22 · 2026-07-20 · P2.1 ruff lint 门 ✅（`121413d` 机械 + `6e65487` 语义）＊日期按 git 时间戳修正（原误记 07-21）
 
 - 352 发现 → 0：238 自动修 + 7 F821 逐案（**三真雷**：Save Preset 即崩的缺导入、
   pin 分支未定义变量、直跑块引用已亡测试）+ F841 缓议 P2.1b + format 单列 P2.1c
