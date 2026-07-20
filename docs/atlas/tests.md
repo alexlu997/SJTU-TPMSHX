@@ -1,15 +1,16 @@
 # tests — 测试覆盖地图
-生成日期 2026-07-11，基于 commit f33d30e 附近的 master
+生成日期 2026-07-11，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末"2026-07 升级分支收编"节；正文失准断言已就地改正并标 ⟨07-20 更新⟩）
 
 ## 定位与功能
 
-`sjtu_tpmshx/tests/` 是本仓库唯一的 pytest 套件根，由仓库根的 `pytest.ini`（`pytest.ini:15`）通过 `testpaths = sjtu_tpmshx/tests` 锁定收集范围，防止裸 `pytest` 误入 `.claude/worktrees/` 下的仓库副本。套件共 **151 个文件**：`sjtu_tpmshx/tests/` 下 135 个 `test_*.py` + 1 个 `conftest.py`，加上子目录 `sjtu_tpmshx/tests/design/` 下 15 个 `test_*.py`（后者是 `sjtu_tpmshx/design/`——一个独立的 10kW 换热器选型/CLI 子模块——的单元测试，复用同一个顶层 `conftest.py` 做 `sys.path` 引导，未见独立的 `design/conftest.py`）。
+`sjtu_tpmshx/tests/` 是本仓库唯一的 pytest 套件根，由仓库根的 `pytest.ini`（`pytest.ini:15`）通过 `testpaths = sjtu_tpmshx/tests` 锁定收集范围，防止裸 `pytest` 误入 `.claude/worktrees/` 下的仓库副本。套件共 **162 个文件** ⟨07-20 更新；07-11 原文 151⟩：`sjtu_tpmshx/tests/` 下 146 个 `test_*.py` + 1 个 `conftest.py` + 1 个 `_fast_tier_manifest.txt`（P3.1 heavy 清单，见收编节），加上子目录 `sjtu_tpmshx/tests/design/` 下 15 个 `test_*.py`（后者是 `sjtu_tpmshx/design/`——一个独立的 10kW 换热器选型/CLI 子模块——的单元测试，复用同一个顶层 `conftest.py` 做 `sys.path` 引导，未见独立的 `design/conftest.py`）。
 
 与本文档强相关但**不在 pytest 收集范围内**的两个"golden 位一致门禁"脚本位于 `sjtu_tpmshx/runs/_out/_golden_2d.py` 和 `sjtu_tpmshx/runs/_out/_golden_3d.py`（文件头注释明确写 "Not a pytest"，`runs/_out/_golden_2d.py:16`）；它们是手动 CLI 脚本，由 `.claude/commands/check.md` 描述的验收流程调用，只有在人为触发时才跑。测试目录内确实还有"回归"字样的 pytest 文件（`test_shanghai_regression.py`），但那是另一件事——对生产验证脚本（`validation/cases/...`）的 subprocess 包装 + 数值容差断言，不是 bit-identical 位比较。
 
 测试运行的标准入口是 `.claude/commands/check.md`（`/check` skill），而非本文档要精读的对象；本文档只编目"有什么测试、怎么分组、跑门有哪些已知坑"。
 
-## 文件一览（按主题分组，每组给代表性文件；不逐个精读全部 151 个）
+## 文件一览（按主题分组，每组给代表性文件；不逐个精读全部 161 个 ⟨07-20 更新⟩）
 
 ### A. Golden / 位一致回归门禁（不在 pytest 内，人工调用）
 - `sjtu_tpmshx/runs/_out/_golden_2d.py` — Pipeline2D 两个代表 cfg（air-air + air/water-B 交叉流）× headline 标量 + 每个输出场 SHA-256；`--check` 模式做差异比对。
@@ -56,7 +57,7 @@
 
 ## 公开接口（关键函数/类：签名要点 + file:line + 调用方）
 
-- `conftest.py` 无自定义 fixture 函数，只做两件全局副作用：
+- `conftest.py` 无自定义 fixture 函数，做三件全局副作用 ⟨07-20 更新；原文两件，新增 heavy 动态标记钩子，见收编节⟩：
   - `os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')`（`sjtu_tpmshx/tests/conftest.py:33`）——必须在任何 PySide6 import 之前执行，靠 pytest 在收集测试前加载 `conftest.py` 的时机保证；调用方：整个套件里所有 UI 相关 `test_*.py`（隐式依赖，各文件无需自行设置）。
   - `sys.path.insert(0, str(ROOT))`，`ROOT = Path(__file__).resolve().parents[1]` 即 `sjtu_tpmshx/`（`conftest.py:35-37`）——让 `solvers`、`optimization`、`df_surrogate`、`controllers`、`runs`、`ui`、`design` 等顶层包可以在任意子进程/独立文件里被 import，不必每个测试文件自带 `sys.path` 引导（文件头注释列出了已有引导的例外：`test_3d_direction_invariance.py`、`test_compute_orchestrator.py`、`test_ltne_energy_3d.py`，见 `conftest.py:9-12`）。
   - 进程级 `QApplication(['pytest', '-platform', 'offscreen'])` 单例预热（`conftest.py:49-57`），`try/except Exception: pass` 包裹以兼容无 PySide6 的哨兵 CI 环境。
@@ -70,8 +71,15 @@
 
 ## 关键配置项与开关（默认值 + 定义处 file:line）
 
-- `pytest.ini` `testpaths = sjtu_tpmshx/tests`（`pytest.ini:15`），`addopts = --strict-markers`（`pytest.ini:16`）；注册的 marker 只有两个：`slow`（`pytest.ini:18`）、`fast`（`pytest.ini:19`）。**未见 `markers` 里注册其他名字**——`--strict-markers` 意味着任何拼错的 `@pytest.mark.xxx` 会直接报错而不是静默通过。
-- 并行执行标准命令（`.claude/commands/check.md` 记录，非测试代码本身）：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`。`PYTHONHASHSEED=0` **必须在 shell 里设置**，不能写进 `pytest.ini`，因为哈希随机化在解释器启动时就已决定，pytest 配置加载得太晚（`pytest.ini` 第 11-13 行注释同样强调这点）。`--dist loadscope` 把同模块的测试（例如共享 module-scope 的 surrogate/MMS fixture）钉在同一个 worker 上，避免跨 worker 重复初始化。`check.md` 记录的期望结果是"≈1037 passed, a few skipped"（**该数字未在本次编目中重新验证**，来自 `.claude/commands/check.md` 文档描述，可能随套件增删而漂移）。
+- `pytest.ini` `testpaths = sjtu_tpmshx/tests`，`addopts = --strict-markers`；注册的 marker 共三个 ⟨07-20 更新；原文两个⟩：`slow`、`fast`、`heavy`（P3.1，census 驱动，conftest 收集期动态附加，仅被 `scripts/run_tests_fast.ps1` 排除——行号随 pytest.ini 头注扩充有漂移，以 `[pytest]` 节实文为准）。`--strict-markers` 意味着任何拼错的 `@pytest.mark.xxx` 会直接报错而不是静默通过。
+- 并行执行标准入口 ⟨07-20 更新；原文 `-n auto --dist loadscope` + "≈1037 passed" 已双重过时⟩：
+  **`scripts/run_tests_server.ps1`**（128 核服务器：`-n 64 --dist worksteal` 主 pass +
+  顺序敏感模块 `test_df_projection_equivalence.py` 串行第二 pass——worksteal 会把该模块拆到
+  多 worker 触发其冷/热缓存位比较缺陷，头注有完整策略）。`PYTHONHASHSEED=0` 仍**必须在
+  shell 里设置**（脚本已内置，连同线程池全钉 1 与 `QT_QPA_PLATFORM=offscreen`）。
+  当前量级 **1268 passed + 4 skipped（并行 pass）+ 10 passed（串行 pass），~11–19 min 视负载**
+  （2026-07-20 实测；随套件增删漂移，以最新 upgrade/logs 或 /check 输出为准）。
+  开发内循环另有 **`scripts/run_tests_fast.ps1`**（`-m "not heavy"`，实测 ~56s，**非验证门**）。
 - `TPMSHX_RUN_SHANGHAI_REGRESSION`（默认未设置 → 该文件全体 skip）：控制 `test_shanghai_regression.py` 是否运行，值需为 `'1'/'true'/'yes'`（大小写不敏感，`test_shanghai_regression.py:44-51`）。
 - `CI` 环境变量 == `'true'` 时跳过两个同机器 ULP 精确钉定测试文件（`test_df_backend_registry.py:33-35`、`test_df_projection_equivalence.py:54` 附近同名 `_CI` 定义）——即：**这两个文件在 CI 上天然跳过，本地跑门是它们唯一的执行场景**，因此"data/raw_data 缺失导致的 ULP 失败"这个坑只发生在本地/worktree 环境，不会在贴了 `CI=true` 的环境暴露。
 - `_RAW_XLSX = ROOT.parent / 'data' / 'raw_data' / '试验记录表_整理版.xlsx'` 判定路径出现在 `test_load_data_no_shanghai.py:29`（同样的 grep 命中还包括 `test_eps_contract_3d.py`、`test_cache_and_source_guards.py`——后两者的具体行号本次未逐一核实，标注**存疑**）——`ROOT` 是 `sjtu_tpmshx/tests` 的 parent 即 `sjtu_tpmshx/`，故完整路径是 `<repo_root>/data/raw_data/试验记录表_整理版.xlsx`。
@@ -110,3 +118,28 @@
 - **并行 pytest-xdist + `PYTHONHASHSEED=0`**：不适用（同为 Windows，无需处理）。原文档讨论的是"`-n auto` 在 Linux 上是否等价"，现在两端都是 Windows，这个对比问题本身不成立；`-n auto` 核数探测、`PYTHONHASHSEED` 在解释器启动期决定的行为、`--dist loadscope` 都在同一 Windows 家族下沿用桌面开发机的既有结论（见 `.claude/commands/check.md`）。若 Server 核数与开发机差异较大，可用 `-n <N>` 显式指定并行度，这是常规调参，与本次平台迁移无关。
 - **`sys.executable` 子进程模式**（`test_import_dag.py`、`test_shanghai_regression.py::_run_subprocess`、`test_sco2_phase_a.py` 的动态模块加载）：不适用（同为 Windows，无需处理）。原文档讨论"Linux 上是否同样可用"，现在两端都是 Windows，`sys.executable` + 标准库 `subprocess`/`importlib` 这套子进程模式本就在同一操作系统内调用，不存在跨平台差异；唯一仍值得注意的风险已在本节第二条（GBK）里展开，不重复。
 - **numba JIT（`test_warmup_jit_kernels.py`）**：核实后，"Linux 缓存目录不同"的原顾虑本身不成立——仓库内绝大多数 `@njit` 核函数用 `cache=True`（`solvers/ltne_energy.py:27,59,84,368`、`solvers/ltne_enthalpy_3d.py:58`、`solvers/polygon_fvm.py:45,157,301,611`、`solvers/_kernels_2d.py:11`、`solvers/_kernels_simple_2d.py:24,58,87,116,159,176` 等），numba 的磁盘缓存默认写在源文件同目录的 `__pycache__` 下，不依赖 `/tmp`、`~/.cache` 这类 Linux 路径，也未见仓库代码设置 `NUMBA_CACHE_DIR`（已 grep 确认无匹配）——这从来都不是 Linux/Windows 平台差异问题。Windows Server 部署时真正要核实的是：代码检出目录对运行账户是否可写——若 Server 上以只读卷或受限权限账户跑（例如与开发机不同的服务账户），numba 会静默降级为不缓存（每进程重新 JIT，只影响首次调用耗时，不影响正确性），**未验证**目标 Server 的实际部署目录权限。首次 JIT 编译耗时确实会随底层 CPU 差异变化（例如 Server CPU 缺 AVX2/AVX-512 等指令集时 `fastmath` 编译路径可能不同），但这是硬件差异而非 Windows/Windows Server 平台差异，属于性能而非正确性问题；本文档第 83 行记录的跨平台 ULP 差异同理是硬件/编译器层面的，不因两端同为 Windows 而消失，仍建议在 Server 上单独跑一遍 golden gate 确认数值量级一致。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+分支 iter 1–32 对本卷疆域的全部结构性新增（正文失准断言已就地改正并标 ⟨07-20 更新⟩，此节是变更台账）：
+
+- **五个常驻守卫测试**（架构守卫 L 组扩容）：
+  - `test_import_layering.py` — subprocess 跑 `runs/tools/audit_import_graph.py --fail-on-violations`（P1.9；层模型 + SANCTIONED 裁决清单在工具内）
+  - `test_lint_gate.py` — `ruff check`（P2.1；配置 pyproject `[tool.ruff]`，F+E9 全量执法，门面 F401 逐文件豁免）
+  - `test_type_gate.py` — mypy 宽松档核心七文件面（P2.2；清单 `mypy-core-files.txt`，cwd=包目录）
+  - `test_evaluator_envelope_authority.py` — 评估器 choke 种子/判定必须走 `solvers/envelope.py` 权威（P1.3-A）
+  - `test_evaluator_pipeline_contract.py` — 评估器 vs 生产管线六条有意差异的机器断言 + D3 绊线（P1.4）
+- **fast-tier 机制**（P3.1）：`_fast_tier_manifest.txt`（21 个 ≥30s nodeid，census 89% 计算量）+
+  conftest `pytest_collection_modifyitems` 动态 `heavy` 标（basename 归一，调用目录无关）+
+  `scripts/run_tests_fast.ps1`（~56s，**非验证门**）。census 重生成：`runs/tools/build_fast_tier_manifest.py`。
+  `slow`（CI skip 清单）与 `fast`（遗留 opt-in 冒烟）语义均未动。
+- **golden 工作流变更**（D1，iter 5）：`golden_3d.json` **已入库**（仓库根）为权威基线 +
+  `golden_3d.meta.json` 侧车（sha256/认证 commit/环境指纹）——"改动前本地捕获"语义仅剩 2D 沿用；
+  重基准 = json+meta 同 commit 带 `!`。本卷 A 组"只有人为触发才跑"仍真，但基线来源已变。
+- **双跑脚本入库**（P0.4）：`scripts/run_tests_server.ps1` 是唯一标准测试入口（v1 按 slow 分相的
+  错误已在其头注记档）；`run_tests_fast.ps1` 为开发内循环。
+- 测试计数沿革：1245+4skip（P0.1 基线，2026-07-19）→ 1268+4skip / 10（iter 32，2026-07-20）。
+- 新增其它承重测试：`test_solver_threads.py` 扩容（P3.2 建议机制，含 logutil `tpmshx.` 前缀
+  捕获技巧）、`test_optimizer_qnehvi_helpers.py` 扩容（P3.3 预算解析矩阵）、
+  `test_cache_and_source_guards.py` 扩容（P1.6 缓存拷贝语义）、`test_df_prebuilt_fallback_warns`
+  （P0.3 响亮回退）。

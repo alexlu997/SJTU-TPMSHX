@@ -1,5 +1,6 @@
 # 仓库基础设施与环境
-生成日期 2026-07-11，基于 commit f33d30e 附近的 master
+生成日期 2026-07-11，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节；正文失准断言已就地改正并标 ⟨07-20 更新⟩）
 
 ## 定位与功能
 
@@ -20,7 +21,13 @@ checkout `D:\Postgraduate\Homogenize\SJTU-TPMSHX`（未做任何写入）。
 | 路径 | 职责 |
 |---|---|
 | `requirements.txt` | 运行时 Python 依赖清单（数值栈 + 代理模型 + 绘图 + GUI + IO + 测试），标注版本下限 |
-| `pytest.ini` | pytest 配置：`testpaths` 锁定收集范围、`--strict-markers`、`slow`/`fast` marker 注册 |
+| `pytest.ini` | pytest 配置：`testpaths` 锁定收集范围、`--strict-markers`、`slow`/`fast`/`heavy` marker 注册 ⟨07-20 更新：+heavy⟩ |
+| `pyproject.toml` ⟨07-20 新增⟩ | 打包地基（P1.8）：`[project]` 动态版本（单源 `_version.py`）+ extras（gui/bo/test/dev）+ `tpmshx-run` 入口 + `[tool.ruff]` lint 门配置 + `[tool.mypy]` 类型门配置 |
+| `requirements-lock-server.txt` ⟨07-20 新增⟩ | 服务器 83 包精确冻结（torch==2.11.0+cpu 走 pytorch cpu 索引，头注有指纹与安装序） |
+| `mypy-core-files.txt` ⟨07-20 新增⟩ | 类型门核心七文件清单（扩圈 = 加文件同 commit 清零） |
+| `golden_3d.json` + `golden_3d.meta.json` ⟨07-20 新增⟩ | 3D golden 权威基线本体（D1 决策入库）+ sha256/认证 commit/环境指纹侧车 |
+| `scripts/run_tests_server.ps1` ⟨07-20 新增⟩ | 128 核服务器标准测试入口：`-n 64 worksteal` + 顺序敏感模块串行双 pass（策略见头注） |
+| `scripts/run_tests_fast.ps1` ⟨07-20 新增⟩ | 开发内循环快档（`-m "not heavy"`，~56s）——**非验证门** |
 | `README.md` | 面向 GitHub 首页的项目介绍：headline 指标、安装/运行命令、V&V 结果表、仓库目录树 |
 | `PROJECT_MANUAL.md` | 项目说明书（人类+AI 共读）：术语表、架构、逐文件 API 索引、全局约定与陷阱（第 8 节） |
 | `AGENTS.md`（仓库根） | 与 `CLAUDE.md` 内容几乎一致的 agent 导读（供非 Claude 系代理读取）；**存在过期路径引用**（见「已知不足」） |
@@ -52,8 +59,10 @@ checkout `D:\Postgraduate\Homogenize\SJTU-TPMSHX`（未做任何写入）。
 
 本册涉及的多是配置/脚本而非 Python API，"接口"指命令行入口与配置契约：
 
-- `pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（并行门，`pytest.ini:8` 注释 + `README.md:153`）——
-  调用方：`.claude/commands/check.md:16`、CI（单进程变体）。
+- `scripts/run_tests_server.ps1` ⟨07-20 更新；原文 `-n auto --dist loadscope` 在 128 核服务器上
+  会超额订阅卡死（2026-07-13 实测），且 loadscope 的墙钟地板是最大模块和（~40min）⟩——
+  标准全量门，双 pass（`-n 64 worksteal` + `test_df_projection_equivalence.py` 串行）；
+  调用方：`.claude/commands/check.md` §1、升级循环全部验证轮。桌面小核数机器上原命令仍可用。
 - `python sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py` /
   `validate_shanghai_3d_real.py`（`README.md:142,145`）——headline 数字复现入口，调用方：`/check` 第 3 步。
 - `bash scripts/port_retest_pull.sh <user>@<server>`（`scripts/port_retest_pull.sh:4`）——本地拉回服务器
@@ -64,9 +73,11 @@ checkout `D:\Postgraduate\Homogenize\SJTU-TPMSHX`（未做任何写入）。
   Linux 变体，`.ps1`（`56f3b9d`，2026-07-10 新增）为目标平台 **Windows Server 2022** 变体，两者
   入口/参数一致（含私有数据仓拼接、venv、torch/botorch 补装）——**均未验证**曾在真实服务器上完整
   跑通过一次，见「服务器移植注意」节详述。
-- `sjtu_tpmshx/df_surrogate/threads.set_solver_threads(n)` / `init_from_env()`
-  （`sjtu_tpmshx/solvers/threads.py:34,43`）——运行时 Numba 线程数旋钮，GUI 的 "CPU cores" spinbox
-  调用 `set_solver_threads`，无界面批跑靠 `TPMSHX_NUM_THREADS` 走 `init_from_env`。
+- `sjtu_tpmshx/solvers/threads.py` 的 `set_solver_threads(n)` / `init_from_env()`
+  ⟨07-20 更正：原文误写包路径为 `df_surrogate/threads`⟩——运行时 Numba 线程数旋钮，GUI 的
+  "CPU cores" spinbox 调用 `set_solver_threads`，无界面批跑靠 `TPMSHX_NUM_THREADS` 走
+  `init_from_env`。⟨07-20 新增⟩ P3.2 增 `recommend_solver_threads()`（≈min(64, 逻辑核/2)）与
+  `warn_if_default_pool()`（大网格 prange 首触时对未钉扎全核默认打一次性建议，**绝不自动改池**）。
 
 ## 关键配置项与开关
 
@@ -115,14 +126,17 @@ checkout `D:\Postgraduate\Homogenize\SJTU-TPMSHX`（未做任何写入）。
 > 不保证互相去重——批量审计全部旋钮时两处都要查。
 
 pytest 侧开关：`pytest.ini:17-19` 注册两个 marker——`slow`（重量级真实求解测试，CI 用 `-m "not slow"`
-排除）、`fast`（廉价冒烟子集，需显式 `-m fast` opt-in）。`--strict-markers`（`pytest.ini:16`）使未注册
+排除）、`fast`（廉价冒烟子集，需显式 `-m fast` opt-in）、`heavy` ⟨07-20 新增：P3.1 census 驱动，
+conftest 收集期动态附加，仅 `run_tests_fast.ps1` 排除，全量门照跑⟩。`--strict-markers` 使未注册
 marker 在收集期报错而非静默通过。
 
 ## 边界·假设·适用范围
 
 - **Python 版本**：README 声明"Tested on Python 3.11 / 3.12, Windows 11. Linux should work; macOS
-  untested"（`README.md:108`）；CI 实际用 3.12（`.github/workflows/ci.yml:32`）。仓库内**未发现**
-  `python_requires` 或 `pyproject.toml`/`setup.py` 版本硬约束（未验证是否存在于仓库其它未检索位置）。
+  untested"（`README.md:108`）；CI 实际用 3.12（`.github/workflows/ci.yml:32`）。
+  ⟨07-20 更新：`pyproject.toml` 已存在（P1.8），`requires-python = ">=3.11"` 是现行硬约束；
+  原文"未发现 pyproject"已过时。服务器精确复刻用 `requirements-lock-server.txt`（83 包，
+  venv 底座必须 C:\Python312 而非 Anaconda——PySide6 abi3 崩溃，见其头注与 run_tests_server.ps1 守卫）。⟩
 - **依赖分级**（据 `requirements.txt` 与代码内 import 方式核实，而非仅按注释）：
   - **硬依赖（无 try/except 保护，import 失败即整包不可用）**：`numpy` `scipy` `pandas` `sympy`
     （`requirements.txt:6-9`）；`numba`——在 `solvers/simple_solver.py:42`、`simple_solver_3d.py:58`、
@@ -325,3 +339,28 @@ Server 2022**（仍是 Windows 内核，不是 Linux）。以下逐条按代码�
 - **`.claude/worktrees/` 目录本身被 `.gitignore` 排除**（`.gitignore` 末尾块），且 `pytest.ini`
   的 `testpaths = sjtu_tpmshx/tests` 就是为了防止裸 `pytest` 意外收集到这些 worktree 副本里的测试
   （`pytest.ini:3-5` 注释）——在服务器上如果也采用 worktree 隔离开发，需要保留这条 `testpaths` 约束。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+分支 iter 1–32 对本卷疆域的结构性新增台账（正文失准处已就地改正并标 ⟨07-20 更新⟩）：
+
+- **打包地基（P1.8/P1.9）**：`pyproject.toml`（动态版本单源 `sjtu_tpmshx/_version.py`、
+  extras gui/bo/test/dev、`tpmshx-run` console-script）；`pip install -e .` 可用，但**全库仍是
+  顶层导入风格**（`from solvers import ...`）——`sjtu_tpmshx.*` 迁移是未完成波次（ROADMAP P1.8b），
+  迁移前勿在同进程混用两种风格导入同一模块（pyproject 头注原文）。
+- **CLI 入口**：`sjtu_tpmshx/cli.py`（`tpmshx-run config.json [--dry-run|--json]`，exit 2 =
+  solved-but-flagged；Qt 零导入）。
+- **质量门四件套**（配置都在 pyproject）：ruff（F+E9 全量执法 + 门面 F401 豁免清单）、
+  mypy 宽松档核心面（`mypy-core-files.txt` 七文件）、import 分层审计
+  （`runs/tools/audit_import_graph.py`，SANCTIONED 边单列）、fast-tier census
+  （`runs/tools/build_fast_tier_manifest.py`）。全部有对应常驻 pytest 门（见 tests 卷收编节）。
+- **锁文件**：`requirements-lock-server.txt` 83 包（初版 80 包由基线门认证，+ruff/mypy 后 83；
+  torch 走 pytorch cpu 索引，其余 PyPI `--no-deps`；venv 底座 C:\Python312 硬约束）。
+- **golden 基线入库**（D1）：`golden_3d.json` + meta 侧车在仓库根；/check §2 的 3D 工作流从
+  "本地捕获"改为"入库版即权威"。
+- **环境变量新增**：`TPMSHX_BO_CORE_BUDGET`（BO 进程核预算，P3.3 起钳制 [1,cpu] + 启动 INFO
+  可审计）；`TPMSHX_CHI_S` 改每调用读取（P1.6，原 import 冻结）。
+- **升级循环自身的目录**（合并前为分支本地）：`upgrade/`（PROTOCOL/ROADMAP/STATE/PROGRESS/
+  DECISIONS-NEEDED/BASELINE + logs + tools/render_progress.py 进度页渲染器 + progress.html）。
+- AGENTS.md 的过期路径问题（本卷「已知不足」旧条目）在 P0.5 已同步纠偏 check.md 死路径；
+  AGENTS.md 本体是否已同步**未在本轮核实**，留 P4.4 一并处理。
