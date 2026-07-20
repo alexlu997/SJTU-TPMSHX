@@ -1,9 +1,9 @@
 # 循环状态（STATE）
 
-- iteration: 32 ——**Phase 3 全部完成**（P3.1–P3.3，iter 30–32）
-- next: P4.1（atlas 漂移收编：DRIFT.md 累计条目写回受影响卷 + PROJECT_MANUAL §6 对齐
-  新结构——先盘点 DRIFT 存量与升级分支自身造成的新漂移（P1.5/P2.0 拆分、P2.5a、
-  cli/_version 新文件等），大概率多轮；docs-only 门）
+- iteration: 33
+- next: P4.1a（atlas 基建域写回：repo-infra.md / tests.md / README.md——packaging、
+  四常驻门、双跑脚本、套件计数、cli+_version；写回时逐段核对卷内既有断言是否已失准，
+  失准处就地改正并注记；docs-only 门）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

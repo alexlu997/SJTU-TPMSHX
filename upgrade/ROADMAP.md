@@ -127,7 +127,19 @@
 
 ## Phase 4 — 文档与交付
 
-- [ ] P4.1 atlas 漂移收编：DRIFT.md 累计条目写回受影响卷；PROJECT_MANUAL §6 对齐新结构
+- [~] P4.1 atlas 漂移收编（iter 33 盘点：**DRIFT.md 从未存在**——ROADMAP 播种时的臆想
+      产物，前提修正为"分支漂移直接写回卷 + 各卷加'2026-07 升级分支收编'节"；
+      分支 vs 基点 164 文件变更，结构性漂移映射完毕，卷合计仅 3571 行可控）：
+  - [ ] P4.1a 基建域：repo-infra / tests / atlas-README——packaging（pyproject/extras/
+        锁 83 包）、四常驻门（lint/type/layering/fast-tier）、双跑脚本、套件 1245→1268、
+        cli+_version 入口
+  - [ ] P4.1b 架构域：pipelines（run_stack_3d 156 行编排器+五阶段+四数据类）/
+        controllers（PEP 562 惰性）/ core-domain（envelope 权威+_post_solve_gate_3d）/
+        optimization（BO 预算+契约测试）
+  - [ ] P4.1c 外围域：ui-core（run_results mixin+polygon_calc 迁入）/ runs（tools 三件+
+        polygon_calc 迁出）/ solvers 卷小修（threads advisory/tpms_geometry 拷贝语义/
+        chi_s 每调用读取）/ PROJECT_MANUAL §6 对齐
+      （HANDOFF 卷单列 P4.4 不并入；各轮 docs-only 门）
 - [ ] P4.2 README / 手册数字口径复核（1.71/1.73 类问题的当前状态确认）
 - [ ] P4.3 CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）
 - [ ] P4.4 HANDOFF-windows-server.md 刷新——已确认过时处：§1 整节（max_outer + 压力字面量，

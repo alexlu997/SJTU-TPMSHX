@@ -2,6 +2,18 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 33 · 2026-07-20 · P4.1 atlas 盘点 ✅（docs-only，前提修正）——Phase 4 开张
+
+- **前提坍塌（第二例，处置同 P2.3）**：ROADMAP 所称 DRIFT.md 全库不存在——播种时臆想
+  产物，漂移只活在提交信息/PROGRESS 里。章程修正：不造间接层，直接写回卷
+- 盘点：分支 vs 基点 4b32da4 共 164 文件变更；结构性漂移 = 新文件 15（pyproject/cli/
+  _version/run_results/五守卫测试/三工具/双脚本等）+ 结构性改动（run_stack_3d 拆分、
+  controllers 惰性、evaluators 权威、threads advisory、geometry 拷贝语义）
+- 受影响卷映射（合计 3571 行，可控）：三域三轮——P4.1a 基建（repo-infra/tests/README）、
+  P4.1b 架构（pipelines/controllers/core-domain/optimization）、P4.1c 外围
+  （ui-core/runs/solvers 小修/PROJECT_MANUAL §6）；HANDOFF 单列 P4.4
+- 下一步：P4.1a
+
 ## iter 32 · 2026-07-20 · P3.3 BO 核预算 ✅（`e233460`）——**Phase 3 收官**
 
 - _resolve_core_budget 提取：钳制 [1, cpu_count] + 来源标签四态；并行启动一行 INFO
