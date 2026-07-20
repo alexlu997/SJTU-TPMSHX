@@ -167,3 +167,11 @@
   （domain/compute_config.py docstring）已补录 `TPMSHX_BO_CORE_BUDGET`。
 - 本卷「线程超订」段指出的 parallel_runner BLAS 钳制时序缺陷（codex 2026-07-12）**仍未修**
   ——分支只动了 lint 级；该缺陷与 numba 主热点不相干故低优先，留待 Phase 5 性能纵深候选。
+- **D2 已决边界（Alex 2026-07-20，iter 41 文档化）**：2D **评估器**无解后 Mach/正压门——
+  依预解 choke raise（O1 关闭）+ dp_cap 病态兜底；这是有意现状（cheap-screening 排名用途），
+  非缺陷。注意 2D **管线**（solve_2d）自 2026-06-25 起有与 3D 同款的解后门——D2 原条目
+  "2D 管线从未有过"系台账过时表述，已在 DECISIONS-NEEDED 修正。
+- **D3(c) 已执行（iter 41）**：2D 评估器双侧 SIMPLESolver 补显式 `rho_inlet_ref=ρ(T_in,P_in)`
+  ——语义加固，实测冻结值位同（2D 捕获回退本就发生在压力场建立前 = 物理密度）；
+  3D 捕获机理不同（首解后、出口基准），G 亏 19.3% 仍真实 → 候选 A2。
+  契约测试更名 `test_g_reference_density_convention_post_d3c`。

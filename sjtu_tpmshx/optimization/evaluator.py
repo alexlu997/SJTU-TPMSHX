@@ -332,6 +332,13 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
         P_ref_abs=P_ref_outA,
+        # D3(c) 2026-07-20: pin the PHYSICAL inlet mass flux G = rho(T_in,
+        # P_in)·u, matching this evaluator's own production pipeline
+        # (stages_2d passes the same reference). Without it the massflux
+        # inlet captured the first-solve outlet-datum density and
+        # under-drove G by P_out_seed/P_in (measured 7.4% at the frozen
+        # point). 3D deliberately unchanged — candidate A2.
+        rho_inlet_ref=rho_A,
     )
 
     # Push spatially-graded ε into SIMPLE's macroscopic continuity
@@ -405,6 +412,8 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
         outlet_lo=out_lo, outlet_hi=out_hi,
         wall_refine=False,
         P_ref_abs=P_ref_outB,
+        # D3(c) 2026-07-20: physical G reference — see _build_simple_A.
+        rho_inlet_ref=rho_B,
     )
 
     if 'eps_arr' in arrays:

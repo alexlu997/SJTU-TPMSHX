@@ -105,16 +105,20 @@ def test_2d_choke_policy_evaluator_raises_pipeline_clips():
         "2D pipeline lost its envelope seed authority")
 
 
-def test_g_reference_density_divergence_pending_D3():
-    """KNOWN DIVERGENCE, direction reserved (upgrade/DECISIONS-NEEDED.md D3):
-    the 2D pipeline pins the PHYSICAL inlet mass flux via an explicit
-    rho_inlet_ref = rho(T_in, P_in); the 3D solver has no such knob (first-
-    solve capture at the outlet-datum density, under-driving G by
-    P_out_seed/P_in — measured 7.4%/19.3% at the frozen points) and neither
-    evaluator passes one. gamma_df calibration partially absorbs this.
+def test_g_reference_density_convention_post_d3c():
+    """G-reference convention after D3(c) (Alex 2026-07-20, upgrade/
+    DECISIONS-NEEDED.md D3): per-dimension INTERNAL consistency.
 
-    This test pins the CURRENT state so that whichever way D3 goes, the
-    change trips here and gets recorded consciously."""
+    2D: BOTH the pipeline (stages_2d) and the evaluator now pin the physical
+    inlet mass flux via an explicit rho_inlet_ref = rho(T_in, P_in) — the
+    evaluator was aligned in iter 41 (frozen 2D values re-baselined with it).
+
+    3D: DELIBERATELY unchanged — the solver still first-solve-captures the
+    outlet-datum density (G under-driven by P_out_seed/P_in, ~19.3% at the
+    frozen point, partially absorbed by gamma_df). Unifying 3D onto the
+    physical G is the candidate-A2 investigation (golden_3d re-baseline +
+    Shanghai re-validation + gamma re-anchor assessment are prerequisites);
+    these assertions keep that door consciously guarded."""
     import core.evaluators as ev3d
     import optimization.evaluator as ev2d
     import pipelines.stages_2d as st2d
@@ -122,13 +126,14 @@ def test_g_reference_density_divergence_pending_D3():
 
     assert 'rho_inlet_ref' in inspect.getsource(st2d), (
         "2D pipeline stopped passing rho_inlet_ref — the C8-era ratchet "
-        "guard is gone; that is a regression, not a D3 resolution")
-    assert 'rho_inlet_ref' not in inspect.getsource(ev2d), (
-        "2D evaluator now passes rho_inlet_ref — D3 option (a)/(c) executed? "
-        "Update this contract + frozen values + DECISIONS D3 together")
+        "guard is gone; that is a regression, not a D3 change")
+    assert 'rho_inlet_ref' in inspect.getsource(ev2d), (
+        "2D evaluator stopped passing rho_inlet_ref — D3(c) alignment "
+        "regressed; frozen values were re-baselined WITH it (iter 41)")
     assert 'rho_inlet_ref' not in inspect.getsource(ev3d), (
-        "3D evaluator G convention changed — D3 resolution? Update contract")
+        "3D evaluator G convention changed — candidate A2 executed? "
+        "Update contract + golden_3d + Shanghai validation together")
     assert 'rho_inlet_ref' not in inspect.signature(
         SIMPLESolver3D.__init__).parameters, (
-        "SIMPLESolver3D grew a rho_inlet_ref knob — D3 option (a) executed? "
+        "SIMPLESolver3D grew a rho_inlet_ref knob — candidate A2 executed? "
         "golden_3d + Shanghai headline re-validation are prerequisites")
