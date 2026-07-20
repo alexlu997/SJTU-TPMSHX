@@ -58,6 +58,14 @@ python -u sjtu_tpmshx/runs/_out/_golden_2d.py --check golden_2d.json   # → GOL
 python -m ruff check sjtu_tpmshx     # config: pyproject [tool.ruff]（F+E9 最小集）
 ```
 
+## 2a2. Type gate (P2.2 — runs inside the suite via test_type_gate)
+
+```bash
+cd sjtu_tpmshx && python -m mypy @../mypy-core-files.txt --config-file ../pyproject.toml
+```
+
+核心面清单 = 仓库根 `mypy-core-files.txt`；扩圈 = 加文件并同 commit 清零。
+
 ## 2b. Import-layering gate (P1.9 — runs inside the suite via test_import_layering)
 
 ```bash

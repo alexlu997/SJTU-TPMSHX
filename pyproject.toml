@@ -40,7 +40,7 @@ dependencies = [
 gui = ["PySide6>=6.7", "pyvista>=0.45", "pyvistaqt>=0.11"]
 bo = ["torch>=2.2", "botorch>=0.10", "gpytorch>=1.11"]
 test = ["pytest>=8.0", "pytest-xdist>=3.5"]
-dev = ["ruff>=0.15"]
+dev = ["ruff>=0.15", "mypy>=2.0"]
 
 [project.scripts]
 tpmshx-run = "sjtu_tpmshx.cli:main"
@@ -69,6 +69,17 @@ select = ["F", "E9"]
 # 经它再导出，下游 design/tests/ui 穿透引用——首轮 autofix 铲掉整块导致
 # tests/design 收集崩（iter 22 实测），F401 永久豁免
 "sjtu_tpmshx/solvers/tpms_calc.py" = ["F401"]
+
+[tool.mypy]
+# P2.2（2026-07-21）：宽松档，只锁"核心公共面"——envelope 权威、compute_pipeline
+# 接缝、domain 配置/结果、CLI。运行方式（与顶层导入约定一致）：
+#   cd sjtu_tpmshx && ..\.venv\Scripts\python.exe -m mypy @../mypy-core-files.txt
+# 文件清单在 mypy-core-files.txt；扩圈 = 往清单加文件并清零（后续波次）。
+python_version = "3.11"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+no_implicit_optional = true
 
 [tool.setuptools.dynamic]
 version = { attr = "sjtu_tpmshx._version.__version__" }

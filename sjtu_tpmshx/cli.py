@@ -59,6 +59,7 @@ def main(argv=None) -> int:
     diag = result.diagnostics or {}
     ok = bool(diag.get('envelope_valid', True)) and bool(
         (diag.get('convergence_detail') or {}).get('outer_converged', True))
+    warnings_list: list = list(getattr(result, 'warnings', []) or [])
     summary = {
         'Q_W': getattr(result, 'Q_W', None),
         'dP_A_Pa': getattr(result, 'dP_A_Pa', None),
@@ -66,7 +67,7 @@ def main(argv=None) -> int:
         'envelope_valid': diag.get('envelope_valid'),
         'outer_converged': (diag.get('convergence_detail') or {}
                             ).get('outer_converged'),
-        'warnings': list(getattr(result, 'warnings', []) or []),
+        'warnings': warnings_list,
     }
     if args.as_json:
         print(json.dumps(summary, ensure_ascii=False, default=str))
@@ -75,7 +76,7 @@ def main(argv=None) -> int:
         print(f"dP_A = {summary['dP_A_Pa']} Pa   dP_B = {summary['dP_B_Pa']} Pa")
         print(f"envelope_valid = {summary['envelope_valid']}   "
               f"outer_converged = {summary['outer_converged']}")
-        for w in summary['warnings']:
+        for w in warnings_list:
             print(f"warning: {w}")
     return 0 if ok else 2
 
