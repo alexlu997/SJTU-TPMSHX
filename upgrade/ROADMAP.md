@@ -72,7 +72,11 @@
 
 - [x] P2.0 数据类化（`d0238e6`，iter 21——**§10 委托首战成功**：Sonnet 执行/Fable 复核签发）；
       文件级迁移（五阶段函数 → run_stack_3d_stages.py）并入 P1.8b 波次一起做（同属大搬迁）
-- [ ] P2.1 ruff format + lint 引入（配置从宽起步；机械 diff 独立 commit，绝不与语义改动混提交）
+- [x] P2.1 ruff lint 引入（`121413d` 机械波 + `6e65487` 语义波，iter 22）：F+E9 清零、
+      三真雷（QInputDialog/coord_inspector/_直跑块）、门面豁免两教训、lint 门常驻
+- [ ] P2.1b F841 人审波（67 处未用变量逐案：删/改 _/留档说明——判断型，Fable 直做或分批委托）
+- [ ] P2.1c ruff format 评估（行号腐蚀 atlas 引用 + 源码标记测试断言——先盘点受影响面
+      再决定做不做/怎么做，可能与 P4.1 atlas 收编同轮）
 - [ ] P2.2 核心公共面类型注解（solvers/pipelines 对外 API）+ mypy 宽松档
 - [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、
       runs/archive/ 标注 frozen；删除类处置先过 DECISIONS-NEEDED
