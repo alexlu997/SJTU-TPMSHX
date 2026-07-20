@@ -2,6 +2,19 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 26 · 2026-07-20 · P2.3 死代码处置 ✅（盘点轮，docs-only，零处置）
+
+- 命名靶标现场核实全部"活"：zone_config（104 引用/17 文件，ZoneInputConfig 是 2D 计算路径
+  活数据结构）、zone_table（87 引用/8 文件，UI Define-zones 全套）——头注"DEPRECATED for
+  optimizer use"语义准确，无需动；runs/archive frozen 声明 P1.7 已备
+- 全库孤儿扫描（自写只读探针，165 库模块）：16 未导入者中 13 为入口脚本（正常），
+  3 个模块嫌疑逐一复核全为**相对导入误报**（探针正则不识 `from .X import`）：
+  _kernels_ltne_3d(1178 行) ← ltne_energy_3d:322；builders_sidebar ← builders_canvas:19；
+  skeleton ← builders_canvas:1079（函数内惰性导入）。**0 真孤儿，0 删除候选，未立 D 条目**
+- 方法论记录：未来孤儿检查挂 audit_import_graph 的真导入图做（正确处理相对/惰性导入），
+  正则探针只配当一次性初筛；细粒度死代码（死名/死导入）已由 ruff F 门持续执法
+- 下一步：P2.4 异常与日志策略（先盘点分类）
+
 ## iter 25 · 2026-07-20 · P2.1c ruff format 评估 ✅（纯评估轮，docs-only）
 
 - **裁决：不做全库 format（本分支阶段性关闭）**。全部探测只读（--check/--diff），零代码改动

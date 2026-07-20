@@ -85,8 +85,14 @@
       F+E9 管真错误，排版跟随周边风格（CLAUDE.md 约定）。
 - [x] P2.2 mypy 宽松档核心面门（`464076d`，iter 24）：七文件圈（envelope/compute_pipeline/
       domain 配置结果/configs/_version/cli）清零 + test_type_gate 常驻；扩圈 = 加清单同 commit 清零
-- [ ] P2.3 死代码处置：`solvers/zone_config.py`、`ui/zone_table.py`（已标 DEPRECATED）、
-      runs/archive/ 标注 frozen；删除类处置先过 DECISIONS-NEEDED
+- [x] P2.3 死代码处置（iter 26，盘点轮）：**零处置需要，未立 D 条目**。
+      zone_config 104 引用/17 文件、zone_table 87 引用/8 文件——"DEPRECATED"仅指优化器路径，
+      UI Define-zones 标签页全活，头注已准确；runs/archive README 的 frozen+死路径声明
+      P1.7 已备。全库孤儿模块扫描（165 个库模块）：3 个嫌疑全为相对导入误报
+      （_kernels_ltne_3d ← ltne_energy_3d:322、builders_sidebar/skeleton ← builders_canvas），
+      **0 真孤儿**；13 个未被导入者均为 V&V/构建入口脚本（正常）。细粒度死代码由
+      ruff F 门持续执法。未来孤儿检查应挂 audit_import_graph（真图，正确处理相对导入），
+      不用正则探针。
 - [ ] P2.4 异常与日志策略统一（logutil 已有基础；清点裸 except / print / 静默 fallback——
       P0.3 的同族问题全库扫一遍）
 - [ ] P2.5 GUI 巨物减脂：main.py 13-mixin、ui/mixins/run_controller.py 1213 行

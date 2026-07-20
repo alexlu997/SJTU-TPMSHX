@@ -1,7 +1,7 @@
 # 循环状态（STATE）
 
-- iteration: 25
-- next: P2.3（死代码处置：zone_config/zone_table 已标 DEPRECATED、runs/archive 标 frozen；删除类动作先过 DECISIONS-NEEDED——本轮预期先盘点引用面，删除项立 D 条目、标注项直接做）
+- iteration: 26
+- next: P2.4（异常与日志策略统一：清点裸 except / print / 静默 fallback——P0.3 同族问题全库扫；先盘点分类，改动按批次过全门）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`
