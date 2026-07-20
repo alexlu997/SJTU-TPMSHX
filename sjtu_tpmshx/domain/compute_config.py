@@ -94,6 +94,10 @@ but were missing above:
   many-core box + grid ≥ TPMSHX_PARALLEL_THRESHOLD → one-shot advisory log
   recommends ``recommend_solver_threads()`` (≈ min(64, physical cores);
   bandwidth-bound kernels; P3.2 — advisory only, pool never auto-changed).
+- ``TPMSHX_BO_CORE_BUDGET`` (unset → whole machine) — this BO process's
+  core share for the joblib workers×inner split; multi-arm launchers set
+  it per arm (``optimization/optimizer_qnehvi.py::_resolve_core_budget``,
+  engage-time INFO logs the resolved split).
 - ``TPMSHX_SCO2_COMPRESSIBLE`` (0, experimental) — opt-in sCO2
   compressible path; ``pipelines/run_stack_3d.py``.
 - ``TPMSHX_MAX_CELLS_3D`` (2000000) — hard 3D cell cap;
