@@ -2,6 +2,16 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 32 · 2026-07-20 · P3.3 BO 核预算 ✅（`e233460`）——**Phase 3 收官**
+
+- _resolve_core_budget 提取：钳制 [1, cpu_count] + 来源标签四态；并行启动一行 INFO
+  （workers × inner × 预算来源）——多臂并发（port_retest 四臂类）从此可审计
+- 默认/合法路径行为逐字节不变；唯一语义变化 = 超机预算钳制（堵 07-11 超订 bug 残留口）；
+  env 索引补录 TPMSHX_BO_CORE_BUDGET（此前缺失）
+- 测试 +7（解析矩阵全分支，helpers 19 绿）；门禁 1268+4skip / 10 绿（10:45）、golden 位同
+- **Phase 3 完**（fast-tier 20×、线程建议、BO 预算——三项全数落地，iter 30–32 三轮）
+- 下一步：P4.1 atlas 漂移收编（先盘点 DRIFT 存量 + 升级分支自身新漂移）
+
 ## iter 31 · 2026-07-20 · P3.2 线程建议 ✅（`547b7d0`）
 
 - recommend_solver_threads（min(64, 逻辑核/2, 池上限)；本机 64/128）+ warn_if_default_pool

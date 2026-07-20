@@ -1,8 +1,9 @@
 # 循环状态（STATE）
 
-- iteration: 31
-- next: P3.3（BO core budget 工具化：TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics——
-  先现场核实该机制现状与消费点再定形；预期小轮）
+- iteration: 32 ——**Phase 3 全部完成**（P3.1–P3.3，iter 30–32）
+- next: P4.1（atlas 漂移收编：DRIFT.md 累计条目写回受影响卷 + PROJECT_MANUAL §6 对齐
+  新结构——先盘点 DRIFT 存量与升级分支自身造成的新漂移（P1.5/P2.0 拆分、P2.5a、
+  cli/_version 新文件等），大概率多轮；docs-only 门）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

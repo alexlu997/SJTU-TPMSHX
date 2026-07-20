@@ -121,7 +121,9 @@
 - [x] P3.2 大网格线程建议（`547b7d0`，iter 31）：recommend_solver_threads +
       并行分派点一次性 advisory（三静默分支；**池零自动改动**——prange 归约序无门保护，
       设计约束写死）；测试 +3；logutil tpmshx. 前缀教训入档
-- [ ] P3.3 BO core budget 工具化（TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics）
+- [x] P3.3 BO 核预算工具化（`e233460`，iter 32）：_resolve_core_budget 钳制 [1,cpu]+
+      来源标签+启动 INFO（多臂可审计）；超机预算钳制（堵超订残留口）；env 索引补录；
+      测试 +7——**Phase 3 完**
 
 ## Phase 4 — 文档与交付
 
