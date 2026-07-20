@@ -2,6 +2,17 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 31 · 2026-07-20 · P3.2 线程建议 ✅（`547b7d0`）
+
+- recommend_solver_threads（min(64, 逻辑核/2, 池上限)；本机 64/128）+ warn_if_default_pool
+  一次性建议，挂 simple_solver_3d 并行分派真分支；三静默分支（env 已设/GUI 已调低/小机器）
+- 设计约束写死：**绝不自动改池**——prange 归约序变更位移且生产网格无 golden 覆盖，
+  advisory-only；不变量护栏两审零物理接触
+- 测试 +3（1258→1261）；教训入档：logutil 挂 `tpmshx.` 前缀根且 propagate=False，
+  caplog 失明 → 直挂模块 logger；快档 dogfood 首战 45s 抓获开发中真失败
+- 门禁：1261+4skip / 10 绿（10:32，空载快跑）、golden 位同
+- 下一步：P3.3 BO 预算 ergonomics（先现场核实）
+
 ## iter 30 · 2026-07-20 · P3.1 fast-tier ✅（`53431bb`）——Phase 3 开张
 
 - census 轮（--durations=0 镜像服务器环境，双 pass）：265 计时测点 / 4620s 计算量；

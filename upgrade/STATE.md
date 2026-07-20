@@ -1,8 +1,8 @@
 # 循环状态（STATE）
 
-- iteration: 30
-- next: P3.2（大网格线程默认值：TPMSHX_NUM_THREADS 探测式建议——≤64 / 单 socket / 带宽
-  瓶颈提示 + 文档；注意套件测试网格全 < 200k 阈值不受影响，这是生产大网格 ergonomics）
+- iteration: 31
+- next: P3.3（BO core budget 工具化：TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics——
+  先现场核实该机制现状与消费点再定形；预期小轮）
 - in_progress: 无
 - armed_at: 2026-07-19（job d7888157；>5 天须按 PROTOCOL §8 重建；Alex 当日把节奏 25 分钟 → 15 分钟）
 - cron_spec: `7,22,37,52 * * * *`

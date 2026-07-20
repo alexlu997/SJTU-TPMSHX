@@ -118,7 +118,9 @@
       （1.7%）承载 89% 计算量；manifest+conftest 动态 heavy 标（零测试文件改动）+
       run_tests_fast.ps1 实测 **56s vs 全量 19min（20×）**；slow 语义未碰；
       红线三处写死：快档绿 ≠ 过门
-- [ ] P3.2 大网格线程默认值：TPMSHX_NUM_THREADS 探测式建议（≤64 / 单 socket / 带宽瓶颈提示）+ 文档
+- [x] P3.2 大网格线程建议（`547b7d0`，iter 31）：recommend_solver_threads +
+      并行分派点一次性 advisory（三静默分支；**池零自动改动**——prange 归约序无门保护，
+      设计约束写死）；测试 +3；logutil tpmshx. 前缀教训入档
 - [ ] P3.3 BO core budget 工具化（TPMSHX_BO_CORE_BUDGET 既有机制的 ergonomics）
 
 ## Phase 4 — 文档与交付
