@@ -2,6 +2,21 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 38 · 2026-07-20 · P4.3 CI 增强 ✅（`f6b6a5a`）——评估变抓虫
+
+- **发现真缺陷**：test_lint_gate/test_type_gate 是无 skip 守卫的 subprocess 调用（有意——
+  门不许静默消失），而现行 ci.yml 不装 ruff/mypy → **分支合并 master 后 CI 必红**。
+  这把 P4.3 从"可选增强评估"升格为"必修"
+- 修复即增强：install 行 +ruff+mypy（CI 从此真执法 lint/type/layering 三静态门）；
+  选择表达式 `not slow` → `not slow and not heavy`（剔 21 个最重 3D 积分测试——CI 定位
+  smoke/静态层，物理回归归本地全量门，ULP 钉定 CI=true 本就跳过）
+- 验证：manifest nodeid 平台中立性核过（conftest basename 归一）；slow∩heavy 重叠恰 3 文件；
+  本地收集 1223/1282（59 反选）、三门测试在子集内。**改动只入库不推送**（红线），
+  Alex 合并后 CI 生效
+- 插曲：轮中 Alex 暂停 loop（定时器 ef9566f6 删除），恢复时重建为 c87569d6；
+  半截工作树跨暂停无损收尾
+- 下一步：P4.4 HANDOFF 刷新（Phase 4 最后一项）
+
 ## iter 37 · 2026-07-20 · P4.2 数字口径复核 ✅（`978c066`）+ §8 定时器重建
 
 - **复核结论：headline 数字零漂移**——README/PROJECT_MANUAL 的 1.73/≈10/≈3/4.88/2.12/

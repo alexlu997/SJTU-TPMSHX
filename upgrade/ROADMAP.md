@@ -144,7 +144,10 @@
 - [x] P4.2 README/手册数字口径复核（`978c066`，iter 37）：**数字零漂移**——全部 headline
       （1.73/≈10/≈3/4.88/2.12/8.62/2.49/p_obs≥2.07）与 BASELINE 实测一致；修正的是
       平台行（+Server 2022）与测试命令区（服务器双跑脚本+56s 快档入 README/手册）
-- [ ] P4.3 CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性（重测试仍本地）
+- [x] P4.3 CI 增强（`f6b6a5a`，iter 38）：**评估变抓虫**——lint/type 门测试无 skip 守卫，
+      现行 CI 未装 ruff/mypy，合并后必红；install 补装即修且 CI 从此真执法三静态门；
+      "not heavy" 剔 21 重测试（CI=smoke/静态层定位，物理回归归本地全量门）；
+      选择表达式本地验证 1223/59 反选；只入库不推送
 - [ ] P4.4 HANDOFF-windows-server.md 刷新——已确认过时处：§1 整节（max_outer + 压力字面量，
       已修已锁，iter 7 证据）、§2a 预解 choke（aa3f477 已加 raise→罚值）、§3a 热重播种地板
       （aa3f477 已改严格 NaN）；其余节随 P1 推进逐条核实后改写

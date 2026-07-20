@@ -1,13 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 37
-- next: P4.3（CI 增强评估：lint + fast-tier 上 GitHub Actions 的可行性——重测试仍本地；
-  评估轮：读现 ci.yml，判断 ruff/mypy/import-layering/fast-tier 四门哪些能在 ubuntu CI 跑
-  （注意 heavy manifest 的 nodeid 平台无关性、CI=true 对 ULP 钉定的既有 skip 语义）；
-  产出改 ci.yml 的方案或"不改"裁决——**改 ci.yml 本身不触发本地门**（CI 配置不在套件疆域），
-  但方案若含 workflow 文件改动需注意绝不 push 红线：改动只入库不推送，Alex 合并后才生效）
+- iteration: 38
+- next: P4.4（HANDOFF-windows-server.md 刷新：已确认过时处——§1 整节（max_outer + 压力
+  字面量，iter 7 证据"上游均已修复"）、§2a 预解 choke（aa3f477 已加 raise→罚值）、
+  §3a 热重播种地板（aa3f477 已改严格 NaN）；其余节逐条核实后改写；另核 AGENTS.md
+  过期路径是否同步（P4.1a 收编节留的尾巴）；docs-only，完成后 Phase 4 收官 → 收尾轮）
 - in_progress: 无
-- armed_at: 2026-07-20（job ef9566f6，iter 37 重建；>5 天须按 PROTOCOL §8 重建 → 下个窗口 2026-07-25 前）
+- armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
 
