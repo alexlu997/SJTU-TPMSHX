@@ -2,6 +2,24 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 43 · 2026-07-21 · P1.8b W0 身份垫片 ✅——**双风格同对象，迁移从此顺序无关**（`88b63e9`）
+
+- Alex 拍板"启动 P1.8b"。W0 = openspec 三件套 + 身份垫片 + venv editable
+- **垫片核心**：新建 `sjtu_tpmshx/__init__.py`（原 namespace 包）——自举 + 前插
+  meta-path finder，`sjtu_tpmshx.X` 与顶层 `X` 解析为同一模块对象 ⇒ 双风格混用
+  无法再产生双状态（warn 注册表/logutil logger/缓存），W1..Wn 任意顺序任意粒度安全
+- 实现抓到两个 CPython 实测坑：① reload 后类对象换新使 isinstance 判重失效 → finder
+  装双份（改类属性标记判重）；② import 机制在 create/exec 之间把被别名模块的
+  `__spec__` 改绑为包名 spec（`reload(solvers)` 会静默降级 no-op）→ exec_module 恢复
+- 身份测试 7/7；editable 后**包外任意 cwd 也拿到同一对象**（新能力）；pip check 净
+- **门史（一红一假红，均已记档）**：首轮红 = mypy "found twice"（新 __init__ 使上溯
+  出双模块名，静态世界的双风格问题）→ `explicit_package_bases = true`（cwd 基底位同
+  语义）；重跑套件绿但 golden 步骤路径误写 validation/（正确 runs/_out/）→ 单步补跑
+  **PASS 位同**；补跑 exit 1 系 **PS 5.1 stderr 包装假红**（求解器日志走 stderr 被
+  2>&1 包成 ErrorRecord），以判定行为准——环境备忘新坑
+- 门证据：套件 **1275+4skip（18:57）/ 10 绿**（+7 = 身份测试）+ golden **位同 PASS**
+- 下一步：W1 tests/ 73 文件迁移（§10 委托子代理 + 复核）
+
 ## iter 42 · 2026-07-21 · P1.3/P1.5 关账 ✅——**前提修正：#4 早已落地，零代码**（docs-only）
 
 - Alex 批准原建议（"补做 #4 警告注册表 + 关账"），开工核实即推翻前提：**#4 已于
