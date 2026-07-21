@@ -1,10 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 50 ——**A2 调查即关闭（`ff99e92`，前提证伪，零求解器改动），next=C**
-- next: **C = 性能纵深**（Alex 已拍板）。首项 = parallel_runner BLAS 上限计时缺陷
-  （FINAL-REPORT 候选池 C / HANDOFF §6 部分解遗留）。第一轮 = 现场核实缺陷现状
-  （HANDOFF 表述 vs 代码）+ 复现测量 + 修复或裁决。后续 C 项按 profile 先行纪律
-- in_progress: 无（iter 50 已收）
+- iteration: 51 ——**C-1 线程钳制时序修复毕（`6fc752b`，全门绿+golden 位同），HANDOFF §6b 闭案**
+- next: **C-2 = 候选 C 余项盘点轮**（性能纵深还有什么值得做：以 P3.1 census 的
+  durations 谱 + benchmarks/profiling 基建为底，按"profile 先行、禁拍脑袋"纪律
+  列候选与量级预估，产出=盘点报告+建议排序，交 Alex 拍板；无明显标的则 C 收官回待命）
+- in_progress: 无（iter 51 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`

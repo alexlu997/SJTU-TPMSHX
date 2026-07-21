@@ -2,6 +2,21 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 51 · 2026-07-21 · C-1 线程钳制时序修复 ✅——**HANDOFF §6b 闭案 + 一次孤儿进程事故**（`6fc752b`）
+
+- 现场核实缺陷比记载深一层：spawn 反序列化 worker 必先 import 模块（顶层 numpy）
+  → OpenBLAS 库加载即读环境 ⇒ **函数体内钳制结构性恒迟到**；清单漏 NUMBA_NUM_THREADS；
+  setdefault 输给外泄 shell 变量
+- 修复三件：轻量叶模块 `_thread_caps.py`（仅 os）任 executor initializer（反序列化
+  只拉轻模块，钳制先于 numpy/numba）；补 NUMBA + 硬设 + TPMSHX_WORKER_THREADS 逃生阀；
+  时序契约测试 4 断言（真 spawn 池实证 pre=0/blas=1/numba=1）
+- **事故记档**：首发门命令 bash 内 `&` 二次分离 → bash 退出撕裂管道 → **197 孤儿
+  xdist worker**（日志冻结）→ 按 venv 路径过滤精准清场归零。教训：后台门整命令交
+  run_in_background，禁 shell 内二次分离
+- 门证据（干净重发）：套件 **1276+4skip（11:28）/ 10 绿**（+4=新时序测试）+
+  **GOLDEN: PASS (bit-identical)**；HANDOFF §6 改已解 + atlas 注记
+- 下一步：候选 C 余项盘点（profile 先行纪律）或待 Alex 排新优先级
+
 ## iter 50 · 2026-07-21 · A2 调查即关闭 ✅——**动机亏空三重证伪，D3 剧本 3D 重演**（`ff99e92`）
 
 - Alex 拍板启动 A2（+C 随后）。按台账纪律先查 vault 台账——**C10 与 D3 前提正面冲突**
