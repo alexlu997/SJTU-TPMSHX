@@ -2,6 +2,20 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 47 · 2026-07-21 · P1.8b W_final-F1 库内改写 ✅——**最大单波 78 文件纯替换**（`d672eba`）
+
+- Sonnet 委托：**AST 列级改写**（ast 定位 import 节点字符列纯文本插入——三波行尾
+  教训的方法终态，339+/339- 零搅动）；Fable 复核零越界 + type gate 风险探针
+- 覆盖库内 8 目录 + tests/design 15 余量清账；相对导入不动；零行为变化（垫片在位）
+- cli.py / main.py **有据整体跳过**：双约定引导块 + 裸启动双模式支持，是 F2 撤垫片的
+  正题而非本波机械范围——代理判断准确未扩权
+- 分析器免修：audit_import_graph 本就剥前缀双约定兼容（文档串明写），layering/dag
+  前后 0 违规一致；我预判的 mypy found-twice 实测未发生
+- 门证据：套件 **1275+4skip（19:13）/ 10 绿** + **GOLDEN: PASS (bit-identical)** +
+  ruff 全包 + tpmshx-run exit 0
+- 下一步：**F2 撤垫片收官**（全库残留零核对 → 撤 finder/自举 → __init__ 瘦身 →
+  cli/main 双约定改造 → 身份测试改撤除断言 → mypy 基底换仓库根 → pyproject/atlas 收尾）
+
 ## iter 46 · 2026-07-21 · P1.8b W3 runs+ui ✅——**golden 门脚本自迁自证**（`1f0e689`）
 
 - Sonnet 委托 + Fable 复核；runs/ 31 + ui/demo_vis_3d，净 -61 行；archive/ 冻结区零 diff

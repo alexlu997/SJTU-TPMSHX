@@ -34,9 +34,15 @@
       AST 遍历残留双保险全零；自伤 1（孤儿 import，被套件内 lint 门实战拦截）
 - [x] 门禁：套件 1275+4skip / 10 绿（18:52）+ GOLDEN PASS 位同（=迁移后门脚本自跑）
 
-## W_final · 库内改写 + 撤垫片
-- [ ] 库内 165 模块 `from solvers...` 等 → `from sjtu_tpmshx....`（子代理分批）
-- [ ] 撤 _IdentityFinder 与自举；`__init__.py` 瘦身为普通包 init
+## W_final-F1 · 库内改写（iter 47 ✓，`d672eba`——78 文件 339 行纯替换）
+- [x] AST 列级改写（方法终态：ast 节点列定位+纯插入）；相对导入不动；design 余量清账；
+      cli.py/main.py 双约定支持件有据跳过 → F2 正题；分析器本就双约定兼容免修
+- [x] 门禁：套件 1275+4skip / 10 绿（19:13）+ GOLDEN PASS 位同 + type gate 绿
+      （预判 found-twice 未发生）
+
+## W_final-F2 · 撤垫片收官
+- [ ] 全库双风格残留 grep 零核对 → 撤 _IdentityFinder 与自举；`__init__.py` 瘦身为普通包 init
+- [ ] cli.py/main.py 双约定引导块改造（撤垫片后包名风格为唯一约定）
 - [ ] P1.5 尾巴并入：run_stack_3d 五阶段函数 → `run_stack_3d_stages.py`（保 re-export 面）
 - [ ] pyproject 头注收尾；atlas repo-infra / pipelines 卷收编注记
 - [ ] 全库 grep：双风格残留零、sys.path 引导仅存钦定白名单（若有）

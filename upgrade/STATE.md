@@ -1,12 +1,14 @@
 # 循环状态（STATE）
 
-- iteration: 46 ——**P1.8b W3 毕（`1f0e689`，32 文件，全门绿+golden 位同），仅剩 W_final**
-- next: **P1.8b W_final**（库内 165 模块顶层→包名改写 + 撤垫片 + tests/design 15 文件
-  余量 + P1.5 尾巴〔五阶段函数迁 run_stack_3d_stages.py〕+ mypy 基底换仓库根 +
-  pyproject/atlas 注记收尾）。**量级最大，建议拆两轮**：F1=库内改写+design 余量
-  （垫片在位保安全）；F2=撤垫片+尾巴+文档（须全库双风格残留 grep 零后才撤）。
-  波门同前 + F2 加"身份测试改撤除断言"
-- in_progress: 无（iter 46 已收）
+- iteration: 47 ——**P1.8b F1 毕（`d672eba`，78 文件，全门绿+golden 位同），仅剩 F2 撤垫片**
+- next: **P1.8b W_final-F2 撤垫片收官**：①全库双风格残留 grep 零核对（cli/main 两跳过件
+  先改造：引导块删除+局部导入前缀化+裸启动语义决策〔`python main.py` 或死或文档化为
+  `-m` 唯一〕）；②撤 _IdentityFinder+自举，__init__ 瘦身；③身份测试改"垫片已撤"断言；
+  ④mypy explicit_package_bases 基底换仓库根（type gate cwd 改 _REPO）；⑤P1.5 尾巴
+  （五阶段函数迁 run_stack_3d_stages.py，保 re-export）评估——若量大另拆一轮；
+  ⑥pyproject 头注收尾+atlas repo-infra/pipelines 注记。**F2 是全波次风险最高轮**
+  （撤垫片后 __module__/pickle/缓存键第一次真正走包名），Fable 直做不委托
+- in_progress: 无（iter 47 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
