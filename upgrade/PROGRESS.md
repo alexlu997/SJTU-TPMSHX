@@ -2,6 +2,17 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 46 · 2026-07-21 · P1.8b W3 runs+ui ✅——**golden 门脚本自迁自证**（`1f0e689`）
+
+- Sonnet 委托 + Fable 复核；runs/ 31 + ui/demo_vis_3d，净 -61 行；archive/ 冻结区零 diff
+- **golden 门脚本本体随波迁移**（_golden_3d/_golden_2d：守卫核实 import 零副作用），
+  波门 golden 实跑 = 迁移后门脚本自身冒烟 → **GOLDEN: PASS (bit-identical)**
+- 零逃生舱（本波引导块全数干净可删）；9 文件零改动有据；AST 遍历双保险残留全零
+- 自伤 1 处：孤儿 Path import 被**套件内 lint 门**抓获——常驻门在委托流程的首次实战拦截
+- 门证据：套件 **1275+4skip（18:52）/ 10 绿** + ruff 全包 + 身份/wiring 组
+- 下一步：**W_final**（库内 165 模块改写 + 撤垫片 + design 余量 + P1.5 尾巴）——
+  P1.8b 最后一波，量级最大，或需拆两轮（改写轮 + 撤垫片轮）
+
 ## iter 45 · 2026-07-21 · P1.8b W2 validation+df_surrogate ✅——**headline 位同直跑冒烟过**（`59ee773`）
 
 - Sonnet 委托（逐文件手改非批量正则——W1 的 CRLF 模板教训直接改了执行方式）+

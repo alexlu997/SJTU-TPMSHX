@@ -29,9 +29,10 @@
 - [x] 门禁：套件 1275+4skip / 10 绿（19:08）+ GOLDEN PASS 位同 + Shanghai 冒烟
       **GATE PASS headline 位同**（4.88%/2.12%）+ tracked CSV ULP 自改写回退（1.4e-12）
 
-## W3 · runs/（35）+ ui/（1）迁移（§10 委托）
-- [ ] 同 W1 流程；runs/ 直跑脚本逐个 `--help`/dry 冒烟；archive/ 冻结区只注记不迁移
-- [ ] 门禁全套
+## W3 · runs/ + ui/demo_vis_3d 迁移（iter 46 ✓，`1f0e689`——32 文件，零逃生舱）
+- [x] golden 门脚本本体随波迁移（__main__ 守卫核实）；archive/ 零 diff；--help 抽 5 冒烟；
+      AST 遍历残留双保险全零；自伤 1（孤儿 import，被套件内 lint 门实战拦截）
+- [x] 门禁：套件 1275+4skip / 10 绿（18:52）+ GOLDEN PASS 位同（=迁移后门脚本自跑）
 
 ## W_final · 库内改写 + 撤垫片
 - [ ] 库内 165 模块 `from solvers...` 等 → `from sjtu_tpmshx....`（子代理分批）

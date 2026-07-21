@@ -1,11 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 45 ——**P1.8b W2 毕（`59ee773`，31 文件，全门绿+golden 位同+Shanghai headline 位同），波次进行中**
-- next: **P1.8b W3 = runs/ 35 + ui/ 1 迁移**（§10 委托；runs/ 直跑脚本多，逐个
-  py_compile+可冒烟者冒烟；archive/ 冻结区只注记不迁移。波门 = 全套 + golden 位同 +
-  身份测试 + tpmshx-run 冒烟 + 波内 sys.path 零残留白名单核对）。后续 W_final =
-  库内 165 模块改写 + 撤垫片 + design 余量 + P1.5 尾巴
-- in_progress: 无（iter 45 已收）
+- iteration: 46 ——**P1.8b W3 毕（`1f0e689`，32 文件，全门绿+golden 位同），仅剩 W_final**
+- next: **P1.8b W_final**（库内 165 模块顶层→包名改写 + 撤垫片 + tests/design 15 文件
+  余量 + P1.5 尾巴〔五阶段函数迁 run_stack_3d_stages.py〕+ mypy 基底换仓库根 +
+  pyproject/atlas 注记收尾）。**量级最大，建议拆两轮**：F1=库内改写+design 余量
+  （垫片在位保安全）；F2=撤垫片+尾巴+文档（须全库双风格残留 grep 零后才撤）。
+  波门同前 + F2 加"身份测试改撤除断言"
+- in_progress: 无（iter 46 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
