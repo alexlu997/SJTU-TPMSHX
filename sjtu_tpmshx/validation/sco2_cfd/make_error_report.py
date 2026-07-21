@@ -27,14 +27,13 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent
-sys.path.insert(0, str(_PKG_ROOT))
 sys.path.insert(0, str(_THIS.parent))
 
-from df_surrogate.load_sco2_cfd import LATTICES, load_core, load_segments  # noqa: E402
-from df_surrogate.smooth_df import SmoothDF                                # noqa: E402
+from sjtu_tpmshx.df_surrogate.load_sco2_cfd import LATTICES, load_core, load_segments  # noqa: E402
+from sjtu_tpmshx.df_surrogate.smooth_df import SmoothDF                                # noqa: E402
 from compare_smooth_df import _fit_B, _fit_pooled_m                        # noqa: E402
 from fit_nu_sco2 import _fit, _predict                                     # noqa: E402
-from validation.report_template import (                                   # noqa: E402
+from sjtu_tpmshx.validation.report_template import (                                   # noqa: E402
     CLAY, G200, G300, G500, G700, PAPER, SLATE,
     PAIR_A, PAIR_B, VIZ1, VIZ2, VIZ3, VIZ4,
     math_block, math_inline, mfrac, mi, mn, mo, mrow, msub, msup,
@@ -114,7 +113,7 @@ def cross_fluid_backtest(meta: dict) -> pd.DataFrame:
     SmoothDF 面各预测一遍 dp/L, 分流体、分 Re 段报 medAPE。
     空气表缺失时自动跳过并告警（原始表在迁移前机器上, 见 AIR_XLSX_CANDIDATES）。
     """
-    from df_surrogate.smooth_df import AIR_XLSX_DEFAULT, WATER_XLSX
+    from sjtu_tpmshx.df_surrogate.smooth_df import AIR_XLSX_DEFAULT, WATER_XLSX
     sm = SmoothDF()
     rows = []
     xl = pd.ExcelFile(WATER_XLSX, engine="openpyxl")

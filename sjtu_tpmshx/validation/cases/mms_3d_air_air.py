@@ -38,21 +38,17 @@ import argparse
 import sys
 import time
 import warnings
-from pathlib import Path
 
 import numpy as np
 import sympy as sp
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from solvers.ltne_energy_3d import _gs_full_chunk_3d_stag
+from sjtu_tpmshx.solvers.ltne_energy_3d import _gs_full_chunk_3d_stag
 
 
 # ─────────────────────────────────────────────────────────────────────────

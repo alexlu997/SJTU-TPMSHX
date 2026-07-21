@@ -27,9 +27,9 @@ import sys
 
 import numpy as np
 
-from df_surrogate.predict import predict_K_cF
-from df_surrogate import kappa_asym
-from logutil import get_logger
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.df_surrogate import kappa_asym
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

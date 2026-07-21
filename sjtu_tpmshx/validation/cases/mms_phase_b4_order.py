@@ -19,24 +19,21 @@ Writes validation/mms_phase_b4_orders.csv (read by tests/test_mms_b4_conservativ
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from validation.cases.mms_3d_air_air import run_mms
-from validation.harness._order_fit import fit_order_loglog
-from validation.harness import _provenance as _prov
+from sjtu_tpmshx.validation.cases.mms_3d_air_air import run_mms
+from sjtu_tpmshx.validation.harness._order_fit import fit_order_loglog
+from sjtu_tpmshx.validation.harness import _provenance as _prov
 
 GRIDS = [10, 16, 24, 32]
 OUT_CSV = ROOT / 'validation' / 'mms_phase_b4_orders.csv'
 
 
 def main():
-    from validation.harness._mms_driver import run_grid_sequence
+    from sjtu_tpmshx.validation.harness._mms_driver import run_grid_sequence
     rows_raw = run_grid_sequence(
         GRIDS,
         lambda N: run_mms('3d', Nx=N, Ny=N, Nz=N, max_outer=8000, inner=50,

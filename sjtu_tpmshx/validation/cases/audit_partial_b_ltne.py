@@ -35,16 +35,14 @@ from typing import Any
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from solvers.tpms_calc import air_density
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.solvers.tpms_calc import air_density
 
 
 # ── Shanghai case 1 partial-B baseline (mirror sweep_m4_baseline.py C1) ──

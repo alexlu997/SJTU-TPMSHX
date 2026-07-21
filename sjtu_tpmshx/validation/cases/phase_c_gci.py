@@ -32,17 +32,15 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from validation.harness._provenance import write_csv_with_provenance
-from validation.cases.audit_3d_conservation import (
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.validation.harness._provenance import write_csv_with_provenance
+from sjtu_tpmshx.validation.cases.audit_3d_conservation import (
     make_T2, make_T4_H8,
 )
 
@@ -55,7 +53,7 @@ CASES_C = {
 
 def _fit_order_loglog(Ns, Qs):
     """Slope of log|Q-Q_inf| vs log(h), Q_inf = finest-grid proxy."""
-    from validation.harness._order_fit import fit_order_loglog
+    from sjtu_tpmshx.validation.harness._order_fit import fit_order_loglog
     Qs = np.asarray(Qs, dtype=np.float64)
     Q_inf = Qs[-1]   # finest as proxy
     h = 1.0 / np.asarray(Ns, dtype=np.float64)

@@ -36,20 +36,13 @@ from __future__ import annotations
 
 import sys
 from math import sqrt
-from pathlib import Path
 
 import numpy as np
 
-_THIS = Path(__file__).resolve()
-_PROJECT_ROOT = _THIS.parent.parent
-_PROJECT = _PROJECT_ROOT.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 from scipy.interpolate import RBFInterpolator
 
-from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
-from logutil import get_logger  # noqa: E402
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 _log = get_logger(__name__)
 

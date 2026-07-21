@@ -48,10 +48,7 @@ import pandas as pd
 _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parent.parent.parent
 _PROJECT = _PROJECT_ROOT.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, nu_from_Re, nu_water_topo,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
@@ -64,7 +61,7 @@ from solvers.tpms_calc import (
 # (cross-flow, narrow 42×42 port). Internal interstitial flow areas
 # differ between streams since flow direction differs.
 from configs import load_shanghai_baseline
-from domain.compute_config import ComputeConfig
+from sjtu_tpmshx.domain.compute_config import ComputeConfig
 # Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()
 _SH_CC = ComputeConfig.from_dict(_SH)
@@ -151,8 +148,8 @@ def main() -> None:
     print("  Air Nu: nu_from_Re (Gyroid v4.1 ×1.28 roughness)")
     print("  Water Nu: nu_water_topo(Gyroid)  Nu = 0.4445·Re^0.6361·Pr^(1/3)\n")
 
-    from validation.harness._harness import load_cases_df
-    from validation.harness._case_sets import SHANGHAI_XLSX
+    from sjtu_tpmshx.validation.harness._harness import load_cases_df
+    from sjtu_tpmshx.validation.harness._case_sets import SHANGHAI_XLSX
     df = load_cases_df(SHANGHAI_XLSX)
 
     rows = []
@@ -260,7 +257,7 @@ def main() -> None:
     out.to_csv(csv_path, index=False, encoding='utf-8-sig')
 
     # err_stats_pct: shared helper (validation/_metrics.py, L5 fix 2026-05-28)
-    from validation.harness._metrics import err_stats_pct as stats
+    from sjtu_tpmshx.validation.harness._metrics import err_stats_pct as stats
 
     print('\n' + '═' * 70)
     print(f"{'Reference':>16}  {'RMSRE':>8}  {'bias':>8}  {'max|err|':>8}")

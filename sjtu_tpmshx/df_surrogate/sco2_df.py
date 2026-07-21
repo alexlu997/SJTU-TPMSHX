@@ -42,9 +42,7 @@ import numpy as np
 import pandas as pd
 
 _THIS = Path(__file__).resolve()
-_PROJECT_ROOT = _THIS.parent.parent          # .../sjtu_tpmshx
-sys.path.insert(0, str(_PROJECT_ROOT))
-from logutil import get_logger  # noqa: E402
+from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 _log = get_logger(__name__)
 
@@ -97,8 +95,8 @@ def fit_pooled_m(core: pd.DataFrame, sm, tpms: str) -> float:
 
 def build_table() -> pd.DataFrame:
     """Fit per-geometry B + per-lattice m from the raw sCO2 CFD; write CSV."""
-    from df_surrogate.load_sco2_cfd import LATTICES, load_core
-    from df_surrogate.smooth_df import SmoothDF
+    from sjtu_tpmshx.df_surrogate.load_sco2_cfd import LATTICES, load_core
+    from sjtu_tpmshx.df_surrogate.smooth_df import SmoothDF
 
     sm = SmoothDF()
     rows = []

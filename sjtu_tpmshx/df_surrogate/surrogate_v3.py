@@ -67,12 +67,9 @@ _PROJECT = _PROJECT_ROOT.parent
 # Make sjtu_tpmshx/ importable as a search root so `from solvers.tpms_calc`
 # below resolves regardless of how the app was launched (python main.py from
 # sjtu_tpmshx/, python -m sjtu_tpmshx.main from parent, or packaged entry).
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 from scipy.interpolate import RBFInterpolator
-from solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
-from logutil import get_logger
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
