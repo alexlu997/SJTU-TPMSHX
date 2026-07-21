@@ -1,12 +1,10 @@
 # 循环状态（STATE）
 
-- iteration: 49 ——**P1.8b F3 毕（`0816d9f`）：七轮全波次收官，ROADMAP 全清（含 P1.8b）**
-- next: **A2 = 3D 物理 G 统一调查**（Alex 2026-07-21 拍板，D3(a)）。第一轮 = 立证伪方案
-  （in-repo openspec change：什么证据能证明/推翻"统一物理 G 后 Shanghai headline 在
-  γ 重锚后不劣化"；前置三件套评估=golden 重基准流程、Shanghai 重验证预算、γ_df 纠缠
-  分析）+ 量化侦察（frozen 点+Shanghai 16 案例的 G 亏空谱）。绊线 4 断言是门。
-  A2 后 → C 性能纵深（parallel_runner BLAS 计时缺陷首项）
-- in_progress: 无（iter 49 已收）
+- iteration: 50 ——**A2 调查即关闭（`ff99e92`，前提证伪，零求解器改动），next=C**
+- next: **C = 性能纵深**（Alex 已拍板）。首项 = parallel_runner BLAS 上限计时缺陷
+  （FINAL-REPORT 候选池 C / HANDOFF §6 部分解遗留）。第一轮 = 现场核实缺陷现状
+  （HANDOFF 表述 vs 代码）+ 复现测量 + 修复或裁决。后续 C 项按 profile 先行纪律
+- in_progress: 无（iter 50 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
