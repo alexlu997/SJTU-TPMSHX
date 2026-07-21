@@ -7,9 +7,9 @@ default path (rbf) is untouched by the new routing.
 import numpy as np
 import pytest
 
-import df_surrogate.predict as P
-from df_surrogate.gamma_df import GammaDF, GATE_CF_G7
-from solvers.tpms_calc import geometry as tpms_geometry
+import sjtu_tpmshx.df_surrogate.predict as P
+from sjtu_tpmshx.df_surrogate.gamma_df import GammaDF, GATE_CF_G7
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
 
 
 def _ef(tp, L, t):

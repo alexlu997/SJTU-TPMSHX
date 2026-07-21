@@ -12,19 +12,13 @@ is_reverse=False) path is the trusted reference; the reverse (-y, dir=3) path is
 under test. A missing stream-axis flip in the reverse handling breaks the
 mirror symmetry.
 """
-import sys
-from pathlib import Path
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-import pipelines.stages_3d as R
+import sjtu_tpmshx.pipelines.stages_3d as R
 
 
 def _cfg(dir_B, in_ctr, out_ctr):

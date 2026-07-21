@@ -11,14 +11,8 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from logutil import get_logger  # noqa: E402
+from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 
 def test_logger_output_visible_under_redirect_stdout():
@@ -71,7 +65,7 @@ def test_ts_env_adds_timestamp_prefix(monkeypatch):
     _configure_root is once-per-process, so build the handler/formatter
     pair the same way the module does and verify the format directly."""
     import io as _io
-    import logutil as lu
+    import sjtu_tpmshx.logutil as lu
     monkeypatch.setenv('TPMSHX_LOG_TS', '1')
     # Reset the module singleton in an isolated logger namespace.
     monkeypatch.setattr(lu, '_configured', False)
@@ -94,7 +88,7 @@ def test_ts_env_adds_timestamp_prefix(monkeypatch):
 
 def test_invalid_level_env_falls_back_to_info(monkeypatch):
     """Garbage TPMSHX_LOG_LEVEL must resolve to INFO, not crash."""
-    import logutil as lu
+    import sjtu_tpmshx.logutil as lu
     monkeypatch.setenv('TPMSHX_LOG_LEVEL', 'NOT_A_LEVEL')
     monkeypatch.setattr(lu, '_configured', False)
     try:

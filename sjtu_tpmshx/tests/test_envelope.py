@@ -6,16 +6,10 @@ mass-flux inlet drives v supersonic). These guards turn that silent blow-up
 (which used to return converged=True with garbage fields) into either a clear
 ChokedFlowError (pre-solve) or a flagged-invalid result (post-solve).
 """
-import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.envelope import (
+from sjtu_tpmshx.solvers.envelope import (
     ChokedFlowError, predict_outlet_p_sq, check_compressible_envelope,
     mach, assess_solution_validity, gate_solution,
 )

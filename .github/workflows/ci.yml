@@ -53,6 +53,10 @@ jobs:
           pip install numpy scipy pandas sympy pyamg joblib numba \
                       scikit-learn scikit-image matplotlib openpyxl \
                       PySide6 CoolProp pytest pytest-timeout ruff mypy
+          # P1.8b W1: tests import `sjtu_tpmshx.*`; bare `pytest` (below) does
+          # not put the repo root on sys.path, so the package must be
+          # installed. --no-deps: the closure above stays the authority.
+          pip install -e . --no-deps
       - name: Run fast test subset
         # timeout-method=thread: the default signal method cannot interrupt a
         # hang inside a native Qt call (observed: first-run onboarding modal

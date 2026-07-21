@@ -1,22 +1,15 @@
 """Coarse-grid bootstrap (Phase C) regression tests."""
 from __future__ import annotations
-import sys
 import warnings
-from pathlib import Path
 
 import numpy as np
 
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 warnings.filterwarnings('ignore')
 
-from solvers.coarse_bootstrap_3d import (
+from sjtu_tpmshx.solvers.coarse_bootstrap_3d import (
     bootstrap_simple_3d, _block_average_2d, _block_average_3d,
     _trilinear_zoom)
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 def _build_solver():

@@ -6,14 +6,10 @@ Covers two layers:
   B. run_calculation._parse_inputs maps the UI field correctly (empty →
      None, numeric → float in Kelvin, °C toggle respected).
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-from solvers.ltne_energy import solve_full_domain
-from solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
 
 
 def _common_args(Nx=10, Ny=8):

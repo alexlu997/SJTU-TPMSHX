@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.simple_solver import (
+from sjtu_tpmshx.solvers.simple_solver import (
     SIMPLESolver,
     _sweep_u_jit_df, _sweep_v_jit_df,
     _pseudo_u_jit_df, _pseudo_v_jit_df,

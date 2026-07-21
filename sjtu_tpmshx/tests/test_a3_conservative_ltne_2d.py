@@ -20,21 +20,14 @@ Note: serial vs red-black fluid-A fields can differ ~0.4 K on steep
 synthetic fronts — a pre-existing A-SOU live-vs-snapshot limit cycle
 (present at HEAD), not an A3 regression; B/S fields agree tightly.
 """
-import sys
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 warnings.filterwarnings('ignore')
 
-from solvers.ltne_energy import solve_full_domain, _gs_full_chunk, _gs_full_chunk_rb
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain, _gs_full_chunk, _gs_full_chunk_rb
 
 
 def _nonuniform_case(use_sou_B=False):
@@ -121,8 +114,8 @@ def test_serial_and_redblack_agree_on_b_and_solid():
 def test_fine_grid_outer_coupling_stability():
     """Fine-grid air-water coupled eval with the conservative base (default
     config) must stay finite and produce a sane duty."""
-    from solvers.continuous_field import uniform_field
-    from optimization.evaluator import evaluate_design
+    from sjtu_tpmshx.solvers.continuous_field import uniform_field
+    from sjtu_tpmshx.optimization.evaluator import evaluate_design
     cfg = {'Nx': 40, 'Ny': 80,
            'max_iter_simple': 800, 'tol_simple': 1e-3,
            'max_iter_energy': 3000, 'tol_energy': 0.5, 'n_rho_loops': 1}

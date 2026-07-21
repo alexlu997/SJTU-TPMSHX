@@ -5,16 +5,10 @@ test exercises the rule logic directly without instantiating a window.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.validator import (
+from sjtu_tpmshx.domain.validator import (
     suggest_grid_2d,
     suggest_grid_3d,
     validate_geometry,

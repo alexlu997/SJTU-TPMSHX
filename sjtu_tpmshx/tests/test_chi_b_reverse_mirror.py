@@ -13,16 +13,10 @@ partial-B run (mirror of the actual flow corridor).
 This isolates the reverse handling in the mass-flux χ_B builder. A unit test on
 the helper (no full solve) keeps it fast and deterministic.
 """
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from pipelines.stages_3d import _build_chi_B_mass_flux_threshold
+from sjtu_tpmshx.pipelines.stages_3d import _build_chi_B_mass_flux_threshold
 
 
 def _fake_solver(Nx, Ny, Nz):

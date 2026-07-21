@@ -29,17 +29,13 @@ balance. The face-centered Patankar rewrite (SIMPLE staggered fluxes,
 all six cases < 1 % on BOTH the global and per-cell certificate AND keeps mass
 conservation intact.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from validation.cases.audit_3d_conservation import (
+from sjtu_tpmshx.validation.cases.audit_3d_conservation import (
     make_T1, make_T2, make_T3, make_T4, make_T5, make_T6,
 )
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 _GATE = 0.01  # < 1 %
 

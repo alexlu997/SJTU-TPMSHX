@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from ui.math_symbols import to_unicode, greek
+from sjtu_tpmshx.ui.math_symbols import to_unicode, greek
 
 
 # ─── Greek lookup ──────────────────────────────────────────────────

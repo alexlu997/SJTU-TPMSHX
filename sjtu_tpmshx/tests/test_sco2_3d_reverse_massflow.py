@@ -15,22 +15,16 @@ physical value and the A/B imbalance drops out of the bug regime.
 
 skipped if CoolProp is unavailable.
 """
-import sys
-from pathlib import Path
 
 import pytest
 
 # NOTE: TPMSHX_ALLOW_EXTRAP is set test-locally via monkeypatch inside the test
 # (NOT at module level) — a module-level os.environ.setdefault leaks the env
 # process-wide and breaks later-collected out-of-window surrogate-domain tests.
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 PropsSI = pytest.importorskip("CoolProp.CoolProp").PropsSI
 
-from solvers.tpms_calc import geometry as _geom          # noqa: E402
-import pipelines.stages_3d as R                           # noqa: E402
+from sjtu_tpmshx.solvers.tpms_calc import geometry as _geom          # noqa: E402
+import sjtu_tpmshx.pipelines.stages_3d as R                           # noqa: E402
 
 _G = _geom("Diamond", 7.0, 0.6, 16.0)
 EPS, EPS_A = _G["epsilon"], _G["epsilon_A"]

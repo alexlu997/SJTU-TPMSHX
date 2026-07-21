@@ -10,15 +10,11 @@ on advective cases, <0.03% of T). This test forces RB on (gate 0) and checks the
 field stays functionally equivalent to the serial kernel — a regression guard,
 not a bit-identity claim.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import solvers.ltne_energy as le2
-from solvers.ltne_energy import solve_full_domain
+import sjtu_tpmshx.solvers.ltne_energy as le2
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
 
 
 def _args(Nx, Ny):

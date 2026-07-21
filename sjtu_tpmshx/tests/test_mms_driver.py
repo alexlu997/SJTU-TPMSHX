@@ -3,7 +3,7 @@ import importlib
 
 
 def test_run_grid_sequence_order_and_rows():
-    from validation.harness._mms_driver import run_grid_sequence
+    from sjtu_tpmshx.validation.harness._mms_driver import run_grid_sequence
     calls = []
     rows = run_grid_sequence(
         [4, 8],

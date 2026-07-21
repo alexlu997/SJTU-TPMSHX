@@ -9,7 +9,7 @@ Run from repo root:
     python -m pytest sjtu_tpmshx/tests/test_quick_design_dialog.py -v
 """
 from unittest.mock import patch
-from ui.quick_design_panel import build_quick_design_dialog
+from sjtu_tpmshx.ui.quick_design_panel import build_quick_design_dialog
 
 CONTRACT = [
     "le_qd_file", "combo_qd_mode", "combo_qd_arr", "le_qd_rho",

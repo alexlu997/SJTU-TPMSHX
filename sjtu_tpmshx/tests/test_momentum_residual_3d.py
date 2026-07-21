@@ -21,8 +21,8 @@ loudly. Keep them in lockstep.
 import numpy as np
 import pytest
 
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers._kernels_simple_3d import (
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers._kernels_simple_3d import (
     _mom_res_jit_3d,
     _sweep_u_jit_df_3d,
     _sweep_v_jit_df_3d,

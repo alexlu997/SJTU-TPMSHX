@@ -21,7 +21,7 @@ import pytest
 # Qt-adjacent test suite.
 pytest.importorskip('PySide6')
 
-from controllers.result_cache import ResultCache  # noqa: E402
+from sjtu_tpmshx.controllers.result_cache import ResultCache  # noqa: E402
 
 
 # ── lite Main_Menu stub — keeps only the @property bridges ──────────

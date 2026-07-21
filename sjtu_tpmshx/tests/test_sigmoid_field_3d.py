@@ -8,16 +8,10 @@ Four tests:
   4. test_z_uniform_degrade  — 108 with z-invariant values degrades to 2D
 """
 
-import sys
-from pathlib import Path
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.sigmoid_field import get_geometry_lut, build_continuous_arrays
-from solvers.sigmoid_field_3d import build_continuous_arrays_3d
+from sjtu_tpmshx.solvers.sigmoid_field import get_geometry_lut, build_continuous_arrays
+from sjtu_tpmshx.solvers.sigmoid_field_3d import build_continuous_arrays_3d
 
 
 def _common_kwargs():

@@ -22,19 +22,13 @@ can see WHICH gate failed.
 
 These tests assert the *verdict wiring*, not physics numbers.
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from runs._case_template import build_cfg          # noqa: E402
-from pipelines.stages_3d import _run_3d_stack      # noqa: E402
-from solvers.coupling_skeleton import run_outer_coupling  # noqa: E402
+from sjtu_tpmshx.runs._case_template import build_cfg          # noqa: E402
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack      # noqa: E402
+from sjtu_tpmshx.solvers.coupling_skeleton import run_outer_coupling  # noqa: E402
 
 _GATES = ('simple_ok', 'ltne_ok', 'outer_converged', 'fields_finite',
           'envelope_ok')
@@ -127,7 +121,7 @@ def test_typed_config_rejects_non_converging_outer_budget():
     diff against), so it could only ever report converged=False. Raw-dict
     screening (`_run_3d_stack` with max_outer_ltne=1) stays legal and honest.
     """
-    from domain.compute_config import (ComputeConfig, FluidConfig,
+    from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                        GeometryConfig, SolverConfig)
 
     def _cc(mo):
@@ -156,7 +150,7 @@ def test_typed_config_requires_explicit_lz_for_3d():
     dP_B) then scaled with a constant the user never chose. The class's own
     GeometryConfig docstring already said the 3D path *requires* Lz_m.
     """
-    from domain.compute_config import (ComputeConfig, FluidConfig,
+    from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                        GeometryConfig, SolverConfig)
 
     def _cc(Nz, Lz):
@@ -177,7 +171,7 @@ def test_typed_config_requires_explicit_lz_for_3d():
 
     # The pipeline entry must refuse it too (defence in depth: raw
     # ComputeConfig construction bypasses validate()).
-    from pipelines.stages_3d import _parse_inputs_3d_cfg
+    from sjtu_tpmshx.pipelines.stages_3d import _parse_inputs_3d_cfg
     with pytest.raises(ValueError, match='Lz_m'):
         _parse_inputs_3d_cfg(_cc(Nz=3, Lz=None))
 
@@ -191,7 +185,7 @@ def test_3d_initial_dual_fluid_simple_obeys_solver_config():
     call site now forwards both.
     """
     import inspect
-    from pipelines import run_stack_3d as _r3
+    from sjtu_tpmshx.pipelines import run_stack_3d as _r3
     # Seam-A extraction (P1.5, 2026-07-20): the initial dual-fluid solve now
     # lives in _build_3d_problem (problem setup/build), not _run_3d_stack.
     src = inspect.getsource(_r3._build_3d_problem)
@@ -210,7 +204,7 @@ def test_3d_initial_dual_fluid_simple_obeys_solver_config():
 
 def test_typed_config_rejects_nonsense_numeric_settings():
     """validate() used to check NO solver numerical parameter at all."""
-    from domain.compute_config import (ComputeConfig, FluidConfig,
+    from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                        GeometryConfig, SolverConfig)
 
     def _cc(**sk):
@@ -240,7 +234,7 @@ def test_3d_nz1_delegation_reports_the_real_ltne_verdict():
     run claimed a converged LTNE inner pass unconditionally — and that lie fed
     straight into solver_converged.
     """
-    from solvers.ltne_energy_3d import solve_full_domain_3d
+    from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
     N = 6
     z = lambda v: np.full((N, N, 1), v, dtype=np.float64)  # noqa: E731
     out = solve_full_domain_3d(
@@ -302,7 +296,7 @@ def test_2d_converged_resolve_supersedes_an_earlier_failure():
     A later converged solve on the same side must clear it.
     """
     import inspect
-    from pipelines import stages_2d as _s2
+    from sjtu_tpmshx.pipelines import stages_2d as _s2
     src = inspect.getsource(_s2)
     assert 'simple_warnings.pop(label, None)' in src, (
         "a converged re-solve must supersede an earlier failure on that side")
@@ -311,7 +305,7 @@ def test_2d_converged_resolve_supersedes_an_earlier_failure():
 def test_3d_convergence_detail_reaches_compute_result():
     """stages_3d must forward convergence_detail into ComputeResult."""
     import inspect
-    from pipelines.stages_3d import _finalize_3d_cfg
+    from sjtu_tpmshx.pipelines.stages_3d import _finalize_3d_cfg
     assert "'convergence_detail'" in inspect.getsource(_finalize_3d_cfg)
 
 
@@ -324,7 +318,7 @@ def test_2d_forwards_envelope_and_clip_and_detail():
     p_clip_hits; both closed 2026-07-12).
     """
     import inspect
-    from pipelines.stages_2d import _finalize_cfg
+    from sjtu_tpmshx.pipelines.stages_2d import _finalize_cfg
     src = inspect.getsource(_finalize_cfg)
     for key in ("'envelope_valid'", "'envelope_reasons'", "'p_clip_hits'",
                 "'convergence_detail'"):
@@ -334,7 +328,7 @@ def test_2d_forwards_envelope_and_clip_and_detail():
 def test_2d_verdict_ands_the_ltne_inner_pass():
     """`e_info['converged']` must reach the 2D verdict (it was write-only)."""
     import inspect
-    from pipelines import solve_2d as _s2
+    from sjtu_tpmshx.pipelines import solve_2d as _s2
     src = inspect.getsource(_s2.solve_2d_cfg if hasattr(_s2, 'solve_2d_cfg')
                             else _s2)
     assert "e_info.get('converged'" in src, (

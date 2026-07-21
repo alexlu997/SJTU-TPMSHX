@@ -19,20 +19,14 @@ renaming the marker means you touched the contract surface — re-read the
 rationale before updating.
 """
 import inspect
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 
 def test_3d_evaluator_defaults_to_legacy_convergence():
     """DELIBERATE: evaluate_3d screens with the cheaper 'legacy' criterion;
     the production pipeline resolves to 'f2' (ledger C6/C7). Reporting
     callers (verify_pareto_3d) explicitly pass 'f2'."""
-    import core.evaluators as ev
-    import pipelines.run_stack_3d as rs
+    import sjtu_tpmshx.core.evaluators as ev
+    import sjtu_tpmshx.pipelines.run_stack_3d as rs
     assert (inspect.signature(ev.evaluate_3d)
             .parameters['convergence_mode'].default == 'legacy')
     assert "'f2'" in inspect.getsource(rs._apply_accel_flags), (
@@ -43,7 +37,7 @@ def test_3d_evaluator_keeps_b_side_frozen():
     """DELIBERATE (BO throughput): the var-rho outer loop re-solves SIMPLE-A
     only; fluid B stays the cold solve (frozen-B tier, core/evaluators
     rationale at the rho_B_ltne block). The pipeline reseeds B too."""
-    import core.evaluators as ev
+    import sjtu_tpmshx.core.evaluators as ev
     src = inspect.getsource(ev.evaluate_3d)
     assert 're-solving SIMPLE A' in src, (
         "lost the A-side re-solve marker — if the loop structure changed, "
@@ -58,8 +52,8 @@ def test_objective_shaping_is_evaluator_only():
     """DELIBERATE: manufacturability penalty / dp_cap / reject_unconverged
     are OPTIMIZER objective shaping. The physics pipeline must stay free of
     them (a validation number must never contain a penalty term)."""
-    import optimization.evaluator as ev2d
-    import pipelines.stages_2d as st2d
+    import sjtu_tpmshx.optimization.evaluator as ev2d
+    import sjtu_tpmshx.pipelines.stages_2d as st2d
     src_ev = inspect.getsource(ev2d)
     src_pipe = inspect.getsource(st2d)
     for token in ('penalty_enabled', 'dp_cap_pa'):
@@ -73,8 +67,8 @@ def test_evaluators_do_not_route_through_pipeline():
     throughput budget. The convergence path is shared AUTHORITIES (envelope,
     df_surrogate, extract_dP), not shared orchestration. Pareto numbers go
     through verify_pareto_3d / the Pipeline instead."""
-    import core.evaluators as ev3d
-    import optimization.evaluator as ev2d
+    import sjtu_tpmshx.core.evaluators as ev3d
+    import sjtu_tpmshx.optimization.evaluator as ev2d
     for mod in (ev3d, ev2d):
         assert 'compute_pipeline' not in inspect.getsource(mod), (
             f"{mod.__name__} started importing the Pipeline — that is a "
@@ -87,8 +81,8 @@ def test_2d_choke_policy_evaluator_raises_pipeline_clips():
     has never had a choke guard and CLIPS the seed instead (ledger O1).
     The evaluator being stricter than its pipeline is accepted; the pipeline
     growing a gate is DECISIONS D2 territory."""
-    import optimization.evaluator as ev2d
-    import pipelines.stages_2d as st2d
+    import sjtu_tpmshx.optimization.evaluator as ev2d
+    import sjtu_tpmshx.pipelines.stages_2d as st2d
     src_ev = inspect.getsource(ev2d)
     src_pipe = inspect.getsource(st2d)
     assert 'ChokedFlowError' in src_ev
@@ -119,10 +113,10 @@ def test_g_reference_density_convention_post_d3c():
     physical G is the candidate-A2 investigation (golden_3d re-baseline +
     Shanghai re-validation + gamma re-anchor assessment are prerequisites);
     these assertions keep that door consciously guarded."""
-    import core.evaluators as ev3d
-    import optimization.evaluator as ev2d
-    import pipelines.stages_2d as st2d
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    import sjtu_tpmshx.core.evaluators as ev3d
+    import sjtu_tpmshx.optimization.evaluator as ev2d
+    import sjtu_tpmshx.pipelines.stages_2d as st2d
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
     assert 'rho_inlet_ref' in inspect.getsource(st2d), (
         "2D pipeline stopped passing rho_inlet_ref — the C8-era ratchet "

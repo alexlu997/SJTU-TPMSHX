@@ -15,10 +15,8 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from validation.cases.validate_shanghai_3d_real import _build_inlet_profile
+from sjtu_tpmshx.validation.cases.validate_shanghai_3d_real import _build_inlet_profile
 
 
 # ── r2-val-02: inlet profile no backflow ───────────────────────────────────
@@ -67,7 +65,7 @@ def test_sizing_caps_relaxed_via_env():
 # uniform — and a resurfacing warning means the installation regressed.
 def test_evaluate_3d_no_graded_mean_eps_warning():
     import warnings as W
-    from optimization.evaluator_3d import evaluate_design_3d
+    from sjtu_tpmshx.optimization.evaluator_3d import evaluate_design_3d
     x = np.concatenate([np.array([5., 6., 7., 8., 5.5, 6.5, 7.5, 6.]),
                         np.array([0.40, 0.45, 0.50, 0.45, 0.42, 0.48, 0.46, 0.44])])
     cfg = {'Nx_3d': 8, 'Ny_3d': 6, 'Nz_3d': 3, 'max_outer_3d': 1,
@@ -81,7 +79,7 @@ def test_evaluate_3d_no_graded_mean_eps_warning():
 
 def test_evaluate_3d_uniform_no_graded_warn():
     import warnings as W
-    from optimization.evaluator_3d import evaluate_design_3d
+    from sjtu_tpmshx.optimization.evaluator_3d import evaluate_design_3d
     x = np.concatenate([np.full(8, 6.0), np.full(8, 0.45)])   # uniform L, t
     cfg = {'Nx_3d': 8, 'Ny_3d': 6, 'Nz_3d': 3, 'max_outer_3d': 1,
            'max_iter_energy': 400, 'tol_energy': 0.5}

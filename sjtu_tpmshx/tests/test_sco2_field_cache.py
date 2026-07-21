@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from unittest.mock import patch
 
-from solvers import sco2_props
+from sjtu_tpmshx.solvers import sco2_props
 
 pytestmark = pytest.mark.skipif(
     not sco2_props._HAVE_COOLPROP, reason="CoolProp required for sCO2 tests")

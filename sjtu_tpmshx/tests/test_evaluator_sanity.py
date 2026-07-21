@@ -20,11 +20,11 @@ import pytest
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     encode_decision_vector,
     uniform_field,
 )
-from optimization.evaluator import evaluate_design
+from sjtu_tpmshx.optimization.evaluator import evaluate_design
 
 
 # Lighter solver settings so the test suite stays fast (~10 s total)
@@ -179,7 +179,7 @@ def test_dp_cap_passthrough_when_below():
     ([1.00, 1.10, 1.105, 1.110, 1.115], 0.001, 3, False),
 ])
 def test_hv_plateau_detection(hist, tol, window, expected):
-    from optimization.optimizer_qnehvi import hv_plateau_detected
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import hv_plateau_detected
     assert hv_plateau_detected(hist, tol, window) is expected
 
 

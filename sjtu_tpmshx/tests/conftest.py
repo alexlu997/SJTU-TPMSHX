@@ -24,7 +24,6 @@ same process. Setting it here at conftest load time guarantees it lands
 before any PySide6 module is imported.
 """
 import os
-import sys
 from pathlib import Path
 
 # Must run BEFORE any PySide6 import — pytest loads conftest.py at session
@@ -32,9 +31,7 @@ from pathlib import Path
 # subsequent test_*.py import.
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-ROOT = Path(__file__).resolve().parents[1]   # ...sjtu_tpmshx/
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import sjtu_tpmshx  # noqa: F401  (P1.8b W1: 触发包自举，会话级顶层名可用)
 
 
 # 2026-05-09 — Eagerly instantiate a process-wide QApplication so that:

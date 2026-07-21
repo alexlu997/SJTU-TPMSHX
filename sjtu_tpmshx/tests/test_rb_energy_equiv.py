@@ -11,16 +11,12 @@ on a small z-symmetric cross-flow (by zeroing the gate) and assert it:
     does NOT survive to the converged solution,
   * keeps the strict-conservation certificate < 1%.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import solvers.ltne_energy_3d as le
-from solvers.tpms_calc import geometry as tpms_geometry
-from pipelines.stages_3d import _run_3d_stack
+import sjtu_tpmshx.solvers.ltne_energy_3d as le
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 def _z_asym_pct(field):

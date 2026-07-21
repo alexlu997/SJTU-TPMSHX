@@ -9,20 +9,14 @@ matches the experiment-validated duty (validation/cases/validate_shanghai_3d_rea
 computes the same m_air*cp*dT_A; RMSRE ~3 %), so the headline now reports it
 directly. Q_enthalpy_B stays in the result dict as a transparent diagnostic.
 """
-import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-import pipelines.stages_3d as R
+import sjtu_tpmshx.pipelines.stages_3d as R
 
 
 def _air_water_cfg():

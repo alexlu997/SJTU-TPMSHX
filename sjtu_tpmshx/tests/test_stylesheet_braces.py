@@ -10,7 +10,6 @@ without their intended styling. Kept as a permanent regression guard
 against the same kind of typo recurring anywhere in the GUI.
 """
 import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 
@@ -22,7 +21,7 @@ def _balanced(name, css):
 
 def test_build_styles_braces_balanced():
     """Every Qt stylesheet returned by _build_styles must have matched braces."""
-    from ui.theme import _build_styles
+    from sjtu_tpmshx.ui.theme import _build_styles
     s = _build_styles()
     for key, css in s.items():
         if not isinstance(css, str):
@@ -44,7 +43,7 @@ def test_main_menu_no_qt_parse_warnings():
     qInstallMessageHandler(_handler)
 
     _app = QApplication.instance() or QApplication(sys.argv)
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     w = Main_Menu()
     w.close()
 

@@ -6,9 +6,9 @@ cfg path was a silent no-op (latent bug found in the B2 pre-check).
 """
 import pytest
 
-from domain.compute_config import ComputeConfig
-from controllers.compute_orchestrator import CancelToken
-from controllers.compute_pipeline import (CancelledError, Pipeline2D,
+from sjtu_tpmshx.domain.compute_config import ComputeConfig
+from sjtu_tpmshx.controllers.compute_orchestrator import CancelToken
+from sjtu_tpmshx.controllers.compute_pipeline import (CancelledError, Pipeline2D,
                                           Pipeline3D, pipeline_for)
 
 
@@ -41,7 +41,7 @@ def test_ui_hooks_stored_and_default_empty():
 
 
 def test_shim_forwards_iter_label_and_progress():
-    from pipelines.stages_2d import _PipelineWindowShim
+    from sjtu_tpmshx.pipelines.stages_2d import _PipelineWindowShim
     labels, pcts = [], []
     shim = _PipelineWindowShim(ComputeConfig(),
                                progress_cb=pcts.append,
@@ -55,7 +55,7 @@ def test_shim_forwards_iter_label_and_progress():
 def test_3d_cfg_stage_wires_iter_cb(monkeypatch):
     """_run_solvers_3d_cfg must plant iter_cb as cfg['_iter_cb'] (the key
     _run_3d_stack polls each outer iteration)."""
-    import pipelines.stages_3d as r3
+    import sjtu_tpmshx.pipelines.stages_3d as r3
     seen = {}
     monkeypatch.setattr(r3, '_run_3d_stack',
                         lambda cfg: seen.update(cfg) or {'ok': True})

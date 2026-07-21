@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from optimization.evaluator import (
+from sjtu_tpmshx.optimization.evaluator import (
     DEFAULT_CONFIG,
     evaluate_design,
     _build_simple_A,
@@ -28,7 +28,7 @@ from optimization.evaluator import (
     _percell_K_cF,
     _resolve_grid,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     encode_decision_vector,
     from_decision_vector,
 )

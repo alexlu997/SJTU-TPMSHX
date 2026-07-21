@@ -5,8 +5,8 @@ import numpy as np
 from design.cases import DesignCase
 from design.forward import (forward, _hvol, K_STEEL, GEOM_N, NX, _ARR,
                             SIZING_QTOL, SIZING_CHUNK)
-from solvers.tpms_calc import geometry as tg
-from solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tg
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
 
 
 def _case():

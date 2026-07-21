@@ -14,15 +14,12 @@ Hard gates (B-plan B4 §3):
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 ORDERS_CSV = ROOT / 'validation' / 'mms_phase_b4_orders.csv'
 

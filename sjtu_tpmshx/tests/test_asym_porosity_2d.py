@@ -7,13 +7,11 @@ Mirrors `test_asym_porosity_3d.py` at the kernel level. Guards:
     default single-`eps_f_arr` path bit-for-bit (golden 2D / Shanghai 2D safe);
   - the total-void guard still rejects ε_A + ε_B > ε.
 """
-import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
 
-from solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
 
 
 def _common_args(Nx=12, Ny=10):
@@ -105,7 +103,7 @@ def test_over_allocation_rejected():
 
 def _air_air_delta_cfg(delta):
     """Golden 2D air-air cfg with the offset δ set on the geometry."""
-    from runs._out._golden_2d import _air_air_cfg
+    from sjtu_tpmshx.runs._out._golden_2d import _air_air_cfg
     cc = _air_air_cfg()
     cc.geometry.delta_levelset = float(delta)
     return cc
@@ -114,7 +112,7 @@ def _air_air_delta_cfg(delta):
 def test_delta_pos_pipeline_runs_and_conserves():
     """A δ≠0 config runs end-to-end through Pipeline2D, returns finite headline
     scalars, and the A↔B energy balance still closes (split conserves)."""
-    from controllers.compute_pipeline import Pipeline2D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
     p0 = Pipeline2D(_air_air_delta_cfg(0.0))
     raw0 = p0.run_solvers(p0.build_fields())
     pd = Pipeline2D(_air_air_delta_cfg(0.6))
@@ -130,7 +128,7 @@ def test_delta_pos_pipeline_runs_and_conserves():
 def test_delta_pos_differs_from_symmetric_pipeline():
     """δ≠0 actually drives an asymmetric run end-to-end — at least one headline
     scalar moves vs the symmetric δ=0 path (guards that δ is plumbed at all)."""
-    from controllers.compute_pipeline import Pipeline2D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
     r0 = Pipeline2D(_air_air_delta_cfg(0.0)).run()
     rd = Pipeline2D(_air_air_delta_cfg(0.6)).run()
     assert (rd.Q_W != r0.Q_W) or (rd.dP_A_Pa != r0.dP_A_Pa) or (rd.T_out_A_K != r0.T_out_A_K)

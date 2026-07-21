@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import pytest
 
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig, PartialBCConfig)
-from pipelines.stages_3d import _parse_inputs_3d_cfg
+from sjtu_tpmshx.pipelines.stages_3d import _parse_inputs_3d_cfg
 
 
 def _cfg(dir_B):

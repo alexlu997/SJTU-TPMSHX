@@ -19,7 +19,7 @@ import pytest
 def _shanghai_df():
     # Use the canonical data anchor (resilient to where the runner module lives)
     # instead of recomputing the path from V.__file__ depth.
-    from validation.harness._case_sets import SHANGHAI_XLSX
+    from sjtu_tpmshx.validation.harness._case_sets import SHANGHAI_XLSX
     import pathlib
     if not pathlib.Path(str(SHANGHAI_XLSX)).exists():
         pytest.skip('Shanghai experiment Excel (gitignored data/) not present')
@@ -29,7 +29,7 @@ def _shanghai_df():
 
 def test_validate_shanghai_passes_full_epsilon(monkeypatch):
     """validate_shanghai_3d_real must hand the kernel FULL ε, not ε_A."""
-    import validation.cases.validate_shanghai_3d_real as V
+    import sjtu_tpmshx.validation.cases.validate_shanghai_3d_real as V
 
     captured = {}
 

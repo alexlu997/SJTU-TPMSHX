@@ -5,20 +5,13 @@ pure-Stokes / Darcy-Forchheimer regime. Also checks trivial smokes:
 solver does not crash, fields have expected shapes, and w stays zero
 in a 2D-equivalent setup.
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 def _uniform_darcy_config(Nx=20, Ny=15, Nz=5, v_inlet=3.0,

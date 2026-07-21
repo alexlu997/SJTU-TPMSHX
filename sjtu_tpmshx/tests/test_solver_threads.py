@@ -1,10 +1,6 @@
 """Numba thread-count control helper (`solvers/threads.py`)."""
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numba
-import solvers.threads as th
+import sjtu_tpmshx.solvers.threads as th
 
 
 def test_clamp_to_max_and_min():

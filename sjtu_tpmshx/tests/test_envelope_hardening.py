@@ -10,17 +10,11 @@ Three audit findings fixed here:
   fires when the pressure is AT the floor (i.e. the clip engaged → off-envelope).
 - ma_max override so the pipeline can pass the rigorous per-cell value.
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.envelope import (
+from sjtu_tpmshx.solvers.envelope import (
     assess_solution_validity, mach_field_max, gate_solution, ChokedFlowError,
     PRESSURE_FLOOR_PA,
 )
@@ -72,7 +66,7 @@ def test_gate_solution_raises_on_ma_max_override():
 
 # ── envelope_mode reachable through ComputeConfig (audit: unreachable) ──────
 def test_envelope_mode_field_and_from_dict():
-    from domain.compute_config import ComputeConfig
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
     assert ComputeConfig().envelope_mode == 'raise'              # default
     assert ComputeConfig(envelope_mode='warn').envelope_mode == 'warn'
     # canonical-layout dict (the asdict round-trip path) carries it
@@ -82,8 +76,8 @@ def test_envelope_mode_field_and_from_dict():
 
 def test_envelope_mode_propagates_into_3d_cfg():
     from dataclasses import replace
-    from domain.compute_config import ComputeConfig
-    from pipelines.stages_3d import _parse_inputs_3d_cfg
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
+    from sjtu_tpmshx.pipelines.stages_3d import _parse_inputs_3d_cfg
     base = ComputeConfig()
     cc = replace(base,
                  geometry=replace(base.geometry, t_wall_mm=0.5, Lz_m=0.042),

@@ -12,7 +12,7 @@ number-preserving without re-running the (hours-long) MMS sweeps:
 import numpy as np
 import pytest
 
-from validation.harness._order_fit import OrderFitResult, fit_order_loglog
+from sjtu_tpmshx.validation.harness._order_fit import OrderFitResult, fit_order_loglog
 
 
 # ── retired implementations, verbatim ───────────────────────────────

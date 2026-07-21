@@ -5,26 +5,20 @@ meaningless values outside their calibration window. These guards make the
 out-of-window behaviour explicit (clear error for impossible inputs, a loud
 one-shot warning for extrapolation) without erroring on valid inputs.
 """
-import sys
 import warnings as W
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import solvers.tpms_calc as tpms_calc
-import solvers.tpms_props as tpms_props   # warn-state lives here (arch-b-c-e B)
-from solvers.tpms_calc import geometry, compute, water_density
-import solvers.nu_correlations as nu_correlations
-from solvers.nu_correlations import nu_water_topo
-from df_surrogate.predict import predict_dP_compressible
-from domain.compute_config import (ComputeConfig, FluidConfig,
+import sjtu_tpmshx.solvers.tpms_calc as tpms_calc
+import sjtu_tpmshx.solvers.tpms_props as tpms_props   # warn-state lives here (arch-b-c-e B)
+from sjtu_tpmshx.solvers.tpms_calc import geometry, compute, water_density
+import sjtu_tpmshx.solvers.nu_correlations as nu_correlations
+from sjtu_tpmshx.solvers.nu_correlations import nu_water_topo
+from sjtu_tpmshx.df_surrogate.predict import predict_dP_compressible
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                          ZoneInputConfig)
-from pipelines.stages_2d import _check_zoned_fluid_support
+from sjtu_tpmshx.pipelines.stages_2d import _check_zoned_fluid_support
 
 
 # ── geometry degeneracy floor ──────────────────────────────────────────────
@@ -111,7 +105,7 @@ def test_compute_nu_window_unified_no_warn_at_re_581():
 
 # ── compressible dP infeasibility honesty ──────────────────────────────────
 def test_predict_dP_choked_warns_when_rescuing_to_pin():
-    import df_surrogate.predict as predmod
+    import sjtu_tpmshx.df_surrogate.predict as predmod
     predmod._CHOKE_WARNED.clear()
     with W.catch_warnings(record=True) as rec:
         W.simplefilter('always')
@@ -129,7 +123,7 @@ def test_predict_dP_choke_warns_per_geometry_not_once_per_process():
     # constant string 'choke', so only the FIRST choked candidate in a design
     # sweep warned. Now keyed on (tpms, L, t) -> a second, different choked
     # geometry warns too.
-    import df_surrogate.predict as predmod
+    import sjtu_tpmshx.df_surrogate.predict as predmod
     predmod._CHOKE_WARNED.clear()
     geoms = [('Gyroid', 7.0, 0.5), ('Diamond', 4.0, 0.3)]
     warned = 0

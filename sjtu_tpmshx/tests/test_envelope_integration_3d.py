@@ -5,18 +5,12 @@ converged garbage. Default (envelope_mode='raise') -> ChokedFlowError before/at
 the doomed solve; envelope_mode='warn' -> run but flag the result invalid; an
 in-envelope case -> valid result, no clip.
 """
-import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from runs._case_template import build_cfg
-from pipelines.stages_3d import _run_3d_stack
-from solvers.envelope import ChokedFlowError
+from sjtu_tpmshx.runs._case_template import build_cfg
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.solvers.envelope import ChokedFlowError
 
 
 def test_choked_case_raises_by_default():

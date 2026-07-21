@@ -11,15 +11,11 @@ locks in. Root cause + full diagnostic chain: 2026-06-09 systematic-debug.
 This test pins the symmetry the physics requires; it is RED until the
 conservative-scheme convergence defect is fixed.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from solvers.tpms_calc import geometry as tpms_geometry
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 def _z_mirror_asym_pct(field):
@@ -62,7 +58,7 @@ def test_conservative_ltne_z_symmetric(u_A):
 
 def test_conservative_kernel_zsym_minimal():
     """Direct-kernel minimal repro: z-even axial-only flow must give z-even T."""
-    from solvers.ltne_energy_3d import solve_full_domain_3d
+    from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
 
     Nx, Ny, Nz = 16, 10, 8
     L, H, D = 0.182, 0.042, 0.042

@@ -23,8 +23,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.simple_solver import SIMPLESolver
-from solvers._kernels_simple_2d import _sweep_u_jit_df, _sweep_v_jit_df
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers._kernels_simple_2d import _sweep_u_jit_df, _sweep_v_jit_df
 
 
 def _make_solver(eps=0.6, v_inlet=6.0, Nx=10, Ny=30,

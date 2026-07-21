@@ -16,9 +16,9 @@ import math
 import numpy as np
 import pytest
 
-from df_surrogate.surrogate_v3 import SurrogateV3
-from df_surrogate.predict import predict_dP_compressible
-from df_surrogate.residual_correction import predict_dP_compressible_corrected
+from sjtu_tpmshx.df_surrogate.surrogate_v3 import SurrogateV3
+from sjtu_tpmshx.df_surrogate.predict import predict_dP_compressible
+from sjtu_tpmshx.df_surrogate.residual_correction import predict_dP_compressible_corrected
 
 
 # --- predict_dP_compressible (geometry-routed) infeasible / feasible -----

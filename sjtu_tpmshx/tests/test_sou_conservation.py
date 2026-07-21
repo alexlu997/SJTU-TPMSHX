@@ -9,17 +9,11 @@ compressible, non-uniform-velocity field). The fix uses a face-averaged flux
 F_face = 0.5*(Fx_P + Fx_neighbour) so both cells apply the identical extra flux
 and the sum over all cells telescopes to the (zero, limiter-clamped) boundary.
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.ltne_energy import _sou_corr_x, _sou_corr_y
+from sjtu_tpmshx.solvers.ltne_energy import _sou_corr_x, _sou_corr_y
 
 
 def _smooth_T(n):
@@ -63,7 +57,7 @@ def test_sou_corr_x_uniform_flux_matches_local_form():
     # With uniform flux the face-averaged form reduces to the legacy cell-local
     # form 0.5*Fx*(phi_w - phi_e) to floating-point rounding (the two differ
     # only by float distributivity, F*a - F*b vs F*(a-b)).
-    from solvers._kernels_2d import minmod
+    from sjtu_tpmshx.solvers._kernels_2d import minmod
     Nx = 9
     T = _smooth_T(Nx)
     F = 1.7

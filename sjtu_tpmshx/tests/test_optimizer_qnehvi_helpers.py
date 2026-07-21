@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from optimization.optimizer_qnehvi import (
+from sjtu_tpmshx.optimization.optimizer_qnehvi import (
     _pareto_mask_max,
     hv_plateau_detected,
     request_cancel,
@@ -144,7 +144,7 @@ def test_save_pareto_csv_header_has_x_and_objective_columns(tmp_path):
 # ── P3.3: _resolve_core_budget (env parse/clamp/visibility) ──────────────────
 
 def test_core_budget_default_unset(monkeypatch):
-    from optimization.optimizer_qnehvi import _resolve_core_budget
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _resolve_core_budget
     import os
     monkeypatch.delenv('TPMSHX_BO_CORE_BUDGET', raising=False)
     cores, src = _resolve_core_budget()
@@ -161,7 +161,7 @@ def test_core_budget_default_unset(monkeypatch):
     ('', (None, 'default')),
 ])
 def test_core_budget_parse_matrix(monkeypatch, raw, expect):
-    from optimization.optimizer_qnehvi import _resolve_core_budget
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _resolve_core_budget
     import os
     monkeypatch.setenv('TPMSHX_BO_CORE_BUDGET', raw)
     cores, src = _resolve_core_budget()

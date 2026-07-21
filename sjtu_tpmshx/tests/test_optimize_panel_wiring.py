@@ -23,7 +23,7 @@ import pytest
 
 from PySide6.QtWidgets import QLineEdit, QComboBox
 
-from ui.optimize_panel import _gather_cfg, _make_worker_class
+from sjtu_tpmshx.ui.optimize_panel import _gather_cfg, _make_worker_class
 
 
 # ─── Fake window builder ───────────────────────────────────────────
@@ -265,7 +265,7 @@ def test_gather_cfg_reads_search_space_widgets():
 def test_gather_cfg_clamps_bounds_to_training_hull():
     """User-entered bounds outside the DF/Nu hull must be clamped — out-of-
     hull rankings are extrapolation."""
-    from df_surrogate._domain import TRAIN_L, TRAIN_T
+    from sjtu_tpmshx.df_surrogate._domain import TRAIN_L, TRAIN_T
     w = _add_space_widgets(_make_window(), L_min=1.0, L_max=50.0,
                            t_min=0.01, t_max=5.0)
     cfg = _gather_cfg(w)
@@ -274,7 +274,7 @@ def test_gather_cfg_clamps_bounds_to_training_hull():
 
 
 def test_gather_cfg_degenerate_range_falls_back_to_hull():
-    from df_surrogate._domain import TRAIN_L
+    from sjtu_tpmshx.df_surrogate._domain import TRAIN_L
     w = _add_space_widgets(_make_window(), L_min=6.0, L_max=6.0)
     cfg = _gather_cfg(w)
     assert cfg['L_bounds'] == pytest.approx(tuple(TRAIN_L))
@@ -283,8 +283,8 @@ def test_gather_cfg_degenerate_range_falls_back_to_hull():
 def test_gather_cfg_optimizer_config_hook():
     """R3 wiring: a typed OptimizerConfig on window._optimizer_cfg must reach
     the evaluator dict; absent → dimension defaults unchanged."""
-    from domain.compute_config import OptimizerConfig
-    from optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
+    from sjtu_tpmshx.domain.compute_config import OptimizerConfig
+    from sjtu_tpmshx.optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
 
     w = _make_window()
     cfg_plain = _gather_cfg(w)
@@ -306,7 +306,7 @@ def test_gather_cfg_3d_base_keeps_fast_mode_budget():
     """3D launch passes DEFAULT_CONFIG_3D as base — the 3D fast-mode budget
     (max_iter_simple 300 / tol 1e-2) must survive, not be stomped by the 2D
     defaults (5000 / 1e-3)."""
-    from optimization.evaluator_3d import DEFAULT_CONFIG_3D
+    from sjtu_tpmshx.optimization.evaluator_3d import DEFAULT_CONFIG_3D
     w = _make_window()
     cfg = _gather_cfg(w, base=DEFAULT_CONFIG_3D)
     assert cfg['max_iter_simple'] == DEFAULT_CONFIG_3D['max_iter_simple']
@@ -317,7 +317,7 @@ def test_gather_cfg_3d_base_keeps_fast_mode_budget():
 
 
 def test_is_3d_mode_follows_combo_dim():
-    from ui.optimize_panel import _is_3d_mode
+    from sjtu_tpmshx.ui.optimize_panel import _is_3d_mode
     w = _make_window()
     assert _is_3d_mode(w) is False            # no combo at all
     w.combo_dim = _combo(['2D', '3D'], default_idx=0)

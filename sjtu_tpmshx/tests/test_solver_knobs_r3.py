@@ -12,16 +12,12 @@ Contract under test:
    both dims — the whole point of R3 is that these were decorative.
 """
 import json
-import os
-import sys
 import warnings as _warnings
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from domain.compute_config import (ComputeConfig, ExtrapPolicy, FeatureFlags,
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, ExtrapPolicy, FeatureFlags,
                                    FluidConfig, GeometryConfig,
                                    OptimizerConfig, SolverConfig)
 
@@ -47,7 +43,7 @@ def test_optimizer_budget_matches_old_solver_defaults():
 
 
 def test_evaluator_mapping_reads_optimizer_block():
-    from optimization.evaluator import _compute_cfg_to_evaluator_dict
+    from sjtu_tpmshx.optimization.evaluator import _compute_cfg_to_evaluator_dict
     cfg = ComputeConfig()
     cfg.optimizer.tol_simple = 0.123
     cfg.optimizer.max_iter_simple = 77
@@ -113,7 +109,7 @@ def test_2d_max_outer_knob_turns():
     convergence_mode='legacy' (ledger C6/C9 — under the f2 pipeline
     default it drives nothing but the AMG scheduler), so its
     effectiveness is not asserted here."""
-    from controllers.compute_pipeline import Pipeline2D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
     Ta_def = Pipeline2D(_small_2d_cfg()).run().fields['Ta']
     Ta_capped = Pipeline2D(_small_2d_cfg(max_outer_ltne=2)).run().fields['Ta']
     Ta_capped2 = Pipeline2D(_small_2d_cfg(max_outer_ltne=2)).run().fields['Ta']
@@ -129,7 +125,7 @@ def test_3d_knobs_turn():
     """max_outer_ltne must cap the 3D outer loop. (tol_simple is also passed
     but its exit-gating is legacy-only — ledger C6/C7; under the f2 pipeline
     default it only retunes the AMG scheduler, so no assertion hangs on it.)"""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     from tests.test_partial_bc_ghost_b import _partial_bc_air_air_cfg
     base = _partial_bc_air_air_cfg(Nx=8, Ny=6, Nz=6)
     r_def = _run_3d_stack(dict(base))

@@ -13,20 +13,14 @@ Both live in ui/mixins/run_controller.py and touch no numerical path.
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from PySide6.QtWidgets import QMessageBox
-from ui.mixins.run_controller import RunControllerMixin
+from sjtu_tpmshx.ui.mixins.run_controller import RunControllerMixin
 
 
 class _LE:

@@ -1,10 +1,6 @@
 """Tests for the grid-legality preflight (pure-logic layer)."""
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from ui.preflight import FluidCfg, compute_preflight
+from sjtu_tpmshx.ui.preflight import FluidCfg, compute_preflight
 
 
 def _shanghai_A():

@@ -3,7 +3,7 @@ import types
 from unittest.mock import patch
 from PySide6.QtWidgets import QLineEdit, QComboBox, QCheckBox, QLabel
 
-from ui.quick_design_panel import (
+from sjtu_tpmshx.ui.quick_design_panel import (
     _gather_inputs, _make_worker_class, run_quick_design,
 )
 

@@ -11,21 +11,14 @@ Grids small enough to fall under the spsolve branch (`N <= 30000`) are
 exercised indirectly by `tests/test_simple_solver_3d.py`; the cache stays
 empty on that path so the counters tested here are zero.
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 import pytest
 
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 # 60x60x10 = 36 000 cells > 30 000 AMG gate.

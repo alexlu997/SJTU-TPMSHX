@@ -9,18 +9,12 @@ pressure-gradient source. Flooring the stored gauge where the clip engages
 removes that; an in-envelope solve never clips, so `self.P` is untouched
 (bit-identical).
 """
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 
 def _mock_3d(P, P_ref_abs):

@@ -1,20 +1,13 @@
 """Tests for solvers.sigmoid_field.build_continuous_arrays — verifies shape
 contract, clip behaviour, and custom dx_arr/dy_arr support.
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 
-from solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
+from sjtu_tpmshx.solvers.sigmoid_field import build_continuous_arrays, get_geometry_lut
 
 
 def _call(Nx=40, Ny=20, L=0.08, H=0.04, x=None, L0=6.0, t0=0.4,

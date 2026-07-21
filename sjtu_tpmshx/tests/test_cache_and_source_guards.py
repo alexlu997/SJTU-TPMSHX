@@ -11,13 +11,9 @@ W7: two cache-key hazards —
       returned the same mutable dict on every hit.
 """
 import logging
-import os
 import pathlib
-import sys
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ── W6: xlsx vs prebuilt-CSV source parity ──────────────────────────
@@ -26,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def test_df_source_parity(monkeypatch):
     """Excel-calibrated and prebuilt-CSV surrogates must agree at the
     Shanghai gate point (and record which source they used)."""
-    import df_surrogate.surrogate_v3 as sv3mod
+    import sjtu_tpmshx.df_surrogate.surrogate_v3 as sv3mod
     if not sv3mod.XLSX.exists():
         pytest.skip("experiment Excel (gitignored data/) not present")
 
@@ -51,7 +47,7 @@ def test_df_prebuilt_fallback_warns(monkeypatch, caplog):
     """The prebuilt-CSV fallback must be LOUD. The info-level version let a
     machine silently compute from a different calibration source (the
     riskiest trap of the 2026-07 server port, HANDOFF §8)."""
-    import df_surrogate.surrogate_v3 as sv3mod
+    import sjtu_tpmshx.df_surrogate.surrogate_v3 as sv3mod
     monkeypatch.setattr(sv3mod, 'XLSX',
                         pathlib.Path('__nonexistent_p03_probe__.xlsx'))
     # tpmshx's namespaced root logger has propagate=False, so caplog's
@@ -75,7 +71,7 @@ def test_compute_geometry_returns_unpoisonable_copy():
     """compute_geometry's lru_cache used to hand every caller the SAME dict;
     mutating a result poisoned all later hits (the exact W7b mechanism
     tpms_calc.compute was fixed for)."""
-    from solvers.tpms_geometry import compute_geometry
+    from sjtu_tpmshx.solvers.tpms_geometry import compute_geometry
     a = compute_geometry('Diamond', 6.0, 0.4)
     a['D_h'] = -1.0                      # caller scribbles on its copy
     b = compute_geometry('Diamond', 6.0, 0.4)
@@ -84,7 +80,7 @@ def test_compute_geometry_returns_unpoisonable_copy():
 
 
 def test_compute_geometry_cache_management_reexposed():
-    from solvers.tpms_geometry import compute_geometry
+    from sjtu_tpmshx.solvers.tpms_geometry import compute_geometry
     assert callable(compute_geometry.cache_clear)
     assert compute_geometry.cache_info().maxsize == 4096
 
@@ -94,7 +90,7 @@ def test_phi_grid_cache_is_frozen():
     would silently corrupt every later geometry computation at that
     (type, N) key."""
     import pytest
-    from solvers.tpms_geometry import _phi_grid
+    from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid
     phi = _phi_grid('Diamond', 32)
     assert phi.flags.writeable is False
     with pytest.raises((ValueError, RuntimeError)):
@@ -105,7 +101,7 @@ def test_chi_s_env_is_read_per_call(monkeypatch):
     """TPMSHX_CHI_S used to be read at import time only — setting it after
     the first import (monkeypatch.setenv included) was silently ignored
     (audit §5d). chi_s_eff must honor the CURRENT environment."""
-    from solvers.tpms_props import chi_s_eff, _CHI_S_FIT
+    from sjtu_tpmshx.solvers.tpms_props import chi_s_eff, _CHI_S_FIT
     monkeypatch.delenv('TPMSHX_CHI_S', raising=False)
     c0, c1 = _CHI_S_FIT['Diamond']
     fit_val = chi_s_eff('Diamond', 0.6)
@@ -117,7 +113,7 @@ def test_chi_s_env_is_read_per_call(monkeypatch):
 
 
 def test_laplacian_amg_cache_reset_hook():
-    from solvers.ltne_energy_3d import (_LAPLACIAN_AMG_CACHE,
+    from sjtu_tpmshx.solvers.ltne_energy_3d import (_LAPLACIAN_AMG_CACHE,
                                         clear_laplacian_amg_cache)
     _LAPLACIAN_AMG_CACHE[(2, 2, 2)] = {'probe': True}
     clear_laplacian_amg_cache()
@@ -129,7 +125,7 @@ def test_laplacian_amg_cache_reset_hook():
 
 @pytest.mark.slow
 def test_geometry_lut_cache_keys_on_kwargs(tmp_path):
-    from solvers.sigmoid_field import get_geometry_lut
+    from sjtu_tpmshx.solvers.sigmoid_field import get_geometry_lut
     lut_a = get_geometry_lut('Gyroid', n_L=3, n_t=2, N=32,
                              cache_dir=str(tmp_path))
     lut_b = get_geometry_lut('Gyroid', n_L=4, n_t=2, N=32,
@@ -147,7 +143,7 @@ def test_geometry_lut_cache_keys_on_kwargs(tmp_path):
 
 
 def test_compute_cache_keys_on_df_backend(monkeypatch):
-    from solvers import tpms_calc
+    from sjtu_tpmshx.solvers import tpms_calc
     args = ('Gyroid', 7.0, 0.6, 10.0, 422.0, 192362.0, 16.0)
 
     monkeypatch.delenv('TPMSHX_DF_METHOD', raising=False)
@@ -167,7 +163,7 @@ def test_compute_cache_keys_on_df_backend(monkeypatch):
 
 
 def test_compute_hit_returns_unpoisonable_copy():
-    from solvers import tpms_calc
+    from sjtu_tpmshx.solvers import tpms_calc
     args = ('Gyroid', 7.0, 0.6, 10.0, 422.0, 192362.0, 16.0)
     tpms_calc.compute.cache_clear()
     r1 = tpms_calc.compute(*args)

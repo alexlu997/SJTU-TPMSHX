@@ -3,7 +3,7 @@ the SOU deferred-correction kernels used before extraction (DUP-C / #4)."""
 import numpy as np
 import pytest
 
-from solvers._kernels_2d import minmod
+from sjtu_tpmshx.solvers._kernels_2d import minmod
 
 
 def _minmod_ref(gu, gd):

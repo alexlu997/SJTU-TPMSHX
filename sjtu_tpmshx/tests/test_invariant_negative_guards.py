@@ -13,13 +13,9 @@ single non-production caller):
    SLM roughness; any friction multiplier double-counts. Zero tests
    referenced f_enhancement before this file.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ── 1. ε-once contract: production pipeline callers ────────────────
@@ -32,7 +28,7 @@ class _EpsCaptured(Exception):
 def test_stages_3d_passes_full_epsilon(monkeypatch):
     """_run_3d_stack (production 3D pipeline) must hand solve_full_domain_3d
     the FULL ε (kernel halves once) — not a pre-halved ε_A."""
-    import pipelines.run_stack_3d as R
+    import sjtu_tpmshx.pipelines.run_stack_3d as R
 
     captured = {}
 
@@ -61,7 +57,7 @@ def test_stages_3d_passes_full_epsilon(monkeypatch):
 def test_solve_2d_passes_full_epsilon(monkeypatch):
     """The 2D pipeline loop must hand solve_full_domain the FULL ε with
     eps_A/eps_B None on the symmetric (δ=0) path."""
-    import pipelines.solve_2d as S2
+    import sjtu_tpmshx.pipelines.solve_2d as S2
 
     captured = {}
 
@@ -73,10 +69,10 @@ def test_solve_2d_passes_full_epsilon(monkeypatch):
 
     monkeypatch.setattr(S2, "solve_full_domain", spy)
 
-    from domain.compute_config import (ComputeConfig, ExtrapPolicy,
+    from sjtu_tpmshx.domain.compute_config import (ComputeConfig, ExtrapPolicy,
                                        FluidConfig, GeometryConfig,
                                        SolverConfig)
-    from controllers.compute_pipeline import Pipeline2D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
     cfg = ComputeConfig(
         fluid_A=FluidConfig(type='air', u_mps=5.0, T_in_K=400.0),
         fluid_B=FluidConfig(type='air', u_mps=10.0, T_in_K=310.0),
@@ -91,7 +87,7 @@ def test_solve_2d_passes_full_epsilon(monkeypatch):
         pass   # sentinel (or downstream wreckage) — capture is what matters
 
     assert "eps" in captured, "energy kernel was never reached"
-    from solvers.tpms_calc import compute as tpms_compute
+    from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute
     eps_full = tpms_compute('Gyroid', 7.0, 0.6, 5.0, 400.0, 101325.0,
                             16.0)['epsilon']
     assert captured["eps"] == pytest.approx(eps_full, rel=1e-6), (
@@ -106,7 +102,7 @@ def test_solve_2d_passes_full_epsilon(monkeypatch):
 
 
 def test_massflux_inlet_default_on_2d():
-    from solvers.simple_solver import SIMPLESolver
+    from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
     s = SIMPLESolver(
         W=0.06, H=0.03, Nx=10, Ny=8,
         tpms_type='Gyroid', L_cell_mm=7.0, t_mm=0.6, eps=0.85, r_h=1e-3,
@@ -121,7 +117,7 @@ def test_massflux_inlet_default_on_2d():
 
 
 def test_massflux_inlet_default_on_3d():
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
     K_arr = np.full((6, 5), 5.0e-8)
     cF_arr = np.full((6, 5), 500.0)
     s = SIMPLESolver3D(Lx=0.04, Ly=0.03, Lz=0.02, Nx=8, Ny=6, Nz=5,
@@ -142,7 +138,7 @@ def test_norris_1a_friction_is_exactly_noop():
     """norris_1a MUST stay f×1.0 (alias of baseline): gamma_df's cF already
     encodes SLM roughness; any friction multiplier double-counts (ledger
     ROUGH-X, constructive double-count)."""
-    from solvers.roughness import f_enhancement, nu_extra_factor, apply_to_K_cF
+    from sjtu_tpmshx.solvers.roughness import f_enhancement, nu_extra_factor, apply_to_K_cF
     for Re in (500.0, 2000.0, 8000.0, 16000.0):
         assert f_enhancement(Re, mode='norris_1a') == 1.0
         assert f_enhancement(Re, mode='baseline') == 1.0

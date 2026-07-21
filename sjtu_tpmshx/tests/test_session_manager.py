@@ -7,20 +7,15 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from PySide6.QtCore import QCoreApplication
 
-from controllers.session_manager import SessionManager, SCHEMA_VERSION
+from sjtu_tpmshx.controllers.session_manager import SessionManager, SCHEMA_VERSION
 
 
 def _app():

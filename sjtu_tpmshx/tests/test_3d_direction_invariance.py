@@ -9,16 +9,10 @@ Covers (on small Nz>1 LTNE cases):
   * Nz=1 with dir_A ∈ {0, 3} delegates to 2D bitwise (regression from
     existing tests, re-asserted here for locality).
 """
-import sys
-from pathlib import Path
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.ltne_energy_3d import solve_full_domain_3d, energy_balance_3d
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d, energy_balance_3d
 
 
 def _base_cfg(Nx=10, Ny=10, Nz=5, u=5.0, dir_A=0, dir_B=3):

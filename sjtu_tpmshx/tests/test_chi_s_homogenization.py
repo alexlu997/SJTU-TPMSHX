@@ -9,18 +9,15 @@ Covers:
   * K_ss integration through tpms_calc.compute().
 """
 import importlib.util
-import sys
 from pathlib import Path
 
 import numpy as np
 
 _HERE = Path(__file__).resolve()
 _PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from solvers.tpms_props import chi_s_eff, geometry
-from solvers.tpms_calc import compute as tpms_compute
+from sjtu_tpmshx.solvers.tpms_props import chi_s_eff, geometry
+from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute
 
 _HOM_PATH = _PROJECT_ROOT / 'runs' / 'tools' / 'homogenize_chi_s.py'
 _spec = importlib.util.spec_from_file_location('homogenize_chi_s', _HOM_PATH)

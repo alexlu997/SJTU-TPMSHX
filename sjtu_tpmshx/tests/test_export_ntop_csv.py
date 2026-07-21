@@ -13,13 +13,13 @@ import json
 import numpy as np
 import pytest
 
-from optimization.export_ntop_csv import (
+from sjtu_tpmshx.optimization.export_ntop_csv import (
     DEFAULT_GRID_NX,
     DEFAULT_GRID_NY,
     export_decision_vector,
     export_pareto_row,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_T_BOUNDS,
     encode_decision_vector,

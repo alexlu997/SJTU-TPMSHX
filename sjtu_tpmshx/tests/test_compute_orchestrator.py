@@ -14,22 +14,16 @@ Phase 1 of 2026-05-06 main.py refactor (audit fix #4).
 from __future__ import annotations
 
 import os
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
 # Headless Qt for CI / non-GUI test environments.
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from PySide6.QtCore import QCoreApplication, QEventLoop
 
-from controllers.compute_orchestrator import ComputeOrchestrator, CancelToken
+from sjtu_tpmshx.controllers.compute_orchestrator import ComputeOrchestrator, CancelToken
 
 
 # ----------------------------------------------------------- helpers

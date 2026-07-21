@@ -13,19 +13,13 @@ We rotate the whole two-stream frame cyclically x→y→z:
 and assert dP_A agrees. A failure would mean the dP fix (or the axis map) is
 direction-dependent — exactly the regression this guards.
 """
-import sys
-from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-import pipelines.stages_3d as R
+import sjtu_tpmshx.pipelines.stages_3d as R
 
 # cube domain + cube grid + uniform geometry → x/y/z streams are the same
 # physical problem in a rotated frame.

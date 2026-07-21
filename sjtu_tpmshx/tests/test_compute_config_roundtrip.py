@@ -14,9 +14,9 @@ CONFIG_FIELDS is the single source for scalar field wiring (dataclass slot
 
 import pytest
 
-from domain.compute_config import (ComputeConfig, FluidConfig,
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                     GeometryConfig, SolverConfig)
-from ui.window_config import (CONFIG_FIELDS, config_from_window,
+from sjtu_tpmshx.ui.window_config import (CONFIG_FIELDS, config_from_window,
                               _validate_required_widgets)
 from tests.test_compute_config import _StubWindow
 

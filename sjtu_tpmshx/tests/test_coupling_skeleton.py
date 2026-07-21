@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
+from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 
 
 def _f(val, shape=(3, 3)):

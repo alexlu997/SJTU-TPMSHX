@@ -8,16 +8,10 @@ to lock in the contract.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from validation.harness._provenance import (
+from sjtu_tpmshx.validation.harness._provenance import (
     write_csv_with_provenance,
     backfill_provenance,
     read_csv_with_provenance,

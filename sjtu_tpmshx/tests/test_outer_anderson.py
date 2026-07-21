@@ -16,19 +16,13 @@ same is shown independently by sweeping `_ALPHA_T` from 0.3 to 1.0, which moves
 the outer count by zero. Kept because the stiff-ρ(T) case it was designed for
 (sCO2 near pseudo-critical) is not covered by these air cases.
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.anderson_acceleration import AndersonOuterCoupling  # noqa: E402
-from runs._case_template import build_cfg                        # noqa: E402
-from pipelines.stages_3d import _run_3d_stack                    # noqa: E402
+from sjtu_tpmshx.solvers.anderson_acceleration import AndersonOuterCoupling  # noqa: E402
+from sjtu_tpmshx.runs._case_template import build_cfg                        # noqa: E402
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack                    # noqa: E402
 
 
 def _cfg(**over):
@@ -48,7 +42,7 @@ def test_default_off_and_production_blend_is_untouched():
     assert r['convergence_detail']['outer_anderson'] is None
 
     import inspect
-    from pipelines import run_stack_3d as _r3
+    from sjtu_tpmshx.pipelines import run_stack_3d as _r3
     # Seam-C extraction (P1.5, 2026-07-20): the outer-loop closures (and the
     # production Picard blend inside _outer_post_3d) now live in
     # _run_outer_coupling_3d, not _run_3d_stack.

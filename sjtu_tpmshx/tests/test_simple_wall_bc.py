@@ -1,21 +1,14 @@
 """Tests for SIMPLESolver wall BC — verifies no-slip at side walls and
 inlet / outlet semantics for a simple full-width configuration.
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 
-from solvers.tpms_calc import geometry as tpms_geometry, P_atm
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry, P_atm
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 
 def _build_solver(Nx=24, Ny=80, wall_refine=False, v_in=4.0, T_in=450.0,

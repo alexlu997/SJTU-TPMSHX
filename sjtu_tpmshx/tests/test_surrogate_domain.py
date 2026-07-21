@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from df_surrogate.surrogate_domain import (
+from sjtu_tpmshx.df_surrogate.surrogate_domain import (
     check_surrogate_domain_at_point,
     _SURROGATE_L_MM, _SURROGATE_T_MM,
 )
