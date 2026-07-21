@@ -57,7 +57,7 @@ def main(argv: Optional[list] = None) -> int:
         save_dir = str(Path('opt_runs') / f'production_v3_{ts}')
 
     # Spawn the orchestrator
-    from optimization.parallel_runner import run_qnehvi_multiseed
+    from sjtu_tpmshx.optimization.parallel_runner import run_qnehvi_multiseed
 
     out = run_qnehvi_multiseed(
         config=config,

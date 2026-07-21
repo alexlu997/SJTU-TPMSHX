@@ -15,11 +15,11 @@ import warnings
 
 import numpy as np
 
-from optimization.evaluator_3d import (
+from sjtu_tpmshx.optimization.evaluator_3d import (
     DEFAULT_CONFIG_3D,
     evaluate_design_3d,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     decision_dim,
     decision_bounds,
 )

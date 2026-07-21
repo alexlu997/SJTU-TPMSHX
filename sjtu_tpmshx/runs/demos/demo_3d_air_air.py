@@ -11,17 +11,14 @@ Defaults mirror ui_builders.py:
     Fluid B : Air, u_B=10 m/s, T_inB=293.15 K, P_inB=101325 Pa, -y stream
 """
 import os
-import sys
 import numpy as np
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from pipelines.stages_3d import _run_3d_stack
-from runs._case_template import build_cfg as _template_cfg
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.runs._case_template import build_cfg as _template_cfg
 
 
 def build_cfg():

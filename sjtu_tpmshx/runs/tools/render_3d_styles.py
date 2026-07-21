@@ -13,10 +13,7 @@ Field selection:
   - Ta, Tb, vmag, P_kPa → outputs 1 + 2 only (lighter)
 """
 import os
-import sys
 import numpy as np
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 os.environ['PYVISTA_OFF_SCREEN'] = 'true'
 
@@ -31,8 +28,8 @@ pv.OFF_SCREEN = True
 pv.global_theme.background = 'white'
 pv.global_theme.font.color = 'black'
 
-from solvers.tpms_calc import geometry as tpms_geometry
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 def build_cube_cfg():

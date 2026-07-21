@@ -31,15 +31,10 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.tpms_geometry import _phi_grid, _C_from_tL  # noqa: E402
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL  # noqa: E402
 
 K_VOID = 1e-6      # void conductivity (units of k_s); flux error O(K_VOID)
 CG_TOL = 1e-9      # relative residual

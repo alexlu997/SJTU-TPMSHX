@@ -23,8 +23,6 @@ import pandas as pd
 import pyvista as pv
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -32,15 +30,15 @@ except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp, P_atm,
 )
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from solvers.sigmoid_field_3d import build_continuous_arrays_3d
-from solvers.sigmoid_field import get_geometry_lut
-from df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.sigmoid_field_3d import build_continuous_arrays_3d
+from sjtu_tpmshx.solvers.sigmoid_field import get_geometry_lut
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
 
 R_AIR = 287.05
 

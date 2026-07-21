@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import warnings
 
-from optimization.optimizer_qnehvi import run_qnehvi
+from sjtu_tpmshx.optimization.optimizer_qnehvi import run_qnehvi
 
 
 def main() -> None:

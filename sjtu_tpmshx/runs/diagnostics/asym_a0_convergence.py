@@ -12,12 +12,9 @@ A0 网格收敛诊断（非对称孔隙率，极端 δ）。
 用法: python -u runs/asym_a0_convergence.py
 """
 import sys
-from pathlib import Path
 
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _find_C_for_eps
-from solvers.asym_geometry import (
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _find_C_for_eps
+from sjtu_tpmshx.solvers.asym_geometry import (
     eps_sides, a0_sides, a0_sides_mc, a0_sides_richardson, find_delta_max,
 )
 

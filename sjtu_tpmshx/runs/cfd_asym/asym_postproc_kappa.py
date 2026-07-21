@@ -114,8 +114,7 @@ def kappa(fit: pd.DataFrame) -> pd.DataFrame:
 
 def register(kap: pd.DataFrame):
     """Push κ_K(r), κ_cF(r) interp tables into the live solver (kappa_asym)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from df_surrogate import kappa_asym
+    from sjtu_tpmshx.df_surrogate import kappa_asym
     for tpms, g in kap.groupby("tpms"):
         g = g.sort_values("r")
         r = g["r"].values

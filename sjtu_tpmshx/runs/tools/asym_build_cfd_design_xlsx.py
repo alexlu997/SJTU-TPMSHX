@@ -20,7 +20,6 @@ channels (A large r>1, B small r<1), so d↔1−d symmetry halves the geometry c
 Output: runs/_out/asym_cfd/asym_cfd_design_matrix.xlsx
 Usage:  python -u runs/asym_build_cfd_design_xlsx.py
 """
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +27,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side as XLSide
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _C_from_tL
-from solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
 
 # ── finalized design parameters ──────────────────────────────────
 N = 128

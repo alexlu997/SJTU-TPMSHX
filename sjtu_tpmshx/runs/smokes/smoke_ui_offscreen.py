@@ -8,10 +8,9 @@ Boots MainWindow with QT_QPA_PLATFORM=offscreen, simulates user flow:
   5. Verify no exceptions / unhandled errors
 """
 from __future__ import annotations
-import os, sys, traceback
+import sys, traceback
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
+from sjtu_tpmshx.runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
 from PySide6.QtWidgets import QPushButton, QToolButton, QComboBox
 
@@ -25,7 +24,7 @@ sys.excepthook = _hook
 
 
 def main():
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     print("[1/5] Constructing Main_Menu ... ", end='', flush=True)
     win = Main_Menu()
     print("OK", flush=True)

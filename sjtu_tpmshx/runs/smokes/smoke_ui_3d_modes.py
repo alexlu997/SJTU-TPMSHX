@@ -6,13 +6,12 @@ Also exercises fluid_type_B='water' path (Shanghai-style) to verify
 roughness skipped on water side.
 """
 from __future__ import annotations
-import os, sys, warnings
+import os, warnings
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from runs._case_template import build_cfg as _template_cfg
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.runs._case_template import build_cfg as _template_cfg
 
 
 def build_cfg(tpms='Gyroid', Lcell=7.0, t_wall=0.6, k_s=16.0,

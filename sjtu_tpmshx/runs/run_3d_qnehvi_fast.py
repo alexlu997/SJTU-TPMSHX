@@ -22,11 +22,11 @@ import os
 import time
 import warnings
 
-from optimization.evaluator_3d import (
+from sjtu_tpmshx.optimization.evaluator_3d import (
     DEFAULT_CONFIG_3D,
     evaluate_design_3d,
 )
-from optimization.optimizer_qnehvi import run_qnehvi
+from sjtu_tpmshx.optimization.optimizer_qnehvi import run_qnehvi
 
 
 def main() -> None:

@@ -10,13 +10,10 @@ Phase 0.5：指定配比 (A%, B%, solid%) 反解 (C, δ) + 出每侧 ε/A0/D_h +
 
 用法：python -u runs/asym_target_scan.py
 """
-import sys
-from pathlib import Path
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid
-from solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
 
 N = 128
 TPMS = ["Diamond", "Gyroid"]

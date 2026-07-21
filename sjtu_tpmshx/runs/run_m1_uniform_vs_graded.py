@@ -34,14 +34,14 @@ import warnings
 
 import numpy as np
 
-from optimization.evaluator import DEFAULT_CONFIG, evaluate_design, _resolve_grid
-from optimization.optimizer_qnehvi import run_qnehvi, _pareto_mask_max
-from solvers.continuous_field import (
+from sjtu_tpmshx.optimization.evaluator import DEFAULT_CONFIG, evaluate_design, _resolve_grid
+from sjtu_tpmshx.optimization.optimizer_qnehvi import run_qnehvi, _pareto_mask_max
+from sjtu_tpmshx.solvers.continuous_field import (
     encode_decision_vector,
     from_decision_vector,
     decision_dim,
 )
-from df_surrogate._domain import TRAIN_L, TRAIN_T
+from sjtu_tpmshx.df_surrogate._domain import TRAIN_L, TRAIN_T
 
 
 # ─── Config (operating point mirrors runs/run_3d_qnehvi_fast.py) ────

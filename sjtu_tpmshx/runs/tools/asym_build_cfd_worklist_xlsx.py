@@ -21,7 +21,6 @@ Output: D:/Postgraduate/asym-porosity-data/asym_cfd_worklist.xlsx
         (workspace-level dedicated folder, gitignored — porosity-offset generated data)
 Usage:  python -u runs/asym_build_cfd_worklist_xlsx.py
 """
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,9 +28,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side as XLSide
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _C_from_tL
-from solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
 
 # ── geometry design (locked) ─────────────────────────────────────
 N = 128

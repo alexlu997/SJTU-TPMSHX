@@ -14,14 +14,12 @@ import cProfile
 import io
 import os
 import pstats
-import sys
 import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
 
 import numpy as np
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 R_GAS = 287.05
 T_IN = 422.0

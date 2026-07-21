@@ -8,15 +8,10 @@ the gap between schemes vs its shrink rate under refinement is the
 
     python -u sjtu_tpmshx/runs/benchmark_sou_3d.py
 """
-import os
-import sys
 import time
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
-
 import numpy as np
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 GRIDS = [(10, 40, 10), (20, 80, 20)]
 K_VAL, CF_VAL = 2.0e-8, 100.0

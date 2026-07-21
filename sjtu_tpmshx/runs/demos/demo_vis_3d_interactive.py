@@ -29,12 +29,6 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 
-# Repo-root layout (Batch-5, 2026-06-10): examples/ sits beside the
-# sjtu_tpmshx package, so point sys.path at the package dir itself.
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
@@ -42,13 +36,13 @@ except Exception:
 warnings.filterwarnings('ignore')
 
 # Reuse helpers + field loader from demo_vis_3d
-from ui.demo_vis_3d import (
+from sjtu_tpmshx.ui.demo_vis_3d import (
     run_case_8_fields, build_demo_zoning_field,
     L_DOM, H_DOM, LZ,
 )
 
 
-from ui.vis3d_constants import FIELD_ORDER, FIELD_META, tone_down_plane_widget
+from sjtu_tpmshx.ui.vis3d_constants import FIELD_ORDER, FIELD_META, tone_down_plane_widget
 
 
 def build_data_grid(Nx, Ny, Nz, dx, dy, dz, Ta, vmag, P, L_field,

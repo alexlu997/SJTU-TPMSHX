@@ -13,12 +13,10 @@ PyVistaQt volume panel cannot init offscreen (logged + tolerated), but the
 slice path exercises the ComputeResult consumer surface end to end.
 """
 import os
-import sys
 import time
 
 os.environ['TPMSHX_EAGER_3D_SLICES'] = '1'   # run the 2D slice renderer
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
+from sjtu_tpmshx.runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
 from PySide6.QtWidgets import QMessageBox
 
@@ -38,7 +36,7 @@ def _patch_modals():
 def main():
     app = _smoke_boot.get_app()
     _patch_modals()
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     win = Main_Menu()
     app.processEvents()
 

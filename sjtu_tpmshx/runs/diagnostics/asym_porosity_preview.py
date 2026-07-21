@@ -20,9 +20,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _find_C_for_eps
-from solvers.asym_geometry import eps_sides, find_delta_max
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _find_C_for_eps
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, find_delta_max
 
 # P1.7: was a dead C:\Users\ALEX\Desktop path. Default to gitignored
 # runs/_out; TPMSHX_TOOL_OUT_DIR overrides.
