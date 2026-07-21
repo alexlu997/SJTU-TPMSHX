@@ -14,10 +14,14 @@
 - [x] 门禁：全套 1275+4skip / 10 绿（18:57）+ golden PASS 位同（日志 upgrade/logs/iter43-*；
       注意 golden 单跑时 PS 5.1 stderr 包装会假红退出码，以判定行为准）
 
-## W1 · tests/ 迁移（73 文件，§10 委托）
-- [ ] 删各文件 sys.path 引导块；顶层导入 → `sjtu_tpmshx.*`
-- [ ] conftest.py 同波处理；波尾 grep：tests/ 内 `sys.path` 零残留
-- [ ] 门禁全套
+## W1 · tests/ 迁移（iter 44 ✓，`140166b`——实际 141 文件，非预估 73）
+- [x] 删 sys.path 引导块 + 顶层导入 → `sjtu_tpmshx.*`（Sonnet 委托 + Fable 复核；
+      净 -357 行）
+- [x] conftest.py：引导块 → `import sjtu_tpmshx` 显式自举；ci.yml 补
+      `pip install -e . --no-deps`（裸 pytest 无 cwd 于 sys.path）
+- [x] 波尾 grep：残留白名单 = 身份测试（豁免）/ optionB（poc/ 引导非包）/ conftest 文档串；
+      **已知余量：tests/design/ 15 文件顶层 `design` 导入（不在委托白名单）→ W_final 收**
+- [x] 门禁：套件 1275+4skip / 10 绿（18:45）+ GOLDEN PASS 位同（判定行核实）
 
 ## W2 · validation/（17）+ df_surrogate/（7）迁移（§10 委托）
 - [ ] 同 W1 流程；validation 侧注意 gate 脚本可独立直跑（`python -u` 入口语义不变）
