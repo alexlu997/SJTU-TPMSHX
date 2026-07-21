@@ -25,7 +25,7 @@
 | §3 | evaluator↔pipeline 无一致性契约 | **已立契约**：P1.4 六断言机器化（test_evaluator_pipeline_contract）+ D3 绊线；§3a 热重播种地板已改严格 NaN（aa3f477）。G 口径不一致升级为 **D3 待 Alex 决策**（实测亏 7.38%/19.30%） |
 | §4 | 运行目标【需人答】 | 仍开放（Alex 域） |
 | §5 | port_retest_server.ps1 无实跑证据 | 部分超越：**本升级循环即 Server 2022 实跑证据**（venv/锁包/双跑脚本/1268 绿），但 .ps1 四臂脚本本身仍未整跑过 |
-| §6 | 四臂超订无依据 | 部分解：TPMSHX_BO_CORE_BUDGET 机制 + P3.3 钳制/来源标签/启动 INFO 可审计；parallel_runner BLAS 钳制时序缺陷**仍未修**（挂 Phase 5 候选 C） |
+| §6 | 四臂超订无依据 | **已解（候选 C-1，2026-07-21）**：TPMSHX_BO_CORE_BUDGET（P3.3）+ worker 钳制时序修复——轻模块 `optimization/_thread_caps.py` 做 executor initializer（spawn 反序列化只拉 os，钳制先于 numpy/OpenBLAS 加载）、补 NUMBA_NUM_THREADS、setdefault 改硬设 + TPMSHX_WORKER_THREADS 逃生阀；时序契约测试 4 断言（test_thread_caps_timing）实证 spawn 池内 pre-numpy 钳制 |
 | §7 | 中断/重启处理脆弱 | 未动（原样成立） |
 | §8a | 数据仓无 pin | **已解**：仓库根 `data-repo.pin`（P0.3） |
 | §8b | XLSX/prebuilt 可能静默分叉 | 部分解：回退改响亮（P0.3，test_df_prebuilt_fallback_warns）；源等价性钉定仍依赖 xlsx 在位 |

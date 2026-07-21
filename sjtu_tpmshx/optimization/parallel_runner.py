@@ -37,20 +37,23 @@ from typing import List, Optional
 import numpy as np
 
 from sjtu_tpmshx.logutil import get_logger
+from sjtu_tpmshx.optimization._thread_caps import set_worker_thread_caps
 
 _log = get_logger(__name__)
 
 
 def _set_thread_caps() -> None:
-    """Pin BLAS / OpenMP threads to 1 in the *current* process.
+    """Belt-and-braces re-pin inside the worker body.
 
-    Must be called BEFORE importing numpy/scipy in worker subprocesses.
-    The orchestrator subprocess wrapper sets these env vars at the very
-    top of `_seed_subprocess_main` before any heavy imports happen.
+    The REAL guard is the executor's ``initializer=set_worker_thread_caps``
+    (light-module timing — see _thread_caps.py: a spawned child imports this
+    module, numpy included, just to UNPICKLE the worker fn, so an in-body cap
+    ran after OpenBLAS already sized its pool, and the old list was missing
+    NUMBA_NUM_THREADS — HANDOFF §6b, fixed 2026-07-21). This call remains for
+    the dynamic readers (MKL/OMP re-read at parallel regions) and for callers
+    invoking _seed_subprocess_main outside the pool.
     """
-    for k in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
-              'NUMEXPR_NUM_THREADS'):
-        os.environ.setdefault(k, '1')
+    set_worker_thread_caps()
 
 
 def _seed_subprocess_main(seed: int,
@@ -195,7 +198,11 @@ def run_qnehvi_multiseed(config: Optional[dict] = None,
     ctx = mp.get_context('spawn')
 
     per_seed_results: List[dict] = []
-    with ProcessPoolExecutor(max_workers=n_seeds, mp_context=ctx) as ex:
+    # initializer from the LIGHT module: unpickling it imports os only, so
+    # the caps land BEFORE the child's numpy/numba load (candidate C fix —
+    # see optimization/_thread_caps.py for the spawn-timing rationale).
+    with ProcessPoolExecutor(max_workers=n_seeds, mp_context=ctx,
+                             initializer=set_worker_thread_caps) as ex:
         futs = [
             ex.submit(_seed_subprocess_main,
                       seed, config, n_init, n_iter, q_batch,

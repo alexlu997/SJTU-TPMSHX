@@ -175,3 +175,4 @@
   ——语义加固，实测冻结值位同（2D 捕获回退本就发生在压力场建立前 = 物理密度）；
   3D 捕获机理不同（首解后、出口基准），G 亏 19.3% 仍真实 → 候选 A2。
   契约测试更名 `test_g_reference_density_convention_post_d3c`。
+- **⟨07-21 更新⟩ 候选 C-1**：parallel_runner 线程钳制时序缺陷修复（HANDOFF §6b 三连：OpenBLAS 载入时读环境→worker 函数体内钳制恒迟到；清单漏 NUMBA_NUM_THREADS；setdefault 输给外泄 shell 变量）。新轻量叶模块 `_thread_caps.py`（仅 os）任 executor initializer；逃生阀 TPMSHX_WORKER_THREADS；`_set_thread_caps` 降级为 belt-and-braces。时序契约测试 test_thread_caps_timing 4 断言。
