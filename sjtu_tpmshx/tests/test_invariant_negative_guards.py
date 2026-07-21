@@ -28,7 +28,11 @@ class _EpsCaptured(Exception):
 def test_stages_3d_passes_full_epsilon(monkeypatch):
     """_run_3d_stack (production 3D pipeline) must hand solve_full_domain_3d
     the FULL ε (kernel halves once) — not a pre-halved ε_A."""
-    import sjtu_tpmshx.pipelines.run_stack_3d as R
+    # P1.8b F3: patch the STAGES module — the five stage functions moved to
+    # run_stack_3d_stages.py and read their globals THERE; patching the
+    # orchestrator/re-export module would be a silent no-op.
+    import sjtu_tpmshx.pipelines.run_stack_3d_stages as R
+    import sjtu_tpmshx.pipelines.run_stack_3d as R_orch
 
     captured = {}
 
@@ -46,7 +50,7 @@ def test_stages_3d_passes_full_epsilon(monkeypatch):
     from test_partial_bc_ghost_b import _partial_bc_air_air_cfg
     cfg = _partial_bc_air_air_cfg(Nx=6, Ny=6, Nz=6)
     with pytest.raises(_EpsCaptured):
-        R._run_3d_stack(cfg)
+        R_orch._run_3d_stack(cfg)
 
     assert captured["eps"] == pytest.approx(cfg['eps'], rel=1e-6), (
         f"stages_3d passed epsilon.max()={captured['eps']:.4f}; expected "

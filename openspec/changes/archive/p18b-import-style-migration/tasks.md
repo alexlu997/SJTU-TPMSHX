@@ -48,9 +48,10 @@
       numba 缓存旧名序列化（清 __pycache__ 重编译）
 - [x] 门禁（终跑）：1272+4skip / 10 绿（11:31）+ GOLDEN PASS 位同
 
-## W_final-F3 · P1.5 尾巴（可选收尾，另轮）
-- [ ] run_stack_3d 五阶段函数文件级迁移 → run_stack_3d_stages.py（保 re-export 面）
-- [ ] atlas pipelines 卷注记 + openspec 变更归档
+## W_final-F3 · P1.5 尾巴（iter 49 ✓——**P1.8b 全波次收官**）
+- [x] run_stack_3d 3001→68 行（编排器+24 名重导出）；run_stack_3d_stages.py 2977 行
+      （五阶段+四数据类+助手+常量 verbatim）；eps 负向守卫补丁目标随迁（唯一站点，审计确认）
+- [x] 门禁：1272+4skip / 10 绿（10:23）+ GOLDEN PASS 位同；openspec 变更归档
 - [ ] P1.5 尾巴并入：run_stack_3d 五阶段函数 → `run_stack_3d_stages.py`（保 re-export 面）
 - [ ] pyproject 头注收尾；atlas repo-infra / pipelines 卷收编注记
 - [ ] 全库 grep：双风格残留零、sys.path 引导仅存钦定白名单（若有）
