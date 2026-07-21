@@ -2,6 +2,21 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 42 · 2026-07-21 · P1.3/P1.5 关账 ✅——**前提修正：#4 早已落地，零代码**（docs-only）
+
+- Alex 批准原建议（"补做 #4 警告注册表 + 关账"），开工核实即推翻前提：**#4 已于
+  iter 8（`7cbeee1`）随 P1.3-A 落地**——qnehvi `_reset_warn_registries()` 战役入口调用，
+  测试 `test_qnehvi_campaign_resets_warn_registries` 钉住粒度决策（per-campaign：
+  500 评估战役内仍去重，镜像 ComputePipeline.run；per-design 反而会刷屏）
+- 循环误报根因：iter 41 答疑时只 grep 两个评估器文件本身，漏了上一层 qnehvi 战役
+  入口——**"评估器入口"字面被 iter 8 有意收窄为"战役入口"且有测试背书**，本轮核实
+  qnehvi 为评估器唯一批量调用方（一次性脚本=新进程，注册表无陈旧态），收窄成立
+- 关账：P1.3 勾选（四子项决议映射：①iter 8 ②iter 9+D2(c) ③iter 41 D3(c) ④iter 8
+  战役级）；P1.5 勾选（数据类化 ✓ P2.0，文件级迁移归 P1.8b，无独立余量）；
+  Phase 1 头部余留注记改为"仅 P1.8b 波次"
+- 验证：docs-only（ROADMAP/STATE/PROGRESS/progress.html），零代码零门，免套件有据
+- 下一步：回待命。P1 真余量收敛为 P1.8b 一项，与 Phase 5 候选池 A2/B/C/D 同级待拍板
+
 ## iter 41 · 2026-07-20 · D2(c)+D3(c) 执行 ✅——**双前提修正、零重基准**（`20031ba`）
 
 - Alex 拍板（"可以，按你的建议开始吧"）：D2=(c) 现状+文档化、D3=(c) 分维一致先行 +

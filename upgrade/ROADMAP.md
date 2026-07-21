@@ -25,7 +25,7 @@
       补 server runner 指引；HANDOFF §9d 的 CI=true 精确门语义写进 `pytest.ini` 头注
 
 ## Phase 1 — 架构（Alex 指定的最高优先级）**主线完成 2026-07-20（iter 6-20）**
-（余留：P1.3-C 待 D3 拍板；P1.8b 为立项波次——不阻塞 Phase 2 开工）
+（余留：仅 P1.8b 立项波次——不阻塞，与 Phase 5 候选池同级待启动；P1.3/P1.5 已于 iter 42 关账）
 
 - [x] P1.1 架构审计（iter 6：工具+文档，见 `docs/ARCHITECTURE-AUDIT-2026-07.md`）：实测 import 图
       （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、
@@ -35,21 +35,24 @@
       （max_outer_ltne 自 `8ea7ce5` 活、压力字面量 2026-07-11 改真实转发，_CSV_STATUS.md:315
       记载）且已被 `test_validate_pipeline_runner_wiring.py` 四断言锁死；本轮实跑 19 个
       锁定测试全绿（6.13s）作为证据。审计报告 §0/§6 勘误同步
-- [ ] P1.3 评估器 envelope 权威统一 + post-solve 门（**A ✓ iter 8；B ✓ iter 9；
-      C → BLOCKED on D3**——iter 10 发现 2D/3D 管线 G 口径不一致 + γ_df 标定纠缠
-      （亏空 7.4%/19.3%），升级为标定级决策，见 DECISIONS D3 与 openspec D4 修正）：
-      3D 评估器改 import `envelope.predict_outlet_p_sq`（弃 :224,230 手抄代数与本地 R_AIR）；
-      两评估器补 post-solve `gate_solution`（失败→invalid/罚值的语义设计走 openspec）；
-      补传 `rho_inlet_ref`（对齐 stages_2d:546,561）；评估器入口 reset 警告注册表
-      （对齐 compute_pipeline:120-123）。"Pareto 选点须经 Pipeline 复核后引用数字"写入文档契约
+- [x] P1.3 评估器 envelope 权威统一 + post-solve 门（**关账 iter 42**——四子项全数有归属，
+      末两项经 D2/D3 决策裁定，无剩余代码工作）：
+      ① envelope 权威 import ✓ iter 8（`7cbeee1`，弃手抄代数与本地 R_AIR）；
+      ② post-solve 门：3D ✓ iter 9，2D → **D2(c) 裁定刻意不加**（已知边界已文档化）；
+      ③ `rho_inlet_ref`：2D ✓ iter 41（`20031ba`，D3(c)，冻结值位同），3D → **D3(c) 裁定
+      刻意不动**（候选 A2 调查范围，绊线 4 断言守门）；
+      ④ 警告注册表重置 ✓ iter 8（`7cbeee1`）——落在 qnehvi **战役级**（`_reset_warn_registries`，
+      测试钉住粒度决策：500 评估战役内仍去重，镜像 ComputePipeline.run；原条目"评估器入口"
+      字面被有意收窄，iter 42 核实 qnehvi 为评估器唯一批量调用方，一次性脚本属新进程无陈旧态）。
+      "Pareto 选点须经 Pipeline 复核后引用数字"已入契约（P1.4）
 - [x] P1.4 evaluator 契约测试（`6c727dc`，iter 11）：六条有意差异固化为机器断言 + D3 绊线；
       主规则"Pareto 须经 Pipeline 复核"入档；openspec D5 节（并入 evaluator-envelope-authority
       变更而非新开——同能力域，偏离原"openspec change"字面已记）
-- [ ] P1.5 run_stack_3d 五缝拆分（审计 §3；**A ✓ iter 12、B ✓ `ddf9c64` iter 13**——
-      **五缝全收官 iter 12-16（C ✓ `2549a79`）：_run_3d_stack 1955→156 行纯编排器**；
-      余一个收尾切片：mega-tuple 数据类化 + 五函数文件级迁移（可选，见下）；
-      每步 golden 位同 + 全套件；stages_3d 的 re-export 面 = raw-cfg 直调方的兼容层，必须保持；
-      C 缝需显式耦合态对象保 nonlocal 语义。预计 3-5 轮
+- [x] P1.5 run_stack_3d 五缝拆分（**关账 iter 42**——实质工作五缝全收官 iter 12-16
+      （C ✓ `2549a79`）：_run_3d_stack 1955→156 行纯编排器，每步 golden 位同；
+      两个收尾切片均有归属：mega-tuple 数据类化 ✓ P2.0（`d0238e6`），五函数文件级
+      迁移已并入 P1.8b 波次（同属大搬迁，当时明记）。勾选框此前留空系账目滞后，
+      本条无独立剩余工作量。stages_3d re-export 兼容层照旧必须保持）
 - [x] P1.6 缓存与 env 卫生（`7d70227`，iter 17）：`compute_geometry` 返回浅拷贝、`_phi_grid` 冻结
       writeable=False（两个 W7b 同族潜伏隐患，照 _FIELD_CACHE 标杆）；`TPMSHX_CHI_S` 改 per-call
       （import 冻结影响 K_ss）；`_LAPLACIAN_AMG_CACHE` 只读性查证 + reset 钩；各配 W7 风格测试。
