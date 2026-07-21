@@ -40,9 +40,17 @@
 - [x] 门禁：套件 1275+4skip / 10 绿（19:13）+ GOLDEN PASS 位同 + type gate 绿
       （预判 found-twice 未发生）
 
-## W_final-F2 · 撤垫片收官
-- [ ] 全库双风格残留 grep 零核对 → 撤 _IdentityFinder 与自举；`__init__.py` 瘦身为普通包 init
-- [ ] cli.py/main.py 双约定引导块改造（撤垫片后包名风格为唯一约定）
+## W_final-F2 · 撤垫片收官（iter 48 ✓，`79e5c21`——28 文件，两轮门红教训记档）
+- [x] __init__ 纯 docstring（AST 零语句测试锁）；身份测试改撤除态；logutil 前缀剥离保
+      logger 打包中立；cli 引导整删/main 启动器自定位；mypy 仓库根基底定型
+- [x] 三类历波盲区扫尾：字符串形模块路径 24 站点（patch/import_module 数据表/子进程
+      内嵌 sys.modules 键——旧键断言空转假绿）、configs 白名单遗漏 8、from tests. 4、
+      numba 缓存旧名序列化（清 __pycache__ 重编译）
+- [x] 门禁（终跑）：1272+4skip / 10 绿（11:31）+ GOLDEN PASS 位同
+
+## W_final-F3 · P1.5 尾巴（可选收尾，另轮）
+- [ ] run_stack_3d 五阶段函数文件级迁移 → run_stack_3d_stages.py（保 re-export 面）
+- [ ] atlas pipelines 卷注记 + openspec 变更归档
 - [ ] P1.5 尾巴并入：run_stack_3d 五阶段函数 → `run_stack_3d_stages.py`（保 re-export 面）
 - [ ] pyproject 头注收尾；atlas repo-infra / pipelines 卷收编注记
 - [ ] 全库 grep：双风格残留零、sys.path 引导仅存钦定白名单（若有）

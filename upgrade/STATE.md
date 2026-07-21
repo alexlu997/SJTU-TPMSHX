@@ -1,14 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 47 ——**P1.8b F1 毕（`d672eba`，78 文件，全门绿+golden 位同），仅剩 F2 撤垫片**
-- next: **P1.8b W_final-F2 撤垫片收官**：①全库双风格残留 grep 零核对（cli/main 两跳过件
-  先改造：引导块删除+局部导入前缀化+裸启动语义决策〔`python main.py` 或死或文档化为
-  `-m` 唯一〕）；②撤 _IdentityFinder+自举，__init__ 瘦身；③身份测试改"垫片已撤"断言；
-  ④mypy explicit_package_bases 基底换仓库根（type gate cwd 改 _REPO）；⑤P1.5 尾巴
-  （五阶段函数迁 run_stack_3d_stages.py，保 re-export）评估——若量大另拆一轮；
-  ⑥pyproject 头注收尾+atlas repo-infra/pipelines 注记。**F2 是全波次风险最高轮**
-  （撤垫片后 __module__/pickle/缓存键第一次真正走包名），Fable 直做不委托
-- in_progress: 无（iter 47 已收）
+- iteration: 48 ——**P1.8b F2 撤垫片毕（`79e5c21`，全门绿+golden 位同）：导入迁移主体 W0–F2 全部完成**
+- next: **P1.8b F3 = P1.5 尾巴**（run_stack_3d 五阶段函数文件级迁移 →
+  run_stack_3d_stages.py，保 re-export 面 + golden 位同；此为迁移波次唯一余项，
+  做完即可归档 openspec 变更并勾 ROADMAP P1.8b）。若 Alex 另有优先级
+  （候选池 A2/B/C/D），F3 可延后——它不阻塞任何事
+- in_progress: 无（iter 48 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
