@@ -28,10 +28,10 @@ def test_df_surrogate_is_below_the_kernel():
     tpms_calc/simple_solver back in would recreate the two-way coupling."""
     _probe(
         "import sys; import df_surrogate.predict; "
-        "bad = [m for m in ('solvers.tpms_calc', 'solvers.simple_solver')"
+        "bad = [m for m in ('sjtu_tpmshx.solvers.tpms_calc', 'sjtu_tpmshx.solvers.simple_solver')"
         " if m in sys.modules]; "
         "assert not bad, f'df_surrogate pulled kernel modules: {bad}'; "
-        "assert 'solvers.tpms_props' not in sys.modules  # backend is lazy too"
+        "assert 'sjtu_tpmshx.solvers.tpms_props' not in sys.modules  # backend is lazy too"
     )
 
 
@@ -40,7 +40,7 @@ def test_tpms_props_is_a_leaf():
     _probe(
         "import sys; import solvers.tpms_props; "
         "bad = [m for m in sys.modules if m.startswith('df_surrogate')"
-        " or m in ('solvers.tpms_calc', 'solvers.simple_solver')]; "
+        " or m in ('sjtu_tpmshx.solvers.tpms_calc', 'sjtu_tpmshx.solvers.simple_solver')]; "
         "assert not bad, f'tpms_props is not a leaf: {bad}'"
     )
 

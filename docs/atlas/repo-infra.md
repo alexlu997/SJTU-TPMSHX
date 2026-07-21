@@ -364,3 +364,11 @@ Server 2022**（仍是 Windows 内核，不是 Linux）。以下逐条按代码�
   DECISIONS-NEEDED/BASELINE + logs + tools/render_progress.py 进度页渲染器 + progress.html）。
 - AGENTS.md 的过期路径问题（本卷「已知不足」旧条目）在 P0.5 已同步纠偏 check.md 死路径；
   AGENTS.md 本体是否已同步**未在本轮核实**，留 P4.4 一并处理。
+
+- **⟨07-21 更新⟩ 导入约定全库翻转（P1.8b W0–F2，openspec p18b-import-style-migration）**：
+  唯一风格 = `from sjtu_tpmshx.solvers import ...`；~350 文件迁移、135 个逐文件
+  sys.path 引导块退役（白名单余留：poc 引导 / sco2 兄弟脚本互导 / main.py 启动器
+  自定位仅插仓库根）；过渡期身份垫片（W0 立、F2 撤）已成历史，`sjtu_tpmshx/__init__.py`
+  仅存 docstring（测试锁定零语句）；venv/CI editable 安装为标准形态；logger 命名
+  经 logutil removeprefix 保持 `tpmshx.<subsystem>` 打包中立；mypy 门仓库根基底。
+  本卷此前所有「顶层导入 + sys.path 引导」表述自此过时，以本条为准。

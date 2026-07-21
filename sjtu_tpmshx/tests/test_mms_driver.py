@@ -17,7 +17,7 @@ def test_run_grid_sequence_order_and_rows():
 
 
 def test_sweep_scripts_import():
-    for mod in ('validation.cases.mms_phase_a3_h_refine',
-                'validation.cases.mms_phase_a4_boundary',
-                'validation.cases.mms_phase_b4_order'):
+    for mod in ('sjtu_tpmshx.validation.cases.mms_phase_a3_h_refine',
+                'sjtu_tpmshx.validation.cases.mms_phase_a4_boundary',
+                'sjtu_tpmshx.validation.cases.mms_phase_b4_order'):
         importlib.import_module(mod)

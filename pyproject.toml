@@ -1,12 +1,11 @@
 # SJTU-TPMSHX packaging (P1.8, 2026-07-20 — upgrade/loop 分支立的地基).
 #
-# 现状约束（诚实注记，P1.8b W0 更新 2026-07-21）：库内部仍用顶层导入风格
-# （`from solvers import ...`）；`sjtu_tpmshx/__init__.py` 的身份垫片
-# （meta-path finder）已使两种风格解析为同一模块对象——混用不再产生双状态，
-# 调用方可安全地逐波迁到 `sjtu_tpmshx.*`（波次计划见
-# openspec/changes/p18b-import-style-migration/）。工作 venv 已 editable
-# 安装（--no-deps；依赖闭包仍由 requirements-lock-server.txt 管理）。
-# 垫片与库内顶层风格在 W_final 一并退场。
+# 导入约定（P1.8b F2 收官 2026-07-21）：全库唯一风格 = 包限定
+# `from sjtu_tpmshx.solvers import ...`；顶层风格与逐文件 sys.path 引导块
+# 已随 openspec p18b-import-style-migration（W0–F2）退役，过渡期身份垫片
+# 已撤（__init__.py 零导入副作用）。工作 venv editable 安装（--no-deps；
+# 依赖闭包由 requirements-lock-server.txt 管理）；裸启动 `python
+# sjtu_tpmshx/main.py` 由 main.py 的启动器自定位（仅插仓库根）支持。
 #
 # 版本号 0.1.0.dev0 为升级分支占位；对外版本语义合并时由 Alex 定。
 
@@ -74,18 +73,16 @@ select = ["F", "E9"]
 
 [tool.mypy]
 # P2.2（2026-07-21）：宽松档，只锁"核心公共面"——envelope 权威、compute_pipeline
-# 接缝、domain 配置/结果、CLI。运行方式（与顶层导入约定一致）：
-#   cd sjtu_tpmshx && ..\.venv\Scripts\python.exe -m mypy @../mypy-core-files.txt
+# 接缝、domain 配置/结果、CLI。运行方式（P1.8b F2 起仓库根基底，与包名风格一致）：
+#   .venv\Scripts\python.exe -m mypy @mypy-core-files.txt   （cwd = 仓库根）
 # 文件清单在 mypy-core-files.txt；扩圈 = 往清单加文件并清零（后续波次）。
 python_version = "3.11"
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = true
 no_implicit_optional = true
-# P1.8b W0：sjtu_tpmshx/__init__.py 出现后，mypy 的 __init__ 上溯会给同一文件
-# 算出双模块名（sjtu_tpmshx.domain.* vs domain.*）→ "found twice"。显式包基底
-# 锁定"以调用 cwd（=sjtu_tpmshx/，见上）为基"，模块名恒按顶层风格计算，与
-# W0 前语义一致；W_final 库内迁包名风格时，调用处与本开关一并改为仓库根基底。
+# P1.8b（W0 引入，F2 定型）：explicit_package_bases + 仓库根 cwd ⇒ 模块名
+# 恒为 sjtu_tpmshx.*，与包内 __init__ 上溯一致，杜绝 "found twice" 双名。
 explicit_package_bases = true
 
 [tool.setuptools.dynamic]

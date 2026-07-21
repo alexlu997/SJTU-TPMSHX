@@ -126,7 +126,7 @@ def test_3d_knobs_turn():
     but its exit-gating is legacy-only — ledger C6/C7; under the f2 pipeline
     default it only retunes the AMG scheduler, so no assertion hangs on it.)"""
     from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
-    from tests.test_partial_bc_ghost_b import _partial_bc_air_air_cfg
+    from test_partial_bc_ghost_b import _partial_bc_air_air_cfg
     base = _partial_bc_air_air_cfg(Nx=8, Ny=6, Nz=6)
     r_def = _run_3d_stack(dict(base))
     r_knob = _run_3d_stack(dict(base, max_outer_ltne=1, tol_simple=5e-2))

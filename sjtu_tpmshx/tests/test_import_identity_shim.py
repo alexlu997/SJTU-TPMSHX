@@ -1,93 +1,74 @@
-"""P1.8b W0 — import-identity shim contract (openspec p18b-import-style-migration).
+"""P1.8b F2 — the import-identity shim is RETIRED (openspec
+p18b-import-style-migration).
 
-While the migration is in flight, BOTH import styles must yield the SAME
-module object, or module-level state (warn-once registries, logutil wiring,
-field caches) silently duplicates. These tests pin the shim's whole reason
-to exist; they must stay green through every W1..Wn wave. W_final replaces
-them with "shim removed" assertions (see tasks.md).
+W0 installed a transitional meta-path finder in ``sjtu_tpmshx/__init__``
+aliasing top-level and package-qualified imports to one module object; waves
+W1–F1 migrated every caller and library internal to the package style; F2
+removed the shim. These tests pin the END state:
+
+- the package init is side-effect-free (no finder, no sys.path insert);
+- the package style is the ONLY convention (module identity, logger naming);
+- the legacy top-level style is dead in a clean interpreter.
+
+If someone re-introduces a bootstrap or finder, or a module regrows a
+top-level import, these assertions are the tripwire. History: see the
+openspec change's tasks.md and upgrade/PROGRESS.md iters 43–48.
 """
+import subprocess
 import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-REPO = ROOT.parent
-if str(REPO) not in sys.path:
-    sys.path.insert(0, str(REPO))
 
 
-def test_package_and_toplevel_style_share_module_object():
-    import solvers
-    import sjtu_tpmshx.solvers as pkg_solvers
-    assert pkg_solvers is solvers, (
-        "sjtu_tpmshx.solvers and solvers are different module objects — the "
-        "P1.8b identity shim is broken; mixing styles now duplicates state")
-
-
-def test_identity_holds_at_depth():
-    from solvers import envelope as top_env
-    from sjtu_tpmshx.solvers import envelope as pkg_env
-    assert pkg_env is top_env
-
-    import df_surrogate.predict as top_pred
-    import sjtu_tpmshx.df_surrogate.predict as pkg_pred
-    assert pkg_pred is top_pred
-
-    import logutil as top_log
-    import sjtu_tpmshx.logutil as pkg_log
-    assert pkg_log is top_log, (
-        "dual logutil = dual tpmshx.* logger wiring (design.md D3)")
-
-
-def test_warn_registries_are_shared_state():
-    """The concrete hazard the shim kills: one registry set, not two."""
-    import solvers.nu_correlations as top_nc
-    import sjtu_tpmshx.solvers.nu_correlations as pkg_nc
-    assert pkg_nc._EXTRAP_WARNED is top_nc._EXTRAP_WARNED
-
-    import df_surrogate.predict as top_dp
-    import sjtu_tpmshx.df_surrogate.predict as pkg_dp
-    assert pkg_dp._CHOKE_WARNED is top_dp._CHOKE_WARNED
-
-
-def test_finder_installed_once_and_first():
-    import importlib
+def test_package_init_is_side_effect_free():
+    """The package init must be a docstring and NOTHING else — no finder,
+    no sys.path insert, no imports (AST-level: a raw-source grep would
+    false-positive on the docstring narrating the shim's history)."""
+    import ast
     import sjtu_tpmshx
-    importlib.reload(sjtu_tpmshx)  # re-running init must not stack finders
+    tree = ast.parse(open(sjtu_tpmshx.__file__, encoding='utf-8').read())
+    non_doc = [n for n in tree.body
+               if not (isinstance(n, ast.Expr)
+                       and isinstance(n.value, ast.Constant)
+                       and isinstance(n.value.value, str))]
+    assert not non_doc, (
+        "sjtu_tpmshx/__init__.py grew executable statements — F2 retired "
+        f"the shim; found: {[type(n).__name__ for n in non_doc]}")
     finders = [f for f in sys.meta_path
-               if type(f).__name__ == '_IdentityFinder']
-    assert len(finders) == 1, f"expected exactly one finder, got {len(finders)}"
-    assert type(sys.meta_path[0]).__name__ == '_IdentityFinder', (
-        "finder must sit at the FRONT of sys.meta_path or PathFinder execs "
-        "submodules a second time under the package name (design.md D2)")
+               if getattr(type(f), '_P18B_IDENTITY_FINDER', False)]
+    assert not finders, "identity finder still installed at runtime"
 
 
-def test_module_body_not_executed_twice(monkeypatch):
-    """_AliasLoader.exec_module is a no-op — solvers/__init__ side effects
-    (threads.init_from_env) must not re-run on package-style import."""
-    import solvers
-    sentinel = object()
-    monkeypatch.setattr(solvers, '_P18B_SENTINEL', sentinel, raising=False)
-    sys.modules.pop('sjtu_tpmshx.solvers', None)  # force finder path anew
-    import sjtu_tpmshx.solvers as pkg_solvers
-    assert getattr(pkg_solvers, '_P18B_SENTINEL', None) is sentinel, (
-        "package-style import re-executed the module body (sentinel lost)")
+def test_legacy_toplevel_style_is_dead_in_clean_interpreter():
+    """`import solvers` must fail in a fresh interpreter (repo-root cwd,
+    which puts the REPO ROOT — not the package dir — on sys.path)."""
+    r = subprocess.run(
+        [sys.executable, '-c',
+         'import sys; sys.path.pop(0) if sys.path and not sys.path[0] '
+         'else None\n'
+         'try:\n'
+         '    import solvers\n'
+         'except ModuleNotFoundError:\n'
+         '    raise SystemExit(0)\n'
+         'raise SystemExit(1)'],
+        capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, (
+        "top-level `import solvers` still resolves in a clean interpreter — "
+        "some bootstrap survives:\n" + r.stderr[-500:])
 
 
-def test_canonical_spec_survives_aliasing():
-    """The import machinery rebinds module.__spec__ to the alias spec between
-    create_module and exec_module; the loader must restore the canonical one
-    or importlib.reload(solvers) silently degrades to a no-op."""
-    import solvers
-    sys.modules.pop('sjtu_tpmshx.solvers', None)
-    import sjtu_tpmshx.solvers  # noqa: F401  (side effect under test)
-    assert solvers.__spec__.name == 'solvers'
-    assert solvers.__name__ == 'solvers'
+def test_package_style_resolves_and_is_canonical():
+    import sjtu_tpmshx.solvers.nu_correlations as nc
+    assert nc.__name__ == 'sjtu_tpmshx.solvers.nu_correlations'
+    import sjtu_tpmshx.solvers as s
+    assert s.__name__ == 'sjtu_tpmshx.solvers'
 
 
-def test_tests_namespace_not_aliased():
-    """tests/ has no __init__.py and must NOT be aliased to a generic
-    top-level 'tests' name (collision surface)."""
-    import sjtu_tpmshx
-    assert 'tests' not in sjtu_tpmshx._TOP_LEVEL
+def test_logger_taxonomy_is_packaging_neutral():
+    """get_logger strips the package prefix: logger names stay
+    tpmshx.<subsystem> exactly as before the migration (F2 decision —
+    the logging taxonomy must not encode packaging history)."""
+    from sjtu_tpmshx.logutil import get_logger
+    lg = get_logger('sjtu_tpmshx.solvers.threads')
+    assert lg.name == 'tpmshx.solvers.threads'
+    lg2 = get_logger('solvers.threads')
+    assert lg2.name == 'tpmshx.solvers.threads'
+    assert lg is lg2

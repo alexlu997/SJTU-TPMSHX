@@ -139,7 +139,7 @@ def test_worker_passes_n_jobs_to_run_qnehvi():
             'save_dir':  worker.save_dir,
         }
 
-    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
+    with patch('sjtu_tpmshx.optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
         worker.run()
 
     assert 'n_jobs' in captured, \
@@ -169,7 +169,7 @@ def test_worker_n_jobs_capped_at_q_batch():
             'n_evals': 0, 'save_dir': worker.save_dir,
         }
 
-    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
+    with patch('sjtu_tpmshx.optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
         worker.run()
 
     assert captured['n_jobs'] == 2  # capped to q_batch
@@ -196,7 +196,7 @@ def test_worker_emits_finished_signal_on_success():
             'save_dir':  worker.save_dir,
         }
 
-    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
+    with patch('sjtu_tpmshx.optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
         worker.run()
 
     assert len(received) == 1
@@ -218,7 +218,7 @@ def test_worker_emits_error_signal_on_exception():
     def _fake_raise(**_kw):
         raise RuntimeError("synthetic BO crash")
 
-    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_raise):
+    with patch('sjtu_tpmshx.optimization.optimizer_qnehvi.run_qnehvi', _fake_raise):
         worker.run()
 
     assert len(errors) == 1
@@ -347,7 +347,7 @@ def test_worker_passes_evaluator_fn_to_run_qnehvi():
             'n_evals': 0, 'save_dir': worker.save_dir,
         }
 
-    with patch('optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
+    with patch('sjtu_tpmshx.optimization.optimizer_qnehvi.run_qnehvi', _fake_run_qnehvi):
         worker.run()
 
     assert captured.get('evaluator_fn') is _sentinel

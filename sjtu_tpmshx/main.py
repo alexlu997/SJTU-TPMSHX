@@ -1,15 +1,15 @@
 import sys
 from pathlib import Path as _PathBoot
 
-# Make both import styles work regardless of launch mode:
-#   python main.py                    -> from solvers..., from runs...
-#   python -m sjtu_tpmshx.main        -> from sjtu_tpmshx...
-_BOOT_PATH = _PathBoot(__file__).resolve().parent
-_BOOT_DIR = str(_BOOT_PATH)
-_PROJECT_PARENT = str(_BOOT_PATH.parent)
-for _p in (_BOOT_DIR, _PROJECT_PARENT):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Launcher self-location (P1.8b F2): `python main.py` / `python
+# sjtu_tpmshx/main.py` must work on a raw clone with no editable install,
+# so the REPO ROOT goes on sys.path to make `sjtu_tpmshx.*` resolvable.
+# This is launcher plumbing, not an import-style shim — the package-dir
+# insert that used to support top-level style (`from solvers...`) is gone
+# with the convention (openspec p18b-import-style-migration).
+_PROJECT_PARENT = str(_PathBoot(__file__).resolve().parent.parent)
+if _PROJECT_PARENT not in sys.path:
+    sys.path.insert(0, _PROJECT_PARENT)
 
 import matplotlib
 matplotlib.use("QtAgg")
@@ -19,25 +19,25 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QWidget,
 )
 
-from solvers.tpms_calc import geometry as tpms_geometry, adaptive_grid
-from ui.fmt import duration as _fmt_dur
-from ui.matplotlib_canvas import _label_axes
-from ui.mixins import (RunHistoryMixin, DialogsMixin, ZonePanelMixin,
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry, adaptive_grid
+from sjtu_tpmshx.ui.fmt import duration as _fmt_dur
+from sjtu_tpmshx.ui.matplotlib_canvas import _label_axes
+from sjtu_tpmshx.ui.mixins import (RunHistoryMixin, DialogsMixin, ZonePanelMixin,
                        OptimizeUIMixin, TabViewMixin, UIBuilderMixin,
                        FluidInputMixin, RunControllerMixin, RunResultsMixin,
                        AppearanceMixin, SessionPresetsMixin,
                        ShortcutsMixin, IOActionsMixin, ResultBridgeMixin)
-from ui.ui_constants import (
+from sjtu_tpmshx.ui.ui_constants import (
     TOAST_MS_BRIEF, TOAST_MS_MED,
 )
-from ui.theme import (
+from sjtu_tpmshx.ui.theme import (
     get_theme_name, set_theme,
     apply_mpl_theme, set_density,
 )
 
 # Version lives in _version.py (P1.9): a leaf module UI widgets can import
 # without pulling in this composition root. Re-exported here for back-compat.
-from _version import __version__  # noqa: E402
+from sjtu_tpmshx._version import __version__  # noqa: E402
 
 
 def _git_commit_hash():
@@ -84,7 +84,7 @@ def _rebuild_styles(theme_name=None):
     """
     if theme_name is not None:
         try:
-            from ui.theme import set_theme as _st
+            from sjtu_tpmshx.ui.theme import set_theme as _st
             _st(theme_name)
         except Exception:
             pass
@@ -106,7 +106,7 @@ def _rebuild_styles(theme_name=None):
 # ── Auto-select delegate for zone table editing ─────────────
 # Moved to ui/delegates.py (Phase 5 follow-up). Re-exported here for
 # any historical callers that imported `main._SelectAllDelegate`.
-from ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
+from sjtu_tpmshx.ui.delegates import SelectAllDelegate as _SelectAllDelegate  # noqa: F401
 
 
 # ── Main window ───────────────────────────────────────────────
@@ -168,9 +168,9 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
 
         # Controllers — Phase 1+2+3 of 2026-05-06 main.py refactor (#4).
         # See vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
-        from controllers import (ComputeOrchestrator, ResultCache,
+        from sjtu_tpmshx.controllers import (ComputeOrchestrator, ResultCache,
                                   SessionManager, SignalRouter)
-        from ui.theme_manager import ThemeManager
+        from sjtu_tpmshx.ui.theme_manager import ThemeManager
 
         # Phase 3: ThemeManager owns the style dict. Batch-3 (2026-06-10):
         # the legacy `import main as _m; m._BG` back-import path is retired
@@ -183,7 +183,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         # Phase 5: install a process-wide FieldFactory backed by the live
         # ThemeManager so ui_builders helpers (section/row/res_row/add_row)
         # build widgets through DI rather than module globals.
-        from ui.field_factory import FieldFactory, set_default_factory
+        from sjtu_tpmshx.ui.field_factory import FieldFactory, set_default_factory
         set_default_factory(FieldFactory(self.theme))
 
         # Phase 1: solver lifecycle (refactor-p1-done).
@@ -234,7 +234,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         from PySide6.QtCore import QTimer as _QT
         _QT.singleShot(1200, self._maybe_show_onboarding)
         if get_theme_name() == 'dark':
-            from ui.glass_panel import generate_blurred_bg
+            from sjtu_tpmshx.ui.glass_panel import generate_blurred_bg
             from PySide6.QtGui import QPalette, QBrush
             _bg_pix = generate_blurred_bg(1920, 1080)
             pal = self.palette()
@@ -270,16 +270,16 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         self._wire_fluid_defaults()
         self._install_status_bar_widgets()
         self._install_dialog_theme()
-        from ui.command_palette import install_command_palette
+        from sjtu_tpmshx.ui.command_palette import install_command_palette
         install_command_palette(self)
-        from ui.coord_inspector import install_coord_inspector
+        from sjtu_tpmshx.ui.coord_inspector import install_coord_inspector
         install_coord_inspector(self)
-        from ui.zone_editor import ZoneHandleManager
+        from sjtu_tpmshx.ui.zone_editor import ZoneHandleManager
         self._zone_handle_mgr = ZoneHandleManager(self)
         self._zone_handle_mgr.wire()
-        from ui.field_menu import install_field_menus
+        from sjtu_tpmshx.ui.field_menu import install_field_menus
         install_field_menus(self)
-        from ui.expr_eval import install_expression_eval
+        from sjtu_tpmshx.ui.expr_eval import install_expression_eval
         install_expression_eval(self)
         # Accept file drops on the whole window — users can drag a saved
         # `.json` preset onto the app to load it without going through the
@@ -533,7 +533,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
                 # Warm the D-F surrogate by triggering one prediction.
                 # Loads joblib model + first sklearn import.
                 try:
-                    from df_surrogate.predict import predict_K_cF
+                    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
                     predict_K_cF(tpms_type, float(Lcell), float(t_mm), 0.4)
                 except Exception:
                     pass
@@ -593,7 +593,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             # 2D path retains adaptive_grid (solver-side, BL-aware); 3D
             # path matches the legacy heuristic exactly via suggest_grid_3d.
             if is_3d:
-                from domain.validator import suggest_grid_3d
+                from sjtu_tpmshx.domain.validator import suggest_grid_3d
                 try:
                     Lz_dom = float(self.le_Lz.text())
                 except ValueError:
@@ -686,7 +686,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         Invoked by the Sync-colorbar toggle on canvas_temp's mini toolbar.
         """
         try:
-            from ui.plot_2d_results import redraw_temperature_panel
+            from sjtu_tpmshx.ui.plot_2d_results import redraw_temperature_panel
             redraw_temperature_panel(self)
         except Exception:
             pass
@@ -754,7 +754,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         warns when Richardson doubling would blow up runtime. Returns True
         if OK to continue (no errors AND user acknowledged any warnings).
         """
-        from ui.preflight import FluidCfg, compute_preflight
+        from sjtu_tpmshx.ui.preflight import FluidCfg, compute_preflight
 
         # robustness-hardening (2026-07-03): the old _f/_i fell back to
         # 0.0/0 on unparseable text, so preflight ran its geometry checks
@@ -830,7 +830,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         # → critical modal; soft findings merge into the preflight report.
         _geom_warnings = []
         try:
-            from domain.validator import validate_geometry as _vg
+            from sjtu_tpmshx.domain.validator import validate_geometry as _vg
             _geom_warnings = _vg(
                 L, H, (Lz if is_3d else None),
                 _f('le_Lcell', 7.0), _f('le_t', 0.6),
@@ -1241,7 +1241,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
     # so future scripts / widgets can read the same canonical map.
     # The class still surfaces the two names as attributes for the
     # ``_attach_field_validation`` / ``_make_field_handler`` callers.
-    from domain.validator import (
+    from sjtu_tpmshx.domain.validator import (
         FIELD_UNITS as _FIELD_UNITS,
         POSITIVE_FIELDS as _POSITIVE_FIELDS,
     )
@@ -1288,7 +1288,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             r"\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*"
             r"([A-Za-zμΜ°/··]+[A-Za-z0-9/··]*)\s*$")
 
-        from domain.validator import (
+        from sjtu_tpmshx.domain.validator import (
             parse_field_value as _domain_parse_field,
             format_unit_value as _domain_format,
         )
@@ -1380,7 +1380,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         timer = getattr(self, '_badge_timer', None)
         if timer is None:
             from PySide6.QtCore import QTimer
-            from ui.ui_builders import refresh_group_badges
+            from sjtu_tpmshx.ui.ui_builders import refresh_group_badges
             timer = QTimer(self)
             timer.setSingleShot(True)
             timer.setInterval(150)
@@ -1428,7 +1428,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         self._lazy_init_3d_running = True
         try:
             try:
-                from ui.panel_vis_3d import ThreeDVisPanel
+                from sjtu_tpmshx.ui.panel_vis_3d import ThreeDVisPanel
                 panel = ThreeDVisPanel()
             except Exception as e:
                 self._vis3d_import_error = str(e)
@@ -1581,7 +1581,7 @@ if __name__ == "__main__":
             with open(_accent_file, 'r', encoding='utf-8') as _fac:
                 _saved_accent = _fac.read().strip()
             if _saved_accent.startswith('#') and len(_saved_accent) == 7:
-                from ui.theme import set_accent_override
+                from sjtu_tpmshx.ui.theme import set_accent_override
                 set_accent_override(_saved_accent)
         except Exception:
             pass

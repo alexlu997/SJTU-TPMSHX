@@ -28,7 +28,7 @@ CLI usage::
 
 Or invoke the function programmatically::
 
-    from optimization.export_ntop_csv import export_decision_vector
+    from sjtu_tpmshx.optimization.export_ntop_csv import export_decision_vector
     export_decision_vector(x_decision, out_dir='nTop_inputs/best_Q',
                            Nx_export=100, Ny_export=50)
 

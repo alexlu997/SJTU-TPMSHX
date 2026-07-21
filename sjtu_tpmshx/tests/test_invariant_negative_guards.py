@@ -43,7 +43,7 @@ def test_stages_3d_passes_full_epsilon(monkeypatch):
     monkeypatch.setattr(R.SIMPLESolver3D, "solve",
                         lambda self, *a, **k: (True, 1))
 
-    from tests.test_partial_bc_ghost_b import _partial_bc_air_air_cfg
+    from test_partial_bc_ghost_b import _partial_bc_air_air_cfg
     cfg = _partial_bc_air_air_cfg(Nx=6, Ny=6, Nz=6)
     with pytest.raises(_EpsCaptured):
         R._run_3d_stack(cfg)

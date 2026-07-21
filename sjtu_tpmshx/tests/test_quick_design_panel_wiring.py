@@ -55,8 +55,8 @@ def test_worker_auto_calls_backend_and_emits():
         d=_D(); return [d], d
     received=[]
     worker.finished_with_result.connect(lambda r: received.append(r))
-    with patch("design.cases.load_cases", _fake_load), \
-         patch("design.select.enumerate_select", _fake_enum):
+    with patch("sjtu_tpmshx.design.cases.load_cases", _fake_load), \
+         patch("sjtu_tpmshx.design.select.enumerate_select", _fake_enum):
         worker.run()
     assert captured["path"]=="spec.xlsx"
     assert captured["arr"]=="counter" and captured["rho"]==7900.0
@@ -81,7 +81,7 @@ def test_worker_emits_error_on_exception():
     w=_make_window("auto"); worker=_make_worker_class()(_gather_inputs(w))
     errs=[]; worker.error_signal.connect(lambda m: errs.append(m))
     def _boom(path): raise RuntimeError("bad file")
-    with patch("design.cases.load_cases", _boom):
+    with patch("sjtu_tpmshx.design.cases.load_cases", _boom):
         worker.run()
     assert len(errs)==1 and "RuntimeError" in errs[0]
 

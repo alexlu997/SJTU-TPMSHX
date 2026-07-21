@@ -1,7 +1,7 @@
-solvers/envelope.py
-controllers/compute_pipeline.py
-domain/compute_config.py
-domain/compute_result.py
-configs/__init__.py
-_version.py
-cli.py
+sjtu_tpmshx/solvers/envelope.py
+sjtu_tpmshx/controllers/compute_pipeline.py
+sjtu_tpmshx/domain/compute_config.py
+sjtu_tpmshx/domain/compute_result.py
+sjtu_tpmshx/configs/__init__.py
+sjtu_tpmshx/_version.py
+sjtu_tpmshx/cli.py

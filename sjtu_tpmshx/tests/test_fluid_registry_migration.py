@@ -80,7 +80,7 @@ def test_nu_water_topo_matches_retired_formula(topo, Re):
 
 
 def test_design_fluids_adapter_equivalence():
-    from design.fluids import fluid_props as design_props, fluid_nu, nu_re_window
+    from sjtu_tpmshx.design.fluids import fluid_props as design_props, fluid_nu, nu_re_window
     for f in ('air', 'water'):
         for T in _TEMPS:
             p = design_props(f, T, 192362.0)

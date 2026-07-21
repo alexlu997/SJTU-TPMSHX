@@ -60,7 +60,7 @@ from sjtu_tpmshx.solvers.tpms_calc import (
 # Air flows along x (full-width inlet on yz face), water flows along y
 # (cross-flow, narrow 42×42 port). Internal interstitial flow areas
 # differ between streams since flow direction differs.
-from configs import load_shanghai_baseline
+from sjtu_tpmshx.configs import load_shanghai_baseline
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
 # Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()

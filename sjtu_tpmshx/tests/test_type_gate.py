@@ -14,8 +14,10 @@ _PKG = _REPO / 'sjtu_tpmshx'
 
 
 def test_mypy_core_surface_clean():
+    # P1.8b F2: repo-root basis — core files are package-style now, so
+    # module names resolve as sjtu_tpmshx.* (explicit_package_bases + cwd).
     r = subprocess.run(
-        [sys.executable, '-m', 'mypy', '@../mypy-core-files.txt',
-         '--config-file', '../pyproject.toml'],
-        capture_output=True, text=True, timeout=600, cwd=str(_PKG))
+        [sys.executable, '-m', 'mypy', '@mypy-core-files.txt',
+         '--config-file', 'pyproject.toml'],
+        capture_output=True, text=True, timeout=600, cwd=str(_REPO))
     assert r.returncode == 0, "mypy findings:\n" + r.stdout[-2000:]

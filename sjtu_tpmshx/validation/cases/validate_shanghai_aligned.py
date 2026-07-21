@@ -82,7 +82,7 @@ _ALPHA_COUP   = 0.7
 
 # ── Geometry (Shanghai Electric Gyroid prototype) ──
 # Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
-from configs import load_shanghai_baseline
+from sjtu_tpmshx.configs import load_shanghai_baseline
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
 # Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()

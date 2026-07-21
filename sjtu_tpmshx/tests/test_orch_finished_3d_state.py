@@ -115,9 +115,9 @@ def _run_finished(win, finalize_behavior):
     if isinstance(finalize_behavior, BaseException):
         def _fb(_w):
             raise finalize_behavior
-        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d', _fb)
+        patch_fin = patch('sjtu_tpmshx.ui.plot_3d_results.finalize_plots_3d', _fb)
     else:
-        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d',
+        patch_fin = patch('sjtu_tpmshx.ui.plot_3d_results.finalize_plots_3d',
                           return_value=finalize_behavior)
     with patch_fin, patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()

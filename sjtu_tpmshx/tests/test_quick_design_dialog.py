@@ -30,7 +30,7 @@ def test_dialog_builds_with_contract_attrs():
 
 def test_run_button_invokes_run_quick_design():
     dlg = build_quick_design_dialog()
-    with patch("ui.quick_design_panel.run_quick_design") as m:
+    with patch("sjtu_tpmshx.ui.quick_design_panel.run_quick_design") as m:
         dlg._qd_run_btn.click()   # expose the run button as dlg._qd_run_btn
         assert m.called
     dlg.deleteLater()

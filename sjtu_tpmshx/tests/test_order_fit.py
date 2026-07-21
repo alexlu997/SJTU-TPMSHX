@@ -106,8 +106,8 @@ def test_underdetermined_returns_nan():
 def test_migrated_modules_import():
     """The four caller modules still import (call sites rewired)."""
     import importlib
-    for mod in ('validation.cases.mms_phase_a3_h_refine',
-                'validation.cases.mms_phase_a4_boundary',
-                'validation.cases.mms_phase_b4_order',
-                'validation.cases.phase_c_gci'):
+    for mod in ('sjtu_tpmshx.validation.cases.mms_phase_a3_h_refine',
+                'sjtu_tpmshx.validation.cases.mms_phase_a4_boundary',
+                'sjtu_tpmshx.validation.cases.mms_phase_b4_order',
+                'sjtu_tpmshx.validation.cases.phase_c_gci'):
         importlib.import_module(mod)

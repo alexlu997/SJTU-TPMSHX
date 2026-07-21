@@ -19,16 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
-
-# Canonical dual-convention bootstrap (same as main.py): the package's own
-# directory goes on sys.path so the repo's top-level import style
-# (`from solvers...`) resolves regardless of how this module was reached.
-_PKG = Path(__file__).resolve().parent
-if str(_PKG) not in sys.path:
-    sys.path.insert(0, str(_PKG))
-
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
@@ -43,8 +33,8 @@ def main(argv=None) -> int:
                     help='machine-readable one-line JSON summary')
     args = ap.parse_args(argv)
 
-    from domain.compute_config import ComputeConfig
-    from controllers.compute_pipeline import pipeline_for
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
+    from sjtu_tpmshx.controllers.compute_pipeline import pipeline_for
 
     cc = ComputeConfig.from_json(args.config)
     pipe = pipeline_for(cc)

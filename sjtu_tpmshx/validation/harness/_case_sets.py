@@ -27,7 +27,7 @@ D76_EXCLUDE = frozenset({11})
 def shanghai_spec() -> SpecimenSpec:
     """Shanghai Electric gas-heater specimen, from the canonical baseline
     JSON (configs/shanghai_baseline.json, audit Item 3 / AR8)."""
-    from configs import load_shanghai_baseline
+    from sjtu_tpmshx.configs import load_shanghai_baseline
     from sjtu_tpmshx.domain.compute_config import ComputeConfig
     sh = load_shanghai_baseline()
     cc = ComputeConfig.from_dict(sh)

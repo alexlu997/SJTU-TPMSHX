@@ -16,7 +16,7 @@ import pytest
 
 
 _SURFACE = {
-    'pipelines.stages_2d': [
+    'sjtu_tpmshx.pipelines.stages_2d': [
         # cfg boundary (kept)
         '_check_zoned_fluid_support', '_parse_inputs_cfg',
         '_build_fields_cfg', '_run_solvers_cfg', '_finalize_cfg',
@@ -25,7 +25,7 @@ _SURFACE = {
         '_compute_pressure_2d', '_apply_zone_stats_2d',
         '_compute_Q_richardson', '_run_solvers',
     ],
-    'pipelines.stages_3d': [
+    'sjtu_tpmshx.pipelines.stages_3d': [
         # cfg boundary (kept)
         '_parse_inputs_3d_cfg', '_build_fields_3d_cfg',
         '_run_solvers_3d_cfg', '_finalize_3d_cfg',
@@ -46,7 +46,7 @@ _SURFACE = {
         '_asym_split_A', '_eps_sides_for_run', '_per_side_eps_override',
         '_build_chi_B_mass_flux_threshold',
     ],
-    'solvers.simple_solver': [
+    'sjtu_tpmshx.solvers.simple_solver': [
         'SIMPLESolver', '_aligned_grid', 'build_wall_refined_1d',
         'build_inlet_stretched_1d',
         '_WALL_PENALTY_BASE', '_WALL_PENALTY_EFOLD',
@@ -57,18 +57,18 @@ _SURFACE = {
         '_correct_jit', '_mass_res_jit', '_solve_temp_jit',
         '_assemble_pp_data_jit',
     ],
-    'solvers.simple_solver_3d': [
+    'sjtu_tpmshx.solvers.simple_solver_3d': [
         'SIMPLESolver3D', '_v_bc_3d', '_correct_jit_3d', '_sou_axis',
         '_mass_res_jit_3d', '_assemble_pp_3d',
         '_sweep_u_jit_df_3d', '_sweep_v_jit_df_3d', '_sweep_w_jit_df_3d',
     ],
-    'solvers.ltne_energy_3d': [
+    'sjtu_tpmshx.solvers.ltne_energy_3d': [
         'solve_full_domain_3d', 'energy_balance_3d', 'mass_balance_3d',
         '_project_faces_div_free',
         '_gs_full_chunk_3d', '_gs_full_chunk_3d_stag',
         '_gs_full_chunk_3d_stag_rb',
     ],
-    'ui.builders_canvas': [
+    'sjtu_tpmshx.ui.builders_canvas': [
         '_build_result_sidebar', 'refresh_result_sidebar',
         'update_result_sidebar_visibility', 'build_canvas_area',
     ],
