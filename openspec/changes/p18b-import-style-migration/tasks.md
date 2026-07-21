@@ -23,9 +23,11 @@
       **已知余量：tests/design/ 15 文件顶层 `design` 导入（不在委托白名单）→ W_final 收**
 - [x] 门禁：套件 1275+4skip / 10 绿（18:45）+ GOLDEN PASS 位同（判定行核实）
 
-## W2 · validation/（17）+ df_surrogate/（7）迁移（§10 委托）
-- [ ] 同 W1 流程；validation 侧注意 gate 脚本可独立直跑（`python -u` 入口语义不变）
-- [ ] 门禁全套 + validate_shanghai_3d_real gate 脚本冒烟
+## W2 · validation/ + df_surrogate/ 全目录迁移（iter 45 ✓，`59ee773`——31/44 文件）
+- [x] 逐文件手改（W1 行尾教训内化）；3 逃生舱有据（script-dir insert 兄弟脚本互导）；
+      13 文件零改动有据；自伤两处自查修复（3 文件整文件行尾翻转字节级抓获 / 孤儿 Path）
+- [x] 门禁：套件 1275+4skip / 10 绿（19:08）+ GOLDEN PASS 位同 + Shanghai 冒烟
+      **GATE PASS headline 位同**（4.88%/2.12%）+ tracked CSV ULP 自改写回退（1.4e-12）
 
 ## W3 · runs/（35）+ ui/（1）迁移（§10 委托）
 - [ ] 同 W1 流程；runs/ 直跑脚本逐个 `--help`/dry 冒烟；archive/ 冻结区只注记不迁移

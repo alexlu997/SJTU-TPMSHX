@@ -2,6 +2,19 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 45 · 2026-07-21 · P1.8b W2 validation+df_surrogate ✅——**headline 位同直跑冒烟过**（`59ee773`）
+
+- Sonnet 委托（逐文件手改非批量正则——W1 的 CRLF 模板教训直接改了执行方式）+
+  Fable 复核（零越界、ruff、wiring/身份 21/21、gate 脚本 diff 抽查）
+- 31/44 文件改动；3 逃生舱有据（script-dir insert 供 sco2 兄弟脚本裸名互导，非包根
+  引导）；13 零改动有据
+- 代理自伤两处自查修复：3 文件整文件 CRLF→LF 翻转（字节级行尾审计）、孤儿 Path
+- **W2 特有波门全过**：validate_shanghai_3d_real 包风格下直跑 **GATE PASS 且 headline
+  分毫未动**（RMSRE_dP 4.88% / RMSRE_Q 2.12% ≡ P0.1 基线）；tracked CSV 的 ULP
+  自改写（1.4e-12）按 iter 1 惯例回退
+- 门证据：套件 **1275+4skip（19:08）/ 10 绿** + **GOLDEN: PASS (bit-identical)**
+- 下一步：W3 = runs/ 35 + ui/ 1 迁移（直跑脚本逐个冒烟）
+
 ## iter 44 · 2026-07-21 · P1.8b W1 tests 迁移 ✅——**§10 委托轮：141 文件净 -357 行**（`140166b`）
 
 - Sonnet 子代理机械执行（脚本化改写非盲扫 + 分批自测 + 三项强制收尾自检），Fable 复核
