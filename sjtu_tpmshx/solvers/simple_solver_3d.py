@@ -112,10 +112,17 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 # ─── AMG-active gate (pressure-correction inner solver) ───────────
 # Below this N the pressure-correction system uses scipy.sparse.linalg.spsolve
 # (sparse LU); above it, PyAMG ruge_stuben_solver as a preconditioner for
-# BiCGStab. Break-even ~30 k cells where spsolve memory + factor cost starts
-# hurting and AMG O(N) win amortises. This constant is also used to auto-
-# enable `coarse_bootstrap_3d` warm-start (audit P4 / phase L-d Option B).
-_AMG_GATE = 30_000
+# BiCGStab. The old "break-even ~30 k" was never measured on the mid band:
+# D4(b)-1 (2026-07-22, upgrade/tools/d4b_pp_cost_curve.py) measured per-call
+# pp cost LU vs AMG on identical assembled systems — AMG wins at EVERY size
+# ≥ 2 k cells (2.0k: 13→3 ms, 4.9k: 79→5 ms, 11.6k: 459→20 ms, 19.7k:
+# 1505→169 ms, 29.8k: 4896→219 ms; spsolve refactorizes every call, the
+# hierarchy cache amortises). Gate lowered 30_000 → 2_000 accordingly
+# (golden-3D re-baselined same commit — 15³ grids now take the AMG path;
+# Shanghai validation cases at 600 cells stay on LU, headline unchanged).
+# This constant is also used to auto-enable `coarse_bootstrap_3d` warm-start
+# (audit P4 / phase L-d Option B).
+_AMG_GATE = 2_000
 
 from .tpms_calc import P_atm
 from .threads import warn_if_default_pool as _warn_if_default_pool

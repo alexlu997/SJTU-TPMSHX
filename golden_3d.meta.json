@@ -1,16 +1,14 @@
 {
   "artifact": "golden_3d.json",
-  "sha256": "4ae326dc6df62a002df05992d20e8b5bedb3e2d49b31f1e6732ec151185e5ff8",
-  "size_bytes": 2037,
+  "sha256": "527c1365ffe2f5bf7e4bc688ba0c1acf6ba79299ec1006efe6e1073d458ac9b2",
+  "size_bytes": 2042,
   "generator": "sjtu_tpmshx/runs/_out/_golden_3d.py",
   "attested": {
-    "date": "2026-07-19",
-    "code_commit": "4b32da4",
-    "check_result": "PASS (bit-identical)",
+    "date": "2026-07-22",
+    "code_commit": "this commit (gate change + json + meta, ! marker)",
+    "check_result": "PASS (bit-identical) ¡ª upgrade/logs/iter56-golden3d.log",
     "check_runs": [
-      "worktree readiness chain 2026-07-19",
-      "P0.1 baseline chain (upgrade/logs/p01-golden3d.log)",
-      "P0.3 gates (upgrade/logs/p03-golden3d.log)"
+      "iter56 validation chain: golden self-check + suite 1276+4skip/10 (3:31) + Shanghai GATE PASS dP 4.88% / Q 2.12% (headline unchanged, LU-side containment)"
     ],
     "env": {
       "python": "3.12.10 (C:\\Python312 base venv)",
@@ -20,5 +18,11 @@
       "QT_QPA_PLATFORM": "offscreen"
     }
   },
-  "history_note": "golden_3d.json is COMMITTED alongside this sidecar since 2026-07-19 (decision D1 by Alex; it was untracked before, the HANDOFF Â§9 'zero version records' era). Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update json + this sidecar in the SAME commit, with a `!` commit type (upgrade/PROTOCOL.md Â§5)."
+  "history_note": "golden_3d.json is COMMITTED alongside this sidecar since 2026-07-19 (decision D1 by Alex; it was untracked before, the HANDOFF Â§9 'zero version records' era). Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update json + this sidecar in the SAME commit, with a `!` commit type (upgrade/PROTOCOL.md Â§5).",
+  "history": [
+    {
+      "date": "2026-07-22",
+      "event": "RE-BASELINE (D4(b)-2): _AMG_GATE 30_000 -> 2_000 ¡ª 15^3 golden grids moved to the AMG pp path. All 27 changed scalars are ULP-tail only (max rel ~5e-12; e.g. air_air.Q 385.47142867386947 -> ...88874); field hashes re-captured. Cost-curve evidence: upgrade/tools/d4b_pp_cost_curve.py + upgrade/logs/iter55-costcurve.log. Pre-change code commit: 4622a07."
+    }
+  ]
 }
