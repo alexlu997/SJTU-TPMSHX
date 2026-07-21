@@ -1,11 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 53 ——**D4(a) 毕（`7061836`，全门 7:44+golden 位同），next=(c) profile**
-- next: **D4(c) = profile 轮（(b) 前置）**：①wall_refine 异常解剖（refined 447.7s vs
-  uniform 0.6s @288 基格——拉伸网格上 pp/AMG/GS 谁吃掉了 wall；cProfile+分段计时）；
-  ②AMG 网格（>32k）生产解的 pp 占比测量（rtol_dyn 复活收益上限）。产出=测量报告
-  → (b) 实装方案。之后 (b) AMG rtol_dyn 复活（§5 重基准已授权）
-- in_progress: 无（iter 53 已收）
+- iteration: 54 ——**D4(c) 毕（pp LU 重分解 89.4% 实锤），next=(b) 实装**
+- next: **D4(b) 实装**：第一步=中带成本曲线（2k/5k/12k/20k/30k 格：LU 单次 vs AMG 单次
+  vs 迭代+复用预条件），据线定方案（AMG 门下调 / 分解缓存 / 中带迭代）；第二步=实装+
+  全门+golden（大概率 §5 重基准，已授权）；验证矩阵含 wall_refine 构型与 partial-BC
+  40×40×20 挂死构型
+- in_progress: 无（iter 54 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
