@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
 
-from solvers.tpms_calc import geometry as tpms_geometry
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from df_surrogate.predict import predict_dP_compressible, predict_dP
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.df_surrogate.predict import predict_dP_compressible, predict_dP
 from .fluids import fluid_props, fluid_nu
 
 K_STEEL = 16.0

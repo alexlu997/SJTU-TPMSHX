@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from scipy.optimize import brentq
 
-from solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
 from .fluids import fluid_props, nu_re_window
 from .forward import forward, dP_fracs, K_STEEL, GEOM_N, LTNE_TOL
 

@@ -91,7 +91,7 @@ def warn_if_default_pool(n_cells: int) -> int:
     active, cap = get_solver_threads(), max_threads()
     if active >= cap and cap > rec:
         _advised_default_pool = True
-        from logutil import get_logger
+        from sjtu_tpmshx.logutil import get_logger
         get_logger(__name__).warning(
             "large grid (%d cells) engages parallel kernels on the numba "
             "all-cores default (%d threads). Red-black GS is memory-bandwidth "

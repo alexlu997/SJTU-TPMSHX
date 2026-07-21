@@ -12,23 +12,23 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QMessageBox
 
-from ui.ui_constants import TOAST_MS_SHORT
-from ui.theme import get_theme
+from sjtu_tpmshx.ui.ui_constants import TOAST_MS_SHORT
+from sjtu_tpmshx.ui.theme import get_theme
 
 
 class TabViewMixin:
     """Tab / canvas / detach-reattach UI handlers."""
 
     def _canvas_zoom(self, factor):
-        from ui.builders_canvas import canvas_zoom
+        from sjtu_tpmshx.ui.builders_canvas import canvas_zoom
         return canvas_zoom(self, factor)
 
     def _canvas_zoom_reset(self):
-        from ui.builders_canvas import canvas_zoom_reset
+        from sjtu_tpmshx.ui.builders_canvas import canvas_zoom_reset
         return canvas_zoom_reset(self)
 
     def _canvas_wheel_zoom(self, event, canvas, key):
-        from ui.builders_canvas import canvas_wheel_zoom
+        from sjtu_tpmshx.ui.builders_canvas import canvas_wheel_zoom
         return canvas_wheel_zoom(self, event, canvas, key)
 
     def _update_tab_visibility(self):
@@ -154,7 +154,7 @@ class TabViewMixin:
             self.statusBar().showMessage(
                 "Split view requires both tabs to have data.", 4000)
             return
-        from ui.builders_canvas import _layout_split_cards
+        from sjtu_tpmshx.ui.builders_canvas import _layout_split_cards
         _layout_split_cards(self, [cur, tab])
         # Paint both tab buttons as active, others inactive.
         for k, btn in (('temp', self.btn_tab_temp),
@@ -242,7 +242,7 @@ class TabViewMixin:
         # Exiting split view — a plain tab click means "back to single".
         if getattr(self, '_split_tabs', None):
             self._split_tabs = None
-            from ui.builders_canvas import _relayout_canvas_cards
+            from sjtu_tpmshx.ui.builders_canvas import _relayout_canvas_cards
             _relayout_canvas_cards(self, 1)
         # Reject clicks on hidden tabs (defensive — buttons are hidden anyway)
         btn_lookup = {
@@ -368,7 +368,7 @@ class TabViewMixin:
                 pass
         # ui-plan3-workbench T2: sidebar follows the result family.
         try:
-            from ui.builders_canvas import update_result_sidebar_visibility
+            from sjtu_tpmshx.ui.builders_canvas import update_result_sidebar_visibility
             update_result_sidebar_visibility(self)
         except Exception:
             pass

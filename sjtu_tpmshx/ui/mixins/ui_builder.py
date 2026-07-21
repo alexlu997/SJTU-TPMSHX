@@ -14,50 +14,50 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QLineEdit, QScrollArea, QWidget
 
-from ui.theme import get_theme
+from sjtu_tpmshx.ui.theme import get_theme
 
 
 class UIBuilderMixin:
     """Page/tab/canvas builders + status-bar / undo / help installers."""
 
     def _build_ui(self):
-        from ui.ui_builders import build_ui
+        from sjtu_tpmshx.ui.ui_builders import build_ui
         return build_ui(self)
 
     def _build_param_tabs(self) -> QWidget:
-        from ui.ui_builders import build_param_tabs
+        from sjtu_tpmshx.ui.ui_builders import build_param_tabs
         return build_param_tabs(self)
 
     def _build_page_domain(self) -> QScrollArea:
-        from ui.builders_domain import build_page_domain
+        from sjtu_tpmshx.ui.builders_domain import build_page_domain
         return build_page_domain(self)
 
     def _build_page_fluids(self) -> QScrollArea:
-        from ui.builders_fluids import build_page_fluids
+        from sjtu_tpmshx.ui.builders_fluids import build_page_fluids
         return build_page_fluids(self)
 
     def _build_page_zones(self) -> QScrollArea:
-        from ui.ui_builders import build_page_zones
+        from sjtu_tpmshx.ui.ui_builders import build_page_zones
         return build_page_zones(self)
 
     def _build_canvas_area(self) -> QWidget:
-        from ui.builders_canvas import build_canvas_area
+        from sjtu_tpmshx.ui.builders_canvas import build_canvas_area
         return build_canvas_area(self)
 
     def _section(self, parent_lay, title, title_style, frame_style):
-        from ui.builders_base import section
+        from sjtu_tpmshx.ui.builders_base import section
         return section(self, parent_lay, title, title_style, frame_style)
 
     def _row(self, g, row, text, default) -> QLineEdit:
-        from ui.builders_base import row as _row_impl
+        from sjtu_tpmshx.ui.builders_base import row as _row_impl
         return _row_impl(self, g, row, text, default)
 
     def _res_row(self, g, row, text, col=0) -> QLabel:
-        from ui.builders_base import res_row
+        from sjtu_tpmshx.ui.builders_base import res_row
         return res_row(self, g, row, text, col)
 
     def _add_row(self, g, row, text, widget):
-        from ui.builders_base import add_row
+        from sjtu_tpmshx.ui.builders_base import add_row
         return add_row(self, g, row, text, widget)
 
     def _install_status_bar_widgets(self):
@@ -67,7 +67,7 @@ class UIBuilderMixin:
         survive transient showMessage() calls, giving the user a constant
         context strip like VSCode / JetBrains IDEs.
         """
-        from ui.theme import get_theme as _gt_sb
+        from sjtu_tpmshx.ui.theme import get_theme as _gt_sb
         _t = _gt_sb()
         _mono_css = (
             f"color:{_t.get('sub_fg', _t['fg'])};"
@@ -103,7 +103,7 @@ class UIBuilderMixin:
         # flight so users can eyeball convergence without waiting for the
         # pressure-tab residual plot. Fluid A only (keep footprint small);
         # the full A+B semilog plot remains on Pressure tab post-run.
-        from ui.sparkline import Sparkline as _LiveSpark
+        from sjtu_tpmshx.ui.sparkline import Sparkline as _LiveSpark
         self._sb_live_resid = _LiveSpark(height=20)
         self._sb_live_resid.setFixedWidth(120)
         self._sb_live_resid.hide()

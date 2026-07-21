@@ -19,8 +19,8 @@ import numpy as np
 
 from PySide6.QtWidgets import QMessageBox
 
-from solvers.tpms_calc import compute as tpms_compute
-from ui.ui_constants import RE_NU_LO, RE_NU_HI, TOAST_MS_MED
+from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute
+from sjtu_tpmshx.ui.ui_constants import RE_NU_LO, RE_NU_HI, TOAST_MS_MED
 
 
 def _fluid_styles() -> dict:
@@ -28,7 +28,7 @@ def _fluid_styles() -> dict:
     time (the old module-global _VAL/_VAL_WARN snapshot in main.py went
     stale after a theme switch)."""
     try:
-        from ui.theme import _build_styles
+        from sjtu_tpmshx.ui.theme import _build_styles
         s = _build_styles()
         return {'VAL': s.get('VAL', ''), 'VAL_WARN': s.get('VAL_WARN', '')}
     except Exception:
@@ -51,7 +51,7 @@ class FluidInputMixin:
             # tpms_compute so water side picks up water properties + the
             # Pr-substitution Nu correlation. Falls back to 'air' if combo
             # not present (legacy compute path).
-            from solvers.tpms_calc import parse_fluid_type
+            from sjtu_tpmshx.solvers.tpms_calc import parse_fluid_type
             _combo = getattr(self, f'combo_fluid{fluid}', None)
             _ftype = parse_fluid_type(_combo) if _combo is not None else 'air'
             r = tpms_compute(
@@ -65,7 +65,7 @@ class FluidInputMixin:
 
         # Convert face HTC [W/(m2K)] to volumetric HTC [W/(m3K)] —
         # delegated to domain.compute_volumetric_htc (Phase 4 #4).
-        from domain.validator import compute_volumetric_htc
+        from sjtu_tpmshx.domain.validator import compute_volumetric_htc
         h_v_vol = compute_volumetric_htc(r['A_0'], r['H_sf'])
 
         # Re range check against Nu v4.1 calibration window.
@@ -315,7 +315,7 @@ class FluidInputMixin:
         so user knows which coord they're editing.
         """
         # Cross-axis labels delegated to domain.validator (Phase 4 #4).
-        from domain.validator import cross_axes_for_dir
+        from sjtu_tpmshx.domain.validator import cross_axes_for_dir
         for combo, prefix in [(self.combo_dirA, 'pipeA'),
                               (self.combo_dirB, 'pipeB')]:
             try:
@@ -338,11 +338,11 @@ class FluidInputMixin:
     def _is_x_dir(self, d): return d in (0, 1)
 
     def _inlet_wall(self, d):
-        from domain.validator import wall_for_dir
+        from sjtu_tpmshx.domain.validator import wall_for_dir
         return wall_for_dir(d, 'inlet')
 
     def _outlet_wall(self, d):
-        from domain.validator import wall_for_dir
+        from sjtu_tpmshx.domain.validator import wall_for_dir
         return wall_for_dir(d, 'outlet')
 
     def _fluid_config(self, which):
@@ -387,7 +387,7 @@ class FluidInputMixin:
 
     def _update_edge_combos(self):
         """Populate edge combo boxes with readable edge descriptions."""
-        from solvers import unstructured_mesh as um
+        from sjtu_tpmshx.solvers import unstructured_mesh as um
         try:
             L = float(self.le_L.text())
             H = float(self.le_H.text())
@@ -436,13 +436,13 @@ class FluidInputMixin:
             self.combo_edge_outB.setCurrentIndex(3)
 
     def _draw_layout(self):
-        from ui.layout_drawer import draw_layout
+        from sjtu_tpmshx.ui.layout_drawer import draw_layout
         return draw_layout(self)
 
     def _draw_layout_rect(self, ax, L, H, Lmm, Hmm):
-        from ui.layout_drawer import draw_layout_rect
+        from sjtu_tpmshx.ui.layout_drawer import draw_layout_rect
         return draw_layout_rect(self, ax, L, H, Lmm, Hmm)
 
     def _draw_layout_polygon(self, ax, L, H, Lmm, Hmm):
-        from ui.layout_drawer import draw_layout_polygon
+        from sjtu_tpmshx.ui.layout_drawer import draw_layout_polygon
         return draw_layout_polygon(self, ax, L, H, Lmm, Hmm)

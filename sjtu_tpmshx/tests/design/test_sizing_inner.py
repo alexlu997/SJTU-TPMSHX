@@ -1,5 +1,5 @@
-from design.cases import DesignCase
-from design.sizing import t_target, solve_Lx
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.sizing import t_target, solve_Lx
 
 def _case():
     return DesignCase(1,"air",688.23,1_088_700.0,0.2855,

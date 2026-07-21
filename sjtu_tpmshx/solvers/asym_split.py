@@ -30,8 +30,8 @@ def _asym_split_A(cfg, tpms_type, Lcell, t_wall):
     delta = float(cfg.get('delta_levelset', 0.0))
     if delta == 0.0:
         return 0.5
-    from solvers.tpms_geometry import _phi_grid, _C_from_tL
-    from solvers import asym_geometry as _ag
+    from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+    from sjtu_tpmshx.solvers import asym_geometry as _ag
     phi = _phi_grid(tpms_type, 128)
     C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
     eA, eB, _etot = _ag.eps_sides(phi, C, delta)

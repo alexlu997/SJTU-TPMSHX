@@ -24,23 +24,23 @@ from typing import TYPE_CHECKING, Any
 import os
 
 import numpy as np
-from domain.compute_config import ComputeConfig, bc_to_dict
-from domain.compute_result import ComputeResult
-from solvers.simple_solver import SIMPLESolver
-from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
-from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
-from pipelines._stage_common import (
+from sjtu_tpmshx.domain.compute_config import ComputeConfig, bc_to_dict
+from sjtu_tpmshx.domain.compute_result import ComputeResult
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
+from sjtu_tpmshx.solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
+from sjtu_tpmshx.pipelines._stage_common import (
     validate_domain_dims, surrogate_extrap_reasons, safe_float,
     geometry_props,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 # Re-exports — external consumers (controllers/compute_pipeline, tests)
 # import these from pipelines.stages_2d; keep every moved name reachable.
-from pipelines.solve_2d import (
+from sjtu_tpmshx.pipelines.solve_2d import (
     _enthalpy_balance_2d, _PipelineWindowShim, _compute_pressure_2d,
     _apply_zone_stats_2d, _compute_Q_richardson, _run_solvers,
 )
@@ -96,7 +96,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
     # still blocks. Per-side fluid type captured into cfg so _run_solvers
     # picks the right property accessors.
-    from solvers.tpms_calc import validate_fluid_type
+    from sjtu_tpmshx.solvers.tpms_calc import validate_fluid_type
     fluid_A = compute_cfg.fluid_A.type
     fluid_B = compute_cfg.fluid_B.type
     validate_fluid_type(fluid_A, 'A')
@@ -160,7 +160,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
                 grid = compute_cfg.zones.grid
                 _x_dec = compute_cfg.zones.pareto_x_decision
                 if _x_dec is not None:
-                    from solvers.sigmoid_field import (
+                    from sjtu_tpmshx.solvers.sigmoid_field import (
                         build_continuous_arrays, get_geometry_lut,
                     )
                     _lut = get_geometry_lut(tpms_type)
@@ -176,7 +176,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
                         fluid_type=fluid_A)  # air-only builder; non-air raises
                     _log.info(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
-                    from solvers.zone_config import ZoneConfig
+                    from sjtu_tpmshx.solvers.zone_config import ZoneConfig
                     za = ZoneConfig.build_grid_arrays(
                         N_x, N_y, L, H,
                         grid['cells'],
@@ -270,7 +270,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     def _build_zone_arrays_for_simple(za_dict, N_flow, N_perp, is_x_flow, mu_fluid):
         """Build 1D per-row arrays for SIMPLE from 2D zone arrays.
         SIMPLE's y-axis = flow direction. Need per-row porous params."""
-        from solvers import tpms_calc as _tc
+        from sjtu_tpmshx.solvers import tpms_calc as _tc
         mu_eff = np.empty(N_flow, dtype=np.float64)
         r_h_a  = np.empty(N_flow, dtype=np.float64)
         ln_eps = np.empty(N_flow, dtype=np.float64)
@@ -311,7 +311,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                 'ln_eps_arr': ln_eps, 'ln_tL_arr': ln_tL, 'ln_XSa_arr': ln_XSa}
 
     # Build aligned grid arrays for energy solver
-    from solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
     _x_breaks = set()
     _y_breaks = set()
     # Fluid B (y-flow): inlet/outlet on x-axis
@@ -341,7 +341,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         and zone_config is None and za is None
     )
     if _wall_refine_gui:
-        from solvers.df_projection import build_master_refined_grid
+        from sjtu_tpmshx.solvers.df_projection import build_master_refined_grid
         try:
             energy_dx, energy_dy, N_x, N_y = build_master_refined_grid(
                 L, H, N_x, N_y, n_refine=8, first_cell=0.02e-3, growth=1.8)
@@ -432,7 +432,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
 
         # Build zone arrays for SIMPLE if zones are active
         z_arr = None
-        from solvers.zone_config import ZoneConfig
+        from sjtu_tpmshx.solvers.zone_config import ZoneConfig
         if za is not None:
             if is_x:
                 z_arr = _build_zone_arrays_for_simple(za, N_x, N_y, True, mu_f)
@@ -502,8 +502,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # can never drift from the drag it is seeding for.
         L_stream = float(L if is_x else H)
         if fluid_type == 'ideal_gas':
-            from df_surrogate.predict import predict_K_cF as _pred_KcF
-            from solvers.envelope import predict_outlet_p_sq
+            from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
+            from sjtu_tpmshx.solvers.envelope import predict_outlet_p_sq
             _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
                                   0.5 * float(eps))
             _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
@@ -822,7 +822,7 @@ def _finalize_cfg(raw: dict[str, Any],
                   T_in_K, P_in_Pa):
         # B1 1.1: param renamed from `fluid_props` — it shadowed the
         # solvers.fluid_props module this function now dispatches through.
-        from solvers import fluid_props as _fluids
+        from sjtu_tpmshx.solvers import fluid_props as _fluids
         # Same convention as ``_enthalpy_balance_2d`` outlet plane.
         import numpy as _np
         # Zoned-ε outlet weighting (2026-07-13 audit): the physical mass flux

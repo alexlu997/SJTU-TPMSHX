@@ -36,7 +36,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -71,7 +71,7 @@ def _seed_subprocess_main(seed: int,
     """
     _set_thread_caps()
     # Heavy import deferred until after thread caps are set
-    from optimization.optimizer_qnehvi import run_qnehvi
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import run_qnehvi
 
     save_dir = os.path.join(save_dir_base, f"seed_{seed:03d}")
     os.makedirs(save_dir, exist_ok=True)
@@ -107,7 +107,7 @@ def _merge_paretos(seed_outputs: List[dict]) -> tuple:
     -------
     (X_merged, F_merged_min, X_history, F_history_min, n_evals_total)
     """
-    from optimization.optimizer_qnehvi import _pareto_mask_max
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _pareto_mask_max
 
     X_paretos = [o['X'] for o in seed_outputs if o['X'].size]
     F_paretos = [o['F'] for o in seed_outputs if o['F'].size]
@@ -226,7 +226,7 @@ def run_qnehvi_multiseed(config: Optional[dict] = None,
             _log.info(f"  dP range [{dP.min():.0f}, {dP.max():.0f}] Pa")
 
     # Write merged Pareto + history at top level
-    from optimization.optimizer_qnehvi import _save_pareto_csv
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _save_pareto_csv
     _save_pareto_csv(os.path.join(save_dir_base, 'pareto_merged.csv'), X_m, F_m)
     _save_pareto_csv(os.path.join(save_dir_base, 'history_merged.csv'), X_h, F_h)
 

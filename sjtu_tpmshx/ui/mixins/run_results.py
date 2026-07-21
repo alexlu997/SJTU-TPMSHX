@@ -14,7 +14,7 @@ imports plus the TOAST constant — no main.py module state.
 
 from __future__ import annotations
 
-from ui.ui_constants import TOAST_MS_SHORT
+from sjtu_tpmshx.ui.ui_constants import TOAST_MS_SHORT
 
 
 class RunResultsMixin:
@@ -24,7 +24,7 @@ class RunResultsMixin:
         """Thin wrapper — delegates to run_calculation module (Task B.9).
         Freezes repaints around the multi-canvas population so the user
         sees one clean frame flip instead of five intermediate paints."""
-        from ui.plot_2d_results import finalize_plots
+        from sjtu_tpmshx.ui.plot_2d_results import finalize_plots
         self.setUpdatesEnabled(False)
         try:
             out = finalize_plots(self)
@@ -198,7 +198,7 @@ class RunResultsMixin:
         if recents is not None and len(recents) >= 2:
             prev = recents[1]  # index 0 is the run we just finalised
 
-        from ui.theme import get_theme as _gt
+        from sjtu_tpmshx.ui.theme import get_theme as _gt
         _t = _gt()
         _up_good = _t.get('accent_green', '#22C55E')
         _bad = _gt().get('err_soft', '#F87171')
@@ -251,7 +251,7 @@ class RunResultsMixin:
         # Chips stay alive as the data carriers this method writes.
         self._result_summary_bar.setVisible(False)
         try:
-            from ui.builders_canvas import (refresh_result_sidebar,
+            from sjtu_tpmshx.ui.builders_canvas import (refresh_result_sidebar,
                                             update_result_sidebar_visibility)
             refresh_result_sidebar(self)
             update_result_sidebar_visibility(self)
@@ -301,7 +301,7 @@ class RunResultsMixin:
             return
         from PySide6.QtWidgets import (QDialog, QVBoxLayout, QPlainTextEdit,
                                        QPushButton, QHBoxLayout)
-        from ui.theme import get_theme as _gt
+        from sjtu_tpmshx.ui.theme import get_theme as _gt
         _t = _gt()
         dlg = QDialog(self)
         dlg.setWindowTitle("诊断详情")

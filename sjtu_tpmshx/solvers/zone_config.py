@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import List
 from . import tpms_calc
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

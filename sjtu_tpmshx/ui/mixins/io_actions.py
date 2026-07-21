@@ -13,7 +13,7 @@ import json
 
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
-from ui.ui_constants import TOAST_MS_SHORT, TOAST_MS_MED
+from sjtu_tpmshx.ui.ui_constants import TOAST_MS_SHORT, TOAST_MS_MED
 
 
 def _git_commit_hash() -> str:

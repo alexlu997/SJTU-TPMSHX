@@ -1,5 +1,5 @@
 import openpyxl
-from design.cli import run
+from sjtu_tpmshx.design.cli import run
 
 def _spec(path):
     wb = openpyxl.Workbook(); ws = wb.active

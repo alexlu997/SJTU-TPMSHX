@@ -29,8 +29,8 @@ import time as _time
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from ui.fmt import duration as _fmt_dur
-from ui.ui_constants import VV_VELOCITY_LIMIT_MS, TOAST_MS_MED, TOAST_MS_SHORT
+from sjtu_tpmshx.ui.fmt import duration as _fmt_dur
+from sjtu_tpmshx.ui.ui_constants import VV_VELOCITY_LIMIT_MS, TOAST_MS_MED, TOAST_MS_SHORT
 
 
 class RunControllerMixin:
@@ -89,7 +89,7 @@ class RunControllerMixin:
         # Qt widgets are read EXACTLY ONCE here on the main thread; the
         # worker thread only ever sees the pure ComputeConfig. strict=True
         # reproduces the legacy blank/non-numeric widget validation.
-        from ui.window_config import config_from_window
+        from sjtu_tpmshx.ui.window_config import config_from_window
         try:
             compute_cfg = config_from_window(self, strict=True,
                                              force_3d=False)
@@ -99,7 +99,7 @@ class RunControllerMixin:
 
         def _2d_worker(cfg, cancel_token, progress_cb):
             self._cancel_token = cancel_token
-            from controllers.compute_pipeline import (Pipeline2D,
+            from sjtu_tpmshx.controllers.compute_pipeline import (Pipeline2D,
                                                       CancelledError)
             pipe = Pipeline2D(
                 compute_cfg,
@@ -261,7 +261,7 @@ class RunControllerMixin:
         # deleted. Qt widgets are read exactly once HERE on the main
         # thread (before the UI locks, so a validation error leaves the
         # window usable).
-        from ui.window_config import config_from_window
+        from sjtu_tpmshx.ui.window_config import config_from_window
         try:
             compute_cfg = config_from_window(self, strict=True,
                                              force_3d=True)
@@ -284,7 +284,7 @@ class RunControllerMixin:
 
         def _3d_worker(cfg, cancel_token, progress_cb):
             self._cancel_token = cancel_token
-            from controllers.compute_pipeline import (Pipeline3D,
+            from sjtu_tpmshx.controllers.compute_pipeline import (Pipeline3D,
                                                       CancelledError)
             pipe = Pipeline3D(
                 compute_cfg,
@@ -334,7 +334,7 @@ class RunControllerMixin:
             # clock is non-linear in cells AND Re, so any cheap projection
             # misleads. Show honest live progress instead: elapsed + cells +
             # the outer-iteration label (set by the solver via _iter_label_now).
-            from ui.fmt import duration as _fmt
+            from sjtu_tpmshx.ui.fmt import duration as _fmt
             label = getattr(self, '_iter_label_now', None)
             iter_txt = f" • {label}" if label else ""
             self.statusBar().showMessage(
@@ -349,7 +349,7 @@ class RunControllerMixin:
         # Qt-coupled UI code (takes the main window, uses ui.theme) that
         # lived in the free scripts tier; GUI importing runs/ was a layering
         # violation flagged by the import audit.
-        from ui.polygon_calc import run_polygon_calculation
+        from sjtu_tpmshx.ui.polygon_calc import run_polygon_calculation
         return run_polygon_calculation(self)
 
     def _on_orch_started(self, mode):
@@ -425,7 +425,7 @@ class RunControllerMixin:
 
         mode = self.compute.current_mode()
         if mode == '3d':
-            from ui.plot_3d_results import finalize_plots_3d
+            from sjtu_tpmshx.ui.plot_3d_results import finalize_plots_3d
             # 2026-06-02 fix: do NOT pre-clear ``_has_results_3d`` here. In the
             # live window that flag is a ResultCache bridge whose setter
             # (main.Main_Menu._has_results_3d) DELETES ``_result_3d`` — which
@@ -620,7 +620,7 @@ class RunControllerMixin:
         self._end_compute_ui(success=False)
         QMessageBox.critical(self, "Compute Error", message)
         try:
-            from ui.microanim import toast as _toast
+            from sjtu_tpmshx.ui.microanim import toast as _toast
             _toast(self, f"Compute failed — {message[:80]}",
                    kind='error',
                    copy_payload=log_text or message)
@@ -796,8 +796,8 @@ class RunControllerMixin:
             self._live_resid_cursor = 0
             # Micro-anim polish: pulse the result chips + floating toast.
             try:
-                from ui.microanim import pulse_glow, toast
-                from ui.theme import get_theme as _gt
+                from sjtu_tpmshx.ui.microanim import pulse_glow, toast
+                from sjtu_tpmshx.ui.theme import get_theme as _gt
                 for key in ('Q', 'dPA', 'dPB'):
                     chip = self._res_chips.get(key) if hasattr(
                         self, '_res_chips') else None

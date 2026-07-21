@@ -13,10 +13,10 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
-from solvers import fluid_props
-from solvers.roughness import (f_enhancement, nu_extra_factor,
+from sjtu_tpmshx.solvers import fluid_props
+from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
 
@@ -191,9 +191,9 @@ def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
     keep the scalar-inlet path so the golden 2D/3D and Shanghai-3D baselines
     stay bit-identical.
     """
-    from solvers import sco2_props as _s2
-    from solvers.tpms_calc import nu_sco2_topo as _nu_s2
-    from solvers.nu_correlations import NU_LAM_FLOOR as _floor
+    from sjtu_tpmshx.solvers import sco2_props as _s2
+    from sjtu_tpmshx.solvers.tpms_calc import nu_sco2_topo as _nu_s2
+    from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _floor
     T = np.asarray(T_field, dtype=np.float64)
     rho = _s2.sco2_density_field(T, P_Pa)
     mu = _s2.sco2_viscosity_field(T, P_Pa)

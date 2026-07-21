@@ -29,7 +29,7 @@ from typing import Optional
 
 import numpy as np
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -81,7 +81,7 @@ def _make_worker_class():
 
         def run(self):
             try:
-                from optimization.optimizer_qnehvi import run_qnehvi
+                from sjtu_tpmshx.optimization.optimizer_qnehvi import run_qnehvi
 
                 def _cb(count, total, prog):
                     self.progress_signal.emit(int(count), int(total),
@@ -135,7 +135,7 @@ def _gather_cfg(window, base: dict | None = None) -> dict:
     ``evaluator_3d.DEFAULT_CONFIG_3D`` so the 3D fast-mode budget is not
     stomped by 2D defaults. Widget reads always take precedence.
     """
-    from optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
+    from sjtu_tpmshx.optimization.evaluator import DEFAULT_CONFIG as EVAL_DEFAULT
 
     cfg = dict(base) if base is not None else dict(EVAL_DEFAULT)
 
@@ -223,7 +223,7 @@ def _gather_cfg(window, base: dict | None = None) -> dict:
     _sp = getattr(window, '_opt_space_params', None)
     if _sp:
         try:
-            from df_surrogate._domain import TRAIN_L, TRAIN_T
+            from sjtu_tpmshx.df_surrogate._domain import TRAIN_L, TRAIN_T
 
             def _clamped(lo_w, hi_w, hull):
                 lo = max(hull[0], min(float(lo_w.value()), float(hi_w.value())))
@@ -426,7 +426,7 @@ def _show_qnehvi_param_dialog(window, cfg: dict) -> Optional[dict]:
     dlg.setWindowTitle("qNEHVI — Bayesian optimization parameters")
     dlg.setModal(True)
     # Theme the dialog (previously raw Qt defaults — light-grey on dark theme).
-    from ui.theme import get_theme as _gt_opt
+    from sjtu_tpmshx.ui.theme import get_theme as _gt_opt
     _t = _gt_opt()
     dlg.setStyleSheet(
         f"QDialog{{background:{_t['bg']};}}"
@@ -566,7 +566,7 @@ def show_field_preview(window, x_decision=None) -> None:
         _set_status(window, f"matplotlib unavailable ({e})")
         return
 
-    from solvers.continuous_field import (
+    from sjtu_tpmshx.solvers.continuous_field import (
         from_decision_vector, uniform_field,
     )
     cfg = _gather_cfg(window)
@@ -689,7 +689,7 @@ def run_optimize(window) -> None:
     is_3d = _is_3d_mode(window)
     try:
         if is_3d:
-            from optimization.evaluator_3d import (
+            from sjtu_tpmshx.optimization.evaluator_3d import (
                 DEFAULT_CONFIG_3D, evaluate_design_3d,
             )
             evaluator_fn = evaluate_design_3d
@@ -903,7 +903,7 @@ def run_optimize(window) -> None:
 
 def cancel_optimize(window) -> None:
     """Request graceful cancel of the running optimizer."""
-    from optimization.optimizer_qnehvi import request_cancel
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import request_cancel
     request_cancel()
     _set_status(window, 'cancel requested — stopping at next iteration boundary')
 
@@ -1094,7 +1094,7 @@ def load_pareto_solution(window, x_decision: np.ndarray) -> None:
     pushed back to scalar Compute inputs. The full graded geometry lives in
     the Pareto CSV under ``opt_runs/.../pareto_final.csv``.
     """
-    from solvers.continuous_field import decode_decision_vector
+    from sjtu_tpmshx.solvers.continuous_field import decode_decision_vector
 
     cfg_full = _gather_cfg(window)
     # 2026-05-20 UI sweep: guard against a corrupt or mis-sized decision

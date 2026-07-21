@@ -12,41 +12,41 @@ import time as _time
 from dataclasses import dataclass
 import numpy as np
 
-from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp,
 )
-from solvers import fluid_props
-from solvers import sco2_props
-from solvers.asym_split import (
+from sjtu_tpmshx.solvers import fluid_props
+from sjtu_tpmshx.solvers import sco2_props
+from sjtu_tpmshx.solvers.asym_split import (
     _asym_split_A, _per_side_eps_override, _eps_sides_for_run,
 )
-from df_surrogate.predict import predict_K_cF, sco2_cf_scale
-from df_surrogate.kappa_asym import kappa_KcF
-from solvers.envelope import (check_compressible_envelope, gate_solution,
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, sco2_cf_scale
+from sjtu_tpmshx.df_surrogate.kappa_asym import kappa_KcF
+from sjtu_tpmshx.solvers.envelope import (check_compressible_envelope, gate_solution,
                                mach_field_max, ChokedFlowError,
                                PRESSURE_FLOOR_PA)
 
-from pipelines.flux_3d import (
+from sjtu_tpmshx.pipelines.flux_3d import (
     _face_flux_weights, _mass_weighted_T_out, _mass_weighted_h_out,
     _sco2_hv_local_field, _simple_mass_flow,
     _apply_roughness_KcF, _apply_roughness_h_v,
 )
-from pipelines.grid_3d import (
+from sjtu_tpmshx.pipelines.grid_3d import (
     _resolve_axis_map, _build_zone_fields_3d, _build_grid_3d,
     _solver_spacings,
 )
-from pipelines.stages_3d_helpers import (  # Phase 3: extracted pure helpers
+from sjtu_tpmshx.pipelines.stages_3d_helpers import (  # Phase 3: extracted pure helpers
     _stream_axis, _inlet_index, _outlet_index,
     _face_slice, _real_outlet_slice,
     _build_partial_masks, _solver_velocity_to_real, _solver_staggered_to_real,
     _balance_stream_outflow, _build_chi_B_union_extrude,
     _build_chi_B_mass_flux_threshold, _build_chi_B_velocity_threshold,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -346,7 +346,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
     user spots non-physical regressions without re-running validation; any
     failure warns + reports NaN (never silently swallowed)."""
     try:
-        from solvers.ltne_energy_3d import energy_balance_3d, mass_balance_3d
+        from sjtu_tpmshx.solvers.ltne_energy_3d import energy_balance_3d, mass_balance_3d
         e_bal = energy_balance_3d(Ta, Tb, Ts, h_vA_field, h_vB_field, dx, dy, dz)
         Q_sA = e_bal['Q_sA']
         Q_sB = e_bal['Q_sB']
@@ -745,7 +745,7 @@ def _build_3d_problem(cfg):
     if zone_cells:
         L_mm_field, t_field_3d, eps_field_3d = _build_zone_fields_3d(
             zone_cells, Nx, Ny, Nz, L, H, tpms_type, k_s, Lcell, t_wall)
-        from df_surrogate.predict import predict_K_cF_vec
+        from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
         K_field_3d, cF_field_3d = predict_K_cF_vec(
             tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0)
         # Real → solver coord permutation (inverse equals same tuple for 2-swaps),
@@ -1016,7 +1016,7 @@ def _build_3d_problem(cfg):
         K_ffB = K_ffB + K_disp_B
     # K_ss = χ_s(type, ε) · (1 − eps_local) · k_s, tracks zoned porosity (#3).
     # B2 (2026-07-06): χ_s from unit-cell homogenization fit (chi_s_eff).
-    from solvers.tpms_calc import chi_s_eff as _chi_s_eff
+    from sjtu_tpmshx.solvers.tpms_calc import chi_s_eff as _chi_s_eff
     K_ss = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
     return _Problem3D(
@@ -1142,8 +1142,8 @@ def _build_hv_machinery(prob: _Problem3D):
     # h_v from Nu correlation. Per-cell when zoned (#4): tpms_compute uses
     # local (Lcell_ij, t_wall_ij) so A_0, H_sf track the design field.
     # Uniform case reduces to the old scalar path.
-    from solvers.tpms_calc import compute as tpms_compute
-    from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
+    from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute
+    from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
     u_B_val = cfg.get('u_B', u_A)
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
@@ -1276,8 +1276,8 @@ def _build_hv_machinery(prob: _Problem3D):
     def _hv_side_geom_ratio(fluid_type, u_side, T_side, P_side, side):
         if float(cfg.get('delta_levelset', 0.0)) == 0.0:
             return 1.0
-        from solvers.tpms_geometry import _phi_grid, _C_from_tL
-        from solvers import asym_geometry as _ag
+        from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+        from sjtu_tpmshx.solvers import asym_geometry as _ag
         _N = 128
         _phi = _phi_grid(tpms_type, _N)
         _C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
@@ -2284,7 +2284,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     _use_outer_and = bool(cfg.get('outer_anderson', False))
     _and_A = _and_B = None
     if _use_outer_and:
-        from solvers.anderson_acceleration import AndersonOuterCoupling
+        from sjtu_tpmshx.solvers.anderson_acceleration import AndersonOuterCoupling
         _and_kw = dict(m=int(cfg.get('outer_anderson_m', 3)),
                        trust=float(cfg.get('outer_anderson_trust', 5.0)),
                        patience=int(cfg.get('outer_anderson_patience', 3)))
@@ -2635,7 +2635,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # gate keep air/water and every other config bit-identical.
         # (Plan: vault reports/method/3d/2026-06-28-3d-ltne-enthalpy-*.)
         if _enth_gate:
-            from solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
+            from sjtu_tpmshx.solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
             _epsps = 0.5 * float(eps)
             # N4 (2026-06-28): under δ≠0 the per-side ṁ must weight by the actual
             # channel void (ε·split), matching the duty-extraction path and the

@@ -16,7 +16,7 @@ from scipy.interpolate import RegularGridInterpolator
 from .tpms_geometry import compute_geometry, _phi_grid, _C_from_tL, _eps_from_C, _A0_from_C
 from .tpms_calc import (air_density, air_viscosity, air_conductivity)
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -359,7 +359,7 @@ def build_continuous_arrays(x, L0, t0, y_trans_inlet, y_trans_outlet,
     # homogenization; env TPMSHX_CHI_S constant still overrides.
     # (Thermal dispersion C_DISP is velocity-dependent and added downstream in
     #  the outer loop, not here; default C_DISP=0.0.)
-    from solvers.tpms_calc import chi_s_eff as _chi_s_eff
+    from sjtu_tpmshx.solvers.tpms_calc import chi_s_eff as _chi_s_eff
     K_ss_arr = _chi_s_eff(tpms_type, eps_arr) * (1.0 - eps_arr) * k_s
 
     return {

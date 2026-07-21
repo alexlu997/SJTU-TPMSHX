@@ -32,24 +32,24 @@ import numpy as np
 # (see the solver-construction block), so graded designs are exact instead of
 # mean-ε approximate. The one-shot warning guard that lived here is retired.
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     air_density,
     air_viscosity,
     air_cp,
 )
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from solvers.df_projection import (
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
-from solvers.continuous_field import from_decision_vector
-from solvers.envelope import (
+from sjtu_tpmshx.solvers.continuous_field import from_decision_vector
+from sjtu_tpmshx.solvers.envelope import (
     R_AIR_DEFAULT,
     assess_solution_validity,
     mach_field_max,
     predict_outlet_p_sq,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -112,7 +112,7 @@ def _build_3d_arrays(fc, Nx: int, Ny: int, Nz: int,
     # former per-cell dict-cache loop; the quantization key moved from
     # Python round() to np.round (round-half-even, agrees on the
     # 0.05/0.01-quantized grid). Result is z-broadcast below.
-    from solvers.continuous_field import props_from_Lt_fields
+    from sjtu_tpmshx.solvers.continuous_field import props_from_Lt_fields
     p = props_from_Lt_fields(L_field_2D, t_field_2D, tpms_type, k_s,
                              u_A, u_B, T_inA, T_inB, P_inA,
                              quant_L=quant_L, quant_t=quant_t)
@@ -208,13 +208,13 @@ def evaluate_3d(x_decision: np.ndarray,
     # Water side untouched (the per-topology water fit (`nu_water_topo`)
     # embeds AM roughness already).
     if roughness_mode is None or roughness_eps_um is None:
-        from solvers.roughness import resolve_mode_from_env as _resolve
+        from sjtu_tpmshx.solvers.roughness import resolve_mode_from_env as _resolve
         _env_mode, _env_eps = _resolve(default='baseline')
         roughness_mode = roughness_mode or _env_mode
         roughness_eps_um = roughness_eps_um if roughness_eps_um is not None else _env_eps
     if roughness_mode != 'baseline':
-        from solvers.roughness import f_enhancement, nu_extra_factor
-        from solvers.tpms_calc import geometry as _tpms_geom
+        from sjtu_tpmshx.solvers.roughness import f_enhancement, nu_extra_factor
+        from sjtu_tpmshx.solvers.tpms_calc import geometry as _tpms_geom
         _g_case = _tpms_geom(tpms_type, float(fc.L_ctrl.mean()),
                               float(fc.t_ctrl.mean()), k_s)
         _D_h_m = _g_case['D_h']

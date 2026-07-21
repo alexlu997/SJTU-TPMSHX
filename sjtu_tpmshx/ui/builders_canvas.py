@@ -814,7 +814,7 @@ def build_canvas_area(window):
             # values are unreachable; _gather_cfg clamps again defensively),
             # control-point grid, Y-mirror toggle, field preview.
             space_card, space_lay = _opt_card("搜索空间 (连续场)", 250)
-            from df_surrogate._domain import (
+            from sjtu_tpmshx.df_surrogate._domain import (
                 TRAIN_L as _hull_L, TRAIN_T as _hull_T,
             )
             _dspin_qss = (
@@ -895,7 +895,7 @@ def build_canvas_area(window):
                 "（未选 Pareto 解时显示界中值均匀场）")
 
             def _preview_field(*_):
-                from ui.optimize_panel import show_field_preview
+                from sjtu_tpmshx.ui.optimize_panel import show_field_preview
                 show_field_preview(window)
             btn_field_prev.clicked.connect(_preview_field)
             space_lay.addWidget(btn_field_prev)

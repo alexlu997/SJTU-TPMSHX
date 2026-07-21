@@ -1,5 +1,5 @@
-from design.cases import DesignCase
-from design.select import enumerate_select
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.select import enumerate_select
 
 
 def _cases():
@@ -15,5 +15,5 @@ def test_enumerate_returns_pareto_and_best():
         assert "min-V" in best_tags(feas, best)  # 最小体积件被标
 
 def best_tags(feas, d):
-    from design.select import pareto_tags
+    from sjtu_tpmshx.design.select import pareto_tags
     return pareto_tags(feas).get(id(d), [])

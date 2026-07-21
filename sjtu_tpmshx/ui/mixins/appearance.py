@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QMessageBox
 
-from ui.theme import (get_theme, get_theme_name, set_theme, set_density,
+from sjtu_tpmshx.ui.theme import (get_theme, get_theme_name, set_theme, set_density,
                       set_accent_override)
 
 

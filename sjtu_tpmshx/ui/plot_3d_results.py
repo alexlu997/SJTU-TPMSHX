@@ -18,9 +18,9 @@ from __future__ import annotations
 import numpy as np
 
 # Theme — resolved at call time via get_theme()
-from ui.theme import get_theme as _get_theme
+from sjtu_tpmshx.ui.theme import get_theme as _get_theme
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -251,7 +251,7 @@ def _render_2d_slices_from_3d(window, res):
     # extrapolation flag on every canvas except the PyVistaQt viewport.
     if res.extrap_reasons:
         _reasons = list(res.extrap_reasons or [])
-        from ui.theme import get_theme as _gt
+        from sjtu_tpmshx.ui.theme import get_theme as _gt
         _tw = _gt().get('warn', '#B45309')
         _wm_text = "⚠ ConstDF-v1 extrapolated: " + " | ".join(_reasons)
         for attr in ('canvas_temp', 'canvas_pres', 'canvas_vel'):

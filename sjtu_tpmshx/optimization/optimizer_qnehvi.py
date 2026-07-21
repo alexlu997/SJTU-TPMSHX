@@ -39,15 +39,15 @@ if TYPE_CHECKING:                      # annotation-only; torch stays lazy
 
 import numpy as np
 
-from optimization.evaluator import (
+from sjtu_tpmshx.optimization.evaluator import (
     DEFAULT_CONFIG as EVAL_DEFAULT_CONFIG,
     evaluate_design,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     decision_dim,
     decision_bounds,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -142,8 +142,8 @@ def _reset_warn_registries() -> None:
     ComputePipeline.run (compute_pipeline.py:120-123), which resets per user
     action for the same reason.
     """
-    from solvers.nu_correlations import reset_extrap_warn_registry
-    from df_surrogate.predict import reset_choke_warn_registry
+    from sjtu_tpmshx.solvers.nu_correlations import reset_extrap_warn_registry
+    from sjtu_tpmshx.df_surrogate.predict import reset_choke_warn_registry
     reset_extrap_warn_registry()
     reset_choke_warn_registry()
 

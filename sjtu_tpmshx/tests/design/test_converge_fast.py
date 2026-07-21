@@ -2,8 +2,8 @@
 满迭代参考解相同的收敛温度 (同解, 只是更快)。同时确认内核默认 (None) 不变。"""
 from __future__ import annotations
 import numpy as np
-from design.cases import DesignCase
-from design.forward import (forward, _hvol, K_STEEL, GEOM_N, NX, _ARR,
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.forward import (forward, _hvol, K_STEEL, GEOM_N, NX, _ARR,
                             SIZING_QTOL, SIZING_CHUNK)
 from sjtu_tpmshx.solvers.tpms_calc import geometry as tg
 from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d

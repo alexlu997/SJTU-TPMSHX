@@ -25,7 +25,7 @@ Phase 1 additions (2026-04-20):
 
 import numpy as np
 
-from solvers.ltne_energy import solve_full_domain as _solve_full_2d
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
 
 # ---------------------------------------------------------------------------

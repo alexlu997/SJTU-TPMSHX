@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, ExtrapPolicy, FeatureFlags, FluidConfig, FluidType,
     GeometryConfig, PartialBCConfig, SolverConfig, ZoneAxis, ZoneInputConfig,
 )
@@ -361,7 +361,7 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
     resolved_config = None
     if enabled:
         try:
-            from ui.zone_table import build_zone_config as _bzc
+            from sjtu_tpmshx.ui.zone_table import build_zone_config as _bzc
             resolved_config = _bzc(window)
         except Exception:
             resolved_config = None

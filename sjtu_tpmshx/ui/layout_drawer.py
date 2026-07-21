@@ -557,7 +557,7 @@ def draw_layout_rect(window, ax, L, H, Lmm, Hmm):
 def draw_layout_polygon(window, ax, L, H, Lmm, Hmm):
     """Ex-Main_Menu._draw_layout_polygon(self, ax, L, H, Lmm, Hmm)."""
     _t = get_theme()
-    from solvers import unstructured_mesh as um
+    from sjtu_tpmshx.solvers import unstructured_mesh as um
     from matplotlib.patches import Polygon as MplPolygon
 
     shape = window.combo_shape.currentText()

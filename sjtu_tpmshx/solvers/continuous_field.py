@@ -30,7 +30,7 @@ from scipy.interpolate import RectBivariateSpline
 
 from . import tpms_calc
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -47,7 +47,7 @@ DEFAULT_SYMMETRIC_Y = True
 # 100% rejected designs. See df_surrogate/surrogate_domain.py for the same
 # limits enforced on the UI Compute path.
 # Training convex hull [mm] — single source in df_surrogate/_domain.py.
-from df_surrogate._domain import TRAIN_L as DEFAULT_L_BOUNDS, TRAIN_T as DEFAULT_T_BOUNDS
+from sjtu_tpmshx.df_surrogate._domain import TRAIN_L as DEFAULT_L_BOUNDS, TRAIN_T as DEFAULT_T_BOUNDS
 # Manufacturability ratio: lower-bounded slightly below 0.3/8 = 0.0375 so
 # the corner (L=8, t=0.3) does not trip the penalty; upper-bounded loose.
 DEFAULT_RATIO_BOUNDS = (0.035, 0.20)   # t / L
@@ -490,7 +490,7 @@ if __name__ == '__main__':
     # Test 3: build_grid_arrays returns expected dict keys
     arrays = fc.build_grid_arrays(20, 20, u_A=5.0, u_B=3.0,
                                    T_inA=400.0, T_inB=300.0)
-    from solvers.grid_schema import GRID_ARRAY_KEYS
+    from sjtu_tpmshx.solvers.grid_schema import GRID_ARRAY_KEYS
     expected_keys = set(GRID_ARRAY_KEYS) | {'L_field', 't_field', 'axis',
                                             'cache_size', 'zone_id'}
     assert expected_keys.issubset(set(arrays.keys()))

@@ -13,10 +13,10 @@ import matplotlib.tri as mtri
 from matplotlib.gridspec import GridSpec
 
 from PySide6.QtWidgets import QApplication, QMessageBox
-from solvers.tpms_calc import geometry as tpms_geometry, air_cp
-from solvers.polygon_fvm import solve_polygon_domain
-from solvers.unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
-from ui.theme import get_theme
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry, air_cp
+from sjtu_tpmshx.solvers.polygon_fvm import solve_polygon_domain
+from sjtu_tpmshx.solvers.unstructured_mesh import BC_OUTLET_A, BC_OUTLET_B
+from sjtu_tpmshx.ui.theme import get_theme
 
 
 def run_polygon_calculation(window):
@@ -42,8 +42,8 @@ def run_polygon_calculation(window):
 
 def _parse_inputs(window, _log):
     """Phase 1: read UI widgets, validate, build mesh. Returns cfg or None."""
-    from solvers import unstructured_mesh as um
-    from solvers.unstructured_mesh import BC_INLET_A, BC_INLET_B
+    from sjtu_tpmshx.solvers import unstructured_mesh as um
+    from sjtu_tpmshx.solvers.unstructured_mesh import BC_INLET_A, BC_INLET_B
 
     if not window.compute_tpms():
         return None

@@ -52,20 +52,20 @@ from __future__ import annotations
 import warnings
 import numpy as np
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     air_density,
     air_viscosity,
     air_cp,
     geometry as tpms_geometry,
     adaptive_grid,
 )
-from solvers.simple_solver import SIMPLESolver
-from solvers.ltne_energy import solve_full_domain
-from solvers.df_projection import (
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.df_projection import (
     extract_dP_from_simple,
     override_simple_K_cF,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     ContinuousFieldConfig,
     from_decision_vector,
     DEFAULT_N_CTRL_X,
@@ -74,7 +74,7 @@ from solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_T_BOUNDS,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -220,7 +220,7 @@ def _percell_K_cF(cfg: dict, arrays: dict) -> tuple:
     lateral resistance contrast is erased, which removes the routing lever a
     port-BC study needs. This builds the per-cell prediction instead.
     """
-    from df_surrogate.predict import predict_K_cF_vec
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
     L_f = np.asarray(arrays['L_field'], dtype=np.float64)
     t_f = np.asarray(arrays['t_field'], dtype=np.float64)
     eps_f = np.asarray(arrays['eps_arr'], dtype=np.float64) * 0.5  # per-stream
@@ -245,7 +245,7 @@ def _reseed_p_ref_from_actual_drag(s, mu, G, P_in, T_in, L_stream):
     ChokedFlowError when the graded drag chokes (ledger O1, closed
     2026-07-13); the 1e4 Pa floor stays for tiny-but-positive P_out².
     """
-    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+    from sjtu_tpmshx.solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
                                   ChokedFlowError)
     K_act = (s._K_field2d if getattr(s, '_K_field2d', None) is not None
              else np.asarray(s._K_arr, dtype=np.float64))
@@ -302,8 +302,8 @@ def _build_simple_A(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     # Same 1D compressible Forchheimer closed form as 3D (`run_stack_3d.
     # _seed_p_ref`) and the 2D pipeline (`stages_2d`), using the SAME (K, cF)
     # the solver builds internally so the seed cannot drift from the drag.
-    from df_surrogate.predict import predict_K_cF as _pred_KcF
-    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
+    from sjtu_tpmshx.solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
                                   ChokedFlowError)
     _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
                           float(fc.t_ctrl.mean()), 0.5 * eps_mean)
@@ -388,8 +388,8 @@ def _build_simple_B(cfg: dict, fc: ContinuousFieldConfig, arrays: dict,
     # P_ref_abs = the OUTLET absolute pressure (ledger C8) — see _build_simple_A
     # for the full rationale. Fluid B is also AIR here (compressible), and its
     # streamwise length is H_dom (it flows along -y), not L_dom.
-    from df_surrogate.predict import predict_K_cF as _pred_KcF
-    from solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
+    from sjtu_tpmshx.solvers.envelope import (predict_outlet_p_sq as _p_out_sq,
                                   ChokedFlowError)
     _K0, _cF0 = _pred_KcF(cfg['tpms_type'], float(fc.L_ctrl.mean()),
                           float(fc.t_ctrl.mean()), 0.5 * eps_mean)
@@ -606,7 +606,7 @@ def evaluate_design(x: np.ndarray,
     # Return the SAME bounded dp_cap penalty the blowup guard below uses
     # (deliberate: keeps the GP input distribution bounded, :505-507), with
     # the REAL geometry mass so the mass objective stays honest.
-    from solvers.envelope import ChokedFlowError as _Choked
+    from sjtu_tpmshx.solvers.envelope import ChokedFlowError as _Choked
     try:
         sA = _build_simple_A(cfg_full, fc, arrays, Nx, Ny)
         sB = _build_simple_B(cfg_full, fc, arrays, Nx, Ny)
@@ -791,7 +791,7 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
 
     # Build a uniform field at L=6, t=0.4 → equivalent to single-zone baseline
-    from solvers.continuous_field import uniform_field
+    from sjtu_tpmshx.solvers.continuous_field import uniform_field
 
     fc = uniform_field(6.0, 0.4, 'Diamond', 17.0, 0.10, 0.05)
     print("Building uniform-field design …")

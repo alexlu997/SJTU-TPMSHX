@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -76,9 +76,9 @@ def _make_worker_class():
 
         def run(self):
             try:
-                from design.cases import load_cases
-                from design.sizing import size_fixed_cell
-                from design.select import enumerate_select
+                from sjtu_tpmshx.design.cases import load_cases
+                from sjtu_tpmshx.design.sizing import size_fixed_cell
+                from sjtu_tpmshx.design.select import enumerate_select
                 p = self.params
                 cases = load_cases(p["file"])
                 ks = p.get("k_s", 16.0)
@@ -95,7 +95,7 @@ def _make_worker_class():
                                                      rho_s=p["rho_s"], n_jobs=-1, k_s=ks,
                                                      prop_model=pm, height=ht)  # 全核并行
                     if p["refine"] and best is not None:
-                        from design.optimize import warm_start_joint
+                        from sjtu_tpmshx.design.optimize import warm_start_joint
                         ref = warm_start_joint(cases, best, p["arrangement"],
                                                rho_s=p["rho_s"], k_s=ks, prop_model=pm,
                                                height=ht)
@@ -121,7 +121,7 @@ def _set_status(window, text):
 def _fill_table(window, feasible, best):
     """把可行件按 V 排序填进 window._qd_table (QTableWidget)。无表则打印。"""
     rows = sorted(feasible, key=lambda d: d.V)
-    from design.select import pareto_tags
+    from sjtu_tpmshx.design.select import pareto_tags
     tags = pareto_tags(feasible)
     def _hmm(d):                       # 矩形取固定高, 方形回退 W=s
         h = getattr(d, "height", 0.0) or d.s
@@ -262,7 +262,7 @@ def build_quick_design_dialog(parent=None):
     # window palette, so it didn't match the app's design tokens and looked
     # wrong on the light theme). One cascading stylesheet from the active
     # theme styles every child widget to match the main UI in both palettes.
-    from ui.theme import get_theme as _gt_qd, _build_styles as _bs_qd
+    from sjtu_tpmshx.ui.theme import get_theme as _gt_qd, _build_styles as _bs_qd
     _t = _gt_qd()
     _qd_styles = _bs_qd()
     dlg.setStyleSheet(
@@ -457,7 +457,7 @@ def build_quick_design_dialog(parent=None):
         if not path:
             return
         try:
-            from design.report import write_xlsx          # CLI/UI 共用双 sheet
+            from sjtu_tpmshx.design.report import write_xlsx          # CLI/UI 共用双 sheet
             n_total, n_feas, n_det = write_xlsx(path, results)
             dlg._qd_status.setText(
                 f"已导出 → {path}  (构型汇总 {n_total}/可行 {n_feas} · "

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from df_surrogate._domain import TRAIN_L_NODES, TRAIN_T_NODES
+from sjtu_tpmshx.df_surrogate._domain import TRAIN_L_NODES, TRAIN_T_NODES
 
 
 # ---------------------------------------------------------------- types

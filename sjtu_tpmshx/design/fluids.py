@@ -7,9 +7,9 @@
 from __future__ import annotations
 from dataclasses import dataclass
 
-from solvers import fluid_props as _registry
-from solvers.tpms_calc import nu_from_Re
-from solvers.nu_correlations import (
+from sjtu_tpmshx.solvers import fluid_props as _registry
+from sjtu_tpmshx.solvers.tpms_calc import nu_from_Re
+from sjtu_tpmshx.solvers.nu_correlations import (
     NU_RE_FIT_RANGE,        # air 幂律拟合 Re 窗 (400,16000)
     WATER_NU_RE_RANGE,      # 拓扑专属水侧 Nu 关联式验证 Re 域 (新式)
     SCO2_NU_RE_RANGE,       # sCO2 CFD 拟合 Re 域 (2600,128000), Diamond+Gyroid

@@ -87,7 +87,7 @@ try:
 except ImportError:
     _HAS_PYAMG = False
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

@@ -47,8 +47,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Optional
 
-from domain.compute_config import ComputeConfig
-from domain.compute_result import ComputeResult
+from sjtu_tpmshx.domain.compute_config import ComputeConfig
+from sjtu_tpmshx.domain.compute_result import ComputeResult
 
 
 # ── Pipeline ABC ─────────────────────────────────────────────────────
@@ -117,8 +117,8 @@ class ComputePipeline(ABC):
         # Re-arm the one-shot closure warning registries so each run's
         # banner reflects its own extrapolation/choke events (audit W3,
         # 2026-07-07). Local imports keep controller import time lean.
-        from solvers.nu_correlations import reset_extrap_warn_registry
-        from df_surrogate.predict import reset_choke_warn_registry
+        from sjtu_tpmshx.solvers.nu_correlations import reset_extrap_warn_registry
+        from sjtu_tpmshx.df_surrogate.predict import reset_choke_warn_registry
         reset_extrap_warn_registry()
         reset_choke_warn_registry()
         self._check_cancel()
@@ -175,7 +175,7 @@ class Pipeline2D(ComputePipeline):
         # Lazy on purpose (NOT a cycle since the contracts-layer split):
         # importing stages_2d pulls the numba solver chain + JIT warmup;
         # keeping it method-local spares GUI cold-start when no compute runs.
-        from pipelines.stages_2d import (
+        from sjtu_tpmshx.pipelines.stages_2d import (
             _parse_inputs_cfg, _build_fields_cfg,
         )
         self._parsed = _parse_inputs_cfg(self.cfg)
@@ -184,7 +184,7 @@ class Pipeline2D(ComputePipeline):
             live_residuals=self.ui_hooks.get('live_residuals'))
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
-        from pipelines.stages_2d import _run_solvers_cfg
+        from sjtu_tpmshx.pipelines.stages_2d import _run_solvers_cfg
         assert self._parsed is not None, (
             "Pipeline2D.run_solvers called before build_fields")
         return _run_solvers_cfg(self._parsed, fields,
@@ -194,7 +194,7 @@ class Pipeline2D(ComputePipeline):
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
-        from pipelines.stages_2d import _finalize_cfg
+        from sjtu_tpmshx.pipelines.stages_2d import _finalize_cfg
         assert self._parsed is not None, (
             "Pipeline2D.finalize called before build_fields")
         return _finalize_cfg(raw, self._parsed)
@@ -216,14 +216,14 @@ class Pipeline3D(ComputePipeline):
 
     def build_fields(self) -> Dict[str, Any]:
         # Lazy on purpose — see Pipeline2D.build_fields.
-        from pipelines.stages_3d import (
+        from sjtu_tpmshx.pipelines.stages_3d import (
             _parse_inputs_3d_cfg, _build_fields_3d_cfg,
         )
         self._parsed = _parse_inputs_3d_cfg(self.cfg)
         return _build_fields_3d_cfg(self._parsed)
 
     def run_solvers(self, fields: Dict[str, Any]) -> Dict[str, Any]:
-        from pipelines.stages_3d import _run_solvers_3d_cfg
+        from sjtu_tpmshx.pipelines.stages_3d import _run_solvers_3d_cfg
         assert self._parsed is not None, (
             "Pipeline3D.run_solvers called before build_fields")
         return _run_solvers_3d_cfg(self._parsed, fields,
@@ -233,7 +233,7 @@ class Pipeline3D(ComputePipeline):
 
     def finalize(self, raw: Dict[str, Any],
                  fields: Dict[str, Any]) -> ComputeResult:
-        from pipelines.stages_3d import _finalize_3d_cfg
+        from sjtu_tpmshx.pipelines.stages_3d import _finalize_3d_cfg
         assert self._parsed is not None, (
             "Pipeline3D.finalize called before build_fields")
         return _finalize_3d_cfg(raw, self._parsed)

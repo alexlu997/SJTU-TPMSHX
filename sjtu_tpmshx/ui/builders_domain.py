@@ -279,7 +279,7 @@ def build_page_domain(window):
     # the TPMSHX_NUM_THREADS env var instead. GS is memory-bandwidth bound, so
     # gains taper past ~8-16 cores.
     from PySide6.QtWidgets import QSpinBox, QHBoxLayout
-    from solvers.threads import (max_threads as _max_threads,
+    from sjtu_tpmshx.solvers.threads import (max_threads as _max_threads,
                                  get_solver_threads as _get_threads,
                                  set_solver_threads as _set_threads)
     _mx_cores = _max_threads()

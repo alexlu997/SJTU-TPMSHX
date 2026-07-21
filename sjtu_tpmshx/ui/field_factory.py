@@ -78,7 +78,7 @@ def default_factory() -> 'FieldFactory':
         # Lazy import: theme_manager pulls Qt; importing it at module top
         # would force pytest collection to spin Qt for tests that don't
         # need styling.
-        from ui.theme_manager import ThemeManager
+        from sjtu_tpmshx.ui.theme_manager import ThemeManager
         _FACTORY = FieldFactory(ThemeManager())
     return _FACTORY
 

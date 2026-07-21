@@ -25,6 +25,6 @@ def test_closures_accept_t_0p3_and_0p6():
 
 
 def test_default_enumeration_nodes_include_t_0p6():
-    from design.select import NODES
+    from sjtu_tpmshx.design.select import NODES
     assert 0.3 in NODES["t"]
     assert 0.6 in NODES["t"]

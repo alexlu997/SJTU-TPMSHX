@@ -20,7 +20,7 @@ def _btn_styles() -> dict:
     dialog respects a live ``ThemeManager.rebuild()`` instead of the stale
     module-global ``_BTN_*`` snapshot the original main.py read once at import."""
     try:
-        from ui.theme import _build_styles
+        from sjtu_tpmshx.ui.theme import _build_styles
         s = _build_styles()
         return {"tertiary": s.get("BTN_TERTIARY", ""),
                 "secondary": s.get("BTN_SECONDARY", "")}
@@ -33,7 +33,7 @@ class DialogsMixin:
 
     def _show_overview(self):
         """Open the D7 session-overview dashboard dialog."""
-        from ui.session_overview import open_overview
+        from sjtu_tpmshx.ui.session_overview import open_overview
         open_overview(self)
 
     def _show_solve_log(self):
@@ -49,7 +49,7 @@ class DialogsMixin:
         dlg = QDialog(self)
         dlg.setWindowTitle("Solve log — SIMPLE / coupling output")
         dlg.resize(820, 640)
-        from ui.theme import get_theme as _gt_sl
+        from sjtu_tpmshx.ui.theme import get_theme as _gt_sl
         _tsl = _gt_sl()
         # Theme the dialog chrome too, not just the editor (else the surround
         # falls back to the parent palette and mismatches on the light theme).
@@ -156,7 +156,7 @@ class DialogsMixin:
         """Open the Ctrl+K command palette menu-driven (Help menu entry)."""
         pal = getattr(self, '_command_palette', None)
         if pal is None:
-            from ui.command_palette import CommandPalette
+            from sjtu_tpmshx.ui.command_palette import CommandPalette
             pal = CommandPalette(self)
             self._command_palette = pal
         pal.open_palette()
@@ -168,7 +168,7 @@ class DialogsMixin:
         main UI is unaffected. Rebuilt on the theme-switch restart (__init__).
         """
         from PySide6.QtWidgets import QApplication
-        from ui.theme import get_theme
+        from sjtu_tpmshx.ui.theme import get_theme
         app = QApplication.instance()
         if app is None:
             return
@@ -195,7 +195,7 @@ class DialogsMixin:
         """Pop up the last 50 status-bar messages in a read-only dialog."""
         from PySide6.QtWidgets import (QDialog, QVBoxLayout, QPlainTextEdit,
                                         QDialogButtonBox)
-        from ui.theme import get_theme
+        from sjtu_tpmshx.ui.theme import get_theme
         dlg = QDialog(self)
         dlg.setWindowTitle("Status Log")
         dlg.resize(640, 380)

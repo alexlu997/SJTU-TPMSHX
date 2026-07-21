@@ -30,7 +30,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from ui.ui_constants import TOAST_MS_SHORT
+from sjtu_tpmshx.ui.ui_constants import TOAST_MS_SHORT
 
 # Persistent session log lives next to main.py (project package root), NOT next
 # to this module. Anchor to parents[2]: ui/mixins/run_history.py -> sjtu_tpmshx/.
@@ -196,7 +196,7 @@ class RunHistoryMixin:
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Session timeline — {len(entries)} runs")
         dlg.resize(760, 520)
-        from ui.theme import get_theme as _gt_tl
+        from sjtu_tpmshx.ui.theme import get_theme as _gt_tl
         _t = _gt_tl()
         dlg.setStyleSheet(
             f"QDialog{{background:{_t['bg']};}}"
@@ -296,7 +296,7 @@ class RunHistoryMixin:
             dur = f"{elapsed:.1f}s"
         else:
             dur = f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
-        from ui.fmt import preset_display as _pd
+        from sjtu_tpmshx.ui.fmt import preset_display as _pd
         preset = _pd(getattr(self, "_active_preset_name", "—") or "—")
         tip = (f"Computed @ {ts}  ·  {dur}  ·  grid {grid}  ·  preset: {preset}"
                + (f"  ·  commit: {commit}" if commit else ""))
@@ -363,7 +363,7 @@ def _btn_styles() -> dict:
     dialogs respect a live theme switch (the old module-global snapshot in
     main.py went stale after ThemeManager.rebuild())."""
     try:
-        from ui.theme import _build_styles
+        from sjtu_tpmshx.ui.theme import _build_styles
         s = _build_styles()
         return {"tertiary": s.get("BTN_TERTIARY", ""),
                 "secondary": s.get("BTN_SECONDARY", "")}

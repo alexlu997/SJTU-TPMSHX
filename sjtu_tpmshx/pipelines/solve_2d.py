@@ -2,11 +2,11 @@
 stages_2d.py (openspec split-pipelines, 2026-07-03); behavior bit-identical.
 """
 import numpy as np
-from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
-from solvers.ltne_energy import solve_full_domain
-from solvers.tpms_calc import geometry as tpms_geometry
-from solvers.envelope import gate_solution, mach_field_max
-from logutil import get_logger
+from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.solvers.envelope import gate_solution, mach_field_max
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -129,9 +129,9 @@ class _PipelineWindowShim:
     _init_done = False
 
     def __init__(self, compute_cfg, progress_cb=None, iter_label_cb=None):
-        from solvers import tpms_calc as _tc
-        from solvers.tpms_calc import geometry as _tpms_geom
-        from domain.validator import compute_volumetric_htc
+        from sjtu_tpmshx.solvers import tpms_calc as _tc
+        from sjtu_tpmshx.solvers.tpms_calc import geometry as _tpms_geom
+        from sjtu_tpmshx.domain.validator import compute_volumetric_htc
 
         # Bypass our own __setattr__ during init so the progress
         # callback only fires on the real loop updates below.
@@ -288,10 +288,10 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             window._zone_boundaries_x = [b * L for b in za.get('x_bounds', [])]
             window._zone_boundaries_y = [b * H for b in za.get('y_bounds', [])]
             # Build dummy Zone objects for statistics
-            from solvers.zone_config import Zone
+            from sjtu_tpmshx.solvers.zone_config import Zone
             dummy_zones = [Zone(f'g{r}', gc['y0'], gc['y1'], gc['L'], gc['t'])
                            for r, gc in enumerate(za.get('grid_cells', []))]
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            from sjtu_tpmshx.solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
                                             cell_area=_ca)
@@ -300,7 +300,7 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             window._zone_stats = stats
         else:
             # 1D mode
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            from sjtu_tpmshx.solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
                                             zone_config.zones, cell_area=_ca)
@@ -351,7 +351,7 @@ def _compute_Q_richardson(
     _asymQ = (float(split_A) != 0.5)
     _fAQ = 2.0 * float(split_A)
     _fBQ = 2.0 * (1.0 - float(split_A))
-    from solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
     if za is not None and 'h_vB_arr' in za:
@@ -663,8 +663,8 @@ def _run_solvers(window, cfg, fields):
 
     # ── Outer velocity-temperature coupling loop ──
     import warnings as _warn
-    from solvers import tpms_calc as _tc
-    from solvers import fluid_props
+    from sjtu_tpmshx.solvers import tpms_calc as _tc
+    from sjtu_tpmshx.solvers import fluid_props
 
     # 2026-05-09 (option B) — per-side fluid property accessors. Air uses
     # ideal-gas density (T, P); water is incompressible so P is ignored.
@@ -702,7 +702,7 @@ def _run_solvers(window, cfg, fields):
     # Local-Re Nu rescale (2D #1 fix 2026-04-25): per-cell h_v using local
     # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to the laminar
     # Hagen-Poiseuille floor (prevents Nu→0 non-physical extrapolation).
-    from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
+    from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
 
     def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm,
                      side_P=None):
@@ -795,7 +795,7 @@ def _run_solvers(window, cfg, fields):
     # and keeps diffusion / convection / duty per-side consistent. The kernel
     # itself receives the absolute eps_A = ε·s / eps_B = ε·(1−s) (Phase 1 hook).
     # See design add-2d-asym-porosity D2(b).
-    from solvers.asym_split import _asym_split_A as _asym_split_A_2d
+    from sjtu_tpmshx.solvers.asym_split import _asym_split_A as _asym_split_A_2d
     _delta_2d = float(cfg['compute_cfg'].geometry.delta_levelset)
     _asym_2d = (_delta_2d != 0.0)
     _split_A_2d = _asym_split_A_2d({'delta_levelset': _delta_2d},
@@ -815,8 +815,8 @@ def _run_solvers(window, cfg, fields):
     def _hv_side_geom_ratio_2d(side_props, u_side, T_side, P_side):
         if not _asym_2d:
             return 1.0
-        from solvers.tpms_geometry import _phi_grid, _C_from_tL
-        from solvers import asym_geometry as _ag
+        from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+        from sjtu_tpmshx.solvers import asym_geometry as _ag
         _N = 128
         _phi = _phi_grid(tpms_type, _N)
         _C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
@@ -927,7 +927,7 @@ def _run_solvers(window, cfg, fields):
             # the retired D-7-6 ×3.39 — solver sCO2 Δp is now a SMOOTH-WALL
             # estimate until an experimental γ lands). air/water = 1.0,
             # bit-identical.
-            from df_surrogate.predict import sco2_cf_scale
+            from sjtu_tpmshx.df_surrogate.predict import sco2_cf_scale
             _cfsA = (sco2_cf_scale(
                 tpms_type, Lcell, t_wall, 0.5 * eps,
                 float(_pA['rho'](T_inA, P_inA_val)),
