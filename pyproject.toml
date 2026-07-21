@@ -1,10 +1,12 @@
 # SJTU-TPMSHX packaging (P1.8, 2026-07-20 — upgrade/loop 分支立的地基).
 #
-# 现状约束（诚实注记）：包内部统一使用顶层导入风格（`from solvers import ...`，
-# 由各处 sys.path 引导支撑）。本文件让 `pip install -e .` 暴露 `sjtu_tpmshx`
-# 包与 tpmshx-run 入口；顶层风格 → `sjtu_tpmshx.*` 的全库导入迁移是后续波次
-# （ROADMAP P1.8b），迁移完成前请勿在同一进程混用两种风格导入同一模块
-# （双模块对象会复制模块级缓存/注册表状态）。
+# 现状约束（诚实注记，P1.8b W0 更新 2026-07-21）：库内部仍用顶层导入风格
+# （`from solvers import ...`）；`sjtu_tpmshx/__init__.py` 的身份垫片
+# （meta-path finder）已使两种风格解析为同一模块对象——混用不再产生双状态，
+# 调用方可安全地逐波迁到 `sjtu_tpmshx.*`（波次计划见
+# openspec/changes/p18b-import-style-migration/）。工作 venv 已 editable
+# 安装（--no-deps；依赖闭包仍由 requirements-lock-server.txt 管理）。
+# 垫片与库内顶层风格在 W_final 一并退场。
 #
 # 版本号 0.1.0.dev0 为升级分支占位；对外版本语义合并时由 Alex 定。
 
@@ -80,6 +82,11 @@ ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = true
 no_implicit_optional = true
+# P1.8b W0：sjtu_tpmshx/__init__.py 出现后，mypy 的 __init__ 上溯会给同一文件
+# 算出双模块名（sjtu_tpmshx.domain.* vs domain.*）→ "found twice"。显式包基底
+# 锁定"以调用 cwd（=sjtu_tpmshx/，见上）为基"，模块名恒按顶层风格计算，与
+# W0 前语义一致；W_final 库内迁包名风格时，调用处与本开关一并改为仓库根基底。
+explicit_package_bases = true
 
 [tool.setuptools.dynamic]
 version = { attr = "sjtu_tpmshx._version.__version__" }

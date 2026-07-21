@@ -62,9 +62,15 @@
       sys.path 引导**不零星清理**（回归面大收益负），等 P1.8 结构性根治
 - [x] P1.8 打包地基（`827bee9`，iter 19）：pyproject + tpmshx-run CLI + controllers 惰性导出
       （接缝零 Qt 实证；工作 venv 未动）
-- [ ] P1.8b 导入风格迁移波次（顶层 `from solvers...` → `sjtu_tpmshx.*` 全库扫 + 分波删
-      约百处 sys.path 引导 + 工作 venv 转 editable）：大扫荡，openspec change + §10 委托候选；
-      迁移前双风格混用危险已注记 pyproject
+- [ ] P1.8b 导入风格迁移波次（**启动 iter 43，Alex 2026-07-21 拍板**；openspec
+      `p18b-import-style-migration` 三件套为波次台账）：
+      **W0 ✓ iter 43**——身份垫片（新建 `sjtu_tpmshx/__init__.py`：自举 + 前插
+      meta-path finder，双风格同对象；exec_module 恢复规范 __spec__ 防 reload 降级）
+      + 身份测试 7 断言 + venv editable（--no-deps，pip check 净）+ pyproject 注记改写。
+      垫片使后续迁移**顺序无关**（设计 D1）。
+      余波：W1 tests 73 文件 → W2 validation+df_surrogate 24 → W3 runs+ui 36
+      （§10 委托候选）→ W_final 库内 165 模块改写+撤垫片+P1.5 尾巴并入。
+      每波门：全套+golden 位同+身份测试+tpmshx-run 冒烟+波内 sys.path 零残留
 - [x] P1.9 分层违规裁决（`c43c7db`，iter 20）：两修（polygon_calc 迁 ui、_version 叶子）
       两裁（SANCTIONED 清单内置理由）；test_import_layering 常驻套件 + /check §2b；
       VIOLATIONS = 0
