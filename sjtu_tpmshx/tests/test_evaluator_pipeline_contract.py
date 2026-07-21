@@ -107,12 +107,13 @@ def test_g_reference_density_convention_post_d3c():
     inlet mass flux via an explicit rho_inlet_ref = rho(T_in, P_in) — the
     evaluator was aligned in iter 41 (frozen 2D values re-baselined with it).
 
-    3D: DELIBERATELY unchanged — the solver still first-solve-captures the
-    outlet-datum density (G under-driven by P_out_seed/P_in, ~19.3% at the
-    frozen point, partially absorbed by gamma_df). Unifying 3D onto the
-    physical G is the candidate-A2 investigation (golden_3d re-baseline +
-    Shanghai re-validation + gamma re-anchor assessment are prerequisites);
-    these assertions keep that door consciously guarded."""
+    3D: DELIBERATELY unchanged — and candidate A2 (iter 50) FALSIFIED the
+    feared outlet-datum deficit: the capture reads the CALLER-supplied
+    physical rho(T_in, P_in) (stages:736 / evaluators:247) at solve() entry;
+    the only offset is the seeded-profile half-cell datum (~0.5%, grid-
+    convergent — openspec a2-3d-physical-g). These assertions still guard
+    the convention: growing a rho_inlet_ref knob in 3D means re-opening the
+    golden_3d + Shanghai re-validation question, consciously."""
     import sjtu_tpmshx.core.evaluators as ev3d
     import sjtu_tpmshx.optimization.evaluator as ev2d
     import sjtu_tpmshx.pipelines.stages_2d as st2d
