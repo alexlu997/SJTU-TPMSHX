@@ -2,6 +2,18 @@
 
 每轮一段：`## iter N · 日期 · 条目`，正文写"做了什么 / 验证证据 / 下一步"。重基准条目用 **⚠** 高亮。
 
+## iter 49 · 2026-07-21 · P1.8b F3 五阶段迁移 ✅——**P1.8b 七轮全波次收官，Phase 1 全清**（`0816d9f`）
+
+- run_stack_3d.py 3001→68（编排器+24 名重导出）；run_stack_3d_stages.py 2977（verbatim）
+- 首跑 1 败教科书案例：eps 负向守卫往编排器命名空间打补丁——阶段 globals 已随迁，
+  重导出只会让补丁**无声空转**；改打 stages 模块+编排器双引用，并全测试审计确认
+  唯一站点（防同类假绿）
+- 门证据（终跑）：**1272+4skip（10:23）/ 10 绿 + GOLDEN: PASS (bit-identical)**
+- **P1.8b 战果（iter 43-49 七轮）**：~350 文件迁包名风格、135 个 sys.path 引导块退役、
+  垫片 W0 立 F2 撤全程零行为漂移、golden 六连位同、Shanghai headline 分毫未动；
+  openspec p18b 变更归档。ROADMAP 至此**唯一余项清零，Phase 0-4 + P1.8b 全部完成**
+- 下一步：A2（3D 物理 G 统一调查，Alex 已拍板）→ C（性能纵深）
+
 ## iter 48 · 2026-07-21 · P1.8b W_final-F2 撤垫片 ✅——**包风格成唯一约定，两轮门红全教训**（`79e5c21`）
 
 - Fable 直做（最高风险轮）。__init__ 纯 docstring、logutil 打包中立（removeprefix）、

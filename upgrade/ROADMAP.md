@@ -25,7 +25,7 @@
       补 server runner 指引；HANDOFF §9d 的 CI=true 精确门语义写进 `pytest.ini` 头注
 
 ## Phase 1 — 架构（Alex 指定的最高优先级）**主线完成 2026-07-20（iter 6-20）**
-（余留：仅 P1.8b 立项波次——不阻塞，与 Phase 5 候选池同级待启动；P1.3/P1.5 已于 iter 42 关账）
+（**Phase 1 全清**（iter 49）：P1.8b 七轮收官——全库包名风格、135 引导块退役、垫片生灭闭环）
 
 - [x] P1.1 架构审计（iter 6：工具+文档，见 `docs/ARCHITECTURE-AUDIT-2026-07.md`）：实测 import 图
       （3 违规 + main↔ui 环）、双 evaluator 真相（2D/3D 各对自家管线，HANDOFF §2a/§3a 部分过时）、
@@ -62,7 +62,7 @@
       sys.path 引导**不零星清理**（回归面大收益负），等 P1.8 结构性根治
 - [x] P1.8 打包地基（`827bee9`，iter 19）：pyproject + tpmshx-run CLI + controllers 惰性导出
       （接缝零 Qt 实证；工作 venv 未动）
-- [ ] P1.8b 导入风格迁移波次（**启动 iter 43，Alex 2026-07-21 拍板**；openspec
+- [x] P1.8b 导入风格迁移波次（**iter 43-49 七轮收官**：W0 垫片→W1 tests 141→W2 validation+df 31→W3 runs+ui 32→F1 库内 78→F2 撤垫片 28→F3 P1.5 尾巴；openspec 已归档；
       `p18b-import-style-migration` 三件套为波次台账）：
       **W0 ✓ iter 43**——身份垫片（新建 `sjtu_tpmshx/__init__.py`：自举 + 前插
       meta-path finder，双风格同对象；exec_module 恢复规范 __spec__ 防 reload 降级）

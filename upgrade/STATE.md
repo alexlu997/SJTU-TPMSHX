@@ -1,11 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 48 ——**P1.8b F2 撤垫片毕（`79e5c21`，全门绿+golden 位同）：导入迁移主体 W0–F2 全部完成**
-- next: **P1.8b F3 = P1.5 尾巴**（run_stack_3d 五阶段函数文件级迁移 →
-  run_stack_3d_stages.py，保 re-export 面 + golden 位同；此为迁移波次唯一余项，
-  做完即可归档 openspec 变更并勾 ROADMAP P1.8b）。若 Alex 另有优先级
-  （候选池 A2/B/C/D），F3 可延后——它不阻塞任何事
-- in_progress: 无（iter 48 已收）
+- iteration: 49 ——**P1.8b F3 毕（`0816d9f`）：七轮全波次收官，ROADMAP 全清（含 P1.8b）**
+- next: **A2 = 3D 物理 G 统一调查**（Alex 2026-07-21 拍板，D3(a)）。第一轮 = 立证伪方案
+  （in-repo openspec change：什么证据能证明/推翻"统一物理 G 后 Shanghai headline 在
+  γ 重锚后不劣化"；前置三件套评估=golden 重基准流程、Shanghai 重验证预算、γ_df 纠缠
+  分析）+ 量化侦察（frozen 点+Shanghai 16 案例的 G 亏空谱）。绊线 4 断言是门。
+  A2 后 → C 性能纵深（parallel_runner BLAS 计时缺陷首项）
+- in_progress: 无（iter 49 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
