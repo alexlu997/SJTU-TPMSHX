@@ -1,10 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 52 ——**C-2 盘点毕（D4 已立待拍板），循环回待命模式**
-- next: 【待命模式】每 tick：①扫 DECISIONS-NEEDED 新 `已决`（当前待决=D4 性能余项四选项）
-  →执行；②看本文件 next 是否被 Alex 改写；③均无→静默吸收。照常维护 §8 定时器
-  （armed 07-20，>5 天须重建→窗口 2026-07-25 前）。终审报告 upgrade/FINAL-REPORT.md
-- in_progress: 无（iter 52 已收）
+- iteration: 53 ——**D4(a) 毕（`7061836`，全门 7:44+golden 位同），next=(c) profile**
+- next: **D4(c) = profile 轮（(b) 前置）**：①wall_refine 异常解剖（refined 447.7s vs
+  uniform 0.6s @288 基格——拉伸网格上 pp/AMG/GS 谁吃掉了 wall；cProfile+分段计时）；
+  ②AMG 网格（>32k）生产解的 pp 占比测量（rtol_dyn 复活收益上限）。产出=测量报告
+  → (b) 实装方案。之后 (b) AMG rtol_dyn 复活（§5 重基准已授权）
+- in_progress: 无（iter 53 已收）
 - armed_at: 2026-07-20（job c87569d6——Alex 暂停/恢复 loop 时重建（ef9566f6 已删）；>5 天须按 §8 重建 → 下个窗口 2026-07-25 前）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
