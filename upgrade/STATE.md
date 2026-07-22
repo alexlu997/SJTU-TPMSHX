@@ -1,11 +1,13 @@
 # 循环状态（STATE）
 
-- iteration: 60 ——**D-1sc sCO2 考卷收案（`0ba9bcd`，exam_sco2.py 四题 + 基准冻结）**
-- next: D-2sc sCO2 γ_f 修正试点——hot/cold/合并 × Δ{自由,0} 变体 → 修正 cF 面 +
-  贝叶斯后验 + Δp 预测带 → 选侧证据包交 Alex。考卷首跑两发现直接进证据包：
-  ①hot 函数性稳（LOO 1-2%）cold 幅值可信但函数崩（Re对半 37-48%）；
-  ②γ_f/γ_air 超额 ×1.7-4.6 ⇒ 修正含 HX 级系统效应，适用面标"HX 级预测修正"
-- in_progress: 无（iter 60 已收）
+- iteration: 61 ——**D-2sc-1 证据包收案（`349f466`）：D6 已决（Alex 轮中快裁 hot，
+  证据坐实），Δ 子选择 = hot-free**
+- next: D-2sc-2 产线接线切片——γ_f^hot(Re) 乘进 sCO2 cF 产线路径
+  （`predict.sco2_cf_scale` 层，Re_in 锚定与现行模式同构），窗守卫强制
+  （exam_sco2.assert_in_window，窗外回落光滑壁+警告——设计见 D6/审计 §4），
+  air/water 位同证明（golden 双维 + Shanghai untouched）+ 新测试；
+  γ_Nu(Re) 修正入产线评估顺带排下一切片
+- in_progress: 无（iter 61 已收）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）
