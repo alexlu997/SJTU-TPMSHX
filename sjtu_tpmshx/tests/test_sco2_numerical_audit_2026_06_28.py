@@ -112,7 +112,14 @@ def test_d2_mass_weighted_outlet_enthalpy_not_h_of_mean():
 
 
 # ── D3 : 3D h_v with LOCAL-temperature transport props (sCO2) ────────────────
-def test_d3_sco2_hv_uses_local_temperature_props():
+def test_d3_sco2_hv_uses_local_temperature_props(monkeypatch):
+    # Pin the SMOOTH chain explicitly: this test compares local-T props vs
+    # frozen-inlet props, and its in-test reference is built from the smooth
+    # nu_sco2_topo. The D-2sc-3 γ_Nu correction (2026-07-22) multiplies the
+    # production path by a common factor that the reference does not carry —
+    # kill it here so the original local-vs-frozen intent stays verbatim
+    # (γ_Nu's own behaviour is covered by test_sco2_gamma_nu.py).
+    monkeypatch.setenv('TPMSHX_SCO2_GAMMA_NU', '0')
     from sjtu_tpmshx.pipelines.stages_3d import _sco2_hv_local_field
     from sjtu_tpmshx.solvers.tpms_calc import nu_sco2_topo
 

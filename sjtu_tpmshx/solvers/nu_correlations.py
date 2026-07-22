@@ -39,6 +39,7 @@ Convention
 """
 from __future__ import annotations
 
+import os
 import warnings
 import numpy as np
 
@@ -240,7 +241,12 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
 
     Raises NotImplementedError for topologies without an sCO2 CFD fit.
     Pr is the BULK Prandtl at (T_b, P) — no wall-property ratio by design.
-    Validity/failure bands: see SCO2_NU_COEFFS block comment."""
+    Validity/failure bands: see SCO2_NU_COEFFS block comment.
+
+    STAYS SMOOTH-WALL by contract: the validation baselines
+    (validation/sco2_exp, γ_Nu ≡ Nu_exp / Nu_cfd) and the phase-A form pins
+    ratio against THIS function — the experimental correction is applied by
+    the production consumers via ``gamma_nu_sco2`` below, never here."""
     if tpms_type not in SCO2_NU_COEFFS:
         raise NotImplementedError(
             f"sCO2 Nu fit only available for {sorted(SCO2_NU_COEFFS)} "
@@ -252,3 +258,70 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
     co = SCO2_NU_COEFFS[tpms_type]
     return (co['c'] * Re_safe ** co['a'] * Pr_sco2 ** (1 / 3)
             * (D_h_mm / L_mm) ** co['d'])
+
+
+# ── sCO2 experimental heat-transfer correction γ_Nu (D-2sc-3, 2026-07-22) ──
+# HX-level amplitude on top of the smooth-wall fit above, anchored on the
+# D-7-6 / G-7-6 sCO2 experiments (both sides pooled — the subst.v2 use-card's
+# "换热修正 · 两侧合用" row; anchored-fit convention: exponent a fixed at the
+# CFD value, γ = c_exp/c_cfd_eff). Amplitude-ONLY by measurement: the fitted
+# Re-slopes are ±0.02 (flat — unlike γ_f's significant hot-side slope).
+# Applied per-element inside the experimental Re window; outside, the element
+# keeps the smooth value (never extrapolate an experimental anchor) with a
+# one-shot warning. Kill switch TPMSHX_SCO2_GAMMA_NU=0 → pre-anchor smooth.
+# ⚠ Gyroid caveat: its CFD baseline at 7/0.6 is an L-direction extrapolation
+# (G L=7 CFD missing), so γ_Nu(G)=1.074 conflates roughness with that
+# extrapolation error — re-derive when the G_7_6 CFD backfill lands (ledger
+# SCO2-CFD trigger). Diamond (1.756) is the clean anchor.
+# Uncertainty: pointwise ln-residual σln frozen for downstream UQ.
+GAMMA_NU_SCO2 = {
+    'Diamond': {'gamma': 1.7557581458289075,
+                're_lo': 8950.399055885377, 're_hi': 35173.875658799734,
+                'sig_ln': 0.1284497503774956, 'n': 52},
+    'Gyroid':  {'gamma': 1.0743811537767434,
+                're_lo': 10632.405680243332, 're_hi': 48961.25289670842,
+                'sig_ln': 0.033961111486825596, 'n': 80},
+}
+
+_GAMMA_NU_WARNED: set[tuple[str, str]] = set()
+
+
+def gamma_nu_sco2(tpms_type, Re):
+    """Element-wise γ_Nu factor for the smooth ``nu_sco2_topo`` value.
+
+    Returns an array shaped like ``Re`` (or a scalar for scalar input):
+    γ inside the experimental window, 1.0 outside / for unanchored
+    topologies. Production consumers multiply: Nu_eff = γ · Nu_smooth."""
+    if os.environ.get('TPMSHX_SCO2_GAMMA_NU', '1') == '0':
+        return np.ones_like(np.asarray(Re, dtype=np.float64)) \
+            if np.ndim(Re) else 1.0
+    p = GAMMA_NU_SCO2.get(tpms_type)
+    if p is None:
+        key = (str(tpms_type), 'topo')
+        if key not in _GAMMA_NU_WARNED:
+            _GAMMA_NU_WARNED.add(key)
+            warnings.warn(
+                f"[sCO2 gamma_Nu] no experimental anchor for topology "
+                f"{tpms_type!r} — smooth-wall Nu kept.", stacklevel=3)
+        return np.ones_like(np.asarray(Re, dtype=np.float64)) \
+            if np.ndim(Re) else 1.0
+    Re_arr = np.asarray(Re, dtype=np.float64)
+    inside = (Re_arr >= p['re_lo']) & (Re_arr <= p['re_hi'])
+    if Re_arr.size and not bool(np.all(inside)):
+        key = (str(tpms_type), 'window')
+        if key not in _GAMMA_NU_WARNED:
+            _GAMMA_NU_WARNED.add(key)
+            warnings.warn(
+                f"[sCO2 gamma_Nu] {tpms_type}: part of the Re field "
+                f"(range [{float(Re_arr.min()):,.0f}, "
+                f"{float(Re_arr.max()):,.0f}]) lies outside the experimental "
+                f"window [{p['re_lo']:,.0f}, {p['re_hi']:,.0f}] — those "
+                f"cells keep the SMOOTH-WALL Nu (the anchor never "
+                f"extrapolates).", stacklevel=3)
+    out = np.where(inside, p['gamma'], 1.0)
+    return out if np.ndim(Re) else float(out)
+
+
+def reset_gamma_nu_warn_registry():
+    """Test hook (mirrors _SCO2_NU_WARNED / sco2_gamma_f conventions)."""
+    _GAMMA_NU_WARNED.clear()

@@ -94,7 +94,13 @@ def test_compute_sco2_routes_sco2_nu():
     Pr = m.mu(T, P) * m.cp(T, P) / m.k(T, P)
     g = tpms_calc.geometry('Diamond', 7.0, 0.6, 15.0)
     co = tpms_calc.SCO2_NU_COEFFS['Diamond']
-    expect = (co['c'] * r['Re'] ** co['a'] * Pr ** (1 / 3)
+    # Smooth CFD form × the experimental HX-level correction γ_Nu
+    # (D-2sc-3, 2026-07-22): compute() must carry the PRODUCTION value —
+    # a smooth-only expectation would go stale (and an air-Nu mis-route
+    # still lands far from either).
+    from sjtu_tpmshx.solvers.nu_correlations import gamma_nu_sco2
+    expect = (gamma_nu_sco2('Diamond', float(r['Re']))
+              * co['c'] * r['Re'] ** co['a'] * Pr ** (1 / 3)
               * (float(g['D_h']) * 1000.0 / 7.0) ** co['d'])
     assert r['Nu'] == pytest.approx(expect, rel=1e-9)
     assert r['H_sf'] > 0
@@ -105,13 +111,20 @@ def test_gate_a_d76_gold_duty():
     """sCO2 Nu closure reproduces measured duty on the 6 GOLD cases within
     15 %. Skips if the (large, un-versioned) experiment xlsx is absent.
 
-    SKIPPED since 2026-07-15: production sCO2 closures switched to the
-    SMOOTH-WALL unit-cell CFD fits (user decision) — validating a rough SLM
-    experiment with smooth-wall closures is EXPECTED to exceed the gate
-    (~1.7× on Nu). Re-arm when the experimental roughness anchor (γ) lands;
-    ledger SCO2-CFD holds the trigger."""
-    pytest.skip("smooth-wall sCO2 closures (2026-07-15) — rough D-7-6 gate "
-                "suspended until experimental γ anchor lands (ledger SCO2-CFD)")
+    SKIP HISTORY — 2026-07-15: production switched to SMOOTH-WALL closures,
+    gate suspended "until the experimental γ anchor lands". 2026-07-22
+    (D-2sc-3): γ_Nu HAS landed (nu_correlations.gamma_nu_sco2, Diamond
+    1.756 — the historical ~1.7× gap this gate measured), so the PHYSICS
+    trigger is satisfied; what still blocks the re-arm is MECHANICAL:
+    (a) validate_sco2_d76.py carries pre-P1.8b dead imports (`from solvers
+    import …` — projects/ was never migrated), so exec_module fails and
+    this test would skip VACUOUSLY; (b) its XLSX path points at
+    data/raw_data/D-7-6-sCO2/…V1.xlsx which no longer exists (flat
+    D-7-6实验数据-sCO2.xlsx — same-content verification pending).
+    Re-arm slice = candidate D · D-2sc-4."""
+    pytest.skip("γ_Nu landed 2026-07-22 (D-2sc-3) — re-arm now blocked on "
+                "projects/703 script import migration + XLSX path fix "
+                "(D-2sc-4), not on physics")
     from pathlib import Path
     import importlib.util
     # Moved from sjtu_tpmshx/validation/ to projects/703-sCO2-D76/ in c3635cd
