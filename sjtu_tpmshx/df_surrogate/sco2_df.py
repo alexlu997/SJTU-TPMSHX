@@ -14,13 +14,16 @@ the fit helpers from HERE; keep single-sourced). Point-level refit RMSRE
 8.9 % (Diamond) / 7.1 % (Gyroid); cross-fluid back-test vs water CFD in
 ``reports/sco2_cfd/`` (ledger SCO2-CFD).
 
-⚠ SEMANTICS (2026-07-15 user decision): this is the SMOOTH-WALL cF — SLM
-surface roughness is deliberately NOT modelled (no sCO2 roughness anchor yet;
-the retired D-7-6 experimental field calibration said effective-cF ≈ 3.4×
-smooth on that one geometry). Solver sCO2 Δp is therefore a smooth-wall
-estimate; expect real printed-part Δp to be SEVERAL TIMES higher until a
-γ-style experimental anchor lands. Re-anchor trigger: sCO2 experiment data
-upload (ledger SCO2-CFD / CF-REFIT).
+⚠ SEMANTICS: this module stays the SMOOTH-WALL cF — SLM roughness is
+deliberately NOT modelled HERE and must never be (double-count guard).
+Since 2026-07-22 the experimental anchor lands ONE LAYER UP:
+``predict.sco2_cf_scale`` multiplies this smooth value by the HX-level
+correction ``sco2_gamma_f.gamma_f_sco2`` (D6 hot-free, D-7-6/G-7-6
+experiments, in-window only — off-window the solver falls back to this
+smooth estimate with a loud warning). Validation baselines (γ ≡ f_exp/f_cfd,
+``validation/sco2_exp``) keep calling ``predict_cF_sco2`` directly so the
+correction never feeds back into its own definition. Baking roughness into
+THIS file would double-count with γ_f — don't.
 
 Geometry domain: Diamond L ∈ [4,7] × t ∈ [0.3,0.6] (no 7/0.6); Gyroid
 L ∈ [4,6] × t ∈ [0.3,0.6] (G_6_6 thin: 30 cases, Re 3000 only). Off-grid
