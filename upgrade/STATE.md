@@ -1,12 +1,16 @@
 # 循环状态（STATE）
 
-- iteration: 62 ——**D-2sc-2 产线接线收案（`c98d1e6`）：sCO2 Δp 语义升级为
-  窗内 HX 级修正（D6 hot-free 冻结常量 + 换基绊线 + 双计审查裁定）**
-- next: D-2sc-3 γ_Nu(Re) 修正入产线评估（D 侧 1.75 干净/G 侧 1.07 近一——
-  取用卡 Nu 行同款接线评估，Nu 单源不变量红线：改动只许落
-  nu_correlations 消费层或独立修正模块，绝不复制系数）；完成后 D-2sc 收案
-  → 水/空气阶段（D-2a CF-REFIT 收尾）
-- in_progress: 无（iter 62 已收）
+- iteration: 63 ——**D-2sc-3 γ_Nu 接线收案（`11289db`）：sCO2 Nu 升级为窗内
+  HX 级修正（幅值制，双消费点，Nu 单源合规）；Gate A 复臂物理触发器已满足、
+  机械债揭出（projects/703 死导入+XLSX 路径）**
+- next: D-2sc-4 Gate A 复臂——①validate_sco2_d76.py 导入迁移（projects/703
+  未进 P1.8b 波，死导入被 try/skip 吞成虚绿）②XLSX 路径修（D-7-6-sCO2/…V1
+  → 平铺 D-7-6实验数据-sCO2.xlsx，先核同源性）③GOLD 6 例实跑判 15% 门
+  ④过则解除 skip。完成后 D-2sc 全收案 → 水/空气阶段（D-2a CF-REFIT）。
+  注意：projects/703 其余 9 脚本同样死导入（静默债，随 D-2sc-4 记账不阻塞）
+- in_progress: 无（iter 63 已收）
+- ⏰ 定时器：armed 07-20，>5 天线 = 07-25——**明日（07-23）过 3 天，下下轮
+  前须重建**（CronDelete c87569d6 + CronCreate 同规格，STATE §cron 提示词逐字）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）
