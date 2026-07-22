@@ -1,9 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 58 ——**候选 D 立项对话轮（Alex 2026-07-22）：方向与边界四点拍板，
-  章程化写入 ROADMAP D-0..D-4**
-- next: D-0 溯源审计（下一 tick 开工；候选 D 全串行批到位，关键决策点仍停下问 Alex）
-- in_progress: 无（iter 58 = 章程轮，docs-only）
+- iteration: 59 ——**D-0 溯源审计收案（docs/DF-CALIBRATION-AUDIT-2026-07.md）+
+  Alex 二次拍板"sCO2 先行"章程重排（D-1sc/D-2sc 前置）**
+- next: D-1sc sCO2 考卷基建（首步：主检出 compare_exp_vs_cfd.py 07-16 版 diff 收编
+  ——subst 逻辑只在主检出侧；然后四题固化：LOO/holdout、反向检验、窗内守卫、
+  现行光滑基跑分基准）
+- in_progress: 无（iter 59 已收）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）
