@@ -1,11 +1,11 @@
 # 循环状态（STATE）
 
-- iteration: 59 ——**D-0 溯源审计收案（docs/DF-CALIBRATION-AUDIT-2026-07.md）+
-  Alex 二次拍板"sCO2 先行"章程重排（D-1sc/D-2sc 前置）**
-- next: D-1sc sCO2 考卷基建（首步：主检出 compare_exp_vs_cfd.py 07-16 版 diff 收编
-  ——subst 逻辑只在主检出侧；然后四题固化：LOO/holdout、反向检验、窗内守卫、
-  现行光滑基跑分基准）
-- in_progress: 无（iter 59 已收）
+- iteration: 60 ——**D-1sc sCO2 考卷收案（`0ba9bcd`，exam_sco2.py 四题 + 基准冻结）**
+- next: D-2sc sCO2 γ_f 修正试点——hot/cold/合并 × Δ{自由,0} 变体 → 修正 cF 面 +
+  贝叶斯后验 + Δp 预测带 → 选侧证据包交 Alex。考卷首跑两发现直接进证据包：
+  ①hot 函数性稳（LOO 1-2%）cold 幅值可信但函数崩（Re对半 37-48%）；
+  ②γ_f/γ_air 超额 ×1.7-4.6 ⇒ 修正含 HX 级系统效应，适用面标"HX 级预测修正"
+- in_progress: 无（iter 60 已收）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）

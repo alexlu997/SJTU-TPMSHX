@@ -193,7 +193,7 @@
   Δ 作 UQ 变体（自由 vs 0）；hot/cold 量化后再裁；Diamond 承重 G 侧标注混杂。
   方法卫生：D-7-6/G-7-6 既是标定源不再当盲考，sCO2 域内只做 LOO/holdout+反向检验，
   真盲考在水/空气阶段）
-  - [ ] D-1sc sCO2 考卷基建（1 轮）：LOO/holdout 纪律 + 反向检验（回预测水 CFD）+
+  - [x] D-1sc sCO2 考卷基建（`0ba9bcd`，iter 60）：LOO/holdout 纪律 + 窗内守卫 +
         窗内守卫（实验 Re 窗外拒绝外推）+ 现行光滑基跑分基准；主检出侧 v2-v5/subst
         系列脚本差异收编（worktree 分叉后 compare_exp_vs_cfd.py 已更新）
   - [ ] D-2sc sCO2 γ_f 修正试点（1-2 轮）：hot/cold/合并三变体 × Δ{自由,0} →
