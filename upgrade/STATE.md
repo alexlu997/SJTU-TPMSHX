@@ -1,7 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 64 ——**D-2sc-4 Gate A 复臂收案（`61cb1e2`，GOLD 门 PASS：RMSRE
-  4.2% / max 8.1% < 15%）——sCO2 试点（D-1sc..D-2sc-4）全链闭环**
+- iteration: 65 ——**数据治理问答轮收案（docs-only）**：胞元口径实测裁定
+  （Nu 用剔入口 s2+s3 ✓现行；f 发现 G 侧整核污染 ×1.168——重拟触发器登记）+
+  Gyroid 体检（文件健康，缺口在上游 L=7/G_6_6）
+- next: D-2a CF-REFIT 收尾，**首步新增：水侧 dp 口径核查**（water-cfd-raw 与
+  sCO2 同一后处理管线，整核 vs 分段？若同构则现行 K 面与待建 cF 面同承
+  入口偏差，量级实测后再定基）。原计划照旧：cF log-TPS 候选面（df_cfd_coeffs
+  cF 列 2026-06-30 已在）+ LOO 考卷对比 vs SmoothDF；不动生产默认
 - next: 水/空气阶段开工——D-2a CF-REFIT 收尾（原始水 CFD 两段法提 cF
   〔K 已做〕，log-TPS 面，与 SmoothDF 基同考卷对比）。剩余尾账不阻塞：
   projects/703 其余 9 脚本死导入（静默债）、G_7_6/D_7_6 CFD 补算触发器、
