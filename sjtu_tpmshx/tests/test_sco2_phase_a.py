@@ -111,20 +111,17 @@ def test_gate_a_d76_gold_duty():
     """sCO2 Nu closure reproduces measured duty on the 6 GOLD cases within
     15 %. Skips if the (large, un-versioned) experiment xlsx is absent.
 
-    SKIP HISTORY — 2026-07-15: production switched to SMOOTH-WALL closures,
-    gate suspended "until the experimental γ anchor lands". 2026-07-22
-    (D-2sc-3): γ_Nu HAS landed (nu_correlations.gamma_nu_sco2, Diamond
-    1.756 — the historical ~1.7× gap this gate measured), so the PHYSICS
-    trigger is satisfied; what still blocks the re-arm is MECHANICAL:
-    (a) validate_sco2_d76.py carries pre-P1.8b dead imports (`from solvers
-    import …` — projects/ was never migrated), so exec_module fails and
-    this test would skip VACUOUSLY; (b) its XLSX path points at
-    data/raw_data/D-7-6-sCO2/…V1.xlsx which no longer exists (flat
-    D-7-6实验数据-sCO2.xlsx — same-content verification pending).
-    Re-arm slice = candidate D · D-2sc-4."""
-    pytest.skip("γ_Nu landed 2026-07-22 (D-2sc-3) — re-arm now blocked on "
-                "projects/703 script import migration + XLSX path fix "
-                "(D-2sc-4), not on physics")
+    RE-ARMED 2026-07-22 (candidate D · D-2sc-4) — suspended 2026-07-15 when
+    production went smooth-wall; the experimental anchors landed in
+    D-2sc-2/3 (gamma_f_sco2 / gamma_nu_sco2) and the script was migrated to
+    package imports + the flat re-exported xlsx (header-guarded column map;
+    same dataset, cross-checked). Measured at re-arm: RMSRE 4.2 %,
+    max|err| 8.1 % (case 37 — its hot Re 8453 sits below the gamma_Nu
+    window, honestly falling back to smooth there), bias −0.8 %.
+    HONESTY NOTE: the GOLD cases belong to the same campaign the γ anchors
+    were fitted on — this is an IN-FAMILY end-to-end assembly check
+    (correction reaches compute(); UA/ε-NTU chain sane), not a blind gate
+    (sCO2 has no blind data — audit §4)."""
     from pathlib import Path
     import importlib.util
     # Moved from sjtu_tpmshx/validation/ to projects/703-sCO2-D76/ in c3635cd

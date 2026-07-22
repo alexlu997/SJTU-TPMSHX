@@ -17,13 +17,19 @@ Run:  python projects/703-sCO2-D76/validate_sco2_d76.py
 Gate: max per-case |Q error| < 15 %.
 """
 
-# ⚠ 2026-07-15: solver sCO2 closures switched to SMOOTH-WALL unit-cell CFD
-# fits (Nu: nu_correlations.SCO2_NU_COEFFS with (Dh/L)^d; cF: df_surrogate/
-# sco2_df.py via predict.sco2_cf_scale; the D-7-6 ×3.39 retired). This script
-# validates the ROUGH D-7-6 experiment — errors are EXPECTED to grow until an
-# experimental roughness anchor (gamma) lands. Ledger: SCO2-CFD.
+# ⚠ HISTORY — 2026-07-15: solver sCO2 closures switched to SMOOTH-WALL
+# unit-cell CFD fits, this gate suspended (errors expected ~1.7× on Nu until
+# a roughness anchor lands). 2026-07-22 (candidate D · D-2sc-3/4): the
+# experimental anchors LANDED — gamma_nu_sco2 (Nu, in compute()'s chain) and
+# gamma_f_sco2 (cF) — so this gate is re-armed: it now validates the
+# CORRECTED closure end-to-end (GOLD-case hot/cold Re ≈ 9–14 k, inside the
+# gamma_Nu window). Data path updated: the old D-7-6-sCO2/…V1.xlsx moved to
+# the flat data/raw_data/D-7-6实验数据-sCO2.xlsx re-export — SAME dataset
+# (cases 15/20/38 cross-checked to 6 decimals against sCO2-Experient.xlsx)
+# with every column shifted one LEFT vs V1; the map below is header-guarded
+# so a future re-export cannot silently shift again (the sCO2-Experient
+# Gyroid-sheet "+2 offset" lesson).
 import math
-import sys
 import warnings
 from pathlib import Path
 
@@ -32,19 +38,40 @@ import openpyxl
 from openpyxl.utils import column_index_from_string as ci
 
 _HERE = Path(__file__).resolve()
-sys.path.insert(0, str(_HERE.parent.parent.parent / "sjtu_tpmshx"))   # sjtu_tpmshx/ on path
 
-from solvers import fluid_props, tpms_calc      # noqa: E402
+from sjtu_tpmshx.solvers import fluid_props, tpms_calc      # noqa: E402
 
-XLSX = (_HERE.parent.parent.parent / "data" / "raw_data" / "D-7-6-sCO2"
-        / "D-7-6实验数据-V1.xlsx")
+XLSX = (_HERE.parent.parent.parent / "data" / "raw_data"
+        / "D-7-6实验数据-sCO2.xlsx")
 
 GOLD_CASES = [15, 20, 21, 32, 37, 38]   # ΔT_streams>10 °C & |bal|<5 %
 K_WALL = 16.0                            # solid conductivity [W/m·K] (steel spec)
 GATE_PCT = 15.0
 
+# Flat re-export column map (sheet 整理版, rows 3–53 = 51 cases), with the
+# header substring each column MUST carry (guarded in _col_checked).
+_COLMAP = {
+    "case":   ("A", "序号"),
+    "L_m":    ("B", "流道长度"),
+    "A_flow": ("D", "流通截面积"),
+    "A_ht":   ("E", "换热面积"),
+    "mh":     ("F", "质量流量"),
+    "Th":     ("G", "入口温度"),
+    "Ph":     ("H", "入口压力"),
+    "mc":     ("K", "质量流量"),
+    "Tc":     ("L", "入口温度"),
+    "Pc":     ("M", "入口压力"),
+    "Qexp":   ("R", "换热量"),
+}
 
-def _col(ws, L):
+
+def _col_checked(ws, key):
+    L, must = _COLMAP[key]
+    hdr = "".join(str(ws.cell(r, ci(L)).value or "") for r in (1, 2))
+    if must not in hdr:
+        raise RuntimeError(
+            f"D-7-6 xlsx column {L} header {hdr!r} lacks {must!r} — the "
+            f"re-export layout shifted again; re-derive _COLMAP.")
     return np.array([ws.cell(r, ci(L)).value for r in range(3, 54)], float)
 
 
@@ -58,16 +85,17 @@ def _eps_counterflow(NTU, Cr):
 def main():
     wb = openpyxl.load_workbook(XLSX, data_only=True)
     ws = wb.active
-    L_m = _col(ws, 'C')[0]           # 流道长度 0.182 m
-    A_flow = _col(ws, 'E')[0]        # 截面流通面积 [m^2]
-    A_ht = _col(ws, 'F')[0]          # 总换热面积 [m^2]
-    t_mm = _col(ws, 'D')[0] * 1000.0  # 特征长度? — use the cell wall 0.6 mm instead
+    L_m = _col_checked(ws, 'L_m')[0]        # 流道长度 0.182 m
+    A_flow = _col_checked(ws, 'A_flow')[0]  # 截面流通面积 [m^2]
+    A_ht = _col_checked(ws, 'A_ht')[0]      # 总换热面积 [m^2]
     L_cell_mm, wall_mm = 7.0, 0.6
 
-    case = _col(ws, 'B')
-    mh, ThI, PhI = _col(ws, 'G'), _col(ws, 'H'), _col(ws, 'I')
-    mc, TcI, PcI = _col(ws, 'L'), _col(ws, 'M'), _col(ws, 'N')
-    Qexp = _col(ws, 'S')             # 换热量 kW (ṁ·Δh, hot side)
+    case = _col_checked(ws, 'case')
+    mh, ThI, PhI = (_col_checked(ws, 'mh'), _col_checked(ws, 'Th'),
+                    _col_checked(ws, 'Ph'))
+    mc, TcI, PcI = (_col_checked(ws, 'mc'), _col_checked(ws, 'Tc'),
+                    _col_checked(ws, 'Pc'))
+    Qexp = _col_checked(ws, 'Qexp')         # 换热量 kW (ṁ·Δh, hot side)
 
     m = fluid_props.get('sco2')
     print(f"sCO2 D-7-6 Gate A — geometry L={L_m} m, A_ht={A_ht:.4f} m^2, "
