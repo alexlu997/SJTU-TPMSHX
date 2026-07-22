@@ -1,12 +1,14 @@
 # 循环状态（STATE）
 
-- iteration: 65 ——**数据治理问答轮收案（docs-only）**：胞元口径实测裁定
-  （Nu 用剔入口 s2+s3 ✓现行；f 发现 G 侧整核污染 ×1.168——重拟触发器登记）+
-  Gyroid 体检（文件健康，缺口在上游 L=7/G_6_6）
-- next: D-2a CF-REFIT 收尾，**首步新增：水侧 dp 口径核查**（water-cfd-raw 与
-  sCO2 同一后处理管线，整核 vs 分段？若同构则现行 K 面与待建 cF 面同承
-  入口偏差，量级实测后再定基）。原计划照旧：cF log-TPS 候选面（df_cfd_coeffs
-  cF 列 2026-06-30 已在）+ LOO 考卷对比 vs SmoothDF；不动生产默认
+- iteration: 66 ——**D-2a-1 发展段重提取收案（`751bf22`）**：水侧同构污染
+  坐实（G 整核/发展 dp = 1.155）；两段法自校准复现 06-30 表（med 0.98）；
+  候选表 df_cfd_coeffs_dev.csv 落库（cF 下修 D −5%/G −17%，K 下修 D −15%/
+  G −5%）；重要考古——openspec df-coeffs-cfd-refit 为活变更、已载 LOO 骨架
+  与 col47 L4/L6 异常发现，候选 D 水/空气阶段实为其续篇（Status 已收编）
+- next: D-2a-2 cF/K 候选面（dev 表 → log-TPS，LOO 考卷 vs SmoothDF 基 vs
+  core 基；复用 06-30 的 LOO 门槛设计——"cF LOO ≪ gamma_df 面 87/122%"）。
+  注意池：col47 锚 L4/L6 异常（06-30 发现）直接冲击 D-2b 可信层设计，
+  D-2b 开工前须复核该发现（试验记录表 col43/47 原始数据 vs 2-stage 面）
 - next: 水/空气阶段开工——D-2a CF-REFIT 收尾（原始水 CFD 两段法提 cF
   〔K 已做〕，log-TPS 面，与 SmoothDF 基同考卷对比）。剩余尾账不阻塞：
   projects/703 其余 9 脚本死导入（静默债）、G_7_6/D_7_6 CFD 补算触发器、
