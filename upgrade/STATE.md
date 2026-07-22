@@ -1,10 +1,13 @@
 # 循环状态（STATE）
 
-- iteration: 66 ——**D-2a-1 发展段重提取收案（`751bf22`）**：水侧同构污染
-  坐实（G 整核/发展 dp = 1.155）；两段法自校准复现 06-30 表（med 0.98）；
-  候选表 df_cfd_coeffs_dev.csv 落库（cF 下修 D −5%/G −17%，K 下修 D −15%/
-  G −5%）；重要考古——openspec df-coeffs-cfd-refit 为活变更、已载 LOO 骨架
-  与 col47 L4/L6 异常发现，候选 D 水/空气阶段实为其续篇（Status 已收编）
+- iteration: 67 ——**D-2a-2 候选面 LOO 考卷收案（`12cee5c`）：dev 基 G 侧
+  cF 1.5%/K 2.5%（比 core 再砍半），D 侧面本征粗糙（12.5% med，尾部优于
+  core）；γ 修正结构性不进 CFD 对比（Alex 确认点已答）——D-2a 全收案**
+- next: D-2b 前置复核——col47 试件锚 L4/L6 异常（06-30 发现：L4 t 趋势
+  反转、L6 3-4× 尖峰，L6 是现行可信层！）：用试验记录表原始 col43/47 +
+  闭式反演逐试件复核，裁定可信层重划（L6/L8 还是仅 L8 还是别的），
+  这决定 D-2b 纯试件重锚的锚点集设计。产出 = 复核证据 + 锚层裁定提案
+  （若推翻 L6 需 Alex 知会——γ 面重建的地基）
 - next: D-2a-2 cF/K 候选面（dev 表 → log-TPS，LOO 考卷 vs SmoothDF 基 vs
   core 基；复用 06-30 的 LOO 门槛设计——"cF LOO ≪ gamma_df 面 87/122%"）。
   注意池：col47 锚 L4/L6 异常（06-30 发现）直接冲击 D-2b 可信层设计，
