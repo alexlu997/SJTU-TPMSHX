@@ -410,7 +410,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0):
+                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0,
+                    p_shoot_prev=None):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -422,6 +423,11 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         fluid_type : 'ideal_gas' (default, air) or 'incompressible' (water).
         Controls whether SIMPLE's _update_density runs ρ = P / (R·T) per
         iter or treats ρ as fixed (water). Option B 2026-05-09.
+
+        p_shoot_prev : optional (P_ref_abs_prev, dP_solved_prev) from the
+        PREVIOUS outer iteration's converged SIMPLE (this pipeline recreates
+        the solver each outer iter). Consumed only when the C8 shooting knob
+        is ON and fluid_type is ideal_gas — see the shooting block below.
         """
         d = cfg_fluid['dir']
         is_x = d in (0, 1)  # x-flow = dirs {+x, -x}
@@ -627,6 +633,25 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                     float(P_in_abs), float(T_in_f),
                     float(np.mean(_C_rows)), L_stream)
                 s.P_ref_abs = float(np.sqrt(max(_P_out_sq_g, 1.0e4)))
+        # ── C8 shooting: reseed from the PREVIOUS iteration's MEASURED drag
+        # (openspec c8-p-in-shooting). The 1D seed above (and its graded
+        # refinement) only ESTIMATE the drag, so the realized inlet absolute
+        # pressure P_ref_abs + Δp_solved misses the specified P_in (ledger
+        # C8: case 16 realized 288980 vs spec 304746, −5.2%). The P² update
+        #     P_out²_new = P_in² − (realized_prev² − P_ref_prev²)
+        # reuses the 1D compressible invariant (P_in²−P_out² = 2RT̄CL, level-
+        # free) with the solver-measured drag integral, landing the realized
+        # inlet on spec in 1–2 outer iterations. Overrides BOTH seeds above
+        # (measured drag supersedes any estimate). Same clip posture as the
+        # seeds: 1e4 Pa floor, no raise (2D has no choke guard — ledger O1,
+        # deliberately a separate change).
+        if (fluid_type == 'ideal_gas' and p_shoot_prev is not None
+                and cfg.get('p_in_shooting',
+                            os.environ.get('TPMSHX_P_IN_SHOOT', '0') == '1')):
+            _pref_prev, _dp_prev = float(p_shoot_prev[0]), float(p_shoot_prev[1])
+            _P_out_sq_shoot = (float(P_in_abs) ** 2
+                               - _dp_prev * (_dp_prev + 2.0 * _pref_prev))
+            s.P_ref_abs = float(np.sqrt(max(_P_out_sq_shoot, 1.0e4)))
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         # R3 (2026-07-07): production solver knobs, precedence
         # env > SolverConfig > dim-specific auto. The autos are the
@@ -953,6 +978,17 @@ def _finalize_cfg(raw: dict[str, Any],
             'envelope_valid': raw.get('envelope_valid', True),
             'envelope_reasons': list(raw.get('envelope_reasons', [])),
             'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # C8 shooting diagnostics (openspec c8-p-in-shooting): realized
+            # inlet absolute pressure vs the specified P_in, per ideal-gas
+            # side (NaN otherwise). Forwarded here for the same reason as
+            # envelope_valid above — a raw-dict-only key is invisible to
+            # every ComputeResult consumer.
+            'P_in_realized_A': float(raw.get('P_in_realized_A', float('nan'))),
+            'P_in_shoot_resid_A': float(
+                raw.get('P_in_shoot_resid_A', float('nan'))),
+            'P_in_realized_B': float(raw.get('P_in_realized_B', float('nan'))),
+            'P_in_shoot_resid_B': float(
+                raw.get('P_in_shoot_resid_B', float('nan'))),
             # Per-gate breakdown behind ComputeResult.converged, so a caller
             # can see WHICH gate failed (convergence truth-table).
             'convergence_detail': raw.get('convergence_detail'),

@@ -1733,6 +1733,24 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
     Q_interior_primary = _cdiag['Q_interior_primary']
     AB_interior = _cdiag['AB_interior']
 
+    # ── C8 shooting diagnostics (openspec c8-p-in-shooting) ────────────
+    # Realized inlet absolute pressure = P_ref_abs (outlet anchor, ledger
+    # C8) + reported dP. With shooting OFF this exposes the legacy seed-vs-
+    # solved mismatch (the bias the knob removes); with it ON the residual
+    # certifies the shot landed. Ideal-gas sides only — incompressible
+    # P_ref_abs is a frozen inlet value (level inert), so the metric is
+    # meaningless there (NaN).
+    P_in_realized_A = float('nan')
+    P_in_shoot_resid_A = float('nan')
+    if cfg.get('fluid_type_A', 'air') == 'air':
+        P_in_realized_A = float(sA.P_ref_abs) + float(dP)
+        P_in_shoot_resid_A = (P_in_realized_A - float(P_inA)) / float(P_inA)
+    P_in_realized_B = float('nan')
+    P_in_shoot_resid_B = float('nan')
+    if sB is not None and cfg.get('fluid_type_B', 'air') == 'air':
+        P_in_realized_B = float(sB.P_ref_abs) + float(dP_B)
+        P_in_shoot_resid_B = (P_in_realized_B - float(P_inB)) / float(P_inB)
+
     # ═══════════════════════════════════════════════════════════════════
     # Phase 2 diagnostics (Plan A v3): REQ_1–4 data dump
     # ═══════════════════════════════════════════════════════════════════
@@ -1850,6 +1868,12 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         Q=Q, Q_total=Q, Q_enthalpy_A=Q_enthalpy_A, Q_enthalpy_B=Q_enthalpy_B,
         Q_solid_B=Q_solid_B,
         dP=dP, dP_A=dP, u_A=u_A, T_in=T_inA,
+        # C8 shooting diagnostics: realized inlet abs P vs specified P_in
+        # (NaN on non-ideal-gas sides; see computation above).
+        P_in_realized_A=P_in_realized_A,
+        P_in_shoot_resid_A=P_in_shoot_resid_A,
+        P_in_realized_B=P_in_realized_B,
+        P_in_shoot_resid_B=P_in_shoot_resid_B,
         T_A_out=T_A_out, T_B_out=T_B_out,
         T_out_A=T_A_out, T_out_B=T_B_out,
         dir_A=fA['dir'], dir_B=(fB['dir'] if fB is not None else None),
@@ -2216,6 +2240,15 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     vcB = prob.vcB
     wcB = prob.wcB
     cfg = prob.cfg
+    # ── C8 shooting knob (openspec c8-p-in-shooting) ────────────────────
+    # When ON, the outer-loop P_ref_abs reseed uses the PREVIOUS solve's
+    # measured dP instead of the 1D closed-form estimate, so the realized
+    # inlet absolute pressure (P_ref_abs + dP) iterates onto the user-
+    # specified P_in (ledger C8 leftover: seed-vs-solved dP mismatch left
+    # the inlet ~5% off spec on high-dP cases). cfg key wins over env;
+    # default OFF until the pricing round flips it (§5 re-baseline flow).
+    _p_shoot = bool(cfg.get('p_in_shooting',
+                            os.environ.get('TPMSHX_P_IN_SHOOT', '0') == '1'))
     # Conditionally-bound cross-seam names (surgery tool definite-
     # assignment pass): None-init so the unconditional return below
     # cannot raise UnboundLocalError on guarded paths. Downstream
@@ -2747,12 +2780,33 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
 
         T_avg = float(Ta_sA.mean())
         if _mA.compressible:
-            mu_avg = float(air_viscosity(T_avg))
-            C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
-            P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_stream
+            if _p_shoot:
+                # ── C8 shooting: reseed from the MEASURED drag ──────────
+                # P_ref_abs is the outlet absolute pressure; the previous
+                # solve realized inlet = P_ref + dP_meas. The P² update
+                #   P_out²_new = P_in² − (realized² − P_ref²)
+                # reuses the 1D compressible invariant (P_in²−P_out² =
+                # 2RT̄CL, level-free) with the SOLVER-measured drag integral
+                # in place of the 1D estimate, so the realized inlet lands
+                # on the specified P_in in 1–2 shots (fixed point: realized
+                # == P_in ⟹ P_out²_new == P_ref² exactly). Same dP reducer
+                # as the reported headline dP (face-extrap) so "realized"
+                # is self-consistent with what the pipeline reports.
+                _dp_meas = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
+                _pref_old = float(sA.P_ref_abs)
+                P_out_sq_new = (P_inA ** 2
+                                - _dp_meas * (_dp_meas + 2.0 * _pref_old))
+                _shoot_ctx = 'fluid A shooting reseed (outer iter)'
+            else:
+                mu_avg = float(air_viscosity(T_avg))
+                C_avg = (mu_avg * G_A / max(K_pred, 1e-16)
+                         + cF_pred * G_A * G_A)
+                P_out_sq_new = (P_inA ** 2
+                                - 2.0 * R_AIR * T_avg * C_avg * L_stream)
+                _shoot_ctx = 'fluid A reseed (outer iter)'
             sA.P_ref_abs = _seed_p_ref(P_out_sq_new, P_inA, mode=_env_mode,
                                        warn_list=_env_warnings,
-                                       context='fluid A reseed (outer iter)')
+                                       context=_shoot_ctx)
         else:
             # sco2-A reseed: 1D Darcy-Forchheimer dP (cF_pred already rescaled
             # onto the smooth-wall sCO2 CFD cF via sco2_cf_scale).
@@ -2904,20 +2958,34 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
 
             if _mB.compressible:   # P_ref recompute is compressible-only
                 Tb_avg = float(Tb_sB.mean())
-                mu_avg_B = float(_mB.mu(Tb_avg))
-                # Use the B-side permeability / Forchheimer coeff (audit
-                # 2026-06-28): the outer-loop reseed previously used fluid A's
-                # K_pred / cF_pred, inconsistent with the initial B seed (L1829,
-                # K_pred_B / cF_pred_B). Identical for same-geometry same-fluid
-                # A/B; differs for asymmetric ε (δ≠0) or differing per-side cF.
-                C_avg_B = (mu_avg_B * G_B / max(K_pred_B, 1e-16)
-                           + cF_pred_B * G_B * G_B)
-                P_out_sq_B_new = (P_inB ** 2
-                                  - 2.0 * R_AIR * Tb_avg * C_avg_B * L_stream_B)
+                if _p_shoot:
+                    # C8 shooting, B side — same measured-drag P² update as
+                    # fluid A above (see that comment for the derivation).
+                    _dp_meas_B = float(
+                        SIMPLESolver3D.extract_dP_face_extrap(sB))
+                    _pref_old_B = float(sB.P_ref_abs)
+                    P_out_sq_B_new = (P_inB ** 2
+                                      - _dp_meas_B * (_dp_meas_B
+                                                      + 2.0 * _pref_old_B))
+                    _shoot_ctx_B = 'fluid B shooting reseed (outer iter)'
+                else:
+                    mu_avg_B = float(_mB.mu(Tb_avg))
+                    # Use the B-side permeability / Forchheimer coeff (audit
+                    # 2026-06-28): the outer-loop reseed previously used fluid
+                    # A's K_pred / cF_pred, inconsistent with the initial B
+                    # seed (L1829, K_pred_B / cF_pred_B). Identical for
+                    # same-geometry same-fluid A/B; differs for asymmetric ε
+                    # (δ≠0) or differing per-side cF.
+                    C_avg_B = (mu_avg_B * G_B / max(K_pred_B, 1e-16)
+                               + cF_pred_B * G_B * G_B)
+                    P_out_sq_B_new = (P_inB ** 2
+                                      - 2.0 * R_AIR * Tb_avg * C_avg_B
+                                      * L_stream_B)
+                    _shoot_ctx_B = 'fluid B reseed (outer iter)'
                 sB.P_ref_abs = _seed_p_ref(P_out_sq_B_new, P_inB,
                                            mode=_env_mode,
                                            warn_list=_env_warnings,
-                                           context='fluid B reseed (outer iter)')
+                                           context=_shoot_ctx_B)
 
             sB.update_T_field(Tb_sB)
             _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None

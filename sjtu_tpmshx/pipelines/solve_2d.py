@@ -215,6 +215,26 @@ class _PipelineWindowShim:
                 pass
 
 
+def _pipe_weighted(P_row, w):
+    """Open-fraction-weighted boundary-row mean (module-level so the C8
+    shooting reseed can measure dP with EXACTLY the reporting convention —
+    see `_pipe_dp_2d`). Was nested in `_compute_pressure_2d`; moved verbatim."""
+    s = float(w.sum())
+    return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
+
+
+def _pipe_dp_2d(simp):
+    """Solved dP of one SIMPLE instance, in the 2D REPORTING convention:
+    pipe-weighted inlet-row gauge minus pipe-weighted outlet-row gauge
+    (identical arithmetic to `_compute_pressure_2d`'s dP_A/dP_B). Used by
+    the C8 shooting reseed so 'realized inlet = P_ref_abs + dP' is self-
+    consistent with the dP the pipeline reports."""
+    return (_pipe_weighted(simp.P[:, 0],
+                           simp.inlet_frac.astype(np.float64))
+            - _pipe_weighted(simp.P[:, -1],
+                             simp.outlet_frac.astype(np.float64)))
+
+
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     """Real-coordinate pressure fields + pipe-weighted dP from converged SIMPLE.
 
@@ -227,10 +247,6 @@ def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     # open fraction of each cell at the boundary. A plain row mean mixes wall
     # and pipe cells, severely diluting dP for partial-BC flows (validation
     # showed B's dP under-estimated by >10x in default cross-flow cases).
-    def _pipe_weighted(P_row, w):
-        s = float(w.sum())
-        return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
-
     _wA_in  = simpA.inlet_frac.astype(np.float64)
     _wA_out = simpA.outlet_frac.astype(np.float64)
     _wB_in  = simpB.inlet_frac.astype(np.float64)
@@ -957,19 +973,31 @@ def _run_solvers(window, cfg, fields):
                 except BaseException as e:   # incl. InterruptedError
                     _err[idx] = e
 
+            # C8 shooting: hand the PREVIOUS iteration's (P_ref_abs, solved
+            # dP — reporting convention) to _run_simple, which recreates the
+            # solver each outer iter. First iteration has no previous solve
+            # → None (the 1D closed-form seed stands). _run_simple itself
+            # gates on the knob + ideal_gas, so passing unconditionally is
+            # inert when shooting is off or the side is incompressible.
+            _psA = ((float(simpA.P_ref_abs), _pipe_dp_2d(simpA))
+                    if simpA is not None else None)
+            _psB = ((float(simpB.P_ref_abs), _pipe_dp_2d(simpB))
+                    if simpB is not None else None)
             _tA = _threading.Thread(
                 target=_solve_side,
                 args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
                           'Fluid A', P_inA_val),
                       dict(T_field_real=_Ta_for_simpA,
-                           fluid_type=_ftA, cf_scale=_cfsA)),
+                           fluid_type=_ftA, cf_scale=_cfsA,
+                           p_shoot_prev=_psA)),
                 daemon=True)
             _tB = _threading.Thread(
                 target=_solve_side,
                 args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
                           'Fluid B', P_inB_val),
                       dict(T_field_real=_Tb_for_simpB,
-                           fluid_type=_ftB, cf_scale=_cfsB)),
+                           fluid_type=_ftB, cf_scale=_cfsB,
+                           p_shoot_prev=_psB)),
                 daemon=True)
             _tA.start(); _tB.start()
             _tA.join(); _tB.join()
@@ -1340,6 +1368,30 @@ def _run_solvers(window, cfg, fields):
         'ucB_disp': ucB_disp, 'vcB_disp': vcB_disp,
         'P_fA': P_fA, 'P_fB': P_fB,
         'dP_A': dP_A, 'dP_B': dP_B,
+        # ── C8 shooting diagnostics (openspec c8-p-in-shooting) ──────────
+        # Realized inlet absolute pressure = P_ref_abs (outlet anchor,
+        # ledger C8) + reported dP, vs the specified P_in. Ideal-gas sides
+        # only (incompressible P_ref_abs is a frozen inlet value — level
+        # inert, metric meaningless → NaN). With shooting OFF this exposes
+        # the legacy 1D-seed bias; ON, it certifies the shot landed.
+        'P_in_realized_A': (
+            float(simpA.P_ref_abs) + float(dP_A)
+            if getattr(simpA, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_shoot_resid_A': (
+            (float(simpA.P_ref_abs) + float(dP_A) - float(P_inA_val))
+            / float(P_inA_val)
+            if getattr(simpA, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_realized_B': (
+            float(simpB.P_ref_abs) + float(dP_B)
+            if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_shoot_resid_B': (
+            (float(simpB.P_ref_abs) + float(dP_B) - float(P_inB_val))
+            / float(P_inB_val)
+            if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
         'Q_total': Q_total,
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
