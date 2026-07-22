@@ -1,13 +1,12 @@
 # 循环状态（STATE）
 
-- iteration: 61 ——**D-2sc-1 证据包收案（`349f466`）：D6 已决（Alex 轮中快裁 hot，
-  证据坐实），Δ 子选择 = hot-free**
-- next: D-2sc-2 产线接线切片——γ_f^hot(Re) 乘进 sCO2 cF 产线路径
-  （`predict.sco2_cf_scale` 层，Re_in 锚定与现行模式同构），窗守卫强制
-  （exam_sco2.assert_in_window，窗外回落光滑壁+警告——设计见 D6/审计 §4），
-  air/water 位同证明（golden 双维 + Shanghai untouched）+ 新测试；
-  γ_Nu(Re) 修正入产线评估顺带排下一切片
-- in_progress: 无（iter 61 已收）
+- iteration: 62 ——**D-2sc-2 产线接线收案（`c98d1e6`）：sCO2 Δp 语义升级为
+  窗内 HX 级修正（D6 hot-free 冻结常量 + 换基绊线 + 双计审查裁定）**
+- next: D-2sc-3 γ_Nu(Re) 修正入产线评估（D 侧 1.75 干净/G 侧 1.07 近一——
+  取用卡 Nu 行同款接线评估，Nu 单源不变量红线：改动只许落
+  nu_correlations 消费层或独立修正模块，绝不复制系数）；完成后 D-2sc 收案
+  → 水/空气阶段（D-2a CF-REFIT 收尾）
+- in_progress: 无（iter 62 已收）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）
