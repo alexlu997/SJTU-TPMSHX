@@ -1,15 +1,18 @@
 # 循环状态（STATE）
 
-- iteration: 70 ——**D-2b-2 气侧收案（`68b45fa`）：γ_HX 两拓扑一致 ×1.26
-  （几何无关坐实）；Diamond 双层完全闭合（3.04 vs 3.10）；Gyroid 残差
-  ×1.29（假说：534.8 旧栈伪迹 vs 样机差异——D-2c 盲考裁决）。
-  ⏸ **循环暂停（Alex 2026-07-22 原话："完成这步后请先暂停"）**——
-  定时器已拆（8f180729 已删），恢复时按 §8 重建**
-- next: 【暂停中】恢复后 = D-2b-3：①水侧 γ_HX（7-6-Water-dp，注意 G 表
-  负压差坏点/传感器地板）②跨流体一致性（γ_HX_air ×1.26 vs γ_HX_water）
-  ③sCO2 γ_f 跨域对照（hot 7.0-7.9 / cold 3.3-4.2 vs 双层合成）④双层合成
-  面 + 上海盲考准备（D-2c）
-- in_progress: 无（iter 70 已收）
+- iteration: 71 ——**R1 收案（merge `54c9ed2` + 重基准 `bc0f6da`）：Alex 解除
+  暂停并指示"提交 master + 恢复循环做 R1-R3"。master `7ebdf6e`（水/sCO2 Nu
+  重拟至修正 CFD 上传，循环受托提交）已合入；γ_Nu 重冻 D 1.807/G 1.125
+  （G 混杂解除，纯粗糙度因子）；金门 water_b 重采（air_air 位同）；上海门
+  dP 4.88% 持平/Q 2.11%。数据底座已同步（新水簿+新 sCO2 CSV，旧 CSV 已删）。
+  台账 NU-REFIT-0723、DECISIONS D7。**
+- in_progress: **iter 72 = R2**（D-2a 重提）：iter 66 dev 表用了旧 Um
+  （extract_dev_coeffs.py:158 直取文件 Um_m_s，修正后逐几何 cF 隐含位移
+  −26%..+45%，D_7_6 +28.5%）→ extract_dev_coeffs 切换 load_water_cfd
+  （保两段法数学 + 冻结阈值 Re_hi 12800/Re_lo 400），D_7_3/4/5 加
+  flow_suspect 列带病入表（±10% 警示），重产 df_cfd_coeffs_dev.csv +
+  LOO 重跑。R3 = D-2b 重裁决（γ_spec/γ_HX 重跑，"×1.26 拓扑无关"与
+  "D 双层闭合 2%"两结论重验；audit 文档 §8/§9 勘误）
 - next: D-2b 实施（依 §8 架构，除非 Alex 改向）：①γ_specimen(L,t) 纯试件
   面（dev 基，L6/L8 锚，t 模型照 gamma_df v4 结构）②γ_HX 用 7-6 HX 双流体
   实验标定（含任务 3.1 口径调和）③贝叶斯后验（UQ）④对照组 = 纯试件方案

@@ -936,3 +936,33 @@
   全天候 ~25 分钟一轮，撞 5h 限额自动等窗口重置续跑
 - 决策补充（Alex，2026-07-19）：P0/P1 用 Fable 5 max 直做；P2 起循环自评——机械项派
   Sonnet 5/Opus 子代理执行、Fable 5 复核+验证+提交，判断项 Fable 5 直做（PROTOCOL §10）
+
+## iter 71 · 2026-07-23 · R1：修正 CFD 上传合入 + γ_Nu 重冻 + 金门重基准（Alex 解除暂停，指令连做 R1-R3）
+
+**做了什么**：Alex 上午在主检出重拟了水/sCO2 Nu 关联式（修正 CFD 上传：真
+D_7_6/G_7_6 各 270 例、Dh/Um 派生量修正、L=8 扩展），会话中指示"提交到
+master 然后恢复循环做 R1-R3"。①循环独立核验后受托提交 master `7ebdf6e`
+（唯一一次授权写主检出；定向测试 50P/1S 先行）；②merge 进 upgrade/loop
+（`54c9ed2`，零冲突）；③数据同步（新水簿 + 新 sCO2 CSV 拷入，删旧 CSV——
+新 loader 内容识别下新旧共存会按字典序误选旧文件）；④γ_Nu 重冻
+D 1.7558→1.8071 / G 1.0744→1.1254（G 的 L 外推混杂被真 7/6 CFD 解除，
+两锚现为纯粗糙度因子）；⑤金门重基准（`!` commit `bc0f6da`）。
+
+**关键核验（合入前，防"新数据也可能是错的"）**：新旧水簿逐案对齐——原始
+物理量（p0..p3/dp/mdot/ρ/h）逐位相同，改的只是派生量（Dh ≤14.1%、
+Um ≤16.9%）；新 Um 连续性 r=mdot/(ρ·Um·L²)=ε/2 **精确**闭合（旧 Um 散
+0.44–0.59×ε）→ 新值权威坐实。D_7_5 的 r/ε=0.537 精确复现 loader 文档的
++7.3% 质量缺口——交叉验证全对上。
+
+**证据**：套件双 pass 1306 passed/3 skipped + 10 串行（4:49）；golden 3D
+破位只在 water_b（air_air 位同，Q −0.45%/dP +0.09%），重采后自检 PASS，
+meta 侧车同轮；golden 2D 同形态（新自采基线 golden_2d_post_r1.json@job tmp）；
+validate_shanghai_3d_real 16/16 valid，dP 4.88% 持平 / Q 2.12→2.11%，
+GATE PASS；lumped cross Q_air 1.73→1.76%。BASELINE.md 追加修订段；
+DECISIONS D7 登记；台账 NU-REFIT-0723 回写（§5e 首次动用）。
+
+**下一步**：R2 = D-2a 重提——iter 66 的 dev 两段法表用了旧 Um
+（extract_dev_coeffs.py:158），cF 逐几何隐含位移 −26%..+45%（D_7_6
++28.5%、γ_spec 的 D 侧 L6/L8 锚不均匀移位）→ 切换到 load_water_cfd 重提
+40 几何，flag D_7_3/4/5；R3 = D-2b 重裁决（γ_spec/γ_HX；iter 69/70 的
+"×1.26 拓扑无关"与"D 双层闭合 2%"两结论在新数上重验）。
