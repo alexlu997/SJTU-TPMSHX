@@ -145,18 +145,23 @@ def nu_water_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr_water):
 
 
 # ── Topology-specific DIRECT water fits (design-tool lineage) ────────
-# Single-sourced here in B1 1.1 (2026-06-12); previously a private dict in
-# design/fluids.py. These are a THIRD water-Nu lineage, deliberately
-# distinct from both nu_water_from_Re (Pr-substitution) above and
-# tpms_calc.nu_water_gyroid_yan6 (Yan [6]): direct per-topology fits
-# Nu = c·Re^a·Pr^(1/3) on water CFD, Re 100-50000. New-Gyroid
-# cross-checks Yan within ±1 %; new-Diamond sits 5-12 % below the old
-# borrowed-Gyroid value (Diamond finally uses its own physics).
-WATER_NU_RE_RANGE = (100.0, 50000.0)
+# Direct per-topology fits Nu = c·Re^a·Pr^(1/3) on water unit-cell CFD.
+# REFIT 2026-07-23 on the corrected upload (data/raw_data/Water-CFD/
+# 水数值模拟数据.xlsx, 40 geometries D+G L∈[4,8]×t∈[0.3,0.6], ~46 Re each,
+# Re 94–50624), loaded via df_surrogate/load_water_cfd.py (repo Dh, entrance
+# period dropped → Nu_dev target). Replaces the 2026-06-12 coeffs (fit on the
+# retired water-cfd-raw.xlsx, kept in git). Adding a (D_h/L)^d geometry term
+# does NOT help water (d≈0 Diamond / +0.08 Gyroid, RMSRE unchanged) — the
+# 2-parameter form is kept. Accuracy: RMSRE ~10%, LOGO (leave-one-geometry-out)
+# medAPE Diamond 6.8% / Gyroid 8.2%. D_7_3/4/5 share the sCO2 flow-data quirk
+# but Nu is velocity-free so they stay in the fit.
+WATER_NU_RE_RANGE = (90.0, 51000.0)
 WATER_NU_COEFFS = {
-    'Diamond': {'c': 0.3427, 'a': 0.6626},
-    'Gyroid':  {'c': 0.4445, 'a': 0.6361},
+    'Diamond': {'c': 0.3201, 'a': 0.6679},
+    'Gyroid':  {'c': 0.3941, 'a': 0.6435},
 }
+# Retired 2026-06-12 coeffs (old data), for reference:
+#   Diamond c=0.3427 a=0.6626;  Gyroid c=0.4445 a=0.6361.
 
 # One-shot extrapolation warning per side for the water Nu fit (robustness
 # 2026-06-25): the air path already warns outside its window; the water path
@@ -187,25 +192,34 @@ def nu_water_topo(tpms_type, Re, Pr_water):
     return co['c'] * Re_safe ** co['a'] * Pr_water ** (1 / 3)
 
 
-# ── Supercritical CO2 DIRECT fit (smooth-wall unit-cell CFD, 2026-07) ──
-# Source: 7000-case sCO2 unit-cell CFD campaign (Diamond 4000 + Gyroid 3000,
-# 15+12 geometries L∈[4,7]×t∈[0.3,0.6] mm, P∈{8,10,12,15} MPa anchored to the
-# pseudocritical line, Twall = Tref + 50 K, RANS, NO gravity). Fitted on
-# period-2/3 segments with LOCAL bulk properties (CoolProp at (P, T_b)); the
-# V0b pure-bulk-property form was chosen over wall-ratio (Sieder-Tate /
-# Jackson) corrections by user decision 2026-07-15 — ΔT≡50K makes wall-ratio
-# exponents conditional on that superheat, hence non-general. Fit + validation:
-# validation/sco2_cfd/fit_nu_sco2.py, reports/sco2_cfd/, ledger SCO2-CFD.
+# ── Supercritical CO2 DIRECT fit (smooth-wall unit-cell CFD) ──
+# REFIT 2026-07-23 on the corrected upload — Diamond 20 + Gyroid 17
+# geometries L∈[4,8]×t∈[0.3,0.6] mm (was 15+12 on L∈[4,7]); the earlier
+# export's mesh Dh ran ~6% high and D_7_6/G_7_6 were RBF-EXTRAPOLATED, so the
+# 2026-07-15 coeffs below (kept in git) fit a partly-wrong geometry envelope.
+# The new data corrects Dh (agrees with tpms_calc to <0.4%) and gives REAL CFD
+# at D_7_6/G_7_6, which is why the geometry exponent d moved most
+# (Diamond −0.434→−0.282, Gyroid −0.109→−0.014). P∈{8,10,12,15} MPa on the
+# pseudocritical line, Twall = Tref+50K, RANS, no gravity. Fitted on period-2/3
+# segments with LOCAL bulk properties (CoolProp at (P, T_b)); V0b pure-bulk
+# form (no wall-ratio — ΔT≡50K makes those exponents non-general, user
+# decision 2026-07-15). Fit + validation: validation/sco2_cfd/fit_nu_sco2.py,
+# reports/sco2_cfd/, ledger SCO2-CFD.
+#   ⚠ Diamond D_7_3/4/5 carry a flow-data (mdot/Um) inconsistency, but Nu is
+#     velocity-free so their Nu is sound and they are kept in the fit; see
+#     df_surrogate/load_sco2_cfd.py module doc.
 #
 # Form  Nu = c·Re^a·Pr_b^(1/3)·(D_h/L)^d      [bulk properties at (T_b, P)]
+# Accuracy (2026-07-23): far-critical RMSRE ~7–9%, all-data ~19%; LOGO
+# (leave-one-geometry-out) medAPE Diamond 9.5% / Gyroid 8.4%.
 #
-# ⚠ SMOOTH WALL — SLM roughness deliberately NOT included (no sCO2 roughness
-# anchor yet; the D-7-6 overlap-window ratio ~1.7 conflates roughness with
-# geometry extrapolation). Re-anchor when sCO2 experiment data lands.
-# This REPLACED the D-7-6 single-geometry EXPERIMENTAL fit
-# (0.28·Re^0.75·Pr^⅓, rough, Diamond 7/0.6 only, Re 9k–41k) on 2026-07-15 —
-# that fit could not extrapolate in geometry and is retained only as a
-# historical reference inside projects/703-sCO2-D76/ validation scripts.
+# ⚠ SMOOTH WALL — SLM roughness deliberately NOT included. With D_7_6/G_7_6
+# now REAL CFD, the experiment/CFD ratio is a CLEAN roughness factor (no more
+# geometry-extrapolation contamination): γ ≈ 1.80 (Diamond) / 1.13 (Gyroid) on
+# the D-7-6/G-7-6 rough SLM specimens. Re-anchor if the print process changes.
+# This lineage REPLACED the D-7-6 single-geometry EXPERIMENTAL fit
+# (0.28·Re^0.75·Pr^⅓, rough, Diamond 7/0.6 only) on 2026-07-15; that fit could
+# not extrapolate in geometry (kept only in projects/703-sCO2-D76/).
 #
 # VALIDITY (per-cell medAPE, see validation/sco2_cfd/README.md):
 #   usable    P ≥ 10 MPa and T_b ≥ T_pc(P) − 2 K  →  4–12 %
@@ -214,9 +228,12 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 # Re window = local-property Re_b coverage of the fit data.
 SCO2_NU_RE_RANGE = (2600.0, 128000.0)
 SCO2_NU_COEFFS = {
-    'Diamond': {'c': 0.166714, 'a': 0.705490, 'd': -0.434198},
-    'Gyroid':  {'c': 0.199133, 'a': 0.719463, 'd': -0.109010},
+    'Diamond': {'c': 0.184809, 'a': 0.707421, 'd': -0.281792},
+    'Gyroid':  {'c': 0.201101, 'a': 0.720625, 'd': -0.013529},
 }
+# Retired 2026-07-15 coeffs (old data, wrong-Dh + extrapolated 7/0.6), for
+# reference: Diamond c=0.166714 a=0.705490 d=-0.434198;
+#            Gyroid  c=0.199133 a=0.719463 d=-0.109010.
 
 _SCO2_NU_WARNED: set[str] = set()
 
