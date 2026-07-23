@@ -286,18 +286,21 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
 # Applied per-element inside the experimental Re window; outside, the element
 # keeps the smooth value (never extrapolate an experimental anchor) with a
 # one-shot warning. Kill switch TPMSHX_SCO2_GAMMA_NU=0 → pre-anchor smooth.
-# ⚠ Gyroid caveat: its CFD baseline at 7/0.6 is an L-direction extrapolation
-# (G L=7 CFD missing), so γ_Nu(G)=1.074 conflates roughness with that
-# extrapolation error — re-derive when the G_7_6 CFD backfill lands (ledger
-# SCO2-CFD trigger). Diamond (1.756) is the clean anchor.
+# REFROZEN 2026-07-23 against the refit SCO2_NU_COEFFS (corrected upload,
+# REAL CFD at D_7_6/G_7_6): both anchors are now CLEAN roughness factors —
+# the former Gyroid caveat (γ conflated with the G L=7 RBF extrapolation)
+# is RESOLVED by the backfill. Exp windows unchanged (same experiment set).
+# Retired 2026-07-22 values (old wrong-Dh/extrapolated base), for reference:
+#   Diamond γ=1.7557581458289075 σln=0.1284497503774956;
+#   Gyroid  γ=1.0743811537767434 σln=0.033961111486825596.
 # Uncertainty: pointwise ln-residual σln frozen for downstream UQ.
 GAMMA_NU_SCO2 = {
-    'Diamond': {'gamma': 1.7557581458289075,
+    'Diamond': {'gamma': 1.8071381249714116,
                 're_lo': 8950.399055885377, 're_hi': 35173.875658799734,
-                'sig_ln': 0.1284497503774956, 'n': 52},
-    'Gyroid':  {'gamma': 1.0743811537767434,
+                'sig_ln': 0.12840542895995066, 'n': 52},
+    'Gyroid':  {'gamma': 1.1253904125495358,
                 're_lo': 10632.405680243332, 're_hi': 48961.25289670842,
-                'sig_ln': 0.033961111486825596, 'n': 80},
+                'sig_ln': 0.03404943924575467, 'n': 80},
 }
 
 _GAMMA_NU_WARNED: set[tuple[str, str]] = set()

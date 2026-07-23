@@ -44,3 +44,19 @@
 - 工具链教训：PowerShell 后台任务的控制台回显会丢 pytest 尾巴；Tee-Object 各阶段编码不一
   （suite 段 UTF-16LE、python 段 UTF-8）。规矩：证据一律读落盘日志文件，别信回显；
   必要时 iconv 探测两种编码
+
+## 修订 2026-07-23 · iter 71 · R1 重基准（merge master 7ebdf6e 水/sCO2 关联式重拟）
+
+根因 = WATER_NU_COEFFS 重拟（修正水 CFD 上传，Nu_dev 口径）+ SCO2_NU_COEFFS 重拟
+（真 7/6 CFD）+ GAMMA_NU_SCO2 重冻（D 1.7558→1.8071、G 1.0744→1.1254）。
+自本节起，"数字没变"的断言对照以下新值：
+
+- 套件：**1306 passed / 3 skipped + 10 串行**（双 pass，4:49）
+- Golden 3D：重采（`!` commit，json+meta 同轮）；破位只在 water_b 例
+  （air_air 位同）：Q −0.45%、dP +0.09%；2D 同形态（基线在 job tmp，
+  golden_2d_post_r1.json）
+- validate_shanghai_3d_real：16/16 valid，**RMSRE_dP 4.88%（持平）/
+  RMSRE_Q 2.11%（原 2.12%）**，GATE PASS——水 Nu 下修被空气侧限制吸收
+- lumped dual-nu：cross vs Q_air **1.76%**（原 1.73%）/ Q_water 16.96%
+  （原 17.00%）/ Q_avg 6.80%（原 6.84%）；counter 1.53%
+- §1 的 skip 计数注：3 skipped 自 iter 64 Gate A 解锁后的新常态
