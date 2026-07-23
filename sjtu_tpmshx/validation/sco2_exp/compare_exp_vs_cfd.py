@@ -19,9 +19,10 @@ Nu 集 = ok_dT & ok_hb & ok_done;  f 集 = ok_dp & ok_done（负压差剔除,
 （传感器/边界效应, 用户裁决不深究, 但倍数必须分侧给）。
 
 CFD 基准（现产线闭合, 光滑壁）:
-    Nu_cfd = SCO2_NU_COEFFS: c·Re^a·Pr^(1/3)·(Dh/L)^d   [7/0.6 为几何外推]
+    Nu_cfd = SCO2_NU_COEFFS: c·Re^a·Pr^(1/3)·(Dh/L)^d   [7/0.6 现有真实 CFD,
+             2026-07-23 重拟, 已在网内; γ_Nu 为纯粹粗糙度因子]
     f_cfd  = 2·Dh²/(K·Re) + 2·Dh·cF_sco2(Re)            [K=CFD-refit 面;
-             G-7-6 的 cF 为 L 方向 RBF 外推 (Gyroid CFD 仅 L≤6), 混杂较重]
+             cF 仍为 sco2_df 代理, 与 Nu 重拟无关]
 
 倍数定义:
     逐点   γ = 实验值 / CFD 预测值 (同 Re, Pr), 报中位 [p5, p95]
@@ -831,11 +832,14 @@ def build_html(res: list[dict], charts: dict[str, str],
       <div class="srow"><div class="sk">倍数定义</div>
         <div class="sv">{M_G_GT1} = 实验高于 CFD 光滑壁预测
         （同 {M_RE}、{M_PR} 逐点比，报均值与中位 [p5, p95]）。</div></div>
-      <div class="srow"><div class="sk">混杂声明</div>
-        <div class="sv">7/0.6 在 CFD 几何包络外：Diamond t 方向轻度外推；
-        Gyroid CFD 仅 L≤6，L=7 为 RBF 外推，混杂更重。</div></div>
+      <div class="srow"><div class="sk">几何在网</div>
+        <div class="sv">7/0.6 现有<b>真实 CFD</b>（2026-07 补测，D_7_6 / G_7_6
+        各 270 案例），已进 CFD 关联式拟合——不再是此前的 RBF 几何外推。
+        关联式对该几何真实 CFD 的内插 medAPE：Diamond 9.0% / Gyroid 8.8%。</div></div>
       <div class="srow"><div class="sk">解读边界</div>
-        <div class="sv">{M_G} = 粗糙度 × 几何外推的合成，<b>不纯是粗糙度</b>。</div></div>
+        <div class="sv">{M_G} 现为<b>纯粹的粗糙度增强因子</b>（实验粗糙 SLM 件
+        / CFD 光滑壁），已不含几何外推误差。参考：空气侧 SLM 粗糙度 Nu
+        增强 ~1.28。</div></div>
     </div>""")
         + section("03", "Nu：实验 vs CFD",
                   "主图（期刊样式）：藏青方框 = 实验 hot 侧、亮青实心圆 = "

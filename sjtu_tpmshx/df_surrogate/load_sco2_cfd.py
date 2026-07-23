@@ -17,13 +17,44 @@ Two loaders (``lattice`` = 'Diamond' | 'Gyroid'):
                       per-segment is the resolution limit of this dataset).
 
 Conventions (repo, NOT the CSV's own):
-    t_mm       real wall thickness = CSV ``wall_thickness_mm`` / 10
-               (CSV stores the t-code 3..6; same ÷10 convention as
-               ``smooth_df._load_points``).
-    Dh_m       from ``tpms_calc.geometry`` — the CSV's mesh-measured
-               ``Dh_m`` deviates 1–12% on some geometries and every
-               downstream consumer (solver, correlations) uses the
-               tpms_calc value. Raw CSV Dh kept as ``Dh_cfd_m``.
+    t_mm       real wall thickness, auto-detected from
+               ``wall_thickness_mm``: older exports store the t-code 3..6
+               (÷10), the 2026-07-23 exports store real mm 0.3..0.6 as-is;
+               ``_attach_geometry`` decides per-file on whether the max
+               exceeds 1.0.
+    Dh_m       from ``tpms_calc.geometry`` — every downstream consumer
+               (solver, correlations) uses the tpms_calc value, so the fit
+               MUST share it or the correlation misapplies in the solver.
+               Raw CSV Dh kept as ``Dh_cfd_m``.
+               2026-07-22 RETRO-VALIDATION: the corrected upload's
+               mesh-measured Dh now agrees with tpms_calc to 0.43% on
+               Gyroid (the OLD export ran +5.8% median / +10.2% max), and
+               on Diamond to 0.12% median / 0.24% max at N=256 — i.e. the
+               override was right and the old mesh Dh was the error.
+
+               ⚠ FLOW-DATA INCONSISTENCY (NOT a geometry error) —
+               Diamond D_7_3 / D_7_4 / D_7_5. Re-adjudicated 2026-07-23
+               with the corrected upload; SUPERSEDES the earlier
+               "bad mesh / thin walls" call, which was WRONG (it was
+               misled by the old export's Dh being off in lock-step).
+               The GEOMETRY is correct on all 20: the mesh's own wetted
+               area A_wall gives A_0 matching tpms_calc to 0.4% for every
+               geometry INCLUDING these three (Um-independent check), and
+               the file Dh now matches to <0.3%. The single remaining
+               anomaly is a MASS-BALANCE gap in the flow data:
+               mdot/(rho·Um·L²) exceeds the true (geometric) porosity by
+               +3.9 / +5.4 / +7.3% on these three, i.e. reported mdot and
+               Um don't close continuity with the correct geometry.
+               Whether Um is ~5% low or mdot is ~5% high can't be settled
+               from the CSV alone (the Re and energy-balance cross-checks
+               are circular — Re_nominal and Q_core are derived from Um and
+               mdot respectively). CONSEQUENCE for fits:
+                 Nu = h·Dh/k          — NO velocity term → SAFE on all 20.
+                 Re = rho·Um·Dh/mu    — uses Um → these 3 shift ~±5% along
+                 f  = dpdl·Dh/(ρU²/2)   the Re axis / f by ~10% IF Um (not
+                                        mdot) is the wrong one.
+               Fit Nu on all 20 freely; for f, flag D_7_3/4/5 as pending a
+               provider answer on which of mdot/Um is authoritative.
     Re / Nu / f  recomputed from raw physical quantities (Um, h, dp) with
                the repo Dh. CSV's own Re kept as ``Re_nominal`` (case-matrix
                label) — do not fit against it.
@@ -54,17 +85,38 @@ _log = get_logger(__name__)
 
 DATA_ROOT = _PROJECT_ROOT.parent / "data" / "raw_data" / "sCO2-CFD"
 LATTICES = ("Diamond", "Gyroid")
-_CORE_NAME = "tpms_core_summary_results_by_geometry_merged.csv"
-_SEG_NAME = "tpms_period_segments_results_by_geometry_merged.csv"
 
 
-def _csv_path(lattice: str, name: str) -> Path:
+def _resolve_csv(lattice: str, kind: str) -> Path:
+    """Locate the core / segment CSV for a lattice by CONTENT, not filename.
+
+    kind: 'core' (one row per case) or 'seg' (per-period rows).
+
+    Filenames are NOT reliable across uploads: the 2026-07-22/23 exports
+    (``{lat}三个胞元平均/独立数据*.csv``) and the 2026-07-15 exports
+    (``tpms_core_summary.../tpms_period_segments...csv``) coexist, and worse,
+    the new Diamond files have their 平均(avg)/独立(indep) labels SWAPPED
+    vs their contents (平均数据 actually holds the per-segment rows) while
+    Gyroid's do not. So classify by the tell-tale ``segment`` column: the
+    per-period export has it, the core-summary export does not.
+    """
     if lattice not in LATTICES:
         raise ValueError(f"lattice must be one of {LATTICES}, got {lattice!r}")
-    p = DATA_ROOT / lattice / name
-    if not p.exists():
-        raise FileNotFoundError(f"{lattice} sCO2 CFD csv missing: {p}")
-    return p
+    d = DATA_ROOT / lattice
+    core, seg, seen = None, None, []
+    for p in sorted(d.glob("*.csv")):
+        cols = set(pd.read_csv(p, nrows=0).columns)
+        seen.append(p.name)
+        if "segment" in cols:
+            seg = p
+        elif {"Nu_core", "Darcy_f_core"} & cols:
+            core = p
+    hit = core if kind == "core" else seg
+    if hit is None:
+        raise FileNotFoundError(
+            f"{lattice} sCO2 {kind} CSV not found under {d} — saw {seen}. "
+            f"(core = has Nu_core/Darcy_f_core; seg = has a `segment` column.)")
+    return hit
 
 # Tref cents -> operating pressure [MPa]. Confirmed by data provider
 # (2026-07-15) + CoolProp rho-inversion; see dataset README.
@@ -128,7 +180,13 @@ def _attach_geometry(df: pd.DataFrame, lattice: str) -> pd.DataFrame:
         raise ValueError(f"{lattice} loader got lattice codes {codes} — "
                          f"wrong folder contents?")
     out["L_mm"] = out["cell_size_mm"].astype(float)
-    out["t_mm"] = out["wall_thickness_mm"].astype(float) / 10.0
+    # Wall-thickness convention auto-detect (flipped between uploads):
+    #   older exports store the t-CODE 3..6  (real t = code/10),
+    #   2026-07-23 exports store REAL mm 0.3..0.6 directly.
+    # Real walls are always < 1 mm and codes always ≥ 3, so the gap at 1.0
+    # separates them unambiguously; decide per-file on the max.
+    t_raw = out["wall_thickness_mm"].astype(float)
+    out["t_mm"] = np.where(t_raw.to_numpy() > 1.0, t_raw / 10.0, t_raw)
     cache: dict[tuple[float, float], tuple[float, float]] = {}
     eps = np.empty(len(out))
     dh = np.empty(len(out))
@@ -157,7 +215,7 @@ def load_core(lattice: str = "Diamond") -> pd.DataFrame:
         Re, f, Nu  repo-Dh conventions (reference properties at Tref)
         Re_nominal CSV case-matrix Re label
     """
-    df = pd.read_csv(_csv_path(lattice, _CORE_NAME))
+    df = pd.read_csv(_resolve_csv(lattice, "core"))
     df = _attach_pressure(df)
     _verify_rho_guard(df)
     df = _attach_geometry(df, lattice)
@@ -209,7 +267,7 @@ def load_segments(lattice: str = "Diamond",
     """
     from CoolProp.CoolProp import PropsSI
 
-    seg = pd.read_csv(_csv_path(lattice, _SEG_NAME))
+    seg = pd.read_csv(_resolve_csv(lattice, "seg"))
     seg = _attach_pressure(seg)
     _verify_rho_guard(seg)
     seg = _attach_geometry(seg, lattice)
