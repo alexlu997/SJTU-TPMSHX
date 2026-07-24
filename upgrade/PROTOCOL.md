@@ -80,7 +80,7 @@ e) 向台账 `E:\LWH\vault\reports\_research-ledger-CN.md` 追加条目并署名
 
 - 中文 conventional commits：`fix(solver):` / `feat(pipelines):` / `refactor(ui):` / `docs:` / `test:` / `chore(upgrade):`
 - 重基准加 `!`；正文引用 ledger / HANDOFF 编号；行为不变的重构注明"golden 位同"
-- 结尾一律：`Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- 结尾一律：`Co-Authored-By: <当前会话模型> <noreply@anthropic.com>`——**署名跟随实际运行模型**（Alex 2026-07-25 起主会话切 Opus，见 §10；此前轮次署 Claude Fable 5，为如实历史不追改）
 - **容量级变更**（新行为/新能力设计，如 P1.3 choke 罚值策略）：先写 `openspec/changes/<id>/`（proposal.md + design.md + tasks.md），实现后随实现 commit 一起归档——沿用仓库 spec-driven 流程；纯重构/修 bug/文档直接提交
 
 ## 8. 定时器自维护
@@ -97,16 +97,23 @@ e) 向台账 `E:\LWH\vault\reports\_research-ledger-CN.md` 追加条目并署名
   `python upgrade/tools/render_progress.py` 重渲 `upgrade/progress.html`
   （<1s，解析状态文件+git，浏览器打开即看；重渲产物随簿记一并提交）
 
-## 10. 模型分层（Alex 2026-07-19 指示）
+## 10. 模型分层（Alex 2026-07-19 指示；2026-07-25 改用 Opus）
 
-- **P0 / P1：主循环（Fable 5 max）直接执行**，不委托。
+**主会话模型（Alex 2026-07-25 更新）**：主循环改用 **Opus**（当前最新 = Opus 4.8；
+Alex 原话"用 opus 5、暂不用 fable"——picker 无 Opus 5 型号，按最新 Opus 4.8 落地，
+新型号出现即跟进）。**暂停 Fable 主循环**。cron 触发的是新会话，其模型 = Alex 的
+`/model` 默认（已设 Opus 4.8），故自主轮自动跑在 Opus 上；本会话若仍为 Fable，
+需 Alex 在本会话 `/model` 手动切（模型只能 Alex 改，循环改不了）。
+
+- **P0 / P1：主循环（Opus）直接执行**，不委托。
 - **P2 起（P3/P4 同理）**：每条开工时自评"机械型 vs 判断型"：
   - **机械型**（格式化扫、批量类型注解、模式化替换、文档扫尾等有明确模式可循的）→
-    用 Agent 工具派子代理执行：默认 `model: "sonnet"`，中等复杂度用 `model: "opus"`；
-    **主循环（Fable 5）审 diff + 跑全部验证门 + 提交**。执行子代理只改文件，
+    用 Agent 工具派子代理执行：默认 `model: "sonnet"`，中等复杂度用 `model: "opus"`
+    （Agent 工具 model 参数只认家族名 sonnet/opus/haiku/fable，"opus"路由到最新 Opus）；
+    **主循环（Opus）审 diff + 跑全部验证门 + 提交**。执行子代理只改文件，
     **不许提交、不许跑全套测试**（重活并发违反 §2，验证权归主循环）
   - **判断型**（行为/接口设计、无测试保护的重构如 P2.5、任何触及 §3 红线清单的）→
-    Fable 5 主循环直接执行
+    Opus 主循环直接执行
   - 分类拿不准 → 按判断型处理（宁贵勿险）
 - 委托提示词必须包含：具体文件清单、改动模式与例子、相关红线摘录、"完成后报告改动清单，不提交"
-- 主会话模型由 Alex 的 /model 决定，本协议假设主会话保持 Fable 5；若 Alex 主动降档，审查质量随之变化，循环不干预、不擅自改档
+- 主会话模型由 Alex 的 /model 决定；若 Alex 主动降档，审查质量随之变化，循环不干预、不擅自改档

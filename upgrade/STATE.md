@@ -1,38 +1,31 @@
 # 循环状态（STATE）
 
-- iteration: 71 ——**R1 收案（merge `54c9ed2` + 重基准 `bc0f6da`）：Alex 解除
-  暂停并指示"提交 master + 恢复循环做 R1-R3"。master `7ebdf6e`（水/sCO2 Nu
-  重拟至修正 CFD 上传，循环受托提交）已合入；γ_Nu 重冻 D 1.807/G 1.125
-  （G 混杂解除，纯粗糙度因子）；金门 water_b 重采（air_air 位同）；上海门
-  dP 4.88% 持平/Q 2.11%。数据底座已同步（新水簿+新 sCO2 CSV，旧 CSV 已删）。
-  台账 NU-REFIT-0723、DECISIONS D7。**
-- in_progress: **iter 72 = R2**（D-2a 重提）：iter 66 dev 表用了旧 Um
-  （extract_dev_coeffs.py:158 直取文件 Um_m_s，修正后逐几何 cF 隐含位移
-  −26%..+45%，D_7_6 +28.5%）→ extract_dev_coeffs 切换 load_water_cfd
-  （保两段法数学 + 冻结阈值 Re_hi 12800/Re_lo 400），D_7_3/4/5 加
-  flow_suspect 列带病入表（±10% 警示），重产 df_cfd_coeffs_dev.csv +
-  LOO 重跑。R3 = D-2b 重裁决（γ_spec/γ_HX 重跑，"×1.26 拓扑无关"与
-  "D 双层闭合 2%"两结论重验；audit 文档 §8/§9 勘误）
-- next: D-2b 实施（依 §8 架构，除非 Alex 改向）：①γ_specimen(L,t) 纯试件
-  面（dev 基，L6/L8 锚，t 模型照 gamma_df v4 结构）②γ_HX 用 7-6 HX 双流体
-  实验标定（含任务 3.1 口径调和）③贝叶斯后验（UQ）④对照组 = 纯试件方案
-  ⑤上海 16 盲考跑分（两方案并排）。规模 2-3 轮，先 ①+④
-- next: D-2a-2 cF/K 候选面（dev 表 → log-TPS，LOO 考卷 vs SmoothDF 基 vs
-  core 基；复用 06-30 的 LOO 门槛设计——"cF LOO ≪ gamma_df 面 87/122%"）。
-  注意池：col47 锚 L4/L6 异常（06-30 发现）直接冲击 D-2b 可信层设计，
-  D-2b 开工前须复核该发现（试验记录表 col43/47 原始数据 vs 2-stage 面）
-- next: 水/空气阶段开工——D-2a CF-REFIT 收尾（原始水 CFD 两段法提 cF
-  〔K 已做〕，log-TPS 面，与 SmoothDF 基同考卷对比）。剩余尾账不阻塞：
-  projects/703 其余 9 脚本死导入（静默债）、G_7_6/D_7_6 CFD 补算触发器、
-  L4/L5 粗糙壁仲裁触发器
-- in_progress: 无（iter 64 已收）
+- iteration: 73 ——**R1-R3 三轮批（Alex 2026-07-23 解除暂停指示"提交 master +
+  恢复循环做 R1-R3"，2026-07-25 会话内连续完成）**：
+  - R1 `54c9ed2`+`bc0f6da`：master `7ebdf6e`（水/sCO2 Nu 重拟至修正 CFD 上传，
+    循环受托提交）合入 + γ_Nu 重冻 D 1.807/G 1.125（G 混杂解除，纯粗糙度因子）+
+    金门 water_b 重采（air_air 位同）+ 数据底座同步。台账 NU-REFIT-0723、D7。
+  - R2 `8190ccc`：dev 表切修正 Um 基，u 不变量 + (u_o/u_n)² 双重验证，
+    LOO 反而更优（D cF 12.5→9.6%）。
+  - R3 `d7d9a1d`：γ_spec/γ_HX 重跑三结论重验——**"×1.26 拓扑无关"推翻**
+    （D 1.08/G 1.23 分化）、Diamond 双层改写为"试件面基本单独闭合"、
+    G 对上海残差 ×1.296 量级确认（假说与 D-2c 盲考裁决法不变）。audit §10。
+- in_progress: 无（iter 73 已收）
+- next: **D-2b-3**（原暂停前 next，现全部落在修正数据上）：①水侧 γ_HX
+  （7-6-Water-dp.xlsx 未变，试件层用 R2 新 dev cF；注意 G 表负压差坏点/
+  传感器地板）②跨流体一致性（空气 γ_HX D 1.08/G 1.23 vs 水侧；sCO2 γ_f
+  hot 7.0-7.9 vs 双层合成）③双层合成面（γ_spec × γ_HX，分拓扑不再共享）+
+  UQ 后验带 ④D-2c 上海盲考准备。sCO2 f 侧重提（K 面 + sco2_df cF 在新导出）
+  + γ_f 重冻排入本序列（tripwire 现绿，f 侧 CFD 基未动）
 - 候选 D 边界（Alex 2026-07-22 四点拍板，原文见 PROGRESS iter58 段）：
   ①全串行 a→b 一次批到位；②CFD 拟合 (K,cF)、试件实验标定 γ，**上海 16 例退出
   标定转纯盲考卷**；③sCO2 γ 并入但排空气侧重锚之后；④UQ 要（γ 后验 + Δp 预测带）
-- armed_at: 2026-07-22（job 8f180729——iter 64 收轮时重建，旧 c87569d6 已删；
-  >5 天须按 §8 重建 → 下个窗口 2026-07-27 前）
+- 模型（Alex 2026-07-25）：主循环改用 **Opus**（最新 4.8，无 Opus 5 型号）、
+  暂停 Fable——见 PROTOCOL §10。cron 触发的新会话按 Alex /model 默认（已设
+  Opus 4.8）自动跑 Opus。本会话若仍 Fable 需 Alex 手动 /model 切。
+- armed_at: 2026-07-25（iter 73 收轮 §8 重建；旧 8f180729 暂停时已删）
 - cron_spec: `7,22,37,52 * * * *`
-- 基点：master `4b32da4`（含 sCO2 光滑壁闭合提交）；分支 `upgrade/loop`
+- 基点：master `4b32da4`（R1 起并入 `7ebdf6e` 修正关联式）；分支 `upgrade/loop`
 
 ## cron 提示词（重建定时器时逐字使用）
 
