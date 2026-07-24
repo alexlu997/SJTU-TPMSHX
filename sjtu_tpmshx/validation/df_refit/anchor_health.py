@@ -98,7 +98,7 @@ def main() -> int:
 
     for topo in _SHEETS:
         d = df[(df.topo == topo) & df.t.notna()]
-        print(f"\n[{topo}]  cF_exp | γ_SmoothDF γ_dev | R²")
+        print(f"\n[{topo}]  cF_exp | γ_SmoothDF γ_dev | R^2")
         for _, r in d.iterrows():
             print(f"  L{r.L:.0f} t{r.t:.1f}: {r.cF_exp:7.1f} | "
                   f"{r.gamma_smoothdf:6.2f} {r.gamma_dev:6.2f} | "

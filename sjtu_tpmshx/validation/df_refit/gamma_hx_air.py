@@ -78,6 +78,20 @@ def _load_cases(topo: str) -> pd.DataFrame:
     return d.reset_index(drop=True)
 
 
+def dp_pred_compressible(P_in: float, T_bar: float, G: float, K: float,
+                         cF_eff: float, L: float = L_FLOW) -> float | None:
+    """可压 1D 闭式 Δp：P_out² = P_in² − 2·R·T̄·(μG/K + cF_eff·G²)·L。
+
+    `cF_eff` 已含 γ（γ_spec 或双层 γ_total）——调用方决定乘几层。
+    返回 None = P_out² ≤ 0（谱外/窒息，无稳态解，不可"返回个数字"）。
+    """
+    C = _air_mu(T_bar) * G / K + cF_eff * G * G
+    P_out_sq = P_in ** 2 - 2.0 * R_AIR * T_bar * C * L
+    if P_out_sq <= 0:
+        return None
+    return P_in - float(np.sqrt(P_out_sq))
+
+
 def _dev_node(topo: str) -> tuple[float, float]:
     dev = pd.read_csv(_DEV_CSV)
     r = dev[(dev.tp == topo) & np.isclose(dev.L, 7.0)
@@ -106,11 +120,10 @@ def run() -> pd.DataFrame:
                        - float(r["空气出口压力/Pa"]))
             G = mdot / A_FLOW[topo]
             mu = _air_mu(T_bar)
-            C = mu * G / K_dev + g_spec * cF_dev * G * G
-            P_out_sq = P_in ** 2 - 2.0 * R_AIR * T_bar * C * L_FLOW
-            if P_out_sq <= 0:
+            dp_pred = dp_pred_compressible(P_in, T_bar, G, K_dev,
+                                           g_spec * cF_dev)
+            if dp_pred is None:
                 continue                     # 谱外点不进带
-            dp_pred = P_in - float(np.sqrt(P_out_sq))
             rho_in = P_in / (R_AIR * T_in)
             Re_in = G * (2 * 1.2995e-3) / mu   # Dh(D7/0.6)≈2.599mm 量级参考
             rows.append(dict(
@@ -118,7 +131,9 @@ def run() -> pd.DataFrame:
                 dp_meas=dp_meas, dp_pred_spec=dp_pred,
                 gamma_hx=dp_meas / dp_pred,
                 dp_over_pabs=dp_meas / P_in,
-                u_in=G / rho_in, g_spec=g_spec))
+                u_in=G / rho_in, g_spec=g_spec,
+                # 下游（gamma_two_layer）复算 Δp 需要的输入，不改任何既有列
+                P_in=P_in, T_bar=T_bar, G=G, K_dev=K_dev, cF_dev=cF_dev))
     return pd.DataFrame(rows)
 
 
@@ -142,7 +157,7 @@ def main() -> int:
         hi = g[g.mdot > g.mdot.median()]
         print(f"  流量分半: 低半中位 {lo.gamma_hx.median():.2f} / "
               f"高半中位 {hi.gamma_hx.median():.2f}"
-              f"   （平 ⇒ 幅值制；斜 ⇒ 需 γ_HX(Re)）")
+              f"   (平 => 幅值制; 斜 => 需 γ_HX(Re))")
     print(f"\n已写出 {out}")
     return 0
 

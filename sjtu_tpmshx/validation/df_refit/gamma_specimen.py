@@ -163,7 +163,7 @@ def main() -> int:
               f"  95%带 [{lo95:.2f},{hi95:.2f}]")
         print(f"  HX 需要值 γ_HX_needed = {need:.2f}  →  缺口 ×{gap:.2f}"
               f"  （95% 带{'内' if lo95 <= need <= hi95 else '外'}"
-              f" ⇒ HX 层{'不可' if not (lo95 <= need <= hi95) else '或可'}"
+              f" => HX 层{'不可' if not (lo95 <= need <= hi95) else '或可'}"
               f"由试件面解释）")
         out_rows.append(dict(topo=topo, kind="gate_geometry", L=7.0, t=0.6,
                              gamma=g7, pred=need, lo68=lo68, hi68=hi68,
