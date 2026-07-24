@@ -18,7 +18,19 @@ SEMANTICS — read before touching:
   γ_f exceeds the air-side specimen roughness at the same geometry
   (γ_air(7/0.6) = 1.53/1.96) by ×4.0–4.6 — the anchor experiments are
   heat-exchanger cores, so manifold/entrance/instrument systematics are
-  absorbed alongside SLM roughness (exam_sco2 XFLUID finding). Fit support
+  absorbed alongside SLM roughness (exam_sco2 XFLUID finding).
+  ** UPDATE 2026-07-25 (iter 76, audit §13): that ×4.0–4.6 compared two γ's
+  sitting on DIFFERENT smooth bases, so it conflated "base mismatch" with
+  "data disagreement". The closure-free check is
+  ``validation/df_refit/cf_cross_fluid.py``, which inverts cF straight from
+  each fluid's raw measurements on the SAME core, same A/L/Dh, same K:
+  air 430/401 vs sCO2 1522/1512 (1/m, D/G) — ×3.5/×3.8. Base mismatch is
+  NOT the explanation (the two smooth bases differ by only 1.03–1.17× at the
+  relevant Re), and neither is flow area: air and sCO2 use the same A_flow
+  and cF ∝ A², so A cancels EXACTLY in that ratio. The gap is an
+  unexplained systematic between two experiment campaigns, and γ_f currently
+  absorbs all of it — see DECISIONS D9 before treating γ_f as physics.**
+  Fit support
   is the 7/0.6 geometry ONLY; applying to other (L, t) rides on the
   γ-geometry-independence assumption (to be tested in the air/water phase).
 * **Window discipline** (subst.v2 use-card red line): the power law is an

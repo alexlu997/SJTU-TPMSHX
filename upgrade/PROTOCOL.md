@@ -28,6 +28,11 @@
 - **断言存在：`data\raw_data\试验记录表_整理版.xlsx`**——缺失 = surrogate 会静默回退到预构建 CSV，数字无警告地改变；立即停手写 DECISIONS
 - 测试**只用** `scripts\run_tests_server.ps1`（自带 PYTHONHASHSEED=0、五个线程变量钉 1、QT_QPA_PLATFORM=offscreen、双 pass 策略；~11 分钟）；禁 `-n auto`（128 核超订死锁实测）
 - 长跑用 `python -u`（否则块缓冲看着像挂死）；从仓库根跑；**不并发第二个重活**（并发 numba/Qt 进程会产生像测试失败的假死）
+- **控制台是 GBK**（iter 75/76 各踩一次，共耗三次重跑）：诊断脚本里**被 `print` 的**
+  字面量若含 `⇒ ∓ ² ³ ⁴ ṁ ̄` 等 GBK 外字符 → `UnicodeEncodeError` 崩在记分板，
+  而 CSV 已在崩之前写出，**看着像成功、实际 exit 1**。写工具时印出来的部分只用
+  GBK 安全写法（`=> -+ ^2 mdot`），docstring/注释不受限（源文件是 UTF-8）。
+  自检一行：`python -c "import ast,sys;..."`——或直接跑一遍看 exit code，别只看 CSV。
 
 ## 3. 硬红线（违反 = 真回归；源自仓库 CLAUDE.md，重构触及时逐条自查）
 
