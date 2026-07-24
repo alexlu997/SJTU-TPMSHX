@@ -39,9 +39,11 @@ SEMANTICS — read before touching:
   emits a one-shot warning. It never extrapolates the slope and never
   silently clamps.
 * **Base-relative**: γ_f ≡ f_exp / f_cfd(sco2_df + CFD-refit K as of
-  2026-07-22). Swapping or refitting that smooth base INVALIDATES these
+  **2026-07-25**). Swapping or refitting that smooth base INVALIDATES these
   constants — ``test_sco2_gamma_f.py`` recomputes the fit from the raw
-  experiment Excel against the live base and fails loudly on drift.
+  experiment Excel against the live base and fails loudly on drift. It did
+  exactly that on the 2026-07-25 base rebuild (iter 78); the constants below
+  were re-derived, not the tolerance loosened.
 * Kill switch: env ``TPMSHX_SCO2_GAMMA_F=0`` restores the smooth-wall
   behaviour (pre-2026-07-22), e.g. for comparing against CFD.
 
@@ -63,21 +65,32 @@ _log = get_logger(__name__)
 # cross-check test enforces agreement). n = fit-set size; window = the fit's
 # own Re support (slightly narrower than exam_sco2's pooled exam window —
 # interpolation-only discipline binds to what the FIT saw).
+#
+# RE-FROZEN 2026-07-25 (iter 78, ledger SCO2-F-REFIT-0725): the smooth base
+# `sco2_df` was rebuilt on the corrected 2026-07-23 CFD export (20 D / 17 G
+# geometries, 9799 cases — was 15/12, 7000). Because γ_f ≡ f_exp/f_cfd is
+# base-relative, the constants MUST move with the base — and they moved in
+# the compensating direction: dexp absorbed the pooled-m shift almost
+# exactly (D 0.1262→0.1177 vs m 0.1808→0.1721), so the PRODUCT that
+# production actually consumes, γ_f(Re)·cF_smooth(7,0.6,Re), is invariant to
+# <=0.02 % across the whole fit window. Re_c / window / n / sig_ln are
+# untouched (the EXPERIMENT did not change). Off-anchor geometries DO move
+# (base −8…−13 % at Re 2e4) — that is the new CFD's information, not drift.
 GAMMA_F_HOT: dict[str, dict[str, float]] = {
     "Diamond": dict(
-        G0=6.860537266325813,
-        dexp=0.1262406308482877,
+        G0=6.8944008137665165,
+        dexp=0.11774435618983282,
         Re_c=18842.643482804368,
-        sig_ln=0.05949037252890838,
+        sig_ln=0.05948535319139833,
         re_lo=8801.07548108971,
         re_hi=40949.35902093758,
         n=51,
     ),
     "Gyroid": dict(
-        G0=7.765475391888127,
-        dexp=0.09793343418160605,
+        G0=7.715203938698979,
+        dexp=0.09208167893287889,
         Re_c=22517.82778604547,
-        sig_ln=0.03630544213319485,
+        sig_ln=0.03630540714998968,
         re_lo=10632.405680243332,
         re_hi=48961.25289670842,
         n=44,

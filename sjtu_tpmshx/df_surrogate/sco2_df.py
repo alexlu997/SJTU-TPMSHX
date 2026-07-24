@@ -6,12 +6,16 @@
                             ≤ 4 %) cannot identify K; low-Re behaviour stays
                             anchored to the water CFD.
 
-Data: Diamond 4000 + Gyroid 3000 cases, ``data/raw_data/sCO2-CFD/`` (smooth
+Data: Diamond 5399 + Gyroid 4400 cases, ``data/raw_data/sCO2-CFD/`` (smooth
 wall RANS, no gravity; P ∈ {8,10,12,15} MPa on the pseudocritical line).
+REBUILT 2026-07-25 (iter 78) on the corrected 2026-07-23 export: 20 D / 17 G
+geometries (was 15 / 12), 9799 cases (was 7000) — ledger SCO2-F-REFIT-0725.
 Fit: per-geometry B (K fixed from SmoothDF), per-lattice pooled Re-slope m —
 identical math to ``validation/sco2_cfd/compare_smooth_df.py`` (which imports
 the fit helpers from HERE; keep single-sourced). Point-level refit RMSRE
-8.9 % (Diamond) / 7.1 % (Gyroid); cross-fluid back-test vs water CFD in
+8.86 % (Diamond) / 7.80 % (Gyroid) on the 2026-07-25 rebuild (was 8.9 / 7.1
+on the 15/12-geometry export — Gyroid's rise is 5 extra geometries widening
+the fit, not a regression); cross-fluid back-test vs water CFD in
 ``reports/sco2_cfd/`` (ledger SCO2-CFD).
 
 ⚠ SEMANTICS: this module stays the SMOOTH-WALL cF — SLM roughness is
@@ -25,8 +29,13 @@ smooth estimate with a loud warning). Validation baselines (γ ≡ f_exp/f_cfd,
 correction never feeds back into its own definition. Baking roughness into
 THIS file would double-count with γ_f — don't.
 
-Geometry domain: Diamond L ∈ [4,7] × t ∈ [0.3,0.6] (no 7/0.6); Gyroid
-L ∈ [4,6] × t ∈ [0.3,0.6] (G_6_6 thin: 30 cases, Re 3000 only). Off-grid
+Geometry domain (2026-07-25 rebuild): Diamond the FULL 5×4 grid
+L ∈ {4,5,6,7,8} × t ∈ {0.3,0.4,0.5,0.6}; Gyroid the same minus
+(8, 0.4/0.5/0.6) — 17 nodes. **(7, 0.6) — the D-7-6 / G-7-6 prototype
+geometry — is now an interpolation NODE for both lattices** (it used to sit
+outside the hull: the old domain was D L ∈ [4,7] with no 7/0.6 and
+G L ∈ [4,6], so the prototype prediction rode an RBF extrapolation and
+tripped the warning below). Off-grid
 (L, t) interpolate via log-space RBF; outside the hull extrapolates with a
 one-shot warning. Re outside [~2600, ~66000] extrapolates the (Re/1000)^−m
 slope (below ~1000 it overshoots — water back-test measured +21 % medAPE at
