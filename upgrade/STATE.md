@@ -23,7 +23,8 @@
 - 模型（Alex 2026-07-25）：主循环改用 **Opus**（最新 4.8，无 Opus 5 型号）、
   暂停 Fable——见 PROTOCOL §10。cron 触发的新会话按 Alex /model 默认（已设
   Opus 4.8）自动跑 Opus。本会话若仍 Fable 需 Alex 手动 /model 切。
-- armed_at: 2026-07-25（iter 73 收轮 §8 重建；旧 8f180729 暂停时已删）
+- armed_at: 【待重建】Alex 2026-07-25 要新开会话续跑，本会话定时器 `649f1bdf`
+  已拆——新会话说"继续升级循环"后按 §8 重建（或按 Alex 指示手动逐轮）
 - cron_spec: `7,22,37,52 * * * *`
 - 基点：master `4b32da4`（R1 起并入 `7ebdf6e` 修正关联式）；分支 `upgrade/loop`
 
