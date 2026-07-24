@@ -99,11 +99,12 @@ e) 向台账 `E:\LWH\vault\reports\_research-ledger-CN.md` 追加条目并署名
 
 ## 10. 模型分层（Alex 2026-07-19 指示；2026-07-25 改用 Opus）
 
-**主会话模型（Alex 2026-07-25 更新）**：主循环改用 **Opus**（当前最新 = Opus 4.8；
-Alex 原话"用 opus 5、暂不用 fable"——picker 无 Opus 5 型号，按最新 Opus 4.8 落地，
-新型号出现即跟进）。**暂停 Fable 主循环**。cron 触发的是新会话，其模型 = Alex 的
-`/model` 默认（已设 Opus 4.8），故自主轮自动跑在 Opus 上；本会话若仍为 Fable，
-需 Alex 在本会话 `/model` 手动切（模型只能 Alex 改，循环改不了）。
+**主会话模型（Alex 2026-07-25 更新；iter 74 跟进）**：主循环用 **Opus**，
+**暂停 Fable**。Alex 原话"用 opus 5、暂不用 fable"——当时 picker 无 Opus 5，
+按最新 Opus 4.8 落地并约定"新型号出现即跟进"；**iter 74（2026-07-25）起
+Opus 5 已可用，主循环实跑 Claude Opus 5 (1M context)，原话字面落地**。
+cron 触发的是新会话，其模型 = Alex 的 `/model` 默认；模型只能 Alex 改，
+循环不假设也不更改（§0）。
 
 - **P0 / P1：主循环（Opus）直接执行**，不委托。
 - **P2 起（P3/P4 同理）**：每条开工时自评"机械型 vs 判断型"：
