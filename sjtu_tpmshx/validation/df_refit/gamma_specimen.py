@@ -87,6 +87,19 @@ class SpecimenGamma:
         beta = np.array([self.a[_TRUSTED_L[0]], self.a[_TRUSTED_L[1]], self.b])
         return float(np.exp(x @ beta))
 
+    def shape_contrast_sd(self, L: float, t: float,
+                          L0: float = 7.0, t0: float = 0.6) -> float:
+        """ln γ_spec(L,t) − ln γ_spec(L0,t0) 的**参数**标准差。
+
+        双层合成面用（D-2b-4）：HX 数据把 γ_total 在标定几何 (L0,t0) 上
+        直接钉住了，所以外推到别的 (L,t) 时该传播的只是这个**形状差**的
+        不确定度，不是 γ_spec 的绝对水平——把绝对带再加一遍会重复计入
+        （HX 数据已经吃掉了水平）。残差项不进：它描述"另一件试件"的实现
+        散差，而形状差问的是同一批件上的几何趋势。
+        """
+        dx = self._design_row(L, t) - self._design_row(L0, t0)
+        return float(np.sqrt(self.s2 * (dx @ self.XtX_inv @ dx)))
+
     def band(self, L: float, t: float, q: float = 0.16
              ) -> tuple[float, float]:
         """γ 的中心 (1−2q) 后验预测带（含参数与残差不确定度）。"""

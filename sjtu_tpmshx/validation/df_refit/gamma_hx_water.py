@@ -180,6 +180,8 @@ def main() -> int:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         air = run_air()
+    # 气侧同样带缺陷筛（iter 75 补：仪表地板 + 重复行，见 gamma_hx_air）
+    air = air[~air.excluded].copy()
     med_a, dfr_a, re_a = {}, {}, {}
     for t, g in air.groupby("topo"):
         # 气侧 Darcy 份额：C 的两项之比（与水侧同定义，闭式里逐点不变）
@@ -225,9 +227,9 @@ def main() -> int:
               f"气 n={len(ab)} γ_HX 中位 {ab.gamma_hx.median():.2f}"
               f"  -> 水/气 {wb.gamma_hx.median() / ab.gamma_hx.median():.2f}")
         if len(ab) < 5 or len(wb) < 5:
-            print(f"       [薄] 重叠样本 <5，且落在气侧自身最低流量端"
-                  f"（γ_HX 低至 {ab.gamma_hx.min():.2f}，<1 即测值低于试件层"
-                  f"预测 = 气侧也有低流量地板）——本行不作裁决用")
+            print(f"       [薄] 重叠样本 <5（气侧 n={len(ab)}），且落在气侧"
+                  f"自身最低流量端——气侧的仪表地板案已按 iter 75 的筛剔除，"
+                  f"剩下的最低点 γ_HX={ab.gamma_hx.min():.2f}；本行不作裁决用")
 
     # ---- 反解：水侧流通面积要多大才能与气侧 γ_HX 对齐 ----
     # 若水/气差是"对称芯两侧同 A_flow"这个继承假设错了造成的（表内

@@ -196,7 +196,7 @@ def main() -> int:
               f"[{rs.min():.3f},{rs.max():.3f}]")
     sus = df[df.flow_suspect]
     if len(sus):
-        print(f"\nflow_suspect 几何（mdot/Um 不闭合，cF/K 带 ±10%/-+5% 级警示）: "
+        print("\nflow_suspect 几何（mdot/Um 不闭合，cF/K 带 ±10%/-+5% 级警示）: "
               + ", ".join(f"{r.tp[0]}_{r.L:.0f}_{r.t*10:.0f}"
                           for _, r in sus.iterrows()))
     print(f"\n候选表已写出 {DEV_CSV}")

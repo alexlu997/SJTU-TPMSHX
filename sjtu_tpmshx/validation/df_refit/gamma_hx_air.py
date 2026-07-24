@@ -58,6 +58,13 @@ _BOOKS = {
 _NEED = ["样机空气流量kg/s", "空气进口温度/℃", "空气出口温度/℃",
          "空气进口压力/Pa", "空气出口压力/Pa"]
 
+# 仪表地板筛（iter 75 补）：两表的**最低流量工况**都远离 γ_HX 平台
+#   D 工况1 Δp=893 Pa γ=0.69 / G 工况1 Δp=336 Pa γ=0.33，
+#   而次低点已是 4474 / 3925 Pa（γ 1.02 / 1.16）。阈值落在 (893, 3925) Pa
+#   这段宽空隙里取任意值结果都不变——2000 取其中段，非刀刃阈值。
+#   水侧同类缺陷（G 工况1 Δp=−48.4 Pa 负压差）见 gamma_hx_water。
+DP_FLOOR_PA = 2000.0
+
 
 def _air_mu(T_K: float) -> float:
     """Sutherland（与求解器 air_viscosity 同式，避免拖 solver 依赖）。"""
@@ -75,7 +82,18 @@ def _load_cases(topo: str) -> pd.DataFrame:
     d = d.dropna(subset=_NEED)
     d = d[(d["样机空气流量kg/s"] > 0)
           & (d["空气进口压力/Pa"] > d["空气出口压力/Pa"])]
-    return d.reset_index(drop=True)
+    d = d.reset_index(drop=True)
+    d["case"] = d.iloc[:, 0].astype(str)
+    dp = d["空气进口压力/Pa"] - d["空气出口压力/Pa"]
+    # 缺陷 1：仪表地板（最低流量端）
+    d["dp_floor"] = dp < DP_FLOOR_PA
+    # 缺陷 2：除 ṁ 外逐位重复的行——D_7_6 气表 工况10/11 与**同一样机的水表
+    # 同名工况**同址复现（gamma_hx_water 已记），两表同源复制粘贴，其一必错
+    key = ["空气进口温度/℃", "空气出口温度/℃",
+           "空气进口压力/Pa", "空气出口压力/Pa"]
+    d["dup_row"] = d.duplicated(subset=key, keep=False)
+    d["excluded"] = d.dp_floor | d.dup_row
+    return d
 
 
 def dp_pred_compressible(P_in: float, T_bar: float, G: float, K: float,
@@ -133,7 +151,9 @@ def run() -> pd.DataFrame:
                 dp_over_pabs=dp_meas / P_in,
                 u_in=G / rho_in, g_spec=g_spec,
                 # 下游（gamma_two_layer）复算 Δp 需要的输入，不改任何既有列
-                P_in=P_in, T_bar=T_bar, G=G, K_dev=K_dev, cF_dev=cF_dev))
+                P_in=P_in, T_bar=T_bar, G=G, K_dev=K_dev, cF_dev=cF_dev,
+                case=str(r.case), dp_floor=bool(r.dp_floor),
+                dup_row=bool(r.dup_row), excluded=bool(r.excluded)))
     return pd.DataFrame(rows)
 
 
@@ -146,11 +166,20 @@ def main() -> int:
     print("=" * 74)
     print("D-2b-2 γ_HX 气侧提取（7-6 HX 实验 ÷ 试件层闭式预测，可压缩 1D）")
     print("=" * 74)
-    for topo, g in df.groupby("topo"):
+    for topo, g_all in df.groupby("topo"):
+        g = g_all[~g_all.excluded]
         gs = g.gamma_hx
-        print(f"\n[{topo}]  n={len(g)}  γ_spec(7,0.6)={g.g_spec.iloc[0]:.2f}"
+        print(f"\n[{topo}]  n={len(g)}（原表 {len(g_all)}，剔 "
+              f"{int(g_all.excluded.sum())}：仪表地板 "
+              f"{int(g_all.dp_floor.sum())} / 重复行 "
+              f"{int(g_all.dup_row.sum())}）"
+              f"  γ_spec(7,0.6)={g.g_spec.iloc[0]:.2f}"
               f"  Δp/P_abs 范围 [{g.dp_over_pabs.min():.2f},"
               f"{g.dp_over_pabs.max():.2f}]")
+        for _, rr in g_all[g_all.excluded].iterrows():
+            tag = "仪表地板" if rr.dp_floor else "重复行"
+            print(f"    [剔] {rr.case} {tag}: mdot={rr.mdot:.5f} "
+                  f"Δp={rr.dp_meas:.0f} -> γ={rr.gamma_hx:.2f}")
         print(f"  γ_HX: 中位 {gs.median():.2f}  [P10,P90]=[{gs.quantile(.1):.2f},"
               f"{gs.quantile(.9):.2f}]  min/max [{gs.min():.2f},{gs.max():.2f}]")
         lo = g[g.mdot <= g.mdot.median()]
