@@ -201,12 +201,15 @@
   - [x] D-1sc sCO2 考卷基建（`0ba9bcd`，iter 60）：LOO/holdout 纪律 + 窗内守卫 +
         窗内守卫（实验 Re 窗外拒绝外推）+ 现行光滑基跑分基准；主检出侧 v2-v5/subst
         系列脚本差异收编（worktree 分叉后 compare_exp_vs_cfd.py 已更新）
-  - [ ] D-2sc sCO2 γ_f 修正试点（1-2 轮）：hot/cold/合并三变体 × Δ{自由,0} →
+  - [x] D-2sc sCO2 γ_f 修正试点（iter 61，六变体证据 `gamma_f_variants.py`；
+        **记账补勾 iter 80**——D6 已决 hot-free 且常数早已入产线）：hot/cold/合并三变体 × Δ{自由,0} →
         修正 cF 面 + 贝叶斯后验 + Δp 预测带 → **选侧证据包交 Alex 裁**；
         γ_Nu(Re) 修正入产线评估顺带；G 侧 CFD 基线外推混杂标注在案
-  - [ ] D-2a cF 光滑基升级（水/空气，1-2 轮）：CF-REFIT 收尾——原始水 CFD 两段法
+  - [x] D-2a cF 光滑基升级（`8190ccc`，iter 72 = R2；**记账补勾 iter 80**）：
+        CFD 基已切修正 Um、LOO 反更优（D cF medAPE 12.5→9.6%）。CF-REFIT 收尾——原始水 CFD 两段法
         提 cF（K 已做），log-TPS 面，与 SmoothDF 基同考卷对比
-  - [ ] D-2b γ 重锚（水/空气）：纯试件锚（无上海点），Gyroid L 方向照
+  - [~] D-2b γ 重锚（水/空气）**主体完成**（1/2/3/4/5a/5c 全收），
+        余 4w、5b 两条 BLOCKED（见下）：纯试件锚（无上海点），Gyroid L 方向照
         Diamond 模式重建；新口径（打靶 ON）下重跑考卷；γ 后验 + Δp 带（UQ）；
         顺带检验 sCO2 试点的"γ 几何无关"假设（空气 γ(L,t) 面 vs 7/0.6 单点）
     - [x] D-2b-1 γ_specimen 候选面（`6e64e87`，iter 69；R3 `d7d9a1d` 重跑）
