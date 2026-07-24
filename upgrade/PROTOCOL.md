@@ -28,6 +28,14 @@
 - **断言存在：`data\raw_data\试验记录表_整理版.xlsx`**——缺失 = surrogate 会静默回退到预构建 CSV，数字无警告地改变；立即停手写 DECISIONS
 - 测试**只用** `scripts\run_tests_server.ps1`（自带 PYTHONHASHSEED=0、五个线程变量钉 1、QT_QPA_PLATFORM=offscreen、双 pass 策略；~11 分钟）；禁 `-n auto`（128 核超订死锁实测）
 - 长跑用 `python -u`（否则块缓冲看着像挂死）；从仓库根跑；**不并发第二个重活**（并发 numba/Qt 进程会产生像测试失败的假死）
+- **金门必须裸跑**（iter 78 踩坑，耗三次 3.5 分钟重跑）：
+  `python -u sjtu_tpmshx\runs\_out\_golden_3d.py --check golden_3d.json`
+  **不要**套用 `run_tests_server.ps1` 的五个线程钉——那是**套件**口径。
+  钉了线程会改变 AMG/BLAS 的归约顺序，金门当场报 39 条 ULP 级 diff
+  （相对 ~6.5e-14）+ `GOLDEN: FAIL`，**看起来像回归实际是自己造的**。
+  实测三步对照：钉线程时改动组与干净 HEAD **逐行同 diff**（⇒ 改动无关）；
+  裸调用两边都 `PASS (bit-identical)`。BASELINE §3 记的本来就是"bare 调用"。
+  推论：金门 FAIL 时**先用干净 HEAD 跑同一条命令**做对照，再谈回归。
 - **控制台是 GBK**（iter 75/76 各踩一次，共耗三次重跑）：诊断脚本里**被 `print` 的**
   字面量若含 `⇒ ∓ ² ³ ⁴ ṁ ̄` 等 GBK 外字符 → `UnicodeEncodeError` 崩在记分板，
   而 CSV 已在崩之前写出，**看着像成功、实际 exit 1**。写工具时印出来的部分只用
