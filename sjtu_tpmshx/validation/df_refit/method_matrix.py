@@ -77,6 +77,42 @@ class _DirTwoLayer(_ScaledTwoLayer):
     SCALE = DIR_FACTOR
 
 
+class _Ergun:
+    """物理化（Ergun 族）——**零参数**闭合，不看任何实验也不看任何 CFD。
+
+    Ergun 原式（superficial 速度 u_s）：
+        dp/dx = 150·μ·u_s·(1−ε)²/(ε³·d_p²) + 1.75·ρ·u_s²·(1−ε)/(ε³·d_p)
+
+    化到本仓约定（**间隙**流速 u = u_s/ε）并代入水力直径关系
+    d_p = 1.5·(1−ε)·D_h/ε（即 D_h = 4ε/S_v 的标准换算），ε 解析约掉：
+
+        cF = 1.75/(1.5·D_h) = 1.1667/D_h        [1/m]
+        K  = 2.25·D_h²/150  = 0.015·D_h²        [m²]
+
+    **口径声明**：本仓 `tpms_geometry` 的 A_0 实测满足 A_0 = 4·(ε/2)/D_h，
+    即 D_h 用的是**单侧**约定。上式的 d_p 换算假定 D_h = 4ε/S_v；若改按单侧
+    口径（S_v = A_0，d_p = 6(1−ε)/A_0），cF 会再小一个 ~2 倍因子。
+    工具在 [1] 段把两种口径都打出来，不藏这个选择。
+    """
+
+    C_F = 1.75 / 1.5
+    C_K = 2.25 / 150.0
+
+    def __init__(self, tpms: str):
+        self.tpms = tpms
+
+    def _geom(self, L_mm, t_mm):
+        from sjtu_tpmshx.solvers.tpms_props import geometry
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return geometry(self.tpms, float(L_mm), float(t_mm), 0.5)
+
+    def predict(self, L_mm, t_mm, eps_f=None):
+        g = self._geom(L_mm, t_mm)
+        Dh = float(g["D_h"])
+        return self.C_K * Dh * Dh, self.C_F / Dh
+
+
 class _SmoothOnly:
     """γ≡1：只有 dev 光滑基（下界参照）。K 取 dev 表 K 面。"""
 
@@ -113,6 +149,7 @@ def _mk(name: str, model_cls):
 _mk("mm_two_layer", TwoLayerModel)
 _mk("mm_two_layer_dir", _DirTwoLayer)
 _mk("mm_smooth_only", _SmoothOnly)
+_mk("mm_ergun", _Ergun)
 
 # (显示名, backend method 或 None=生产默认, 一句话)
 _VARIANTS = [
@@ -120,6 +157,7 @@ _VARIANTS = [
     ("two_layer", "mm_two_layer", "双层合成面（零上海输入，锚 0407 方向）"),
     ("two_layer_dir", "mm_two_layer_dir",
      f"双层面 × {DIR_FACTOR}（折算到 0401 原接法方向）"),
+    ("ergun", "mm_ergun", "物理化 Ergun 族——零参数，不看实验也不看 CFD"),
     ("smooth_only", "mm_smooth_only", "只有光滑基 cF_dev、γ≡1——下界参照"),
 ]
 
@@ -169,10 +207,20 @@ def main() -> int:
         from sjtu_tpmshx.df_surrogate.gamma_df import GammaDF
         _, cF_pd = GammaDF(tpms="Gyroid").predict(7.0, 0.6)
         cF_sm = float(cf_dev("Gyroid", 7.0, 0.6))
+    _er = _Ergun("Gyroid")
+    _K_er, cF_er = _er.predict(7.0, 0.6)
     for nm, v in (("production", cF_pd), ("two_layer", cF_tl),
                   ("two_layer_dir", cF_tl * DIR_FACTOR),
-                  ("smooth_only", cF_sm)):
+                  ("ergun", cF_er), ("smooth_only", cF_sm)):
         print(f"    {nm:<16} cF = {v:8.2f}   (/production = {v / cF_pd:.3f})")
+    _g = _er._geom(7.0, 0.6)
+    _dh, _a0, _eps = float(_g["D_h"]), float(_g["A_0"]), float(_g["epsilon"])
+    print(f"    [Ergun 口径敏感度] D_h={_dh:.4e} m，A_0={_a0:.1f} 1/m，"
+          f"eps={_eps:.4f}；A_0 x D_h/(4 x eps/2) = {_a0 * _dh / (2 * _eps):.3f}"
+          f"（=1 即单侧口径坐实）")
+    print(f"      本工具用 D_h=4eps/S_v 换算 -> cF={cF_er:.1f}；"
+          f"若按单侧口径(S_v=A_0) -> cF={cF_er / 2:.1f}。"
+          f"两者夹住实测气侧 cF~400。")
 
     print("\n[2] 上海 3D 门（pipeline, 20x10x3, 16 例）")
     rows = []
