@@ -1500,3 +1500,51 @@ STATE 里写了复活后第一件事该查什么。
 - 可视化：浏览器打开 `upgrade/progress.html`（84 轮时间线）
 
 只想花一分钟的话，回 **D10**（产品交付按哪种进出口接法）就够解锁一大片。
+
+## iter 85 — Gyroid sCO2 CFD 补全 L=8 列：f 侧基重建 + γ_f / γ_Nu 重冻（§5 数值重基准）
+
+**触发不是路线图，是新数据**：Alex 2026-07-26 告知主检出
+`data/raw_data/sCO2-CFD/Gyroid/` 已更新。按需模式下由 Alex 触发，
+开工先核数据性质再动手。
+
+**先核后用**：以 `(geometry_id, Re, Tref, Twall)` 为主键内连——旧 4400 行
+**全部匹配且逐位一致**（dp_core/Q_core/mdot 相对差 0.000e+00，Nu/Darcy_f
+3e-16 ULP 级），零丢失 ⇒ **纯增量**。新增 1000 行全在 L=8：`G_8_3` 80→270
+（此前仅 7% 采样）、`G_8_4/5/6` 0→270（**此前完全缺失，靠 RBF 外推**）。
+几何 17→20，与 Diamond 齐平。
+
+**Diamond 全程是对照组**（其数据未动）：预制表 max |ΔB| = **0.000e+00**、
+`GAMMA_F_HOT["Diamond"]` 与 `GAMMA_NU_SCO2["Diamond"]` **逐位重导相同**、
+`SCO2_NU_COEFFS['Diamond']` 存储精度下不变。凡动了的都动在 Gyroid 上。
+
+**两条 base-swap 绊线按设计炸响且只在 Gyroid 上炸**
+（`test_sco2_gamma_f.py` / `test_sco2_gamma_nu.py` 的
+`test_frozen_constants_match_live_refit`），**重导常数而非放宽容差**；
+锁定测试 `test_sco2_phase_a.py::test_sco2_nu_coeffs_locked` 同步。
+
+**抵消结构复现**（与 iter 78 同机理）：Gyroid pooled m 0.11784→0.11244、
+各几何 B 降 ~1.5%，两者互相抵消 ⇒ 生产消费的 `cF = B·(Re/1000)^−m` 在全窗内
+**16 个未变几何 ≤0.64%**、(7,0.6) 样机几何 −0.20…+0.62%；γ_f 侧的乘积
+`γ_f·cF_smooth(Gyroid,7,0.6)` 全窗 **0.008%**。**真变化只有 `G_8_3` 的
++4.2…+5.1%**，正是那个样本数 ×3.4 的几何。
+
+**实质发现 —— D11 的确认题就此结案**：Nu 的 LOGO（逐几何留一）Gyroid medAPE
+**8.4%→7.9%**，而拟合任务同时多了 3 个几何。iter 78 记的"Gyroid RMSRE
+7.1%→7.80% 像是拟合任务变宽而非数据质量问题"得到证实，且钉出了具体位置：
+**L=8 那一列当时是残缺的**。（DF 点级 RMSRE Gyroid 7.80%→8.01% 是任务变宽的
+正常代价；两个指标方向相反、度量的不是一回事。）
+`SCO2_NU_COEFFS['Gyroid']` 的**几何指数 d −0.013529→−0.044313** 变动最大,
+正是补全一整列 L=8 该动的量。
+
+**V&V（§4 第三行全跑）**：套件 **1306 passed / 3 skipped**（二 pass 10 passed）、
+金门**裸调用 PASS bit-identical**、上海 3D **16/16 valid RMSRE_dP 4.88% /
+RMSRE_Q 2.11% GATE PASS**、lumped **Q_air 1.76%** —— 全部与 BASELINE 逐位一致，
+**空气/水认证面零影响**。
+
+**§2 口径坑复现并按协议走了对照**：`shanghai_3d_baseline.csv` 出现 12 行 ULP 级
+diff。三方对照——**stash 掉全部改动、干净 HEAD 跑同一条裸命令，产出与本轮
+逐字节相同**，且二者与已提交版本的 diff 完全一致 ⇒ 已提交版本生成于**套件线程钉
+口径**，与本改动无关。该文件已还原，不把口径噪声混进提交。
+
+登记：DECISIONS **D13**（`[已重基准-待复核]`）；D11 待复核点①标记结案。
+台账 SCO2-F-REFIT-0726。

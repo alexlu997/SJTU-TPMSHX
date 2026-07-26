@@ -30,15 +30,18 @@ def test_sco2_nu_form_diamond():
 
 
 def test_sco2_nu_coeffs_locked():
-    """2026-07-23 smooth-wall CFD refit (V0b) — refit = edit nu_correlations.
-    Corrected upload: 20 Diamond + 17 Gyroid geometries L∈[4,8], real CFD at
-    D_7_6/G_7_6 (were RBF-extrapolated), corrected Dh. Retired 2026-07-15 coeffs
-    (wrong-Dh + extrapolated 7/0.6): Diamond c=0.166714 a=0.705490 d=-0.434198;
+    """2026-07-26 smooth-wall CFD refit (V0b) — refit = edit nu_correlations.
+    Gyroid L=8 completion (purely additive upload): 20 Diamond + **20** Gyroid
+    geometries L∈[4,8]. G_8_3 went 80→270 cases, G_8_4/5/6 0→270 (previously
+    ABSENT). Diamond untouched — unchanged coeffs here are the control.
+    Retired 2026-07-23 Gyroid (17 geometries): c=0.201101 a=0.720625
+    d=-0.013529. Retired 2026-07-15 coeffs (wrong-Dh + extrapolated 7/0.6):
+    Diamond c=0.166714 a=0.705490 d=-0.434198;
     Gyroid c=0.199133 a=0.719463 d=-0.109010."""
     assert SCO2_NU_COEFFS['Diamond'] == {
         'c': 0.184809, 'a': 0.707421, 'd': -0.281792}
     assert SCO2_NU_COEFFS['Gyroid'] == {
-        'c': 0.201101, 'a': 0.720625, 'd': -0.013529}
+        'c': 0.192994, 'a': 0.722221, 'd': -0.044313}
     assert SCO2_NU_RE_RANGE == (2600.0, 128000.0)
 
 

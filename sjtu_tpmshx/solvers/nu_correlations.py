@@ -194,8 +194,18 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 
 
 # ── Supercritical CO2 DIRECT fit (smooth-wall unit-cell CFD) ──
-# REFIT 2026-07-23 on the corrected upload — Diamond 20 + Gyroid 17
-# geometries L∈[4,8]×t∈[0.3,0.6] mm (was 15+12 on L∈[4,7]); the earlier
+# REFIT 2026-07-26 on the Gyroid L=8 completion — Diamond 20 + Gyroid **20**
+# geometries (Gyroid was 17). The 07-26 upload is PURELY ADDITIVE: all 4400
+# prior Gyroid core rows survive bit-identically (max rel dev 3e-16), and the
+# 1000 new rows are all at L=8 — G_8_3 went 80→270 cases (it had been only 7%
+# sampled) and G_8_4/5/6 went 0→270 (they had been ABSENT, i.e. RBF-
+# extrapolated). Diamond is untouched and its coefficients are unchanged to
+# the stored precision — that is the control for this re-baseline.
+# Gyroid moved c 0.201101→0.192994, a 0.720625→0.722221, d −0.013529→−0.044313:
+# the geometry exponent d is what a filled-in L=8 column should move most.
+#
+# Prior lineage — REFIT 2026-07-23 on the corrected upload, Diamond 20 +
+# Gyroid 17 geometries L∈[4,8]×t∈[0.3,0.6] mm (was 15+12 on L∈[4,7]); the earlier
 # export's mesh Dh ran ~6% high and D_7_6/G_7_6 were RBF-EXTRAPOLATED, so the
 # 2026-07-15 coeffs below (kept in git) fit a partly-wrong geometry envelope.
 # The new data corrects Dh (agrees with tpms_calc to <0.4%) and gives REAL CFD
@@ -211,8 +221,10 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 #     df_surrogate/load_sco2_cfd.py module doc.
 #
 # Form  Nu = c·Re^a·Pr_b^(1/3)·(D_h/L)^d      [bulk properties at (T_b, P)]
-# Accuracy (2026-07-23): far-critical RMSRE ~7–9%, all-data ~19%; LOGO
-# (leave-one-geometry-out) medAPE Diamond 9.5% / Gyroid 8.4%.
+# Accuracy (2026-07-26): far-critical RMSRE Diamond 9.3% / Gyroid 7.4%,
+# all-data ~19% both; LOGO (leave-one-geometry-out) medAPE Diamond 9.5% /
+# Gyroid 7.9% (was 8.4% on 17 geometries — it IMPROVED while the fit task got
+# harder by 3 geometries, which is the sign the L=8 column was the weak spot).
 #
 # ⚠ SMOOTH WALL — SLM roughness deliberately NOT included. With D_7_6/G_7_6
 # now REAL CFD, the experiment/CFD ratio is a CLEAN roughness factor (no more
@@ -230,8 +242,11 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 SCO2_NU_RE_RANGE = (2600.0, 128000.0)
 SCO2_NU_COEFFS = {
     'Diamond': {'c': 0.184809, 'a': 0.707421, 'd': -0.281792},
-    'Gyroid':  {'c': 0.201101, 'a': 0.720625, 'd': -0.013529},
+    'Gyroid':  {'c': 0.192994, 'a': 0.722221, 'd': -0.044313},
 }
+# Retired Gyroid coeffs from the 2026-07-23 fit (17 geometries, L=8 column
+# only 7% sampled at t=0.3 and absent at t=0.4/0.5/0.6), for reference:
+#            Gyroid  c=0.201101 a=0.720625 d=-0.013529.
 # Retired 2026-07-15 coeffs (old data, wrong-Dh + extrapolated 7/0.6), for
 # reference: Diamond c=0.166714 a=0.705490 d=-0.434198;
 #            Gyroid  c=0.199133 a=0.719463 d=-0.109010.
@@ -290,6 +305,13 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
 # REAL CFD at D_7_6/G_7_6): both anchors are now CLEAN roughness factors —
 # the former Gyroid caveat (γ conflated with the G L=7 RBF extrapolation)
 # is RESOLVED by the backfill. Exp windows unchanged (same experiment set).
+# REFROZEN 2026-07-26 (Gyroid only) against the Gyroid L=8 completion —
+# the smooth base moved, so the base-relative anchor had to follow. Diamond is
+# bit-identical (its CFD did not change), which is the control. Gyroid moved
+# only γ +0.33% / σln +0.39%; the EXPERIMENT is untouched (same 80 points,
+# same Re window), so this is purely the smooth denominator being better
+# resolved at L=8. Retired 2026-07-23 Gyroid values, for reference:
+#   Gyroid  γ=1.1253904125495358 σln=0.03404943924575467.
 # Retired 2026-07-22 values (old wrong-Dh/extrapolated base), for reference:
 #   Diamond γ=1.7557581458289075 σln=0.1284497503774956;
 #   Gyroid  γ=1.0743811537767434 σln=0.033961111486825596.
@@ -298,9 +320,9 @@ GAMMA_NU_SCO2 = {
     'Diamond': {'gamma': 1.8071381249714116,
                 're_lo': 8950.399055885377, 're_hi': 35173.875658799734,
                 'sig_ln': 0.12840542895995066, 'n': 52},
-    'Gyroid':  {'gamma': 1.1253904125495358,
+    'Gyroid':  {'gamma': 1.1290715256456092,
                 're_lo': 10632.405680243332, 're_hi': 48961.25289670842,
-                'sig_ln': 0.03404943924575467, 'n': 80},
+                'sig_ln': 0.03418246063235273, 'n': 80},
 }
 
 _GAMMA_NU_WARNED: set[tuple[str, str]] = set()

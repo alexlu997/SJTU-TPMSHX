@@ -39,11 +39,13 @@ SEMANTICS — read before touching:
   emits a one-shot warning. It never extrapolates the slope and never
   silently clamps.
 * **Base-relative**: γ_f ≡ f_exp / f_cfd(sco2_df + CFD-refit K as of
-  **2026-07-25**). Swapping or refitting that smooth base INVALIDATES these
+  **2026-07-26**). Swapping or refitting that smooth base INVALIDATES these
   constants — ``test_sco2_gamma_f.py`` recomputes the fit from the raw
   experiment Excel against the live base and fails loudly on drift. It did
-  exactly that on the 2026-07-25 base rebuild (iter 78); the constants below
-  were re-derived, not the tolerance loosened.
+  exactly that on the 2026-07-25 base rebuild (iter 78) and again on the
+  2026-07-26 Gyroid L=8 completion (iter 85); both times the constants below
+  were re-derived, not the tolerance loosened. On the 07-26 pass **Diamond
+  came back bit-identical** (its CFD did not change) — that is the control.
 * Kill switch: env ``TPMSHX_SCO2_GAMMA_F=0`` restores the smooth-wall
   behaviour (pre-2026-07-22), e.g. for comparing against CFD.
 
@@ -66,7 +68,18 @@ _log = get_logger(__name__)
 # own Re support (slightly narrower than exam_sco2's pooled exam window —
 # interpolation-only discipline binds to what the FIT saw).
 #
-# RE-FROZEN 2026-07-25 (iter 78, ledger SCO2-F-REFIT-0725): the smooth base
+# RE-FROZEN 2026-07-26 (iter 85, GYROID ONLY): the smooth base was rebuilt on
+# the Gyroid L=8 completion (17→20 G geometries; purely additive upload, prior
+# rows bit-identical). **Diamond re-derived bit-identically** — its CFD did not
+# change — so it is the control for this pass. Gyroid moved G0 −0.20 % and
+# dexp −5.78 % (0.09208→0.08676), again in the compensating direction against
+# pooled m 0.11784→0.11244: the PRODUCT production consumes,
+# γ_f(Re)·cF_smooth(Gyroid,7,0.6,Re), is invariant to **0.008 %** across the
+# whole fit window. Re_c / re_lo / re_hi / n unchanged and sig_ln moved 1e-6
+# relative — the EXPERIMENT did not change. The real information is off-anchor:
+# G_8_3's cF moved +4.2…+5.1 % and G_8_4/5/6 exist for the first time.
+#
+# Prior — RE-FROZEN 2026-07-25 (iter 78, ledger SCO2-F-REFIT-0725): the smooth base
 # `sco2_df` was rebuilt on the corrected 2026-07-23 CFD export (20 D / 17 G
 # geometries, 9799 cases — was 15/12, 7000). Because γ_f ≡ f_exp/f_cfd is
 # base-relative, the constants MUST move with the base — and they moved in
@@ -87,10 +100,10 @@ GAMMA_F_HOT: dict[str, dict[str, float]] = {
         n=51,
     ),
     "Gyroid": dict(
-        G0=7.715203938698979,
-        dexp=0.09208167893287889,
+        G0=7.699836173022563,
+        dexp=0.0867579781106141,
         Re_c=22517.82778604547,
-        sig_ln=0.03630540714998968,
+        sig_ln=0.03630537836108086,
         re_lo=10632.405680243332,
         re_hi=48961.25289670842,
         n=44,

@@ -6,16 +6,25 @@
                             ≤ 4 %) cannot identify K; low-Re behaviour stays
                             anchored to the water CFD.
 
-Data: Diamond 5399 + Gyroid 4400 cases, ``data/raw_data/sCO2-CFD/`` (smooth
+Data: Diamond 5399 + Gyroid 5400 cases, ``data/raw_data/sCO2-CFD/`` (smooth
 wall RANS, no gravity; P ∈ {8,10,12,15} MPa on the pseudocritical line).
-REBUILT 2026-07-25 (iter 78) on the corrected 2026-07-23 export: 20 D / 17 G
-geometries (was 15 / 12), 9799 cases (was 7000) — ledger SCO2-F-REFIT-0725.
+REBUILT 2026-07-26 (iter 85) on the Gyroid L=8 completion: **20 D / 20 G**
+geometries, 10799 cases. That upload is PURELY ADDITIVE — the prior 4400
+Gyroid rows survive bit-identically (max rel dev 3e-16); the 1000 new rows are
+all L=8 (G_8_3 80→270 cases, G_8_4/5/6 0→270, previously ABSENT). Diamond is
+untouched and its table rebuilt bit-identically, which is the control.
+Prior: REBUILT 2026-07-25 (iter 78) on the corrected 2026-07-23 export,
+20 D / 17 G geometries (was 15 / 12), 9799 cases — ledger SCO2-F-REFIT-0725.
 Fit: per-geometry B (K fixed from SmoothDF), per-lattice pooled Re-slope m —
 identical math to ``validation/sco2_cfd/compare_smooth_df.py`` (which imports
 the fit helpers from HERE; keep single-sourced). Point-level refit RMSRE
-8.86 % (Diamond) / 7.80 % (Gyroid) on the 2026-07-25 rebuild (was 8.9 / 7.1
-on the 15/12-geometry export — Gyroid's rise is 5 extra geometries widening
-the fit, not a regression); cross-fluid back-test vs water CFD in
+8.86 % (Diamond, unchanged) / 8.01 % (Gyroid; was 7.80 % on 17 geometries —
+3 more geometries widen the fit, not a regression. The Nu LOGO metric moved
+the OTHER way, 8.4 %→7.9 %, i.e. the L=8 column was genuinely the weak spot).
+Gyroid pooled m 0.11784→0.11244 and its per-geometry B fell ~1.5 %, but the
+two changes cancel: cF = B·(Re/1000)^−m moves ≤0.64 % across the whole fit
+window for every geometry except G_8_3 (+4.2…+5.1 %, the one that gained
+3.4× more samples). Cross-fluid back-test vs water CFD in
 ``reports/sco2_cfd/`` (ledger SCO2-CFD).
 
 ⚠ SEMANTICS: this module stays the SMOOTH-WALL cF — SLM roughness is
