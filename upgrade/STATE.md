@@ -126,7 +126,16 @@
   - R3 `d7d9a1d`：γ_spec/γ_HX 重跑三结论重验——**"×1.26 拓扑无关"推翻**
     （D 1.08/G 1.23 分化）、Diamond 双层改写为"试件面基本单独闭合"、
     G 对上海残差 ×1.296 量级确认（假说与 D-2c 盲考裁决法不变）。audit §10。
-- in_progress: 无（iter 85 已收）
+- in_progress: 无（iter 85 已收，含报告重生成后续）
+- **§0 例外记录（2026-07-27，Alex 明确指示）**：协议 §0 写死"主检出一律不写"，
+  本次经 Alex 点名，向 `E:\LWH\SJTU-TPMSHX\reports\sco2_exp\` 写入了四份报告
+  （`sco2_exp_vs_cfd{,_subst}.{final,v2}.html`）。目标文件 git 未跟踪、覆盖不可
+  revert，故原件已备份至本 worktree 的
+  `reports/sco2_exp/_backup_mainckt_20260723/`。连 `.v2` 一起更新是因为页内互链
+  指向 `.v2.html`，只改 `.final` 会让读者点一下就跳回旧数据。
+  **此例外仅限本次、仅限这四个文件**，不改变 §0 本身。
+  报告链依赖的 `_redesign/build_v2.py` 只存在于主检出，已手工复制进 worktree
+  但**未提交**（比照 §0 对 `data/` 的处理，不制造第二真源）。
 - **未决提醒（会话内发现，尚未立条目）**：`df_cfd_coeffs_dev.csv`（**气侧 dev
   面，不由 sCO2 数据喂养**，与 iter 85 不是同一条腿）上的试件台异常——
   把气侧试件实测拟成 `cF_exp = γ_core·cF_CFD + rig` 时，

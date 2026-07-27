@@ -1548,3 +1548,42 @@ diff。三方对照——**stash 掉全部改动、干净 HEAD 跑同一条裸�
 
 登记：DECISIONS **D13**（`[已重基准-待复核]`）；D11 待复核点①标记结案。
 台账 SCO2-F-REFIT-0726。
+
+### iter 85 后续 — 报告重生成 + 部署（Alex 指示，含一次 §0 例外）
+
+**"应用到求解器"其实无需额外动作，但已实测证实而非假设**：系数的单一真源就是
+iter 85 已改的三处（`SCO2_NU_COEFFS` / `GAMMA_NU_SCO2` / `GAMMA_F_HOT` +
+`_prebuilt/sco2_df_coeffs.csv`），求解器现读现用。端到端实证：
+`tpms_calc.compute('Gyroid',7,0.6,fluid_type='sco2')` 得 Nu=365.83261，
+**匹配新系数、不匹配旧系数**（旧值应为 365.67216）；
+`predict_cF_sco2('Gyroid',...)` 给出 7/0.6=192.125、8/0.3=155.638、
+8/0.5=165.295，与新预制表逐项一致。
+
+**报告链**（此前无人记过，记在这里）：
+`validation/sco2_exp/compare_exp_vs_cfd.py` → 基础 `sco2_exp_vs_cfd{,_subst}.html`
+→ `reports/sco2_exp/_redesign/build_v2.py` → `*.v2.html`
+→ **`.final.html` 是 `.v2.html` 的人工副本**（实测两者逐字节相同）。
+`build_v2.py` **只存在于主检出**，本轮手工复制进 worktree 才跑得起来
+（未提交，比照 §0 对 `data/` 的处理——不制造第二真源）。
+
+**重生成结果**：worktree 里的基础报告本来停在 **2026-07-22**（比主检出的
+07-23 版还旧两轮），已重跑。与主检出现有 `.final` 逐行比对：
+结构**完全一致**（svg 9 / table 6·8 / figure 5 / math 54·82 计数逐项相同），
+改动**几乎纯数值**——非数字骨架仅变 1（原始版）/ 3（代入版）行，
+数值中位变动 **0.78% / 0.81%**。逐条点名所有 >20% 的变动后确认：
+除时间戳与 MathML 单数字重排外，**唯一实质大改动是 `d −0.0135 → −0.0443`**，
+正是 Gyroid 的 Nu 几何指数。
+
+**§0 例外（Alex 明确指示写主检出）**：协议 §0 写死"主检出一律不写"。
+本次 Alex 点名要求更新
+`E:\LWH\SJTU-TPMSHX\reports\sco2_exp\sco2_exp_vs_cfd{,_subst}.final.html`。
+执行细节：
+- 目标文件 **git 未跟踪**（`git ls-files reports/sco2_exp/` 只有两个 CSV），
+  覆盖不可 revert ⇒ **先备份**到
+  `upgrade-worktree/reports/sco2_exp/_backup_mainckt_20260723/`（四份原件）。
+- **连 `.v2.html` 一起更新**：`.final` 与 `.v2` 原本逐字节相同，且页内
+  "原始数据版 ↔ 代入几何版"的互链指向的是 **`.v2.html`**；只更新 `.final`
+  会让读者点一下就跳回旧数据。四份同步更新才自洽，且保持原有
+  `final == v2` 的不变式。
+- 部署后哈希核对：主检出四份与 worktree 源逐字节一致；抽检 `.final`
+  均为 07-27 构建、旧 d 已清除、HTML 正常闭合。
