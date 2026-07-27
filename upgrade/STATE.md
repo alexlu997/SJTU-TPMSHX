@@ -127,6 +127,19 @@
     （D 1.08/G 1.23 分化）、Diamond 双层改写为"试件面基本单独闭合"、
     G 对上海残差 ×1.296 量级确认（假说与 D-2c 盲考裁决法不变）。audit §10。
 - in_progress: 无（iter 85 已收，含报告重生成后续）
+- **实验数据不入库（2026-07-27，Alex 决定）**：`reports/sco2_exp/` 整个目录
+  已 `git rm --cached` 并加入 `.gitignore`（6 个文件：exp_points.csv 302 行逐工况
+  原始测量值、exp_fit_summary.csv、exam_sco2.csv、gamma_f_variants.csv、
+  两份 sco2_exp_vs_cfd*.html 各含 6 个逐工况数据表）。
+  **背景**：其中 4 个是 PR #48 合并时由循环推上 GitHub 的（另 2 个早于本循环，
+  在老 master 就有）——合并前未做敏感性检查，这是疏漏，已登记备忘。
+  **历史不清理**（Alex 决定）：仓库是 PRIVATE 无公开暴露，改写历史需 force-push
+  覆盖刚落地的 170 commit + 两个 merge commit，风险大于收益。
+  **今后**：`reports/sco2_exp/` 下的产出默认都带实验数据，目录级忽略而非逐个列举。
+  文件全部可由 `validation/sco2_exp/` 的脚本从 `data/` 重新生成，不入库无损失。
+  **另注**：`reports/sco2_exp/_redesign/build_v2.py`（报告排版转换器，96KB，
+  不含实验数据）**在主检出里也从未入过 git** ——报告链依赖一个无版本控制的脚本，
+  若要备份应放 vault 或其他私有位置，不要入本仓库（受目录级忽略覆盖）。
 - **§0 例外记录（2026-07-27，Alex 明确指示）**：协议 §0 写死"主检出一律不写"，
   本次经 Alex 点名，向 `E:\LWH\SJTU-TPMSHX\reports\sco2_exp\` 写入了四份报告
   （`sco2_exp_vs_cfd{,_subst}.{final,v2}.html`）。目标文件 git 未跟踪、覆盖不可
