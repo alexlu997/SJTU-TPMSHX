@@ -24,9 +24,8 @@ Phase 1 additions (2026-04-20):
 """
 
 import numpy as np
-from numba import njit, prange
 
-from solvers.ltne_energy import solve_full_domain as _solve_full_2d
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +37,20 @@ from solvers.ltne_energy import solve_full_domain as _solve_full_2d
 _PROJ_SKIP_TOL = 1e-9
 
 # Cache: grid shape (Nx,Ny,Nz) -> {'L': graph Laplacian csr, 'ml': AMG hierarchy}.
+# Read-only reuse contract: pyamg's multilevel solve() does not mutate the
+# hierarchy, and the csr is only used as an operator — a caller mutating
+# either would poison every later solve on that grid shape (audit §5c).
 _LAPLACIAN_AMG_CACHE = {}
+
+
+def clear_laplacian_amg_cache() -> None:
+    """Reset hook (P1.6): drop all cached Laplacian/AMG hierarchies.
+
+    Unbounded by distinct grid shapes; long-lived processes sweeping many
+    grids (GCI studies, BO with adaptive grids) can use this to bound
+    memory. Also gives tests isolation.
+    """
+    _LAPLACIAN_AMG_CACHE.clear()
 
 
 def _laplacian_amg_cache(Nx, Ny, Nz):
@@ -102,7 +114,6 @@ def _project_faces_div_free(uf, vf, wf, eps_f, rcp, dx, dy, dz):
     Returns corrected (uf, vf, wf). Forward-dir fluids are already
     solenoidal (D≈0 ⇒ φ≈0 ⇒ ~no change), so this is safe to apply to all.
     """
-    from scipy.sparse import csr_matrix
     from scipy.sparse.linalg import spsolve
 
     Nx, Ny, Nz = eps_f.shape

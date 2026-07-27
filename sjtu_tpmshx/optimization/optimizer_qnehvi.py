@@ -32,24 +32,59 @@ import json
 import os
 import time
 import warnings
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:                      # annotation-only; torch stays lazy
+    import torch
 
 import numpy as np
 
-from optimization.evaluator import (
+from sjtu_tpmshx.optimization.evaluator import (
     DEFAULT_CONFIG as EVAL_DEFAULT_CONFIG,
     evaluate_design,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     decision_dim,
     decision_bounds,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
 
 # ─── Module-level worker for joblib (must be top-level for pickle) ─
+
+
+def _resolve_core_budget() -> tuple:
+    """Resolve THIS process's core budget for the parallel-eval split.
+
+    ``TPMSHX_BO_CORE_BUDGET`` (2026-07-11): ``os.cpu_count()`` reports the
+    WHOLE machine, so the workers×inner split silently assumes this process
+    is the only BO on the box. A multi-arm launcher (e.g.
+    scripts/port_retest_server.ps1, 4 concurrent arms) breaks that — each
+    arm claimed cpu_count//2 threads per worker and collectively
+    oversubscribed the box ~4x. The launcher therefore declares each arm's
+    share via the env var; unset keeps the historical whole-machine default
+    (single-arm runs and the golden gate untouched).
+
+    Returns ``(cores, source)``; ``source`` tags the engage-time log line
+    so a multi-arm launch is auditable: 'default' (env unset),
+    'env' (honored), 'env-clamped' (out of [1, cpu_count]),
+    'invalid-env-default' (unparseable → whole machine, as before P3.3).
+    """
+    whole = os.cpu_count() or 4
+    raw = os.environ.get('TPMSHX_BO_CORE_BUDGET', '').strip()
+    if not raw:
+        return whole, 'default'
+    try:
+        n = int(raw)
+    except ValueError:
+        return whole, 'invalid-env-default'
+    if n < 1:
+        return 1, 'env-clamped'
+    if n > whole:
+        return whole, 'env-clamped'
+    return n, 'env'
 
 
 def _eval_worker(x: np.ndarray, cfg: dict, dp_cap: float,
@@ -95,6 +130,22 @@ progress: dict = {
     'hv_iter': 0,                        # iter index of last HV update
     'hv_hist': [],                       # running HV history (per BO iter)
 }
+
+
+def _reset_warn_registries() -> None:
+    """Fresh warn-dedup state per BO campaign (P1.3).
+
+    The extrapolation / choke warn registries are process-global; without a
+    reset here a warning latched by a PREVIOUS campaign (or a stray evaluation)
+    silences the same warning for this one. Per-campaign — not per-eval — so a
+    500-eval run still dedups instead of spamming 500 lines. Mirrors
+    ComputePipeline.run (compute_pipeline.py:120-123), which resets per user
+    action for the same reason.
+    """
+    from sjtu_tpmshx.solvers.nu_correlations import reset_extrap_warn_registry
+    from sjtu_tpmshx.df_surrogate.predict import reset_choke_warn_registry
+    reset_extrap_warn_registry()
+    reset_choke_warn_registry()
 
 
 def request_cancel() -> None:
@@ -228,6 +279,8 @@ def run_qnehvi(config: Optional[dict] = None,
 
     cfg = {**EVAL_DEFAULT_CONFIG, **(config or {})}
 
+    _reset_warn_registries()
+
     # 1. Decision space
     D = decision_dim(cfg['n_ctrl_x'], cfg['n_ctrl_y'], cfg['symmetric_y'])
     lb_np, ub_np = decision_bounds(cfg['n_ctrl_x'], cfg['n_ctrl_y'],
@@ -291,21 +344,15 @@ def run_qnehvi(config: Optional[dict] = None,
             # a single thread. Share the cores across workers instead;
             # loky propagates this to NUMBA_NUM_THREADS (joblib >= 1.5).
             #
-            # TPMSHX_BO_CORE_BUDGET (2026-07-11): `os.cpu_count()` reports the
-            # WHOLE machine, so the split above silently assumes this process
-            # is the only BO on it. A multi-arm launcher (scripts/
-            # port_retest_server.ps1 runs 4 arms concurrently) breaks that
-            # assumption: each arm claimed cpu_count//2 threads per worker and
-            # the arms collectively oversubscribed the box ~4x. The launcher
-            # must therefore declare THIS process's core budget; unset keeps
-            # the historical whole-machine behaviour, so single-arm runs and
-            # the golden gate are untouched.
-            _budget = os.environ.get('TPMSHX_BO_CORE_BUDGET', '').strip()
-            try:
-                _cores = int(_budget) if _budget else (os.cpu_count() or 4)
-            except ValueError:
-                _cores = os.cpu_count() or 4
+            # TPMSHX_BO_CORE_BUDGET resolution + visibility: see
+            # _resolve_core_budget (P3.3 extraction of the 2026-07-11 inline
+            # parse). Default/valid paths unchanged; the engage-time INFO
+            # line is what makes a multi-arm launch debuggable.
+            _cores, _src = _resolve_core_budget()
             _inner = max(1, _cores // _workers)
+            _log.info("BO parallel eval: %d workers × %d inner threads "
+                      "(core budget %d, source=%s)",
+                      _workers, _inner, _cores, _src)
             results = Parallel(
                 n_jobs=_workers,
                 backend='loky',

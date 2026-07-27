@@ -1,5 +1,6 @@
 # controllers
-生成日期 2026-07-10，基于 commit f33d30e 附近的 master
+生成日期 2026-07-10，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节；正文失准处标 ⟨07-20 更新⟩）
 
 ## 定位与功能
 
@@ -18,7 +19,7 @@
 
 | 文件 | 职责（一行） |
 |---|---|
-| `sjtu_tpmshx/controllers/__init__.py` | 包出口：re-export `ComputeOrchestrator` / `ResultCache` / `SessionManager` / `SignalRouter` 四个类（`__init__.py:15-22`）。注意 `compute_pipeline` 不在 `__all__` 内，调用方直接 `from controllers.compute_pipeline import …`。 |
+| `sjtu_tpmshx/controllers/__init__.py` | 包出口 ⟨07-20 更新（P1.8）：四类改 **PEP 562 惰性 `__getattr__`** 导出——`import controllers.compute_pipeline` 不再拉起任何 Qt（cli/headless 场景零 Qt 导入的关键一环）；访问 `controllers.ComputeOrchestrator` 等属性时才真正 import⟩。`compute_pipeline` 仍不在 `__all__`，调用方直接 `from controllers.compute_pipeline import …`。 |
 | `sjtu_tpmshx/controllers/compute_orchestrator.py` | 求解线程生命周期 QObject：QThreadPool 派发、CancelToken、started/progress/finished/error/cancelled 信号、stdout+stderr tee 捕获（上限 500 KB）、per-mode ETA 历史。 |
 | `sjtu_tpmshx/controllers/compute_pipeline.py` | 三阶段流水线 ABC + `Pipeline2D` / `Pipeline3D` 具体实现 + `pipeline_for` 维度分发工厂；本包内唯一 Qt-free 的文件（import 仅 abc/typing/domain，`compute_pipeline.py:45-51`）。 |
 | `sjtu_tpmshx/controllers/result_cache.py` | 按模式（2d/3d/poly）存结果 payload + dirty 位 + drawn-tabs 集合 + 最近运行 ring（默认 5 条），带 `results_changed` / `recent_pushed` 信号。 |
@@ -56,7 +57,7 @@
 - 调用方：GUI 3D worker（`sjtu_tpmshx/ui/mixins/run_controller.py:285`）、上海 3D 基线门脚本的 production-path runner（`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:477`, `515`）、`sjtu_tpmshx/tests/test_pipeline_3d_e2e.py:25`。
 
 ### pipeline_for（`sjtu_tpmshx/controllers/compute_pipeline.py:235-247`）
-- 工厂：`cfg.is_3d` 为真返回 `Pipeline3D`，否则 `Pipeline2D`。`is_3d` 定义为 `int(self.solver.Nz) >= 2`（`sjtu_tpmshx/domain/compute_config.py:374-377`）。调用方主要是测试（`sjtu_tpmshx/tests/test_compute_pipeline.py:176-185`、`test_pipeline_2d_smoke.py:143-147`、`test_pipeline_ui_hooks.py:39`）；GUI 路径不用它（run_controller 直接按按钮分支实例化具体类）。
+- 工厂：`cfg.is_3d` 为真返回 `Pipeline3D`，否则 `Pipeline2D`。`is_3d` 定义为 `int(self.solver.Nz) >= 2`（`sjtu_tpmshx/domain/compute_config.py:374-377`）。调用方 ⟨07-20 更新⟩：**`sjtu_tpmshx/cli.py`（tpmshx-run）是其正式生产消费方**（P1.8 起，headless 入口按 cfg 维度分发），此外是测试（`test_compute_pipeline.py:176-185`、`test_pipeline_2d_smoke.py:143-147`、`test_pipeline_ui_hooks.py:39`）；GUI 路径仍不用它（run_controller 直接按按钮分支实例化具体类）。
 
 ### ResultCache（`sjtu_tpmshx/controllers/result_cache.py:41`）
 - `MODES = ('2d', '3d', 'poly')`（`result_cache.py:48`）；信号 `results_changed(str)` / `recent_pushed(dict)`（`result_cache.py:51-52`）。
@@ -136,3 +137,18 @@
 - **编码——这个坑换到 Windows Server 不会消失，反而要重点提防**：会话/预设读写本身是安全的，`session_manager.py` 的每处文件 I/O 都显式 `encoding='utf-8'`（`session_manager.py:122`, `163`, `208`, `246`, `265`，已逐行核实），不依赖系统区域设置。但风险点在 `compute_orchestrator.py` 的 `_Tee`：它把 worker 产生的原始文本（求解器 `warnings.warn` / stdout 日志，可能含中文）直接 tee 到 `sys.__stdout__` / `sys.__stderr__`（`compute_orchestrator.py:97-109, 119-120`），**没有显式 encoding**。当这两个流不是交互式控制台（例如 Windows Server 上以服务/计划任务方式启动、stdout 被重定向到文件或管道）时，CPython 会退回到 `locale.getpreferredencoding()`；中文区域设置的 Windows Server 该值默认是 `cp936`（GBK）而非 UTF-8。一旦写入触发 `UnicodeEncodeError`，`_Tee.write` 的 `except Exception: pass` 防护（`compute_orchestrator.py:97-102`，本身是刻意为之的 except-audit 设计）会把这个失败**静默吞掉**——不报错，只是这一行日志凭空消失，GUI/solve-log 查看器不会有任何提示。这与"迁移出 Windows 后 GBK 问题自然消失"的方向相反，需要按仓库已知的 GBK 坑（研究台账 / blind-spot audit 记录的"GBK 中文日志毒化 pytest capture"同源问题）持续提防（未验证：本文未在真实中文区域设置的 Windows Server 无 console 会话上复现该编码失败，机制推断自 CPython 非终端场景的 encoding 回退规则与上述 except-pass 设计的组合）。
 - **并行**：orchestrator 池并发=1（`compute_orchestrator.py:196`）；服务器批量跑请绕开 orchestrator 直接多进程驱动 `Pipeline2D/3D`（validation 脚本即此模式，`sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py:477-515`），但注意 `run()` 会重置进程内全局告警注册表（`compute_pipeline.py:113-116`）——多进程各自独立无冲突，同进程多线程并行会互踩。
 - **复现性**：golden 门要求 `PYTHONHASHSEED=0`（repo 约定，见 `/check`；非本包代码——未在本包核实），批量脚本移植时保留该环境变量。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **`__init__.py` 改 PEP 562 惰性导出**（P1.8）：模块级不再 import 四个 Qt-coupled 控制器，
+  `__getattr__` 按属性访问惰性解析——`controllers.compute_pipeline` 可在零 Qt 环境导入
+  （cli.py 与 headless 测试依赖此性质）。对既有调用方透明（属性访问语义不变）。
+- **新消费方 `sjtu_tpmshx/cli.py`**（tpmshx-run，P1.8）：`ComputeConfig.from_json` →
+  `pipeline_for(cc)` → `pipe.run()`；`--dry-run` 只做 parse+分发；exit 2 = solved-but-flagged
+  （envelope_valid 或 outer_converged 为假）。
+- **run_controller.py 呈现区外迁**（P2.5a）：write_result/_finalize_plots/_update_result_summary/
+  _diag_summary_text/_show_diag_dialog 五方法逐字节迁至 `ui/mixins/run_results.py`
+  （RunResultsMixin，MRO 紧随 RunControllerMixin）。本卷所引 run_controller 行号 ≤350 的
+  （数据流/worker/信号接线段）不受影响；>350 的已漂移。orchestrator 侧接口零变化。
+- 本卷正文其余断言（CancelToken 鸭子类型、双 CancelledError 转换、_Tee 500KB、ETA deque、
+  SessionManager/SignalRouter）经抽查仍准确；signal_router.py 分支内仅 lint 级修饰。

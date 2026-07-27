@@ -11,6 +11,7 @@ z 中切片着色: A(phi<δ−C) 蓝 / 固体(|带|) 灰 / B(phi>δ+C) 橙。
 import sys
 import io
 import base64
+import os
 from pathlib import Path
 
 import numpy as np
@@ -19,11 +20,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _find_C_for_eps
-from solvers.asym_geometry import eps_sides, find_delta_max
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _find_C_for_eps
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, find_delta_max
 
-HTML = Path(r"C:\Users\ALEX\Desktop\TPMS-非对称孔隙率-Phase1-CFD计划.html")
+# P1.7: was a dead C:\Users\ALEX\Desktop path. Default to gitignored
+# runs/_out; TPMSHX_TOOL_OUT_DIR overrides.
+_OUT_DIR = Path(os.environ.get('TPMSHX_TOOL_OUT_DIR',
+                               str(Path(__file__).resolve().parents[1] / "_out")))
+_OUT_DIR.mkdir(parents=True, exist_ok=True)
+HTML = _OUT_DIR / "TPMS-非对称孔隙率-Phase1-CFD计划.html"
 PLACEHOLDER = "<!--TPMS-PREVIEW-->"
 N = 200
 TARGET_POROSITY = 0.85          # solid ~15%, 通道清晰

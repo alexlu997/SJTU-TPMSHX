@@ -1,5 +1,5 @@
 import openpyxl
-from design.cases import load_cases, DesignCase
+from sjtu_tpmshx.design.cases import load_cases, DesignCase
 
 def _make_xlsx(path):
     wb = openpyxl.Workbook(); ws = wb.active

@@ -21,9 +21,9 @@ import warnings
 
 import numpy as np
 
-from optimization.evaluator import evaluate_design
-from optimization.optimizer_qnehvi import _pareto_mask_max
-from runs.run_m1_uniform_vs_graded import CFG_M1
+from sjtu_tpmshx.optimization.evaluator import evaluate_design
+from sjtu_tpmshx.optimization.optimizer_qnehvi import _pareto_mask_max
+from sjtu_tpmshx.runs.run_m1_uniform_vs_graded import CFG_M1
 
 RUNS = {
     'seed42': 'reports/m1_uniform_vs_graded/qnehvi_m1/pareto_final.csv',

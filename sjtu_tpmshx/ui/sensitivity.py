@@ -11,7 +11,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QLineEdit, QFrame, QWidget,
+    QLineEdit,
 )
 
 from .theme import get_theme
@@ -36,7 +36,7 @@ _METRICS = [
 
 def _eval_surrogate(tpms, L_cell_mm, t_mm, u, T_in_K, P_in_Pa, k_s):
     """One surrogate evaluation. Returns dict of derived quantities."""
-    from solvers.tpms_calc import compute as _tpms_compute
+    from sjtu_tpmshx.solvers.tpms_calc import compute as _tpms_compute
     r = _tpms_compute(tpms, L_cell_mm, t_mm, u, T_in_K, P_in_Pa, k_s)
     h_v = r.get('h_v') or (
         r['H_sf'] * r.get('A_0', 0.0))

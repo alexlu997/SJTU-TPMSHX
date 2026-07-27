@@ -10,15 +10,8 @@ data changes:
     python -m df_surrogate.build_prebuilt_surrogate
 """
 from __future__ import annotations
-import sys
-from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from df_surrogate.surrogate_v3 import SurrogateV3, XLSX
-from logutil import get_logger
+from sjtu_tpmshx.df_surrogate.surrogate_v3 import SurrogateV3, XLSX
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

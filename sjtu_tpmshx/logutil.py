@@ -3,7 +3,7 @@ openspec change print-to-logging, 2026-07-03).
 
 Usage::
 
-    from logutil import get_logger
+    from sjtu_tpmshx.logutil import get_logger
     _log = get_logger(__name__)
     _log.info("[3D grid] %s", summary)
 
@@ -86,7 +86,11 @@ def get_logger(name: str) -> logging.Logger:
 
     ``name`` is usually ``__name__``; a leading package path is kept so
     ``TPMSHX_LOG_LEVEL`` filtering can later grow per-module knobs via the
-    standard logging hierarchy.
+    standard logging hierarchy. A leading ``sjtu_tpmshx.`` is stripped so
+    logger names stay ``tpmshx.<subsystem>...`` regardless of import style —
+    the taxonomy must not encode packaging history (P1.8b F2: modules now
+    execute under package-qualified names; without this, every logger would
+    have become ``tpmshx.sjtu_tpmshx.*`` and name-anchored consumers broke).
     """
     _configure_root()
-    return logging.getLogger(f"{_ROOT_NAME}.{name}")
+    return logging.getLogger(f"{_ROOT_NAME}.{name.removeprefix('sjtu_tpmshx.')}")

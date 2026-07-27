@@ -210,6 +210,24 @@ SJTU-TPMSHX/                       ← 仓库根
 
 > 下面按文件夹组织。每个文件给出：**作用**、**关键函数/类**、**输入输出**、**依赖**、**注意点**。
 
+> **2026-07-20 增量（upgrade/loop 分支）**——以下新增/迁移未展开成子节，细节见
+> `docs/atlas/` 各卷文末"2026-07 升级分支收编"节（本手册与 atlas 冲突时以 atlas 为准）：
+> - `sjtu_tpmshx/cli.py` ⭐新 — `tpmshx-run` headless 入口（ComputeConfig JSON 进、摘要出，
+>   `--dry-run`/`--json`，exit 2 = 解出但被旗标；Qt 零导入）。注意与 `design/cli.py`（选型
+>   子模块 CLI，本节 6.x 既有条目）是两个不同入口。
+> - `sjtu_tpmshx/_version.py` ⭐新 — 版本号单源（pyproject dynamic 指向；main.py 再导出）。
+> - `pyproject.toml` / `requirements-lock-server.txt` / `mypy-core-files.txt` ⭐新（仓库根）—
+>   打包地基 + 服务器 83 包精确冻结 + 类型门核心面清单。
+> - `ui/mixins/run_results.py` ⭐新 — 结果呈现 mixin（write_result 等五方法自 run_controller
+>   逐字节迁出；Main_Menu 现 14 mixin）。
+> - `ui/polygon_calc.py` ⬅迁入（原 `runs/polygon_calc.py`）— 多边形域计算编排（Qt 耦合，
+>   分层审计迁移）。
+> - `runs/tools/audit_import_graph.py` / `build_fast_tier_manifest.py` / `seam_surgery_3d.py`
+>   ⭐新 — 分层审计（常驻门）/ fast-tier 清单生成 / AST 搬移手术工具（一次性）。
+> - `solvers/threads.py` 增 `recommend_solver_threads` / `warn_if_default_pool`（大网格线程
+>   一次性建议，池不自动改）；`scripts/run_tests_server.ps1`（标准全量门）与
+>   `run_tests_fast.ps1`（~56s 快档，非门）。
+
 ---
 
 ### 6.1 `solvers/` — 物理内核（几何、物性、关联式）
@@ -688,7 +706,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | 冒烟与集成 | 界面实例化、流水线端到端 | `test_main_smoke.py`、`test_pipeline_2d_smoke.py`、`test_evaluator_sanity.py` |
 | design 子模块（`tests/design/`，15 文件） | 定尺、枚举、工况读取 | `test_cases.py`、`test_sizing_inner.py`、`test_optimize.py` |
 
-运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。
+运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（桌面机全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。**多核服务器（2026-07-20 增）**：`-n auto` 在 128 逻辑核上会超额订阅卡死——标准全量门用 `scripts/run_tests_server.ps1`（双 pass，~11–19 min）；开发内循环用 `scripts/run_tests_fast.ps1`（~56 s，排除 census 标记的 21 个 heavy 测试，**非验证门**）。
 
 ---
 

@@ -16,21 +16,14 @@ Streamwise convention for SIMPLESolver3D:
     - inlet face area = Lx * Lz, dy spacing irrelevant for inflow integral
     - face integral: sum_{i,k} rho_face * v_face * (dx_i * dz_k)
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 import pytest
 
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 def _build_uniform_box(Nx=8, Ny=8, Nz=8,
@@ -202,7 +195,7 @@ def test_partial_mask_mass_flow_match_inlet_BC():
         sol.v[:, -1, :] * sol.rho_field[:, -1, :] * dx * dz
     ))
 
-    print(f"  partial-mask reproducer:")
+    print("  partial-mask reproducer:")
     print(f"    A_face          = {A_face:.6g}")
     print(f"    A_open          = {A_open:.6g}  (open_frac={open_frac:.4f})")
     print(f"    target (ρ·U_super·A_open):  {m_target_super:.6g}")

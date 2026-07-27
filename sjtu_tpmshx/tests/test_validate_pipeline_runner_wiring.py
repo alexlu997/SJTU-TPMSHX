@@ -18,17 +18,10 @@ CSVs while dropping information the RMSRE口径 depends on:
 These tests assert the WIRING (config plumbing + diagnostics forwarding), not
 physics numbers, so they are cheap and grid-independent.
 """
-import sys
-from pathlib import Path
 
-import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import SolverConfig  # noqa: E402
-from pipelines.stages_3d import _finalize_3d_cfg  # noqa: E402
+from sjtu_tpmshx.domain.compute_config import SolverConfig  # noqa: E402
+from sjtu_tpmshx.pipelines.stages_3d import _finalize_3d_cfg  # noqa: E402
 
 
 def test_solver_config_carries_max_outer_ltne():
@@ -49,8 +42,8 @@ def test_pipeline_branch_wires_max_outer_into_solver_config():
     Rather than run a real 16-case solve, capture the ComputeConfig the runner
     builds by intercepting Pipeline3D.
     """
-    import validation.cases.validate_shanghai_3d_real as v3d
-    import controllers.compute_pipeline as cp
+    import sjtu_tpmshx.validation.cases.validate_shanghai_3d_real as v3d
+    import sjtu_tpmshx.controllers.compute_pipeline as cp
 
     captured = {}
 
@@ -100,8 +93,8 @@ def test_pipeline_branch_wires_max_outer_into_solver_config():
 
 def test_pipeline_branch_reports_real_pressure_diagnostics():
     """The runner must read envelope_valid / p_clip_hits, not hard-code 0/1."""
-    import validation.cases.validate_shanghai_3d_real as v3d
-    import controllers.compute_pipeline as cp
+    import sjtu_tpmshx.validation.cases.validate_shanghai_3d_real as v3d
+    import sjtu_tpmshx.controllers.compute_pipeline as cp
 
     class _FakePipeline3D:
         def __init__(self, cc):

@@ -22,7 +22,7 @@ def _isolate_session_dir(tmp_path, monkeypatch):
     """Main_Menu.closeEvent auto-saves the session (main.py); without this
     redirect the w.close() below writes the REAL sjtu_tpmshx/.last_session.json
     and clobbers the user's saved GUI session (bug found 2026-07-13)."""
-    import controllers.session_manager as sm_mod
+    import sjtu_tpmshx.controllers.session_manager as sm_mod
     orig_init = sm_mod.SessionManager.__init__
 
     def _init(self, base_dir=None, parent=None):
@@ -34,8 +34,8 @@ def _isolate_session_dir(tmp_path, monkeypatch):
 
 def test_main_menu_startup():
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(sys.argv)
-    from main import Main_Menu
+    _app = QApplication.instance() or QApplication(sys.argv)
+    from sjtu_tpmshx.main import Main_Menu
     w = Main_Menu()
     # Key widgets that every refactor step must preserve
     assert hasattr(w, 'combo_tpms'), "combo_tpms missing after refactor"
@@ -50,9 +50,9 @@ def test_main_menu_startup():
 def test_cpu_cores_spinbox_sets_threads():
     """The 'CPU cores (energy ‖)' spinbox drives solvers.threads at runtime."""
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(sys.argv)
-    from main import Main_Menu
-    import solvers.threads as th
+    _app = QApplication.instance() or QApplication(sys.argv)
+    from sjtu_tpmshx.main import Main_Menu
+    import sjtu_tpmshx.solvers.threads as th
     w = Main_Menu()
     assert hasattr(w, 'spin_cpu_cores'), "CPU cores spinbox missing"
     mx = th.max_threads()

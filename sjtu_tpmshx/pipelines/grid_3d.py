@@ -7,7 +7,7 @@ behavior bit-identical.
 from __future__ import annotations
 import numpy as np
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -93,7 +93,7 @@ def _build_zone_fields_3d(cells: list[dict], Nx: int, Ny: int, Nz: int,
     Returns L_field / t_field / eps_field (mm, mm, 0-1).
     """
     from scipy.ndimage import gaussian_filter
-    from solvers.tpms_calc import geometry as tpms_geometry
+    from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
     L_2d = np.full((Nx, Ny), float(default_L), dtype=np.float64)
     t_2d = np.full((Nx, Ny), float(default_t), dtype=np.float64)
     for cell in cells:
@@ -135,7 +135,7 @@ def _build_grid_3d(wall_refine: bool, L: float, H: float, Lz: float,
     distances; guarded by test_wall_refine_3d.py.)
     """
     if wall_refine:
-        from solvers.df_projection import build_master_refined_grid_3d
+        from sjtu_tpmshx.solvers.df_projection import build_master_refined_grid_3d
         try:
             dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
                 L, H, Lz, Nx_u, Ny_u, Nz_u,

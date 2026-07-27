@@ -6,8 +6,8 @@ t∈{0.3,0.4,0.5} 是闭合训练域; t=0.6 为外推 (低置信, K 外插可能
 """
 import math
 
-from solvers.tpms_calc import geometry, nu_from_Re
-from df_surrogate.predict import predict_K_cF, predict_dP_compressible
+from sjtu_tpmshx.solvers.tpms_calc import geometry, nu_from_Re
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_dP_compressible
 
 
 def test_closures_accept_t_0p3_and_0p6():
@@ -25,6 +25,6 @@ def test_closures_accept_t_0p3_and_0p6():
 
 
 def test_default_enumeration_nodes_include_t_0p6():
-    from design.select import NODES
+    from sjtu_tpmshx.design.select import NODES
     assert 0.3 in NODES["t"]
     assert 0.6 in NODES["t"]

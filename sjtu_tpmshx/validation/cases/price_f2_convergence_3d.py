@@ -43,17 +43,15 @@ import pandas as pd
 
 _HERE = Path(__file__).resolve()
 _PKG = _HERE.parents[2]                       # sjtu_tpmshx/
-if str(_PKG) not in sys.path:
-    sys.path.insert(0, str(_PKG))
 
-from domain.compute_config import (ComputeConfig, FluidConfig,   # noqa: E402
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,   # noqa: E402
                                    GeometryConfig, SolverConfig,
                                    PartialBCConfig, ExtrapPolicy)
-from controllers.compute_pipeline import Pipeline3D              # noqa: E402
-from solvers.tpms_calc import (air_density, water_density,       # noqa: E402
+from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D              # noqa: E402
+from sjtu_tpmshx.solvers.tpms_calc import (air_density, water_density,       # noqa: E402
                                P_atm)
-from validation.harness._case_sets import shanghai_spec, SHANGHAI_XLSX  # noqa: E402
-from validation.harness._harness import load_cases_df            # noqa: E402
+from sjtu_tpmshx.validation.harness._case_sets import shanghai_spec, SHANGHAI_XLSX  # noqa: E402
+from sjtu_tpmshx.validation.harness._harness import load_cases_df            # noqa: E402
 
 SPEC = shanghai_spec()
 _REPORTS = _PKG.parent / 'reports'

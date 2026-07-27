@@ -1,5 +1,6 @@
 # configs + core + domain
-生成日期 2026-07-10，基于 commit f33d30e 附近的 master
+生成日期 2026-07-10，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（见文末收编节；正文失准处标 ⟨07-20 更新⟩）
 
 > 溯源约定：所有 `file:line` 相对仓库内 `sjtu_tpmshx/` 包目录（即 `sjtu_tpmshx/domain/compute_config.py:337` 写作 `domain/compute_config.py:337`）。本文所有断言均已在代码中逐条核实；无法核实处显式标注「未验证」。
 
@@ -21,7 +22,7 @@
 | `configs/__init__.py` | 44 | `load_shanghai_baseline()`：读同目录 `shanghai_baseline.json` 返回 dict |
 | `configs/shanghai_baseline.json` | 27 | Shanghai canonical 参数：Gyroid, L_cell=7.0 mm, t=0.6 mm, k_s=16, L_dom=0.182 m, H_dom=0.042 m, Lz=0.042 m（`configs/shanghai_baseline.json:9-21`） |
 | `core/__init__.py` | 6 | 仅 docstring，声明中性层定位 |
-| `core/evaluators.py` | 433 | 3D 设计评估器 `evaluate_3d` + 逐体素物性数组构建 `_build_3d_arrays` |
+| `core/evaluators.py` | 639 ⟨07-20 更新；原 433。P1.3：choke 种子/超音速判定全部改走 `solvers/envelope` 权威（`from solvers.envelope import ...` :46，`R_AIR = R_AIR_DEFAULT` :59 仅作兼容再导出）；新增 `_post_solve_gate_3d` :66（解后 Mach+正压门，失败 → NaN+invalid dict 保留真实几何质量）；`_build_3d_arrays` 现 :98、`evaluate_3d` 现 :145，本卷旧行号（:51/:61/:108-123）均漂移⟩ | 3D 设计评估器 `evaluate_3d` + 逐体素物性数组构建 `_build_3d_arrays` + 解后有效性门 |
 | `domain/__init__.py` | 63 | re-export `validator` 的全部公开函数（`domain/__init__.py:39-50`） |
 | `domain/compute_config.py` | 533 | `ComputeConfig` dataclass 树 + JSON 双格式适配 + `TPMSHX_*` env 注册表 docstring |
 | `domain/compute_result.py` | 75 | `ComputeResult` 输出 dataclass（headline 标量 + fields/coeffs/props/residuals 等子字典） |
@@ -151,3 +152,19 @@
 - **可复现性**：golden 门要求 `PYTHONHASHSEED=0`（仓库级约定，见 `.claude/commands/check.md`；本三包无直接哈希序依赖，未验证具体敏感点）。
 - **无 GUI 服务器的推荐入口**：`ComputeConfig.from_json`（`domain/compute_config.py:385`）绕开全部 Qt/UI 层直达 pipelines；`FeatureFlags`/`ZoneInputConfig` docstring 里提到的 `window.chk_*` 只是字段来历说明，不是运行时依赖。
 - **并行/线程**：本三包自身无线程逻辑；numba 线程数经 `TPMSHX_NUM_THREADS`（注册表 `domain/compute_config.py:92-93`，读取在 `solvers/threads.py`，未在本文复核）。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **core/evaluators.py envelope 权威统一**（P1.3-A/B）：三处 choke 种子改调
+  `envelope.predict_outlet_p_sq`、判定改 `assess_solution_validity`/`mach_field_max`；本地
+  `R_AIR` 变 `R_AIR_DEFAULT` 兼容再导出；新增 `_post_solve_gate_3d`（solver-frame vmag 中心化
+  0.5·(u[:-1]+u[1:])、T 场 transpose(1,0,2)/[:, ::-1, :] 映射；失败返回 NaN+invalid 但保留真实
+  几何质量供 BO 质量目标）。常驻守卫：`test_evaluator_envelope_authority.py`。
+- **契约测试**（P1.4）：`test_evaluator_pipeline_contract.py` 把评估器 vs 生产管线的六条有意
+  差异固化为机器断言，含 **D3 绊线**（G 口径不一致——2D 管线显式 ρ(T_in,P_in) vs 3D 首解捕获
+  ρ(T_in,P_out_seed)，实测吞吐亏 7.38%/19.30%，待 Alex 决策，upgrade/DECISIONS-NEEDED.md D3）。
+- **compute_config.py**：env 注册表 docstring 扩容（+`TPMSHX_BO_CORE_BUDGET`、
+  `TPMSHX_NUM_THREADS` 建议机制注记——:42-103 行段已漂移）；P2.2 类型注解修正三处
+  （物理默认值零变动）；该文件在 mypy 核心七文件圈内。
+- **邻域新文件**（不属本卷三包但契约相关）：`sjtu_tpmshx/_version.py`（版本单源，pyproject
+  dynamic 指向）、`sjtu_tpmshx/cli.py`（ComputeConfig.from_json → pipeline_for 的 headless 入口）。

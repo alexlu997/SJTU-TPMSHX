@@ -8,17 +8,10 @@ to lock in the contract.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pandas as pd
-import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from validation.harness._provenance import (
+from sjtu_tpmshx.validation.harness._provenance import (
     write_csv_with_provenance,
     backfill_provenance,
     read_csv_with_provenance,
@@ -67,7 +60,7 @@ def test_write_csv_pandas_can_still_read_with_comment(tmp_path):
 def test_backfill_prepends_header_to_existing_csv(tmp_path):
     out = tmp_path / 'legacy.csv'
     out.write_text('a,b\n1,2\n3,4\n', encoding='utf-8')
-    meta = backfill_provenance(out, 'tests/legacy.py')
+    backfill_provenance(out, 'tests/legacy.py')
     lines = out.read_text(encoding='utf-8').splitlines()
     assert lines[0].startswith('# script:')
     assert lines[3] == 'a,b'

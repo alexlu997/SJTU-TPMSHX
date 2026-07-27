@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QMessageBox
 
-from ui.theme import (get_theme, get_theme_name, set_theme, set_density,
+from sjtu_tpmshx.ui.theme import (get_theme, get_theme_name, set_theme, set_density,
                       set_accent_override)
 
 
@@ -16,7 +16,6 @@ class AppearanceMixin:
         """E13 — let user choose a custom accent_primary override.
         Stored to `.accent` next to main.py; read at startup."""
         from PySide6.QtWidgets import QColorDialog
-        from ui.theme import set_accent_override
         cur = get_theme().get('accent_primary', '#3B82F6')
         from PySide6.QtGui import QColor
         col = QColorDialog.getColor(QColor(cur), self, "Pick accent colour")

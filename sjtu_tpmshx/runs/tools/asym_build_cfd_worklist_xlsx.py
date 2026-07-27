@@ -21,7 +21,6 @@ Output: D:/Postgraduate/asym-porosity-data/asym_cfd_worklist.xlsx
         (workspace-level dedicated folder, gitignored — porosity-offset generated data)
 Usage:  python -u runs/asym_build_cfd_worklist_xlsx.py
 """
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,9 +28,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side as XLSide
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from solvers.tpms_geometry import _phi_grid, _C_from_tL
-from solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+from sjtu_tpmshx.solvers.asym_geometry import eps_sides, a0_sides_mc, dh_sides, percolates_z
 
 # ── geometry design (locked) ─────────────────────────────────────
 N = 128
@@ -62,9 +60,10 @@ WATER = dict(name="water", Tref=325.0, P_MPa=0.101325, rho=987.11, mu=5.33e-4,
              cp=4180.9, k=0.643, Pr=3.4657, Twall=375.0)
 
 # Output → workspace-level dedicated folder for porosity-offset generated DATA.
-# parents[4] = D:\Postgraduate (workspace root); folder is gitignored (not committed).
-# Derived (not hardcoded absolute) so it self-locates as long as the solver repo
-# stays nested under the workspace.
+# parents[4] = the workspace root HOLDING the repo (old dev box: D:\Postgraduate;
+# this server: E:\LWH); folder is gitignored (not committed). Derived (not
+# hardcoded absolute) so it self-locates as long as the solver repo stays
+# nested under the workspace.
 OUT = Path(__file__).resolve().parents[4] / "asym-porosity-data"
 XLSX = OUT / "asym_cfd_worklist.xlsx"
 

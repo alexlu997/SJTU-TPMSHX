@@ -9,18 +9,17 @@ on synthetic decision vectors and parsed CSVs.
 from __future__ import annotations
 
 import json
-import os
 
 import numpy as np
 import pytest
 
-from optimization.export_ntop_csv import (
+from sjtu_tpmshx.optimization.export_ntop_csv import (
     DEFAULT_GRID_NX,
     DEFAULT_GRID_NY,
     export_decision_vector,
     export_pareto_row,
 )
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_T_BOUNDS,
     encode_decision_vector,
@@ -39,7 +38,7 @@ def _uniform_decision_vector():
 def test_uniform_field_export_writes_three_files(tmp_path):
     x = _uniform_decision_vector()
     out = tmp_path / 'export'
-    summary = export_decision_vector(x, str(out))
+    export_decision_vector(x, str(out))
     assert (out / 'Lfield.csv').exists()
     assert (out / 'tfield.csv').exists()
     assert (out / 'provenance.json').exists()
@@ -64,7 +63,7 @@ def test_uniform_field_csv_values_are_constant(tmp_path):
 def test_provenance_records_decision_and_summary(tmp_path):
     x = _uniform_decision_vector()
     out = tmp_path / 'prov'
-    summary = export_decision_vector(x, str(out), Nx_export=10, Ny_export=10)
+    export_decision_vector(x, str(out), Nx_export=10, Ny_export=10)
     with open(out / 'provenance.json') as f:
         data = json.load(f)
     assert data['Nx_export'] == 10

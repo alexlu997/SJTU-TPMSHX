@@ -39,6 +39,7 @@ Convention
 """
 from __future__ import annotations
 
+import os
 import warnings
 import numpy as np
 
@@ -193,8 +194,18 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 
 
 # ── Supercritical CO2 DIRECT fit (smooth-wall unit-cell CFD) ──
-# REFIT 2026-07-23 on the corrected upload — Diamond 20 + Gyroid 17
-# geometries L∈[4,8]×t∈[0.3,0.6] mm (was 15+12 on L∈[4,7]); the earlier
+# REFIT 2026-07-26 on the Gyroid L=8 completion — Diamond 20 + Gyroid **20**
+# geometries (Gyroid was 17). The 07-26 upload is PURELY ADDITIVE: all 4400
+# prior Gyroid core rows survive bit-identically (max rel dev 3e-16), and the
+# 1000 new rows are all at L=8 — G_8_3 went 80→270 cases (it had been only 7%
+# sampled) and G_8_4/5/6 went 0→270 (they had been ABSENT, i.e. RBF-
+# extrapolated). Diamond is untouched and its coefficients are unchanged to
+# the stored precision — that is the control for this re-baseline.
+# Gyroid moved c 0.201101→0.192994, a 0.720625→0.722221, d −0.013529→−0.044313:
+# the geometry exponent d is what a filled-in L=8 column should move most.
+#
+# Prior lineage — REFIT 2026-07-23 on the corrected upload, Diamond 20 +
+# Gyroid 17 geometries L∈[4,8]×t∈[0.3,0.6] mm (was 15+12 on L∈[4,7]); the earlier
 # export's mesh Dh ran ~6% high and D_7_6/G_7_6 were RBF-EXTRAPOLATED, so the
 # 2026-07-15 coeffs below (kept in git) fit a partly-wrong geometry envelope.
 # The new data corrects Dh (agrees with tpms_calc to <0.4%) and gives REAL CFD
@@ -210,8 +221,10 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 #     df_surrogate/load_sco2_cfd.py module doc.
 #
 # Form  Nu = c·Re^a·Pr_b^(1/3)·(D_h/L)^d      [bulk properties at (T_b, P)]
-# Accuracy (2026-07-23): far-critical RMSRE ~7–9%, all-data ~19%; LOGO
-# (leave-one-geometry-out) medAPE Diamond 9.5% / Gyroid 8.4%.
+# Accuracy (2026-07-26): far-critical RMSRE Diamond 9.3% / Gyroid 7.4%,
+# all-data ~19% both; LOGO (leave-one-geometry-out) medAPE Diamond 9.5% /
+# Gyroid 7.9% (was 8.4% on 17 geometries — it IMPROVED while the fit task got
+# harder by 3 geometries, which is the sign the L=8 column was the weak spot).
 #
 # ⚠ SMOOTH WALL — SLM roughness deliberately NOT included. With D_7_6/G_7_6
 # now REAL CFD, the experiment/CFD ratio is a CLEAN roughness factor (no more
@@ -229,8 +242,11 @@ def nu_water_topo(tpms_type, Re, Pr_water):
 SCO2_NU_RE_RANGE = (2600.0, 128000.0)
 SCO2_NU_COEFFS = {
     'Diamond': {'c': 0.184809, 'a': 0.707421, 'd': -0.281792},
-    'Gyroid':  {'c': 0.201101, 'a': 0.720625, 'd': -0.013529},
+    'Gyroid':  {'c': 0.192994, 'a': 0.722221, 'd': -0.044313},
 }
+# Retired Gyroid coeffs from the 2026-07-23 fit (17 geometries, L=8 column
+# only 7% sampled at t=0.3 and absent at t=0.4/0.5/0.6), for reference:
+#            Gyroid  c=0.201101 a=0.720625 d=-0.013529.
 # Retired 2026-07-15 coeffs (old data, wrong-Dh + extrapolated 7/0.6), for
 # reference: Diamond c=0.166714 a=0.705490 d=-0.434198;
 #            Gyroid  c=0.199133 a=0.719463 d=-0.109010.
@@ -257,7 +273,12 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
 
     Raises NotImplementedError for topologies without an sCO2 CFD fit.
     Pr is the BULK Prandtl at (T_b, P) — no wall-property ratio by design.
-    Validity/failure bands: see SCO2_NU_COEFFS block comment."""
+    Validity/failure bands: see SCO2_NU_COEFFS block comment.
+
+    STAYS SMOOTH-WALL by contract: the validation baselines
+    (validation/sco2_exp, γ_Nu ≡ Nu_exp / Nu_cfd) and the phase-A form pins
+    ratio against THIS function — the experimental correction is applied by
+    the production consumers via ``gamma_nu_sco2`` below, never here."""
     if tpms_type not in SCO2_NU_COEFFS:
         raise NotImplementedError(
             f"sCO2 Nu fit only available for {sorted(SCO2_NU_COEFFS)} "
@@ -269,3 +290,80 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
     co = SCO2_NU_COEFFS[tpms_type]
     return (co['c'] * Re_safe ** co['a'] * Pr_sco2 ** (1 / 3)
             * (D_h_mm / L_mm) ** co['d'])
+
+
+# ── sCO2 experimental heat-transfer correction γ_Nu (D-2sc-3, 2026-07-22) ──
+# HX-level amplitude on top of the smooth-wall fit above, anchored on the
+# D-7-6 / G-7-6 sCO2 experiments (both sides pooled — the subst.v2 use-card's
+# "换热修正 · 两侧合用" row; anchored-fit convention: exponent a fixed at the
+# CFD value, γ = c_exp/c_cfd_eff). Amplitude-ONLY by measurement: the fitted
+# Re-slopes are ±0.02 (flat — unlike γ_f's significant hot-side slope).
+# Applied per-element inside the experimental Re window; outside, the element
+# keeps the smooth value (never extrapolate an experimental anchor) with a
+# one-shot warning. Kill switch TPMSHX_SCO2_GAMMA_NU=0 → pre-anchor smooth.
+# REFROZEN 2026-07-23 against the refit SCO2_NU_COEFFS (corrected upload,
+# REAL CFD at D_7_6/G_7_6): both anchors are now CLEAN roughness factors —
+# the former Gyroid caveat (γ conflated with the G L=7 RBF extrapolation)
+# is RESOLVED by the backfill. Exp windows unchanged (same experiment set).
+# REFROZEN 2026-07-26 (Gyroid only) against the Gyroid L=8 completion —
+# the smooth base moved, so the base-relative anchor had to follow. Diamond is
+# bit-identical (its CFD did not change), which is the control. Gyroid moved
+# only γ +0.33% / σln +0.39%; the EXPERIMENT is untouched (same 80 points,
+# same Re window), so this is purely the smooth denominator being better
+# resolved at L=8. Retired 2026-07-23 Gyroid values, for reference:
+#   Gyroid  γ=1.1253904125495358 σln=0.03404943924575467.
+# Retired 2026-07-22 values (old wrong-Dh/extrapolated base), for reference:
+#   Diamond γ=1.7557581458289075 σln=0.1284497503774956;
+#   Gyroid  γ=1.0743811537767434 σln=0.033961111486825596.
+# Uncertainty: pointwise ln-residual σln frozen for downstream UQ.
+GAMMA_NU_SCO2 = {
+    'Diamond': {'gamma': 1.8071381249714116,
+                're_lo': 8950.399055885377, 're_hi': 35173.875658799734,
+                'sig_ln': 0.12840542895995066, 'n': 52},
+    'Gyroid':  {'gamma': 1.1290715256456092,
+                're_lo': 10632.405680243332, 're_hi': 48961.25289670842,
+                'sig_ln': 0.03418246063235273, 'n': 80},
+}
+
+_GAMMA_NU_WARNED: set[tuple[str, str]] = set()
+
+
+def gamma_nu_sco2(tpms_type, Re):
+    """Element-wise γ_Nu factor for the smooth ``nu_sco2_topo`` value.
+
+    Returns an array shaped like ``Re`` (or a scalar for scalar input):
+    γ inside the experimental window, 1.0 outside / for unanchored
+    topologies. Production consumers multiply: Nu_eff = γ · Nu_smooth."""
+    if os.environ.get('TPMSHX_SCO2_GAMMA_NU', '1') == '0':
+        return np.ones_like(np.asarray(Re, dtype=np.float64)) \
+            if np.ndim(Re) else 1.0
+    p = GAMMA_NU_SCO2.get(tpms_type)
+    if p is None:
+        key = (str(tpms_type), 'topo')
+        if key not in _GAMMA_NU_WARNED:
+            _GAMMA_NU_WARNED.add(key)
+            warnings.warn(
+                f"[sCO2 gamma_Nu] no experimental anchor for topology "
+                f"{tpms_type!r} — smooth-wall Nu kept.", stacklevel=3)
+        return np.ones_like(np.asarray(Re, dtype=np.float64)) \
+            if np.ndim(Re) else 1.0
+    Re_arr = np.asarray(Re, dtype=np.float64)
+    inside = (Re_arr >= p['re_lo']) & (Re_arr <= p['re_hi'])
+    if Re_arr.size and not bool(np.all(inside)):
+        key = (str(tpms_type), 'window')
+        if key not in _GAMMA_NU_WARNED:
+            _GAMMA_NU_WARNED.add(key)
+            warnings.warn(
+                f"[sCO2 gamma_Nu] {tpms_type}: part of the Re field "
+                f"(range [{float(Re_arr.min()):,.0f}, "
+                f"{float(Re_arr.max()):,.0f}]) lies outside the experimental "
+                f"window [{p['re_lo']:,.0f}, {p['re_hi']:,.0f}] — those "
+                f"cells keep the SMOOTH-WALL Nu (the anchor never "
+                f"extrapolates).", stacklevel=3)
+    out = np.where(inside, p['gamma'], 1.0)
+    return out if np.ndim(Re) else float(out)
+
+
+def reset_gamma_nu_warn_registry():
+    """Test hook (mirrors _SCO2_NU_WARNED / sco2_gamma_f conventions)."""
+    _GAMMA_NU_WARNED.clear()

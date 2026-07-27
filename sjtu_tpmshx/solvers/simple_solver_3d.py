@@ -79,9 +79,7 @@ from __future__ import annotations
 import os
 from time import perf_counter as _perf_counter
 import numpy as np
-from numba import njit, prange
 from scipy import sparse
-from scipy.sparse.linalg import bicgstab
 
 try:
     import pyamg
@@ -89,7 +87,7 @@ try:
 except ImportError:
     _HAS_PYAMG = False
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -114,14 +112,20 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 # ─── AMG-active gate (pressure-correction inner solver) ───────────
 # Below this N the pressure-correction system uses scipy.sparse.linalg.spsolve
 # (sparse LU); above it, PyAMG ruge_stuben_solver as a preconditioner for
-# BiCGStab. Break-even ~30 k cells where spsolve memory + factor cost starts
-# hurting and AMG O(N) win amortises. This constant is also used to auto-
-# enable `coarse_bootstrap_3d` warm-start (audit P4 / phase L-d Option B).
-_AMG_GATE = 30_000
+# BiCGStab. The old "break-even ~30 k" was never measured on the mid band:
+# D4(b)-1 (2026-07-22, upgrade/tools/d4b_pp_cost_curve.py) measured per-call
+# pp cost LU vs AMG on identical assembled systems — AMG wins at EVERY size
+# ≥ 2 k cells (2.0k: 13→3 ms, 4.9k: 79→5 ms, 11.6k: 459→20 ms, 19.7k:
+# 1505→169 ms, 29.8k: 4896→219 ms; spsolve refactorizes every call, the
+# hierarchy cache amortises). Gate lowered 30_000 → 2_000 accordingly
+# (golden-3D re-baselined same commit — 15³ grids now take the AMG path;
+# Shanghai validation cases at 600 cells stay on LU, headline unchanged).
+# This constant is also used to auto-enable `coarse_bootstrap_3d` warm-start
+# (audit P4 / phase L-d Option B).
+_AMG_GATE = 2_000
 
-from .tpms_calc import air_density, air_viscosity, P_atm
-from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
-from ._kernels_2d import minmod
+from .tpms_calc import P_atm
+from .threads import warn_if_default_pool as _warn_if_default_pool
 from ._solve_common import LowReExit, F2Monitor
 
 
@@ -902,6 +906,9 @@ class SIMPLESolver3D:
         # ordering GS; large grids use red-black GS on prange. Break-even
         # ~200k cells where Numba thread-launch overhead no longer dominates.
         if _should_parallelize(Nx, Ny, Nz):
+            # P3.2: one-shot thread-count advisory on the unpinned all-cores
+            # default (bandwidth-bound kernels; advisory only, pool untouched).
+            _warn_if_default_pool(Nx * Ny * Nz)
             _sweep_u = _sweep_u_jit_df_3d_parallel
             _sweep_v = _sweep_v_jit_df_3d_parallel
             _sweep_w = _sweep_w_jit_df_3d_parallel

@@ -4,17 +4,15 @@ Phase 0 驱动：扫偏移 δ，量 ε_A/ε_B/A0/D_h/t/连通性，出 CSV + 闸
 纯几何，无 CFD。用法：python -u runs/asym_geometry_scan.py
 计划：vault/reports/engineering/2026-06-05-asym-porosity-phase0-PLAN-CN.md
 """
-import sys
 import csv
 from pathlib import Path
 
 import numpy as np
 
 # 包根入 sys.path（runs/ 脚本惯例）：parents[2] = sjtu_tpmshx/ (script now under runs/<role>/)
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from solvers.tpms_geometry import _phi_grid, _C_from_tL, compute_geometry
-from solvers.asym_geometry import (
+from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL, compute_geometry
+from sjtu_tpmshx.solvers.asym_geometry import (
     eps_sides, a0_sides, dh_sides, wall_thickness, percolates_z, find_delta_max,
 )
 

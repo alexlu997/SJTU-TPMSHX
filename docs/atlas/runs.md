@@ -13,13 +13,12 @@
   `pipelines/stages_2d.py` / `pipelines/run_stack_3d.py`
   （`PROJECT_MANUAL.md:610-628`），`runs/` 只保留生产优化入口、演示、诊断、
   UI 冒烟、CFD 工具链脚本。
-- **例外**：`runs/polygon_calc.py` 的 `run_polygon_calculation` 是多边形域
-  CFD 编排的真实生产入口，被 `ui/mixins/run_controller.py:344`
-  （`self._run_polygon_calculation()` → `from runs.polygon_calc import
-  run_polygon_calculation`）直接调用——这是本目录中唯一由 UI 生产代码
-  `import` 的模块（其余脚本都是命令行独立执行）。
+- **例外条目已消除** ⟨07-20 更新（P1.9）⟩：`polygon_calc.py` 已**迁出本目录** →
+  `ui/polygon_calc.py`（它是 Qt 耦合的 UI 生产代码，GUI 导入 runs/ 属分层违规，
+  import 审计抓获后迁移）。自此 runs/ 下**没有任何被 UI 生产代码 import 的模块**，
+  全目录回归"命令行独立执行"的定位。
 - 子目录划分（本次编目范围，全 49 个 `.py`）：
-  - 根目录（14 个）：生产优化入口、benchmark、`polygon_calc.py`、
+  - 根目录（13 个 ⟨07-20 更新；polygon_calc.py 迁 ui/⟩）：生产优化入口、benchmark、
     `_case_template.py` / `_smoke_boot.py` 两个助手模块。
   - `_out/`（2 个，仓库根 `.gitignore:86`——不是 `sjtu_tpmshx/.gitignore`（该文件仅 19 行，无此条目）——整目录 gitignored）：golden 位级回归门。
   - `archive/`（11 个）：冻结的一次性历史诊断，多数带 `⚠ ARCHIVAL` 头注。
@@ -27,7 +26,9 @@
     除外，用 PyVista 交互窗口）。
   - `diagnostics/`（5 个）：asym-porosity 几何 Phase-0/0.5 扫描（纯几何，无 CFD）。
   - `smokes/`（6 个）：offscreen Qt / 计算管线端到端冒烟。
-  - `tools/`（5 个）：CFD 工况簿 Excel 生成、HTML 报告渲染、图表再生脚本。
+  - `tools/`（8 个 ⟨07-20 更新⟩）：CFD 工况簿 Excel 生成、HTML 报告渲染、图表再生脚本，
+    以及升级分支新增三件（见收编节）：import 分层审计、fast-tier manifest 生成器、
+    AST 缝手术工具。
   - `cfd_asym/`（3 个）：PyFluent 批跑 + κ 后处理（跑在另一台 CFD 机器上）。
 
 ## 文件一览（每文件一行职责）
@@ -41,7 +42,6 @@
 | `_smoke_boot.py` | `get_app()` — 在任何 PySide6 import 前设 `QT_QPA_PLATFORM=offscreen` + 包根入 `sys.path`；所有 `smokes/*.py` 的强制导入顺序前提。仍在用。 |
 | `benchmark_simpler_2d.py` | SIMPLE vs SIMPLER 2D 耦合性能基准（40×80、80×160 两网格），附 cProfile 阶段占比。openspec `simpler-coupling-2d` 任务 1.2/4.1 的产出脚本，可跑，非 CI 门。 |
 | `benchmark_sou_3d.py` | 3D 动量二阶迎风 (SOU) 开/关网格收敛对比，固定 K/c_F 隔离对流格式本身。openspec `solver-efficiency-r1-r4` 任务 4.3，可跑。 |
-| `polygon_calc.py`（430 行） | **生产入口**：多边形域 CFD 编排，`run_polygon_calculation(window)` 拆 4 阶段（`_parse_inputs` → `_build_fields` → `_run_solvers` → `_store_results`）。详见「公开接口」。 |
 | `run_3d_qnehvi_fast.py` | 3D qNEHVI Pareto 快速跑：`evaluator_3d.evaluate_design_3d` 接入 `optimizer_qnehvi.run_qnehvi`，Shanghai Nz=10 校验工况；n_init=32/n_iter=80/q_batch=2，注释估计 ~13 s/eval、总 45–75 min。可跑。 |
 | `run_m1_uniform_vs_graded.py`（351 行） | **M1 里程碑**：均匀 (L,t) 网格扫掠 vs 16 维连续场 qNEHVI 的 Pareto 对照（`ZONED-OPTIMIZATION-PLAN-CN.md` §六）。导出 `run_uniform_sweep`/`hv_2d_max`/`dominated_fraction`/`steepest_gradients`/`CFG_M1` 供 `run_m2_rerank_m1.py`、`run_port_dim_retest.py` 复用。`--fast`/`--ctrl {4,6}`/`--saas`/`--seed` CLI。可跑，需 `PYTHONHASHSEED=0`。 |
 | `run_m2_rerank_m1.py` | **M2 门 3**：用 VANS 修正后的评估器重跑 M1 graded Pareto 解，量化 (Q,dP) 排名漂移；直接 import `run_m1_uniform_vs_graded.CFG_M1`。可跑。 |
@@ -123,7 +123,8 @@
 
 ## 公开接口
 
-- `run_polygon_calculation(window) -> None` — `sjtu_tpmshx/runs/polygon_calc.py:22`；调用方 `sjtu_tpmshx/ui/mixins/run_controller.py:344`。内部按 4 阶段私有函数 `_parse_inputs`/`_build_fields`/`_run_solvers`/`_store_results` 编排（同文件），是本目录唯一的生产级公开入口。
+- ⟨07-20 更新（P1.9）⟩ `run_polygon_calculation` 已随 `polygon_calc.py` 迁至
+  `sjtu_tpmshx/ui/polygon_calc.py`（4 阶段编排结构不变）——本目录不再有生产级公开入口。
 - `build_cfg(*, tpms_type='Gyroid', Lcell=7.0, t_wall=0.5, ..., **overrides) -> dict` — `sjtu_tpmshx/runs/_case_template.py:22`；调用方：`demos/demo_3d_air_air.py:24`、`demos/demo_3d_cube_air_air.py:23`、`demos/demo_3d_cube_volume.py:31`、`smokes/smoke_ui_3d_modes.py:16`、`archive/diag_ab_imbal.py:34`。`_out/_golden_3d.py` **不** 使用它（`_case_template.py:8-10` 注明是刻意隔离）。
 - `get_app() -> QApplication` — `sjtu_tpmshx/runs/_smoke_boot.py:17`；调用方全部 `smokes/*.py`（`smoke_ui_2d_pipeline.py:35` 等）；模块导入本身（`import runs._smoke_boot`）先于任何 PySide6 import 完成，才能让 `QT_QPA_PLATFORM=offscreen` 生效（`_smoke_boot.py:13`）。
 - `run_uniform_sweep(cfg, L_vals, t_vals, n_jobs) -> np.ndarray`、`hv_2d_max(front_QdP, ref) -> float`、`dominated_fraction(uni_front, grad_front) -> float`、`steepest_gradients(X_pareto, cfg) -> dict`、`CFG_M1: dict` — 均在 `sjtu_tpmshx/runs/run_m1_uniform_vs_graded.py`（分别 96/119/136/149 行附近，`CFG_M1` 49 行）；调用方：`run_m2_rerank_m1.py:26`（`CFG_M1`）、`run_port_dim_retest.py:53-55`（4 个函数）。
@@ -210,3 +211,17 @@
   行）在每个 seed 子进程入口 `_seed_subprocess_main` 里、导入 numpy/scipy 重型依赖**之前**对
   `OMP_NUM_THREADS`/`MKL_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`NUMEXPR_NUM_THREADS` 做
   `os.environ.setdefault(...,'1')`，头注与实现并不矛盾，只是落地在被调用模块而非本脚本文件内。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **polygon_calc.py 迁出**（P1.9）：→ `ui/polygon_calc.py`；runs/ 回归纯脚本层定位（正文已改）。
+- **tools/ 新增三件**：
+  - `audit_import_graph.py`（P1.9）——AST import 图 + 分层模型 + SANCTIONED 边裁决清单；
+    `--fail-on-violations` 由常驻门 `test_import_layering.py` 驱动，VIOLATIONS=0 基线。
+  - `build_fast_tier_manifest.py`（P3.1）——从 durations census 日志重生成 heavy 清单
+    （`tests/_fast_tier_manifest.txt`）；用法见其头注。
+  - `seam_surgery_3d.py`（P1.5 期间自建）——run_stack_3d 拆分用的 AST 逐字节块搬移工具
+    （名流分析七能力：definite-assignment 预初始化、作用域感知嵌套 def、AugAssign 隐式读、
+    有序首现 in-out 参数、嵌套推导抑制、条件导入 store、nonlocal in-out）。**一次性手术工具**，
+    非常驻基建，保留备考古/复用。
+- `_out/` 的 golden 工作流变更见 tests/repo-infra 卷收编节（D1：golden_3d.json 入库为权威）。

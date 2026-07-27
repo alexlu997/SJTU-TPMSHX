@@ -1,9 +1,8 @@
 """Unit tests for ui.math_symbols Unicode rendering helpers (Phase 3)."""
 from __future__ import annotations
 
-import pytest
 
-from ui.math_symbols import to_unicode, greek
+from sjtu_tpmshx.ui.math_symbols import to_unicode, greek
 
 
 # ─── Greek lookup ──────────────────────────────────────────────────

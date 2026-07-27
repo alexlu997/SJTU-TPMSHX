@@ -1,4 +1,5 @@
 # solvers — 闭合关系与物性
+**2026-07-20 收编 upgrade/loop 分支漂移**（受影响处标 ⟨07-20 更新⟩；收编节在文末）
 生成日期 2026-07-10，基于 commit f33d30e 附近的 master
 
 > 本文档所有事实性断言均以代码为唯一真源，逐条附 file:line（相对仓库根 `sjtu_tpmshx/` 前缀）。行号对应本 worktree 当前文件状态；移植后若行号漂移，请以符号名（函数/常量名）重新定位。文档、注释中与代码不符的说法已标注。
@@ -143,7 +144,7 @@
 | `R_AIR_DEFAULT` / `GAMMA_AIR` | 287.05 / 1.4 | `envelope.py:31-32` | 干空气 |
 | `cfg['delta_levelset']` | 0.0（`cfg.get(..., 0.0)`） | `sjtu_tpmshx/solvers/asym_split.py:30,51,66` | δ 偏移（φ 单位）；0 = 对称路径位同一致 |
 | 粗糙度模式 env | `TPMSHX_ROUGH_MODE='baseline'`、`TPMSHX_ROUGH_EPS_UM='100'` | `sjtu_tpmshx/solvers/roughness.py:164-165` | 仅 air；`bhatti_shah_1b` 才用 eps_um |
-| `TPMSHX_CHI_S` | 未设（走 per-type 拟合） | `sjtu_tpmshx/solvers/tpms_props.py:186` | 常数覆盖 χ_s 拟合（模块导入时读取一次，进程内改 env 不生效） |
+| `TPMSHX_CHI_S` | 未设（走 per-type 拟合） | `sjtu_tpmshx/solvers/tpms_props.py` | 常数覆盖 χ_s 拟合 ⟨07-20 更新（P1.6）：`chi_s_eff` 改**每次调用读 env**，进程内改 env 即时生效（原文“导入时读取一次”已过时）；遗留常量 `CHI_S` 保持 import 快照语义⟩ |
 | `C_DISP` | 0.0 | `sjtu_tpmshx/solvers/tpms_calc.py:196` | 流体相热弥散系数；B4 证据判定保持 0（>0 与拟合 Nu 双重计数，:186-195 注释） |
 | `SCO2_CF_SCALE` | 3.39 | `sjtu_tpmshx/df_surrogate/predict.py:140` | sCO2 有效 cF 乘子；`tpms_calc.py:341-342` 集总路径应用 |
 | `cf_aniso` | 0.0 | `sjtu_tpmshx/solvers/simple_solver.py:440`；cfg 默认 `sjtu_tpmshx/optimization/evaluator.py:139` | 斜流 Forchheimer 方向因子，见下节 |
@@ -202,3 +203,13 @@
 - **路径/编码**：本模块群无硬编码绝对路径（复核 `[a-zA-Z]:\` 模式在 `nu_correlations.py`/`envelope.py`/`asym_split.py`/`asym_geometry.py`/`roughness.py`/`fluid_props.py`/`sco2_props.py`/`tpms_calc.py`/`tpms_geometry.py`/`tpms_props.py`/`df_projection.py` 中无命中），迁到另一台 Windows Server 主机不受影响；无文件 I/O（除 `fit_cf_aniso.py` 用 `pd.read_csv(path)` 读 CSV，属 validation 脚本——已核实 pandas 2.3.3 环境下 `read_csv` 的 `encoding` 参数默认即为 `'utf-8'`，不随系统区域设置漂移，此处无 GBK 风险）。源码含 UTF-8 中文/希腊字母 docstring（如 `asym_geometry.py`、`df_projection.py`），Python 3 源码编码默认 UTF-8（PEP 3120），与运行时 OS locale 无关，不构成解析风险——**此前「移植到 Linux 后 locale 设为 UTF-8、风险更低」的判断前提已不成立，且 GBK 编码坑本身不会因为目标是 Windows Server 而消失，需要反过来重估**：本模块群当前运行时文本已核实为纯 ASCII（`nu_correlations.py:91-95`、`tpms_calc.py:302`、`tpms_props.py:61-65,79-85` 的 `warnings.warn` 消息均无中文；`tpms_calc.py:61` 定义的 `_log = get_logger(__name__)` 在本文件内**无调用点**，不产生日志文本），故本模块群眼下不会触发该坑。但同仓库 `df_surrogate/surrogate_v3.py:151-155` 注释记录的真实先例——中文区域设置的 Windows 下控制台代码页为 GBK/cp936，subprocess 以 GBK 字节写出中文而 pytest 按 UTF-8 读捕获流，一行中文即可让此后所有测试的 teardown 抛 `UnicodeDecodeError`——本质是 Windows 控制台代码页问题（与 Linux/Windows 之分无关，纯粹是该主机区域设置），Windows Server 2022 若同为中文区域设置会原样复现，且不会随平台从「假设的 Linux」改为「实际的 Windows Server」而减轻。若日后给本模块群的 `_log`/`print` 加中文内容，应比照仓库既有模式：入口脚本启动时 `try: sys.stdout.reconfigure(encoding='utf-8')`（如 `ui/demo_vis_3d.py:30`，多处 `df_surrogate/*.py` 与 `validation/cases/*.py` 同款），或在无交互式控制台的 Windows Server 服务/计划任务里预先设置 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8` 环境变量（等价于交互式会话下的 `chcp 65001`，未验证在计划任务场景下的具体生效方式）。
 - **数值位同（bit-identical）敏感点**：`df_projection.project_fields_to_streamwise_K_cF` 的逐单元循环刻意保持求值顺序（:169-170）；`_eps_sides_for_run` δ=0 返回同一对象（`asym_split.py:66-67`）；cf_aniso=0 / C_DISP=0 / cf_scale=1 分支跳过。golden gate 回归前不要"顺手向量化"这些循环。
 - **不得移除/放宽的守卫**（顶层 CLAUDE.md 硬不变量，代码锚点已核实）：`ChokedFlowError` 与三档 `envelope_mode`（`envelope.py:43,:34`；默认 `'raise'`，`domain/compute_config.py:370`）；压缩性（air `compressible=True`，`fluid_props.py:90`）；粗糙度不叠加（`roughness.py` f 侧 1.0）；Nu 系数单一来源（`nu_correlations.py:57,156,210`）。
+
+## 2026-07 升级分支收编（upgrade/loop，2026-07-20）
+
+- **`TPMSHX_CHI_S` 读取时机**（P1.6）：`chi_s_eff` 每次调用读 env（原 import 冻结是 W7 族
+  reload 危害）；模块常量 `CHI_S` 语义未动（快照，仅兼容 import）。
+- **`tpms_geometry.compute_geometry` 缓存拷贝语义**（P1.6）：内部 `_compute_geometry_cached`
+  （lru_cache 4096）返回共享对象，公开面 `compute_geometry` 改返回 `dict(...)` 浅拷贝并
+  re-expose `cache_clear/cache_info`；`_phi_grid` 结果 `phi.flags.writeable = False` 冻结
+  ——W7b 族"lru_cache 返回可变体被调用方就地改写"危害的两处防御。守卫测试在
+  `test_cache_and_source_guards.py`。

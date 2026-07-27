@@ -33,9 +33,9 @@ import pytest
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-from solvers.continuous_field import uniform_field
-from optimization.evaluator import evaluate_design
-from optimization.evaluator_3d import evaluate_design_3d
+from sjtu_tpmshx.solvers.continuous_field import uniform_field
+from sjtu_tpmshx.optimization.evaluator import evaluate_design
+from sjtu_tpmshx.optimization.evaluator_3d import evaluate_design_3d
 
 pytestmark = pytest.mark.slow
 

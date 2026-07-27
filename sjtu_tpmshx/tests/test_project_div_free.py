@@ -15,14 +15,9 @@ real-coords face-flux divergence so the conservative kernel telescopes. It must:
 These pin behavior before the perf refactor (dense-bordered direct LU ->
 cached AMG-preconditioned CG on the plain sparse Laplacian).
 """
-import os
-import sys
 
 import numpy as np
-import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from solvers.ltne_energy_3d import _project_faces_div_free
+from sjtu_tpmshx.solvers.ltne_energy_3d import _project_faces_div_free
 
 
 def _cell_div(uf, vf, wf, eps_f, rcp, dx, dy, dz):

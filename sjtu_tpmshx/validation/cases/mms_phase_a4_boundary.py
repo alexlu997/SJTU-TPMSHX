@@ -32,7 +32,6 @@ Output:
 from __future__ import annotations
 import argparse
 import sys
-import time
 import warnings
 from pathlib import Path
 
@@ -40,18 +39,16 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from validation.cases.mms_3d_air_air import run_mms, L_DOM
-from validation.harness._provenance import write_csv_with_provenance
-from validation.harness._order_fit import fit_order_loglog
-from validation.harness._mms_driver import run_grid_sequence
+from sjtu_tpmshx.validation.cases.mms_3d_air_air import run_mms, L_DOM
+from sjtu_tpmshx.validation.harness._provenance import write_csv_with_provenance
+from sjtu_tpmshx.validation.harness._order_fit import fit_order_loglog
+from sjtu_tpmshx.validation.harness._mms_driver import run_grid_sequence
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a4_boundary.py'
 
@@ -106,10 +103,10 @@ def main():
     grids = [int(g) for g in args.grids.split(',')]
 
     print(f"{'='*72}")
-    print(f"  MMS Phase A.4 — boundary-stratified order verification")
+    print("  MMS Phase A.4 — boundary-stratified order verification")
     print(f"{'='*72}")
     print(f"  Case: MMS-{args.case}  Grids: {grids}")
-    print(f"  Regions: inlet_A, outlet_A, inlet_B, outlet_B, lat_z, interior\n")
+    print("  Regions: inlet_A, outlet_A, inlet_B, outlet_B, lat_z, interior\n")
 
     def _row(g, r, dt):
         masks = _region_masks(g, g, g)
@@ -151,7 +148,7 @@ def main():
 
     # Order fit per region per phase (L2)
     print(f"\n{'='*72}")
-    print(f"  Per-region observed order (L2, log-log fit, full grid set)")
+    print("  Per-region observed order (L2, log-log fit, full grid set)")
     print(f"{'='*72}")
     order_rows = []
     print(f"  {'region':<11} {'phase':<6} {'p_obs':>8} {'R^2':>7} "
@@ -175,7 +172,7 @@ def main():
 
     # Hard gates
     print(f"\n{'='*72}")
-    print(f"  Hard gates")
+    print("  Hard gates")
     print(f"{'='*72}")
     fail = []
 

@@ -18,7 +18,7 @@ import pytest
 @pytest.fixture(scope="module")
 def gyroid_model():
     """Build SurrogateV3 once — Excel read on construction is expensive."""
-    from df_surrogate.surrogate_v3 import SurrogateV3
+    from sjtu_tpmshx.df_surrogate.surrogate_v3 import SurrogateV3
     return SurrogateV3(tpms='Gyroid')
 
 
@@ -43,7 +43,7 @@ def _loop_reference(model, L_arr, t_arr, e_arr):
 ])
 def test_batched_matches_loop_bit_exact(gyroid_model, shape):
     """Batched implementation must agree with per-cell loop to within rtol=1e-12."""
-    from df_surrogate.predict import predict_K_cF_vec
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
     rng = np.random.default_rng(seed=42)
     L = rng.uniform(4.5, 7.5, size=shape)
     t = rng.uniform(0.3, 0.5, size=shape)
@@ -64,8 +64,8 @@ def test_batched_matches_loop_bit_exact(gyroid_model, shape):
 
 def test_K_min_floor_preserved():
     """The K_min floor must still clamp tiny K predictions."""
-    from df_surrogate.predict import predict_K_cF_vec
-    from df_surrogate.surrogate_v3 import K_MIN
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
+    from sjtu_tpmshx.df_surrogate.surrogate_v3 import K_MIN
     K, _ = predict_K_cF_vec('Gyroid',
                              np.array([4.0]), np.array([0.5]),
                              np.array([0.30]), method='rbf')
@@ -74,7 +74,7 @@ def test_K_min_floor_preserved():
 
 def test_scalar_broadcast_to_array():
     """Mixed scalar/array inputs broadcast (existing API contract)."""
-    from df_surrogate.predict import predict_K_cF_vec
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
     K, cF = predict_K_cF_vec('Gyroid',
                               L_mm=np.array([5.0, 6.0, 7.0]),
                               t_mm=0.4,
@@ -87,7 +87,7 @@ def test_scalar_broadcast_to_array():
 
 def test_diamond_path_also_works():
     """Confirm both TPMS types still go through the batched path."""
-    from df_surrogate.predict import predict_K_cF_vec
+    from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
     K, cF = predict_K_cF_vec('Diamond',
                               np.array([5.0, 6.0]),
                               np.array([0.3, 0.4]),

@@ -46,3 +46,28 @@
 
 - [ ] 5.1 Summary: LOO accuracy table (c_F, K) over the whole dataset, water-Δp improvement, the col47-anomaly root cause; figure(s) for README closure section (replace/augment the gamma_df cF interpolation figure)
 - [ ] 5.2 Decide (with user) whether to switch the production default to the new backend
+
+---
+
+## Status addendum (2026-07-22, 升级循环 candidate-D · D-2a, iter 66)
+
+**入口段污染发现（iter 65-66）改变本变更的提取基**：dp_core 是含入口周期的
+3 段整核压降；p0..p3 逐段实测显示整核/发展段(2+3) 压降比 = Diamond 1.015 /
+**Gyroid 1.155**（且随 Re 升到 1.5——Forchheimer 支配）。真实 HX ~26 胞元
+入口占比 ~4% ⇒ 均质化闭合应取**周期发展值**。sCO2 数据集（同一后处理管线）
+同构确认（G 整核 f/发展 = 1.168）。
+
+**发展段重提取已交付**（`validation/df_refit/extract_dev_coeffs.py`，两段法
+字面实现 + 阈值自校准 Re_hi≥12800/Re_lo≤400，core 复现对生产表 med 0.98 紧）：
+
+| 量 | Diamond dev/core | Gyroid dev/core |
+|---|---|---|
+| cF | 0.949 (−5%) | **0.831 (−17%)** |
+| K  | **0.846 (−15%)** | 0.950 (−5%) |
+
+候选表 `_prebuilt/df_cfd_coeffs_dev.csv`（生产表未动）；对比表
+`reports/df_refit/dev_vs_core_vs_smoothdf.csv`（含 SmoothDF(Re_ref)/cF_dev
+= ×1.53 两拓扑一致的绝对水平差）。**含义：2026-06-30 已入产线的 K 面按发展
+段口径应下修 D −15%/G −5%（水侧 Δp 波及，air 窗 Darcy 份额 1-6% 上海几乎
+不动）——归 D-3 换默认重基准一并裁**；本变更 2.x（LOO 面）与 4.x（backend）
+的后续实施应以 dev 表为基。

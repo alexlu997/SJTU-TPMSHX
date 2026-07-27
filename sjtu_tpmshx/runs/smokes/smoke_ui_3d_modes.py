@@ -6,14 +6,12 @@ Also exercises fluid_type_B='water' path (Shanghai-style) to verify
 roughness skipped on water side.
 """
 from __future__ import annotations
-import os, sys, warnings
-import numpy as np
+import os, warnings
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from runs._case_template import build_cfg as _template_cfg
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.runs._case_template import build_cfg as _template_cfg
 
 
 def build_cfg(tpms='Gyroid', Lcell=7.0, t_wall=0.6, k_s=16.0,
@@ -95,6 +93,6 @@ if __name__ == '__main__':
         ratio = results['norris_1a']['dP_A'] / max(results['baseline']['dP_A'], 1.0)
         print(f"\n  norris_1a / baseline dP_A ratio: {ratio:.3f}  (expect ~ 1.00)", flush=True)
         if 0.97 < ratio < 1.03:
-            print(f"  [OK] norris_1a == baseline for friction (as designed)", flush=True)
+            print("  [OK] norris_1a == baseline for friction (as designed)", flush=True)
         else:
-            print(f"  [WARN] unexpected drift between norris_1a and baseline", flush=True)
+            print("  [WARN] unexpected drift between norris_1a and baseline", flush=True)

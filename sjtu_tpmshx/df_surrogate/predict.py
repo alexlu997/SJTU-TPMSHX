@@ -47,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -137,25 +137,31 @@ def _overrides_enabled() -> bool:
 
 def sco2_cf_scale(tpms: str, L_mm: float, t_mm: float, eps_f: float,
                   rho_in: float, mu_in: float, u_in: float) -> float:
-    """Per-run sCO2 cf_scale: smooth-CFD cF(Re_in) / production base cF.
+    """Per-run sCO2 cf_scale: rough-corrected sCO2 cF(Re_in) / production base.
 
     Drop-in replacement for the retired constant SCO2_CF_SCALE in the
     ``cf_scale`` hook: callers keep multiplying their production base cF
     (predict_K_cF, same ``eps_f`` argument) by this ratio, which lands the
-    effective cF exactly on the sCO2 smooth-wall CFD value
+    effective cF on the sCO2 smooth-wall CFD value
     ``df_surrogate.sco2_df.predict_cF_sco2`` evaluated at the run's INLET
     Reynolds number (the solver treats cF as a per-run constant; the
     (Re/1000)^−m slope is collapsed at Re_in like SmoothDF anchors B at
-    Re=1000). Zoned/κ-split adjustments layered on the base cF are preserved
+    Re=1000), **times the experimental HX-level correction γ_f(Re_in)**
+    (``sco2_gamma_f``, D6 hot-free anchor, 2026-07-22 — in-window only;
+    off-window γ_f = 1 keeps the smooth-wall estimate with a loud one-shot
+    warning). Zoned/κ-split adjustments layered on the base cF are preserved
     (the ratio multiplies them through, exactly as the old ×3.39 did).
+    Kill switch: TPMSHX_SCO2_GAMMA_F=0 → pre-anchor smooth-wall behaviour.
     """
     from .sco2_df import predict_cF_sco2
+    from .sco2_gamma_f import gamma_f_sco2
     from .smooth_df import _geom
 
     _, D_h = _geom(tpms, L_mm, t_mm)
     Re_in = float(rho_in) * abs(float(u_in)) * D_h / max(float(mu_in), 1e-30)
     base = predict_K_cF(tpms, float(L_mm), float(t_mm), float(eps_f))[1]
-    return float(predict_cF_sco2(tpms, L_mm, t_mm, Re_in)) / max(base, 1e-30)
+    smooth = float(predict_cF_sco2(tpms, L_mm, t_mm, Re_in))
+    return smooth * gamma_f_sco2(tpms, Re_in) / max(base, 1e-30)
 
 
 def _apply_override(tpms: str, L_mm: float, t_mm: float,
@@ -327,7 +333,7 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
 
     # Apply residual learning correction (rbf baseline only)
     from .residual_correction import get_corrector
-    from solvers.tpms_props import geometry as tpms_geometry
+    from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry
     geom = tpms_geometry(tpms_type, L_mm, t_mm, 16.0)
     D_h = float(geom["D_h"])
     rho_in = P_in / (R_AIR * T)
@@ -351,11 +357,11 @@ def smoke_test() -> None:
     model.summary()
 
     # Quick Shanghai check
-    from solvers.tpms_props import geometry as tpms_geometry
+    from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry
     g = tpms_geometry("Gyroid", 7.0, 0.6, 16.0)
     K, cF = predict_K_cF("Gyroid", 7.0, 0.6, g["epsilon"] / 2)
     print(f"\nL=7 t=0.6: K={K:.4e}, c_F={cF:.2f}")
-    print(f"(optimal: K=inf, c_F=372.7)")
+    print("(optimal: K=inf, c_F=372.7)")
 
 
 if __name__ == "__main__":

@@ -91,7 +91,7 @@ def a0_sides_richardson(tpms_type, C: float, delta: float, L_m: float,
     等比网格上算 `a0_sides_mc`，估收敛阶后外推 N→∞，<1%。Ns 默认 (96,144,216)，
     比率 1.5。返回 (A0_A, A0_B)。极端 δ（Phase 1 选点）推荐用此替 `a0_sides_mc`。
     """
-    from solvers.tpms_geometry import _phi_grid
+    from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid
     A_vals, B_vals = [], []
     for N in Ns:
         aA, aB = a0_sides_mc(_phi_grid(tpms_type, N), C, delta, L_m, N)

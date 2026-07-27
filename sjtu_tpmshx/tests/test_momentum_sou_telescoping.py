@@ -12,7 +12,7 @@ east limiter of cell i to equal the west limiter of cell i+1 at the shared face
 import numpy as np
 import pytest
 
-from solvers.simple_solver import (
+from sjtu_tpmshx.solvers.simple_solver import (
     _sou_corr_u_x, _sou_corr_u_y, _sou_corr_v_x, _sou_corr_v_y,
 )
 

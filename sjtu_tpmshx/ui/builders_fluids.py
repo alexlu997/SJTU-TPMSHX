@@ -6,7 +6,7 @@ sections and the polygon pipe-edge selectors.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QScrollArea, QFrame,
 )
 

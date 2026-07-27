@@ -81,15 +81,11 @@ P1b-b (2026-04-20): establishes Shanghai 3D baseline before Phase 2 multi-channe
 """
 
 from __future__ import annotations
-import os, sys, warnings
+import sys, warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -103,18 +99,18 @@ except Exception:
 for _cat in (DeprecationWarning, PendingDeprecationWarning, FutureWarning):
     warnings.filterwarnings('ignore', category=_cat)
 
-from solvers.tpms_calc import (
-    geometry as tpms_geometry, compute as tpms_compute,
+from sjtu_tpmshx.solvers.tpms_calc import (
+    compute as tpms_compute,
     air_density, air_viscosity, air_conductivity, air_cp,
     water_density, water_viscosity, water_conductivity, water_cp,
     nu_water_topo,
-    P_atm, Sa_mm, Pr,
+    P_atm,
 )
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import (solve_full_domain_3d,
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import (solve_full_domain_3d,
                                      energy_balance_3d, mass_balance_3d)
-from df_surrogate.predict import predict_K_cF
-from solvers.roughness import (f_enhancement, nu_extra_factor,
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
                                  apply_to_K_cF, resolve_mode_from_env)
 
 R_AIR = 287.05
@@ -124,8 +120,8 @@ R_AIR = 287.05
 # validate_d76_3d had to monkey-patch. The globals below are kept as a
 # read-only Shanghai view for printing and test back-compat (V.EPS);
 # the runner itself threads `spec` explicitly.)
-from validation.harness._harness import load_cases_df
-from validation.harness._case_sets import shanghai_spec, SHANGHAI_XLSX
+from sjtu_tpmshx.validation.harness._harness import load_cases_df
+from sjtu_tpmshx.validation.harness._case_sets import shanghai_spec, SHANGHAI_XLSX
 
 SPEC = shanghai_spec()
 TPMS = SPEC.tpms
@@ -182,7 +178,7 @@ def _compute_h_vA_field_3d(Ta_field, ucA_field, sA, *, spec):
     sA: SIMPLESolver3D for fluid A (internal dims (Ny, Nx, Nz))
     Returns h_vA shape (Nx, Ny, Nz).
     """
-    from solvers.sigmoid_field import _nu_vec
+    from sjtu_tpmshx.solvers.sigmoid_field import _nu_vec
     d_h = spec.D_h
     P_abs_sf = (sA.P_ref_abs + sA.P).transpose(1, 0, 2)  # (Nx, Ny, Nz)
     rho_loc = P_abs_sf / (R_AIR * Ta_field)
@@ -202,7 +198,7 @@ def _build_grid(Nx_u, Ny_u, Nz_u, wall_refine=False, spec=None):
     """Build (dx, dy, dz, Nx, Ny, Nz). Optional six-wall refinement."""
     spec = SPEC if spec is None else spec
     if wall_refine:
-        from solvers.df_projection import build_master_refined_grid_3d
+        from sjtu_tpmshx.solvers.df_projection import build_master_refined_grid_3d
         dx, dy, dz, Nx, Ny, Nz = build_master_refined_grid_3d(
             spec.L_dom_m, spec.H_dom_m, spec.Lz_m, Nx_u, Ny_u, Nz_u,
             n_refine=8, first_cell=0.02e-3)
@@ -309,7 +305,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     # B2 (2026-07-06): χ_s from the unit-cell homogenization fit — matches
     # the production K_ss path (run_stack_3d / tpms_calc). Was the inline
     # (1−ε)·k_s, which silently bypassed even the legacy CHI_S constant.
-    from solvers.tpms_props import chi_s_eff as _chi_s_eff
+    from sjtu_tpmshx.solvers.tpms_props import chi_s_eff as _chi_s_eff
     K_ss = np.full((Nx, Ny, Nz), _chi_s_eff(TPMS, EPS) * (1.0 - EPS) * K_S)
 
     # D-F coeffs from surrogate (per-stream void fraction ε_A)
@@ -575,10 +571,10 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
     gate SILENTLY. ``--runner kernel`` reproduces the frozen-B era numbers.
     """
     spec = SPEC if spec is None else spec
-    from domain.compute_config import (ComputeConfig, FluidConfig,
+    from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                             GeometryConfig, SolverConfig,
                                             PartialBCConfig, ExtrapPolicy)
-    from controllers.compute_pipeline import Pipeline3D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
 
     case = ci + 1
     m_air = float(df.iloc[ci, 5])
@@ -766,7 +762,6 @@ def main():
     err_dP_all = np.array([r['err_dP%'] for r in results])
     err_Q_all = np.array([r['err_Q%'] for r in results])
     # Re>600 filter via u_air (matches 2D convention)
-    u_arr = np.array([r['u_air'] for r in results])
 
     if valid_mask.any():
         err_dP = err_dP_all[valid_mask]
@@ -776,7 +771,7 @@ def main():
         # prints a number, but the n_invalid banner makes it un-trustable.
         err_dP, err_Q = err_dP_all, err_Q_all
 
-    from validation.harness._metrics import rmsre_from_pct
+    from sjtu_tpmshx.validation.harness._metrics import rmsre_from_pct
     rmsre_dP = rmsre_from_pct(err_dP)
     rmsre_Q = rmsre_from_pct(err_Q)
     max_err_Q = float(np.max(np.abs(err_Q)))

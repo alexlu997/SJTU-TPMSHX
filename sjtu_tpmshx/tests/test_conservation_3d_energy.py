@@ -29,35 +29,40 @@ balance. The face-centered Patankar rewrite (SIMPLE staggered fluxes,
 all six cases < 1 % on BOTH the global and per-cell certificate AND keeps mass
 conservation intact.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from validation.cases.audit_3d_conservation import (
+from sjtu_tpmshx.validation.cases.audit_3d_conservation import (
     make_T1, make_T2, make_T3, make_T4, make_T5, make_T6,
 )
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 _GATE = 0.01  # < 1 %
 
+# Per-case grids (D4(a), 2026-07-21). The certificate is a STRUCTURAL property
+# (telescoping of the conservative kernel — grid-size-independent semantics),
+# so the partial-B monsters run coarser with measured margin under the 1% gate:
+#   T3@16: worst 0.280% (was 526s @20 → 134s);  T4@18: worst 0.729%
+#   (was 604s @20 → 288s; @16 was 0.957% — too thin, rejected).
+# T1/T2/T5/T6 stay at 20 (cheap). Suite critical path drops ~600s → ~460s
+# (now bounded by test_wall_refine_3d — its 448s refined solve on a 288-cell
+# base grid is a flagged performance anomaly for the D4(c) profile round,
+# deliberately NOT dieted away here).
 _CASES = [
-    ("T1_full_parallel", make_T1),
-    ("T2_full_cross", make_T2),
-    ("T3_partial_aligned", make_T3),
-    ("T4_partial_offset", make_T4),
-    ("T5_B_isolated", make_T5),
-    ("T6_equi_temperature", make_T6),
+    ("T1_full_parallel", make_T1, 20),
+    ("T2_full_cross", make_T2, 20),
+    ("T3_partial_aligned", make_T3, 16),
+    ("T4_partial_offset", make_T4, 18),
+    ("T5_B_isolated", make_T5, 20),
+    ("T6_equi_temperature", make_T6, 20),
 ]
 
 
-@pytest.mark.parametrize("name,maker", _CASES, ids=[c[0] for c in _CASES])
-def test_strict_energy_conservation(name, maker):
+@pytest.mark.parametrize("name,maker,grid", _CASES, ids=[c[0] for c in _CASES])
+def test_strict_energy_conservation(name, maker, grid):
     """Conservative discretisation balances per phase — global + per-cell — and
     does not break mass conservation, for every audit geometry."""
-    cfg = maker(20)
+    cfg = maker(grid)
     cfg["conservative_ltne"] = True
     res = _run_3d_stack(cfg)
 

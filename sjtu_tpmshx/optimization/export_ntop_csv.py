@@ -28,7 +28,7 @@ CLI usage::
 
 Or invoke the function programmatically::
 
-    from optimization.export_ntop_csv import export_decision_vector
+    from sjtu_tpmshx.optimization.export_ntop_csv import export_decision_vector
     export_decision_vector(x_decision, out_dir='nTop_inputs/best_Q',
                            Nx_export=100, Ny_export=50)
 
@@ -46,7 +46,7 @@ from typing import Optional
 
 import numpy as np
 
-from solvers.continuous_field import (
+from sjtu_tpmshx.solvers.continuous_field import (
     DEFAULT_L_BOUNDS,
     DEFAULT_N_CTRL_X,
     DEFAULT_N_CTRL_Y,
@@ -54,7 +54,7 @@ from solvers.continuous_field import (
     DEFAULT_T_BOUNDS,
     from_decision_vector,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

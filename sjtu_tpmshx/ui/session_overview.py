@@ -9,7 +9,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QGridLayout, QWidget,
 )
 
 from .theme import get_theme
@@ -50,14 +49,16 @@ class OverviewDialog(QDialog):
             "letter-spacing:-0.3px;")
         hdr.addWidget(title)
         hdr.addStretch(1)
-        import main as _m   # __version__ only — styles come from ThemeManager
+        # P1.9: version from the _version leaf — importing main here was the
+        # ui->main cycle edge (composition root pulled in for one constant).
+        from sjtu_tpmshx._version import __version__ as _app_version
         from .field_factory import default_factory
         _tm = default_factory().theme
         from .fmt import preset_display as _pd
         sub = QLabel(
             f"Preset: {_pd(getattr(window, '_active_preset_name', '—'))}  "
             f"·  Workspace: {getattr(window, '_active_workspace', 'A')}  "
-            f"·  v{getattr(_m, '__version__', '?')}")
+            f"·  v{_app_version}")
         sub.setStyleSheet(
             f"color:{_sub}; font-size:10pt; font-family:{_mono};"
             "background:transparent; border:none;")

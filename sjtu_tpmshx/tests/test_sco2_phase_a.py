@@ -12,8 +12,8 @@ import warnings
 import numpy as np
 import pytest
 
-from solvers import fluid_props, tpms_calc
-from solvers.nu_correlations import (
+from sjtu_tpmshx.solvers import fluid_props, tpms_calc
+from sjtu_tpmshx.solvers.nu_correlations import (
     nu_sco2_topo, SCO2_NU_COEFFS, SCO2_NU_RE_RANGE,
 )
 
@@ -30,15 +30,18 @@ def test_sco2_nu_form_diamond():
 
 
 def test_sco2_nu_coeffs_locked():
-    """2026-07-23 smooth-wall CFD refit (V0b) — refit = edit nu_correlations.
-    Corrected upload: 20 Diamond + 17 Gyroid geometries L∈[4,8], real CFD at
-    D_7_6/G_7_6 (were RBF-extrapolated), corrected Dh. Retired 2026-07-15 coeffs
-    (wrong-Dh + extrapolated 7/0.6): Diamond c=0.166714 a=0.705490 d=-0.434198;
+    """2026-07-26 smooth-wall CFD refit (V0b) — refit = edit nu_correlations.
+    Gyroid L=8 completion (purely additive upload): 20 Diamond + **20** Gyroid
+    geometries L∈[4,8]. G_8_3 went 80→270 cases, G_8_4/5/6 0→270 (previously
+    ABSENT). Diamond untouched — unchanged coeffs here are the control.
+    Retired 2026-07-23 Gyroid (17 geometries): c=0.201101 a=0.720625
+    d=-0.013529. Retired 2026-07-15 coeffs (wrong-Dh + extrapolated 7/0.6):
+    Diamond c=0.166714 a=0.705490 d=-0.434198;
     Gyroid c=0.199133 a=0.719463 d=-0.109010."""
     assert SCO2_NU_COEFFS['Diamond'] == {
         'c': 0.184809, 'a': 0.707421, 'd': -0.281792}
     assert SCO2_NU_COEFFS['Gyroid'] == {
-        'c': 0.201101, 'a': 0.720625, 'd': -0.013529}
+        'c': 0.192994, 'a': 0.722221, 'd': -0.044313}
     assert SCO2_NU_RE_RANGE == (2600.0, 128000.0)
 
 
@@ -98,7 +101,13 @@ def test_compute_sco2_routes_sco2_nu():
     Pr = m.mu(T, P) * m.cp(T, P) / m.k(T, P)
     g = tpms_calc.geometry('Diamond', 7.0, 0.6, 15.0)
     co = tpms_calc.SCO2_NU_COEFFS['Diamond']
-    expect = (co['c'] * r['Re'] ** co['a'] * Pr ** (1 / 3)
+    # Smooth CFD form × the experimental HX-level correction γ_Nu
+    # (D-2sc-3, 2026-07-22): compute() must carry the PRODUCTION value —
+    # a smooth-only expectation would go stale (and an air-Nu mis-route
+    # still lands far from either).
+    from sjtu_tpmshx.solvers.nu_correlations import gamma_nu_sco2
+    expect = (gamma_nu_sco2('Diamond', float(r['Re']))
+              * co['c'] * r['Re'] ** co['a'] * Pr ** (1 / 3)
               * (float(g['D_h']) * 1000.0 / 7.0) ** co['d'])
     assert r['Nu'] == pytest.approx(expect, rel=1e-9)
     assert r['H_sf'] > 0
@@ -109,13 +118,17 @@ def test_gate_a_d76_gold_duty():
     """sCO2 Nu closure reproduces measured duty on the 6 GOLD cases within
     15 %. Skips if the (large, un-versioned) experiment xlsx is absent.
 
-    SKIPPED since 2026-07-15: production sCO2 closures switched to the
-    SMOOTH-WALL unit-cell CFD fits (user decision) — validating a rough SLM
-    experiment with smooth-wall closures is EXPECTED to exceed the gate
-    (~1.7× on Nu). Re-arm when the experimental roughness anchor (γ) lands;
-    ledger SCO2-CFD holds the trigger."""
-    pytest.skip("smooth-wall sCO2 closures (2026-07-15) — rough D-7-6 gate "
-                "suspended until experimental γ anchor lands (ledger SCO2-CFD)")
+    RE-ARMED 2026-07-22 (candidate D · D-2sc-4) — suspended 2026-07-15 when
+    production went smooth-wall; the experimental anchors landed in
+    D-2sc-2/3 (gamma_f_sco2 / gamma_nu_sco2) and the script was migrated to
+    package imports + the flat re-exported xlsx (header-guarded column map;
+    same dataset, cross-checked). Measured at re-arm: RMSRE 4.2 %,
+    max|err| 8.1 % (case 37 — its hot Re 8453 sits below the gamma_Nu
+    window, honestly falling back to smooth there), bias −0.8 %.
+    HONESTY NOTE: the GOLD cases belong to the same campaign the γ anchors
+    were fitted on — this is an IN-FAMILY end-to-end assembly check
+    (correction reaches compute(); UA/ε-NTU chain sane), not a blind gate
+    (sCO2 has no blind data — audit §4)."""
     from pathlib import Path
     import importlib.util
     # Moved from sjtu_tpmshx/validation/ to projects/703-sCO2-D76/ in c3635cd

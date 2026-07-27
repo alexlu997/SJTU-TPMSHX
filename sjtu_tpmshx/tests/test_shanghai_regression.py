@@ -132,7 +132,7 @@ def test_shanghai_3d_baseline():
     """
     import pandas as pd
     rc, stdout, stderr = _run_subprocess(
-        'validation.cases.validate_shanghai_3d_real',
+        'sjtu_tpmshx.validation.cases.validate_shanghai_3d_real',
         '--suffix', '_pytest_h3',
         timeout=1500)
     assert rc == 0, (
@@ -228,7 +228,7 @@ def test_shanghai_lumped_paper():
     """
     import pandas as pd
     rc, stdout, stderr = _run_subprocess(
-        'validation.cases.validate_shanghai_lumped_dual_nu', timeout=600)
+        'sjtu_tpmshx.validation.cases.validate_shanghai_lumped_dual_nu', timeout=600)
     assert rc == 0, (
         f"validate_shanghai_lumped_dual_nu failed (rc={rc}):\n"
         f"STDERR:\n{stderr[-2000:]}")

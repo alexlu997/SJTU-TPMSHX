@@ -68,7 +68,7 @@ def plot_temperature_3panel(window, r, _t):
                 kw.update(vmin=vmin_s, vmax=vmax_s)
         else:
             kw = dict(levels=128, cmap='turbo', vmin=vmin_f, vmax=vmax_f)
-        from ui.matplotlib_canvas import pad_field_to_edges
+        from sjtu_tpmshx.ui.matplotlib_canvas import pad_field_to_edges
         _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, L * 1000.0, H * 1000.0)
         cf = ax.contourf(_Xp, _Yp, _Fp, **kw)
         ax.set_xlim(0, L * 1000.0); ax.set_ylim(0, H * 1000.0)
@@ -118,14 +118,14 @@ def redraw_temperature_panel(window):
     r = getattr(window, '_compute_results', None)
     if r is None:
         return
-    from ui.theme import get_theme
+    from sjtu_tpmshx.ui.theme import get_theme
     plot_temperature_3panel(window, r, get_theme())
 
 
 def finalize_plots(window):
     """Ex-Main_Menu._finalize_plots(self). Render plots from stored results.
     MUST run on main thread."""
-    from ui.theme import get_theme
+    from sjtu_tpmshx.ui.theme import get_theme
     _t = get_theme()
 
     if getattr(window, '_compute_warnings', None):
@@ -135,7 +135,6 @@ def finalize_plots(window):
             "\n\n".join(window._compute_warnings))
         window._compute_warnings = None
     r = window._compute_results
-    Ta, Tb, Ts = r['Ta'], r['Tb'], r['Ts']
     # N5 (2026-07-07): prefer the display-smoothed copies on partial-BC runs;
     # the physics keys ('ucA' …) now stay raw / mass-conserving.
     def _vel(key):
@@ -146,7 +145,6 @@ def finalize_plots(window):
     dP_A, dP_B = r['dP_A'], r['dP_B']
     N_x, N_y, L, H = r['N_x'], r['N_y'], r['L'], r['H']
     dir_A, dir_B = r['dir_A'], r['dir_B']
-    zone_config, za = r['zone_config'], r['za']
 
     dir_flow_A = window._DIR_MAP[dir_A]
     dir_flow_B = window._DIR_MAP[dir_B]
@@ -209,7 +207,7 @@ def finalize_plots(window):
         (UmagB, r"$|\mathbf{U}_B|$  [m/s]", "Fluid B"),
     ]):
         ax.set_facecolor(_t['ax_bg'])
-        from ui.matplotlib_canvas import pad_field_to_edges
+        from sjtu_tpmshx.ui.matplotlib_canvas import pad_field_to_edges
         _Xp, _Yp, _Fp = pad_field_to_edges(x, y, field, L * 1000.0, H * 1000.0)
         cf = ax.contourf(_Xp, _Yp, _Fp, levels=128, cmap='turbo',
                          vmin=0.0, vmax=_vmax_v)
@@ -262,7 +260,7 @@ def finalize_plots(window):
     _reasons = list(getattr(window, '_extrap_reasons', []) or [])
     window._has_extrap = bool(_reasons)
     if _reasons:
-        from ui.theme import get_theme as _gt
+        from sjtu_tpmshx.ui.theme import get_theme as _gt
         _tw = _gt().get('warn', '#B45309')
         _wm_text = "⚠ ConstDF-v1 extrapolated: " + " | ".join(_reasons)
         for _cv in (window.canvas_temp, window.canvas_pres, window.canvas_vel):

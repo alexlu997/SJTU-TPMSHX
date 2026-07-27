@@ -8,8 +8,8 @@ works when a calibration entry is injected.
 import numpy as np
 import pytest
 
-import df_surrogate.predict as P
-from solvers.tpms_calc import geometry as tpms_geometry
+import sjtu_tpmshx.df_surrogate.predict as P
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
 
 _EF_D7 = tpms_geometry('Diamond', 7.0, 0.6, 16.0)['epsilon'] / 2
 _EF_G7 = tpms_geometry('Gyroid', 7.0, 0.6, 16.0)['epsilon'] / 2

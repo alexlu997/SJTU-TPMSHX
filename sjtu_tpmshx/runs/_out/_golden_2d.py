@@ -18,14 +18,11 @@ Untracked diagnostic (runs/_out/). Not a pytest.
 import os, sys, json, hashlib
 import numpy as np
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, _ROOT)
-
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-from controllers.compute_pipeline import Pipeline2D
+from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
 
 
 def _air_air_cfg():

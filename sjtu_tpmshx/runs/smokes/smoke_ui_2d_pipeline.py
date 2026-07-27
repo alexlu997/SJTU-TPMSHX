@@ -9,12 +9,9 @@ All modals are auto-accepted — including INSTANCE QMessageBox(...).exec()
 (main._preflight_grid), which a class-method patch alone does not catch;
 that exact gap hung the first version of this smoke for 20 minutes.
 """
-import os
-import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
+from sjtu_tpmshx.runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
 from PySide6.QtWidgets import QMessageBox
 
@@ -34,7 +31,7 @@ def _patch_modals():
 def main():
     app = _smoke_boot.get_app()
     _patch_modals()
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     win = Main_Menu()
     app.processEvents()
 

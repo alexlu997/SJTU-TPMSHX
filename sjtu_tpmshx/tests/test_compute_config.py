@@ -14,11 +14,10 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig,
     FluidConfig,
     GeometryConfig,
@@ -28,7 +27,7 @@ from domain.compute_config import (
     ExtrapPolicy,
     FeatureFlags,
 )
-from ui.window_config import config_from_window
+from sjtu_tpmshx.ui.window_config import config_from_window
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -337,7 +336,7 @@ def test_c4_new_dataclasses_have_safe_defaults():
 
 def test_read_feature_flags_variable_rho_cp():
     """`chk_var_rhocp` checkbox → FeatureFlags.variable_rho_cp (default ON)."""
-    from ui.window_config import _read_feature_flags
+    from sjtu_tpmshx.ui.window_config import _read_feature_flags
 
     class _Chk:
         def __init__(self, v): self._v = v

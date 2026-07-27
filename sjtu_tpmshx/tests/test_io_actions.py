@@ -8,21 +8,16 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 
 @pytest.fixture(scope="module")
 def win(tmp_path_factory):
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(
+    _app = QApplication.instance() or QApplication(
         ['pytest', '-platform', 'offscreen'])
     # Redirect SessionManager's default base_dir before Main_Menu is built:
     # closeEvent auto-saves the session, and without this the teardown
@@ -30,7 +25,7 @@ def win(tmp_path_factory):
     # 2026-07-13). Module-scoped fixture, so patch manually (monkeypatch
     # fixture is function-scoped) and undo after close.
     from _pytest.monkeypatch import MonkeyPatch
-    import controllers.session_manager as sm_mod
+    import sjtu_tpmshx.controllers.session_manager as sm_mod
     mp = MonkeyPatch()
     session_dir = tmp_path_factory.mktemp('session')
     orig_init = sm_mod.SessionManager.__init__
@@ -40,7 +35,7 @@ def win(tmp_path_factory):
                   parent=parent)
 
     mp.setattr(sm_mod.SessionManager, '__init__', _init)
-    import main as main_mod
+    import sjtu_tpmshx.main as main_mod
     w = main_mod.Main_Menu()
     yield w
     w.close()

@@ -9,7 +9,7 @@ bit-identical).
 import numpy as np
 import pytest
 
-from solvers.simple_solver_3d import _v_bc_3d, _correct_jit_3d
+from sjtu_tpmshx.solvers.simple_solver_3d import _v_bc_3d, _correct_jit_3d
 
 
 def test_v_bc_outlet_uses_eps_rho_ratio_when_zoned():

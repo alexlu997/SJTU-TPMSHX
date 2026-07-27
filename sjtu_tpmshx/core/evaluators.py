@@ -32,27 +32,64 @@ import numpy as np
 # (see the solver-construction block), so graded designs are exact instead of
 # mean-ε approximate. The one-shot warning guard that lived here is retired.
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     air_density,
     air_viscosity,
     air_cp,
 )
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from solvers.df_projection import (
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
-from solvers.continuous_field import from_decision_vector
-from logutil import get_logger
+from sjtu_tpmshx.solvers.continuous_field import from_decision_vector
+from sjtu_tpmshx.solvers.envelope import (
+    R_AIR_DEFAULT,
+    assess_solution_validity,
+    mach_field_max,
+    predict_outlet_p_sq,
+)
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
 
-R_AIR = 287.05
+# Re-exported for verify_pareto_3d et al.; the value lives in solvers/envelope
+# (single authority for the 1D compressible D-F seed — P1.3, was a local copy).
+R_AIR = R_AIR_DEFAULT
 
 
 __all__ = ["evaluate_3d", "_build_3d_arrays", "R_AIR"]
 
+
+
+def _post_solve_gate_3d(sA, sB, Ta, Tb):
+    """Post-solve physical-validity check (P1.3-B, openspec D3).
+
+    Same criteria as the production gate (run_stack_3d.py:2151-2164): minimum
+    absolute pressure vs the clip floor + per-cell Mach against the LOCAL
+    temperature, both ideal-gas sides. Assess-only — never raises; callers map
+    ``(False, reasons)`` onto their existing invalid/penalty channels.
+
+    Velocity magnitude is frame-invariant, so each side is evaluated in its
+    OWN solver frame; the real-frame T fields are mapped in with the same
+    self-inverse transforms the rho/LTNE plumbing uses (A: transpose(1,0,2),
+    B: mirror along axis 1).
+    """
+    reasons = []
+    for tag, s, T_solver in (('A', sA, Ta.transpose(1, 0, 2)),
+                             ('B', sB, Tb[:, ::-1, :])):
+        u_cc = 0.5 * (s.u[:-1, :, :] + s.u[1:, :, :])
+        v_cc = 0.5 * (s.v[:, :-1, :] + s.v[:, 1:, :])
+        w_cc = 0.5 * (s.w[:, :, :-1] + s.w[:, :, 1:])
+        vmag = np.sqrt(u_cc ** 2 + v_cc ** 2 + w_cc ** 2)
+        ok, why = assess_solution_validity(
+            float((s.P_ref_abs + s.P).min()), float(vmag.max()),
+            float(T_solver.mean()),
+            ma_max=mach_field_max(vmag, T_solver))
+        if not ok:
+            reasons += [f"[{tag}] {r}" for r in why]
+    return (not reasons), reasons
 
 
 # ─── 3D field construction (extrude 2D field along z) ───────────────
@@ -75,7 +112,7 @@ def _build_3d_arrays(fc, Nx: int, Ny: int, Nz: int,
     # former per-cell dict-cache loop; the quantization key moved from
     # Python round() to np.round (round-half-even, agrees on the
     # 0.05/0.01-quantized grid). Result is z-broadcast below.
-    from solvers.continuous_field import props_from_Lt_fields
+    from sjtu_tpmshx.solvers.continuous_field import props_from_Lt_fields
     p = props_from_Lt_fields(L_field_2D, t_field_2D, tpms_type, k_s,
                              u_A, u_B, T_inA, T_inB, P_inA,
                              quant_L=quant_L, quant_t=quant_t)
@@ -171,13 +208,13 @@ def evaluate_3d(x_decision: np.ndarray,
     # Water side untouched (the per-topology water fit (`nu_water_topo`)
     # embeds AM roughness already).
     if roughness_mode is None or roughness_eps_um is None:
-        from solvers.roughness import resolve_mode_from_env as _resolve
+        from sjtu_tpmshx.solvers.roughness import resolve_mode_from_env as _resolve
         _env_mode, _env_eps = _resolve(default='baseline')
         roughness_mode = roughness_mode or _env_mode
         roughness_eps_um = roughness_eps_um if roughness_eps_um is not None else _env_eps
     if roughness_mode != 'baseline':
-        from solvers.roughness import f_enhancement, nu_extra_factor
-        from solvers.tpms_calc import geometry as _tpms_geom
+        from sjtu_tpmshx.solvers.roughness import f_enhancement, nu_extra_factor
+        from sjtu_tpmshx.solvers.tpms_calc import geometry as _tpms_geom
         _g_case = _tpms_geom(tpms_type, float(fc.L_ctrl.mean()),
                               float(fc.t_ctrl.mean()), k_s)
         _D_h_m = _g_case['D_h']
@@ -221,13 +258,13 @@ def evaluate_3d(x_decision: np.ndarray,
     cF_mean_A = float(np.mean(cF_A))
     G_A = rho_A0 * u_A
     C_A = mu_A0 * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-    P_out_sq_A = P_inA ** 2 - 2.0 * R_AIR * T_inA * C_A * L_dom
+    P_out_sq_A = predict_outlet_p_sq(P_inA, T_inA, C_A, L_dom)
 
     K_mean_B = float(np.mean(K_B))
     cF_mean_B = float(np.mean(cF_B))
     G_B = rho_B0 * u_B
     C_B = mu_B0 * G_B / max(K_mean_B, 1e-16) + cF_mean_B * G_B * G_B
-    P_out_sq_B = P_inB ** 2 - 2.0 * R_AIR * T_inB * C_B * H_dom
+    P_out_sq_B = predict_outlet_p_sq(P_inB, T_inB, C_B, H_dom)
 
     # 2026-05-20 UI sweep (Tier 17, user re-audit): strict-mode contract
     # from `tests/test_pressure_invalid_flag.py`. The compressible D-F
@@ -346,13 +383,13 @@ def evaluate_3d(x_decision: np.ndarray,
     # verdict is now collected and returned; reporting callers must gate on
     # them (screening callers may ignore them — rankings-only, ledger O2).
     if verbose:
-        _log.info(f"[3D] Solving SIMPLE A (cold) … ")
+        _log.info("[3D] Solving SIMPLE A (cold) … ")
     t0 = time.perf_counter()
     simple_A_ok, _itA = sA.solve(max_iter=max_iter_simple, tol=tol_simple,
                                  verbose=False)
     if verbose:
         _log.info(f"{time.perf_counter()-t0:.0f}s")
-        _log.info(f"[3D] Solving SIMPLE B (cold) … ")
+        _log.info("[3D] Solving SIMPLE B (cold) … ")
     t0 = time.perf_counter()
     simple_B_ok, _itB = sB.solve(max_iter=max_iter_simple, tol=tol_simple,
                                  verbose=False)
@@ -469,7 +506,7 @@ def evaluate_3d(x_decision: np.ndarray,
         T_avg = float(Ta_sA.mean())
         mu_avg = float(air_viscosity(T_avg))
         C_avg = mu_avg * G_A / max(K_mean_A, 1e-16) + cF_mean_A * G_A * G_A
-        P_out_sq_new = P_inA ** 2 - 2.0 * R_AIR * T_avg * C_avg * L_dom
+        P_out_sq_new = predict_outlet_p_sq(P_inA, T_avg, C_avg, L_dom)
         if P_out_sq_new <= 0.0:
             # Hot-state choke (2026-07-13 audit): the COLD seed above passed,
             # but the heated T_avg raised 2RT·C·L past P_in². This used to be
@@ -505,7 +542,7 @@ def evaluate_3d(x_decision: np.ndarray,
         sA.P_ref_abs = float(np.sqrt(P_out_sq_new))
 
         if verbose:
-            _log.info(f"[3D] re-solving SIMPLE A with var-ρ … ")
+            _log.info("[3D] re-solving SIMPLE A with var-ρ … ")
         t0 = time.perf_counter()
         # Last re-solve's verdict overwrites the cold one (the fields returned
         # are the last solve's).
@@ -551,6 +588,30 @@ def evaluate_3d(x_decision: np.ndarray,
     dP_B = float(SIMPLESolver3D.extract_dP_weighted(sB))
     dP_total = dP_A + dP_B
     mass = float(np.sum((1.0 - arrays['eps_arr']) * rho_s * cell_vol))
+
+    # Post-solve envelope gate (P1.3-B): the pre-solve 1D seed can pass while
+    # the CONVERGED field is non-physical (floor-clipped P or supersonic |v|).
+    # Same NaN+invalid contract as the choke seeds — these numbers must never
+    # be reported (verify_pareto) and map to the bounded penalty in the BO
+    # wrapper. Mass stays real: it is pure geometry.
+    _env_ok, _env_reasons = _post_solve_gate_3d(sA, sB, Ta, Tb)
+    if not _env_ok:
+        if verbose:
+            _log.warning("[3D verify] POST-SOLVE INVALID -- %s",
+                         "; ".join(_env_reasons))
+        return {
+            'Q_3D_W':         float('nan'),
+            'dP_A_Pa':        float('nan'),
+            'dP_B_Pa':        float('nan'),
+            'dP_total_Pa':    float('nan'),
+            'mass_kg':        mass,
+            'Lz_m':           Lz,
+            'grid':           (Nx, Ny, Nz),
+            'invalid':        True,
+            'converged':      False,
+            'invalid_reason': ('post-solve envelope gate: '
+                               + '; '.join(_env_reasons)),
+        }
 
     # Convergence truth table (codex review P0, 2026-07-13). `converged` is
     # the conjunction; reporting callers (verify_pareto_3d) MUST gate on it,

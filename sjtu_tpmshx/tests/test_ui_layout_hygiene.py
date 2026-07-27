@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QScrollArea  # noqa: E40
 @pytest.fixture(scope="module")
 def win():
     app = QApplication.instance() or QApplication([])
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     w = Main_Menu()
     w.resize(1600, 1000)
     w.show()
@@ -45,7 +45,7 @@ def test_param_pages_have_no_horizontal_scroll(win):
 
 
 def test_fluids_row_is_responsive(win):
-    from ui.responsive import ResponsiveRow
+    from sjtu_tpmshx.ui.responsive import ResponsiveRow
     assert isinstance(getattr(win, "_fluids_row", None), ResponsiveRow)
 
 
@@ -54,7 +54,7 @@ def test_responsive_row_direction_flips():
     (the parent layout re-imposes geometry), so the flip is tested on a
     top-level ResponsiveRow."""
     from PySide6.QtWidgets import QLabel
-    from ui.responsive import ResponsiveRow
+    from sjtu_tpmshx.ui.responsive import ResponsiveRow
     app = QApplication.instance() or QApplication([])
     row = ResponsiveRow(threshold=520)
     row.addWidget(QLabel("A"))
@@ -143,7 +143,7 @@ def test_tpms_computed_collapsed_then_autoexpands(win):
 def test_group_badge_counts_empty_field(win):
     """ui-batch3 IA-4: clearing a field inside a collapsed group surfaces
     a ⚠N badge in that group's title; fixing it clears the badge."""
-    from ui.ui_builders import refresh_group_badges
+    from sjtu_tpmshx.ui.ui_builders import refresh_group_badges
     grp = win._accordion_groups["网格与求解器"]
     old = win.le_Nx.text()
     win.le_Nx.setText("")
@@ -178,7 +178,7 @@ def test_group_badge_updates_via_validator_debounce(win):
 
 
 def test_group_badge_survives_toggle(win):
-    from ui.ui_builders import refresh_group_badges
+    from sjtu_tpmshx.ui.ui_builders import refresh_group_badges
     grp = win._accordion_groups["网格与求解器"]
     old = win.le_Nx.text()
     win.le_Nx.setText("")
@@ -266,7 +266,7 @@ def test_optimize_wizard_pages(win):
     stack = win._opt_stack
     assert stack.count() == 3
     assert stack.currentIndex() == 0          # starts on 配置
-    from ui.optimize_panel import _set_stage_pill
+    from sjtu_tpmshx.ui.optimize_panel import _set_stage_pill
     _set_stage_pill(win, 'running', 'active')
     assert stack.currentIndex() == 1
     _set_stage_pill(win, 'result', 'active')

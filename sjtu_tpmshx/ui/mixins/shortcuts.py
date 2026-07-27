@@ -84,7 +84,7 @@ class ShortcutsMixin:
 
     def _cycle_density(self, step):
         """`[` / `]` cycle compact ↔ cozy ↔ comfortable with wraparound."""
-        from ui.theme import get_density
+        from sjtu_tpmshx.ui.theme import get_density
         order = ('compact', 'cozy', 'comfortable')
         cur = get_density()
         try:

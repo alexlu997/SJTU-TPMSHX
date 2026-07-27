@@ -39,18 +39,16 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent
-sys.path.insert(0, str(_PKG_ROOT))
 sys.path.insert(0, str(_THIS.parent))
 
 from load_sco2_exp import load_exp                              # noqa: E402
-from solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
-from solvers.tpms_props import geometry as tpms_geometry        # noqa: E402
-from df_surrogate.predict import predict_K_cF                   # noqa: E402
-from df_surrogate.sco2_df import predict_cF_sco2                # noqa: E402
-from validation.report_template import (                        # noqa: E402
-    ANNO_BOX, CFD_C, CHART_ANNO_FS, CHART_LEGEND_FS, CHART_TITLE_FS,
-    COLD_C, G700, HOT_C, IVORY, PAIR_A, PAIR_B, PAPER, SLATE,
-    G200, G300, G500, CLAY,
+from sjtu_tpmshx.solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry        # noqa: E402
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF                   # noqa: E402
+from sjtu_tpmshx.df_surrogate.sco2_df import predict_cF_sco2                # noqa: E402
+from sjtu_tpmshx.validation.report_template import (                        # noqa: E402
+    ANNO_BOX, CFD_C, CHART_ANNO_FS, CHART_LEGEND_FS, COLD_C, G700, HOT_C, IVORY, SLATE,
+    G300, G500, CLAY,
     math_block, math_inline, mfrac, mi, mn, mo, mrow, msub, msup, page,
     paren_pow, section, style_journal_ax)
 
@@ -442,7 +440,6 @@ def make_charts(res: list[dict], subst_geom: bool = False) -> dict[str, str]:
 
     # ── γ(Re, Pr) 函数图（第 05 节; 2026-07-16: γ 扩为 Re,Pr 二元幂律）──
     # γ_Nu 按 Pr 着色（蓝序列）+ 中位 Pr 处拟合线; γ_f 保留分侧红。
-    import matplotlib as mpl
     from matplotlib.colors import LinearSegmentedColormap, Normalize
     from matplotlib.ticker import LogLocator, FuncFormatter, NullFormatter
     PR_CMAP = LinearSegmentedColormap.from_list("pr", ["#CBD9F0", "#1F4E9C"])

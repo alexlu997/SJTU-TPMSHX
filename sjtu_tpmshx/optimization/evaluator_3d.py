@@ -28,12 +28,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from optimization.evaluator import DEFAULT_CONFIG as _EVAL_DEFAULT_CONFIG
+from sjtu_tpmshx.optimization.evaluator import DEFAULT_CONFIG as _EVAL_DEFAULT_CONFIG
 # M4 (2026-05-28 audit): import via core.evaluators neutral layer instead of
 # directly from validation.cases.verify_pareto_3d, breaking the
 # optimization→validation direction anomaly. core.evaluators currently
 # re-exports the function; physical move pending future cleanup.
-from core.evaluators import evaluate_3d as _evaluate_3d_dict
+from sjtu_tpmshx.core.evaluators import evaluate_3d as _evaluate_3d_dict
 
 
 # ─── Default cfg ────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ def _compute_cfg_to_evaluator_dict_3d(compute_cfg) -> dict:
     counterpart in :mod:`optimization.evaluator`, plus the 3D-only
     ``Nx_3d`` / ``Ny_3d`` / ``Nz_3d`` / ``Lz`` overrides.
     """
-    from optimization.evaluator import _compute_cfg_to_evaluator_dict
+    from sjtu_tpmshx.optimization.evaluator import _compute_cfg_to_evaluator_dict
     d = _compute_cfg_to_evaluator_dict(compute_cfg)
     d['Nx_3d'] = compute_cfg.solver.Nx
     d['Ny_3d'] = compute_cfg.solver.Ny

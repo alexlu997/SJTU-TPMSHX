@@ -261,6 +261,9 @@ class CoordInspector(QDockWidget):
 
     def _on_pin_toggled(self, checked):
         self._pinned = bool(checked)
+        # P2.1 lint (F821): _t was only assigned in the ELSE branch — pinning
+        # the inspector hit an unbound _t (NameError) on the styled path.
+        _t = get_theme()
         if self._pinned:
             self._status.setText("◉ Pinned")
             self._status.setStyleSheet(

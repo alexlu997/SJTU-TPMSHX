@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.df_projection import (
+from sjtu_tpmshx.solvers.df_projection import (
     extract_dP_from_simple,
     extract_dP_mass_flux_from_simple,
     build_master_refined_grid,

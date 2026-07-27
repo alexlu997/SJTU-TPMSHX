@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.validator import (
+from sjtu_tpmshx.domain.validator import (
     FIELD_UNITS,
     POSITIVE_FIELDS,
     COUNT_TOKEN_WHITELIST,

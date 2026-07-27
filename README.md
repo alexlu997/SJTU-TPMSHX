@@ -155,7 +155,8 @@
 
 ## ⚙️ Install
 
-> Tested on **Python 3.11 / 3.12, Windows 11**. Linux should work; macOS untested.
+> Tested on **Python 3.11 / 3.12, Windows 11 & Windows Server 2022** (128-core EPYC,
+> full suite + golden gate re-validated 2026-07). Linux should work; macOS untested.
 
 ```bash
 git clone https://github.com/alexlu997/SJTU-TPMSHX.git
@@ -199,13 +200,20 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 #### ✔️ Tests
 
 ```bash
-# full suite, parallel (~4.5 min; ~150 test files). PYTHONHASHSEED must be
-# set in the shell — the 3D pipeline output is hash-seed sensitive.
+# full suite, parallel (~4.5 min on a desktop; ~160 test files). PYTHONHASHSEED
+# must be set in the shell — the 3D pipeline output is hash-seed sensitive.
 PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
 
 # fast subset (same selection CI runs)
 PYTHONHASHSEED=0 pytest -q -m "not slow" -n auto --dist loadscope
 ```
+
+> [!TIP]
+> On many-core servers `-n auto` oversubscribes and stalls (measured on 128 logical
+> cores) — use **`scripts/run_tests_server.ps1`** (`-n 64 --dist worksteal`, two passes,
+> the standing verification gate) instead. For the dev inner loop there is
+> **`scripts/run_tests_fast.ps1`** (~56 s, skips the 21 census-marked `heavy` tests —
+> **not** the verification gate).
 
 ---
 

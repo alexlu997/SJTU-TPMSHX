@@ -13,10 +13,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from solvers.df_projection import (_cell_centre_fracs, _nearest_src_idx,
+from sjtu_tpmshx.solvers.df_projection import (_cell_centre_fracs, _nearest_src_idx,
                                    project_fields_to_streamwise_K_cF as p2d,
                                    project_fields_to_streamwise_K_cF_3d as p3d)
-from solvers.tpms_calc import geometry as _geom
+from sjtu_tpmshx.solvers.tpms_calc import geometry as _geom
 
 _BASE = json.loads(
     (Path(__file__).parent / '_data_df_projection_baseline.json')

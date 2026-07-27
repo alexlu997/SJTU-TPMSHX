@@ -29,22 +29,20 @@ Usage:
     python -u sjtu_tpmshx\\validation\\audit_partial_b_ltne.py --grid 15
 """
 from __future__ import annotations
-import argparse, os, sys, time, warnings
+import argparse, sys, time, warnings
 from pathlib import Path
 from typing import Any
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from solvers.tpms_calc import air_density, air_cp
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.solvers.tpms_calc import air_density
 
 
 # ── Shanghai case 1 partial-B baseline (mirror sweep_m4_baseline.py C1) ──
@@ -346,7 +344,6 @@ def p2_face_flux_enthalpy(res: dict, case: dict) -> dict:
     rho_A_in = float(air_density(T_inA, P_inA))
     rho_B_in = float(air_density(T_inB, P_inB)) if T_inB is not None else None
 
-    sA_face = res['_audit_sA_face']
     sB_face = res.get('_audit_sB_face')
 
     # ── A side ──
@@ -519,7 +516,6 @@ def p5_outlet_distribution(res: dict) -> dict:
     flux_mag_2d, area_outlet_2d = _solver_signed_outflow_2d(sB_face)
     pos_total = float(np.sum(flux_mag_2d))
     pos_inside = float(np.sum(flux_mag_2d * (out_mask_B > 0.5)))
-    pos_outside = pos_total - pos_inside
     inside_frac = pos_inside / max(pos_total, 1e-30)
     outside_frac = 1.0 - inside_frac if pos_total > 1e-30 else 0.0
 
@@ -596,8 +592,6 @@ def diagnose(p1: dict, p2: dict, p3: dict, p4: dict,
     """
     excel_face_A = p2['A']['rel']
     excel_face_B = p2['B']['rel'] if p2['B']['Q_face'] == p2['B']['Q_face'] else float('nan')
-    Q_A_face = p2['A']['Q_face']
-    Q_B_face = p2['B']['Q_face']
 
     # internal LTNE closure (interior only)
     Q_sA_int = p3['A']['interior']
@@ -610,7 +604,6 @@ def diagnose(p1: dict, p2: dict, p3: dict, p4: dict,
 
     # ── ghost-B fraction
     Q_sB_ghost = (p3['B']['ghost'] if p3['B'] is not None else 0.0)
-    Q_sB_part = (p3['B']['participating'] if p3['B'] is not None else 0.0)
     ghost_frac = (abs(Q_sB_ghost) / max(abs(Q_sB_all), 1e-30)
                   if p3['B'] is not None else 0.0)
 
@@ -841,11 +834,11 @@ def write_report(out_path: Path, sections: list, header_meta: dict) -> None:
     lines = []
     lines.append('# Partial-B LTNE Conservation Audit (P1–P7)\n')
     lines.append(f"- Date: {header_meta['date']}")
-    lines.append(f"- Case: Shanghai case 1, B_area_frac ≈ 0.20")
+    lines.append("- Case: Shanghai case 1, B_area_frac ≈ 0.20")
     lines.append(f"- Grid: Nx=Ny=Nz={header_meta['grid']}")
-    lines.append(f"- Audit script: `sjtu_tpmshx/validation/audit_partial_b_ltne.py`")
-    lines.append(f"- Result-dict additive exports: keys prefixed `_audit_*` "
-                 f"in `pipelines/stages_3d.py` (formerly run_calculation_3d)\n")
+    lines.append("- Audit script: `sjtu_tpmshx/validation/audit_partial_b_ltne.py`")
+    lines.append("- Result-dict additive exports: keys prefixed `_audit_*` "
+                 "in `pipelines/stages_3d.py` (formerly run_calculation_3d)\n")
     lines.append('## Scope\n')
     lines.append('- Read-only audit. No solver, M4, M3, K/cF, momentum, or '
                  'closure formula was modified.')
@@ -942,7 +935,7 @@ def main() -> int:
         payload_all.append((closure, payload))
         try:
             _assert_self_consistency(payload)
-            print(f"  self-consistency OK")
+            print("  self-consistency OK")
         except AssertionError as e:
             print(f"  ⚠ self-consistency FAILED: {e}")
 

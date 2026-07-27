@@ -24,17 +24,16 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent
-sys.path.insert(0, str(_PKG_ROOT))
 sys.path.insert(0, str(_THIS.parent))
 
 from load_sco2_exp import load_exp                              # noqa: E402
 from compare_exp_vs_cfd import (analyse as analyse_full,        # noqa: E402
                                 make_charts as make_charts_full)
-from solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
-from solvers.tpms_props import geometry as tpms_geometry        # noqa: E402
-from validation.report_template import (                        # noqa: E402
+from sjtu_tpmshx.solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry        # noqa: E402
+from sjtu_tpmshx.validation.report_template import (                        # noqa: E402
     ANNO_BOX, CFD_C, CHART_ANNO_FS, CHART_LEGEND_FS,
-    G200, G300, G500, G700, IVORY, PAPER, SLATE,
+    G300, G700, IVORY, SLATE,
     math_block, math_inline, mfrac, mi, mn, mo, mrow, msub, msup,
     page, paren_pow, section, style_journal_ax)
 
@@ -120,7 +119,6 @@ def make_chart(res: list[dict]) -> str:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
     from matplotlib.ticker import LogLocator, FuncFormatter, NullFormatter
     plt.rcParams.update({
         "font.family": "sans-serif",

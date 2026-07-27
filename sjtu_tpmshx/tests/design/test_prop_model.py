@@ -3,8 +3,8 @@
 const 必须与历史一致 (回归); mean 在大 ΔT 改变结果、小 ΔT 收敛回 const;
 prop_model 须穿过 solve_Lx 且二分仍收敛。"""
 from __future__ import annotations
-from design.cases import DesignCase
-from design.forward import forward
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.forward import forward
 
 
 def _case(dT):  # 单工况空气-空气, 可调热侧温降 ΔT
@@ -36,7 +36,7 @@ def test_mean_approx_const_for_small_dT():
 
 
 def test_mean_threads_solve_Lx_and_converges():
-    from design.sizing import solve_Lx
+    from sjtu_tpmshx.design.sizing import solve_Lx
     c = _case(300.)
     Lx, r = solve_Lx(c, "Diamond", 7., 0.5, 0.084, "cross", prop_model="mean")
     assert Lx is not None                          # mean 下二分收敛

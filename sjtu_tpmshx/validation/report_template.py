@@ -9,7 +9,7 @@ reports/design_specimen.html 方案三）——暖白底、黑标尺线/黑框�
 
 用法
 ----
-    from validation.report_template import (
+    from sjtu_tpmshx.validation.report_template import (
         BASE_CSS, page, section, mi, mn, mrow, msub, msup, mfrac,
         paren_pow, math_block)
 

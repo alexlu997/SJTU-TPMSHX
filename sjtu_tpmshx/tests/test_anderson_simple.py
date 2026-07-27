@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.anderson_acceleration import (
+from sjtu_tpmshx.solvers.anderson_acceleration import (
     AndersonSIMPLE, stack_state, unstack_state)
 
 
@@ -98,7 +98,7 @@ def test_anderson_skips_rank_deficient():
 
 def _build_solver(use_anderson: bool):
     pytest.importorskip("numba")
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
     Nx, Ny, Nz = 16, 12, 4
     K_arr = np.full((Ny, Nz), 1e-7, dtype=np.float64)
     cF_arr = np.full((Ny, Nz), 340.0, dtype=np.float64)

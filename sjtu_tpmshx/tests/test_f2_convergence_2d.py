@@ -20,8 +20,8 @@ The load-bearing tests here:
 import numpy as np
 import pytest
 
-from solvers.simple_solver import SIMPLESolver
-from solvers._kernels_simple_2d import (
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers._kernels_simple_2d import (
     _mom_res_jit_2d,
     _sweep_u_jit_df,
     _sweep_v_jit_df,

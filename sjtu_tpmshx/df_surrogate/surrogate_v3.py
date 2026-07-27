@@ -67,12 +67,9 @@ _PROJECT = _PROJECT_ROOT.parent
 # Make sjtu_tpmshx/ importable as a search root so `from solvers.tpms_calc`
 # below resolves regardless of how the app was launched (python main.py from
 # sjtu_tpmshx/, python -m sjtu_tpmshx.main from parent, or packaged entry).
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 from scipy.interpolate import RBFInterpolator
-from solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
-from logutil import get_logger
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry, air_viscosity, P_atm
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -160,9 +157,17 @@ class SurrogateV3:
             self._build()                 # authoritative: calibrate from Excel
         else:
             self._source = 'prebuilt_csv'
-            _log.info("[SurrogateV3 %s/%s] local Excel absent - using "
-                      "committed prebuilt CSV calibration", self.tpms,
-                      self.method)
+            _log.warning(
+                "[SurrogateV3 %s/%s]\n"
+                "=============== CALIBRATION SOURCE FALLBACK ===============\n"
+                "local experiment Excel NOT FOUND (data/raw_data/) - using\n"
+                "the committed prebuilt CSV calibration instead. Numbers can\n"
+                "differ from the authoritative Excel-calibrated ones with no\n"
+                "further notice (the production GammaDF anchor derives from\n"
+                "this instance). Fix: copy raw_data/ from the SJTU-TPMSHX-data\n"
+                "repo at the commit recorded in data-repo.pin (repo root).\n"
+                "===========================================================",
+                self.tpms, self.method)
             self._build_from_prebuilt()   # fallback: committed calibrated CSV
 
     def _build(self) -> None:
@@ -471,7 +476,7 @@ class SurrogateV3:
         _log.info(f"  Geometries: {len(self.ref)}")
         _log.info(f"  Training rows: {len(self.rows_df)}")
         _log.info(f"  K_min: {self.K_min:.0e}")
-        _log.info(f"\n  Per-geometry (K, c_F):")
+        _log.info("\n  Per-geometry (K, c_F):")
         _log.info(f"  {'L':>3} {'t':>4} {'K':>10} {'c_F':>8}")
         for _, r in self.ref.iterrows():
             K_str = f"{r.K:.3e}" if r.K is not None and not np.isnan(r.K) else "N/A"
@@ -635,7 +640,7 @@ def main():
     loo_mape = eval_loo(model)
     print(f"\n  Mean LOO MAPE = {loo_mape:.2f}%")
 
-    print(f"\n=== Final ===")
+    print("\n=== Final ===")
     print(f"  Shanghai RMSRE = {rmsre:.2f}%")
     print(f"  LOO MAPE = {loo_mape:.2f}%")
 

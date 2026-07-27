@@ -6,7 +6,9 @@ closeEvent (which calls _save_session) stays in main.py — window lifecycle.
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox
+# P2.1 lint (F821): QInputDialog was used at _save_current_as_preset but
+# never imported — the "Save Preset" action raised NameError on first use.
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 
 class SessionPresetsMixin:

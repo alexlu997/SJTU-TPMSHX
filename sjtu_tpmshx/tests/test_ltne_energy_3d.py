@@ -8,20 +8,14 @@ Four tests:
   4. alpha_T_robustness    — α ∈ {0.5, 0.7, 0.9} converge to same fields
 """
 
-import sys
-from pathlib import Path
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.ltne_energy_3d import (
+from sjtu_tpmshx.solvers.ltne_energy_3d import (
     solve_full_domain_3d,
     energy_balance_3d,
     mass_balance_3d,
 )
-from solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
 
 
 def _toy_case(Nx=10, Ny=8, Nz=1, T_inA=350.0, T_inB=300.0):

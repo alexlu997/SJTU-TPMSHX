@@ -7,18 +7,15 @@ the 2026-07-03 robustness survey found and this change closed.
 from __future__ import annotations
 
 import json
-import sys
 import types
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from domain.compute_config import ComputeConfig  # noqa: E402
-from domain.compute_result import ComputeResult  # noqa: E402
+from sjtu_tpmshx.domain.compute_config import ComputeConfig  # noqa: E402
+from sjtu_tpmshx.domain.compute_result import ComputeResult  # noqa: E402
 
 
 # ── ComputeConfig.validate — the script/optimizer boundary ────────────
@@ -102,13 +99,13 @@ def _fake_window(**over):
 
 
 def test_strict_widgets_reject_nan():
-    from ui.window_config import _validate_required_widgets
+    from sjtu_tpmshx.ui.window_config import _validate_required_widgets
     with pytest.raises(ValueError, match='Domain Length'):
         _validate_required_widgets(_fake_window(le_L='nan'), is_3d=False)
 
 
 def test_strict_widgets_reject_negative():
-    from ui.window_config import _validate_required_widgets
+    from sjtu_tpmshx.ui.window_config import _validate_required_widgets
     with pytest.raises(ValueError, match='TPMS t'):
         _validate_required_widgets(_fake_window(le_t='-0.6'), is_3d=False)
 
@@ -116,7 +113,7 @@ def test_strict_widgets_reject_negative():
 def test_strict_widgets_allow_negative_celsius_temp():
     """Temp fields may hold °C text — sign check is deferred to
     ComputeConfig.validate (Kelvin domain)."""
-    from ui.window_config import _validate_required_widgets
+    from sjtu_tpmshx.ui.window_config import _validate_required_widgets
     _validate_required_widgets(_fake_window(le_TinA='-10'), is_3d=False)
 
 
@@ -131,8 +128,8 @@ def test_compute_result_has_converged_default_true():
 # ── 3D cell cap (script path, no UI dialog) ───────────────────────────
 
 def test_run_3d_stack_cell_cap(monkeypatch):
-    from runs._case_template import build_cfg
-    from pipelines.run_stack_3d import _run_3d_stack
+    from sjtu_tpmshx.runs._case_template import build_cfg
+    from sjtu_tpmshx.pipelines.run_stack_3d import _run_3d_stack
     monkeypatch.setenv('TPMSHX_MAX_CELLS_3D', '1000')
     cfg = build_cfg(Nx=20, Ny=20, Nz=5)          # 2000 cells > 1000 cap
     with pytest.raises(ValueError, match='cell cap'):
@@ -140,8 +137,8 @@ def test_run_3d_stack_cell_cap(monkeypatch):
 
 
 def test_run_3d_stack_cell_cap_cfg_override(monkeypatch):
-    from runs._case_template import build_cfg
-    from pipelines.run_stack_3d import _run_3d_stack
+    from sjtu_tpmshx.runs._case_template import build_cfg
+    from sjtu_tpmshx.pipelines.run_stack_3d import _run_3d_stack
     monkeypatch.setenv('TPMSHX_MAX_CELLS_3D', '10')
     cfg = build_cfg(Nx=20, Ny=20, Nz=5, max_cells_3d=100)
     # cfg override wins over env; 2000 > 100 still raises (proves the
@@ -153,7 +150,7 @@ def test_run_3d_stack_cell_cap_cfg_override(monkeypatch):
 # ── corrupt-session quarantine ────────────────────────────────────────
 
 def test_corrupt_session_quarantined(tmp_path):
-    from controllers.session_manager import SessionManager
+    from sjtu_tpmshx.controllers.session_manager import SessionManager
     sm = SessionManager(base_dir=tmp_path)
     p = sm.session_path('A')
     p.parent.mkdir(parents=True, exist_ok=True)

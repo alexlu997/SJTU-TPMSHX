@@ -5,21 +5,14 @@ Phase 3 of 2026-05-06 main.py refactor (audit fix #4).
 from __future__ import annotations
 
 import os
-import sys
 import types
-from pathlib import Path
 
-import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from PySide6.QtCore import QCoreApplication
 
-from ui.theme_manager import ThemeManager, _LEGACY_GLOBALS
+from sjtu_tpmshx.ui.theme_manager import ThemeManager, _LEGACY_GLOBALS
 
 
 def _app():

@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from domain.compute_config import bc_to_dict
+from sjtu_tpmshx.domain.compute_config import bc_to_dict
 
 
 # ── Reference reimplementations of the deleted legacy functions ──────

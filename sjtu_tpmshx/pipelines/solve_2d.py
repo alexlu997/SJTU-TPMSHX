@@ -2,11 +2,11 @@
 stages_2d.py (openspec split-pipelines, 2026-07-03); behavior bit-identical.
 """
 import numpy as np
-from solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
-from solvers.ltne_energy import solve_full_domain
-from solvers.tpms_calc import geometry as tpms_geometry
-from solvers.envelope import gate_solution, mach_field_max
-from logutil import get_logger
+from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
+from sjtu_tpmshx.solvers.envelope import gate_solution, mach_field_max
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -129,9 +129,9 @@ class _PipelineWindowShim:
     _init_done = False
 
     def __init__(self, compute_cfg, progress_cb=None, iter_label_cb=None):
-        from solvers import tpms_calc as _tc
-        from solvers.tpms_calc import geometry as _tpms_geom
-        from domain.validator import compute_volumetric_htc
+        from sjtu_tpmshx.solvers import tpms_calc as _tc
+        from sjtu_tpmshx.solvers.tpms_calc import geometry as _tpms_geom
+        from sjtu_tpmshx.domain.validator import compute_volumetric_htc
 
         # Bypass our own __setattr__ during init so the progress
         # callback only fires on the real loop updates below.
@@ -215,6 +215,26 @@ class _PipelineWindowShim:
                 pass
 
 
+def _pipe_weighted(P_row, w):
+    """Open-fraction-weighted boundary-row mean (module-level so the C8
+    shooting reseed can measure dP with EXACTLY the reporting convention —
+    see `_pipe_dp_2d`). Was nested in `_compute_pressure_2d`; moved verbatim."""
+    s = float(w.sum())
+    return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
+
+
+def _pipe_dp_2d(simp):
+    """Solved dP of one SIMPLE instance, in the 2D REPORTING convention:
+    pipe-weighted inlet-row gauge minus pipe-weighted outlet-row gauge
+    (identical arithmetic to `_compute_pressure_2d`'s dP_A/dP_B). Used by
+    the C8 shooting reseed so 'realized inlet = P_ref_abs + dP' is self-
+    consistent with the dP the pipeline reports."""
+    return (_pipe_weighted(simp.P[:, 0],
+                           simp.inlet_frac.astype(np.float64))
+            - _pipe_weighted(simp.P[:, -1],
+                             simp.outlet_frac.astype(np.float64)))
+
+
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     """Real-coordinate pressure fields + pipe-weighted dP from converged SIMPLE.
 
@@ -227,10 +247,6 @@ def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     # open fraction of each cell at the boundary. A plain row mean mixes wall
     # and pipe cells, severely diluting dP for partial-BC flows (validation
     # showed B's dP under-estimated by >10x in default cross-flow cases).
-    def _pipe_weighted(P_row, w):
-        s = float(w.sum())
-        return float((P_row * w).sum() / s) if s > 1e-12 else float(P_row.mean())
-
     _wA_in  = simpA.inlet_frac.astype(np.float64)
     _wA_out = simpA.outlet_frac.astype(np.float64)
     _wB_in  = simpB.inlet_frac.astype(np.float64)
@@ -288,10 +304,10 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             window._zone_boundaries_x = [b * L for b in za.get('x_bounds', [])]
             window._zone_boundaries_y = [b * H for b in za.get('y_bounds', [])]
             # Build dummy Zone objects for statistics
-            from solvers.zone_config import Zone
+            from sjtu_tpmshx.solvers.zone_config import Zone
             dummy_zones = [Zone(f'g{r}', gc['y0'], gc['y1'], gc['L'], gc['t'])
                            for r, gc in enumerate(za.get('grid_cells', []))]
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            from sjtu_tpmshx.solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'], dummy_zones,
                                             cell_area=_ca)
@@ -300,7 +316,7 @@ def _apply_zone_stats_2d(window, z_axis, zone_config, za, L, H,
             window._zone_stats = stats
         else:
             # 1D mode
-            from solvers.zone_config import compute_zone_statistics, format_zone_report
+            from sjtu_tpmshx.solvers.zone_config import compute_zone_statistics, format_zone_report
             _ca = energy_dx[:, None] * energy_dy[None, :]
             stats = compute_zone_statistics(Ta, Tb, Ts, za['zone_id'],
                                             zone_config.zones, cell_area=_ca)
@@ -351,7 +367,7 @@ def _compute_Q_richardson(
     _asymQ = (float(split_A) != 0.5)
     _fAQ = 2.0 * float(split_A)
     _fBQ = 2.0 * (1.0 - float(split_A))
-    from solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
     if za is not None and 'h_vB_arr' in za:
@@ -663,9 +679,8 @@ def _run_solvers(window, cfg, fields):
 
     # ── Outer velocity-temperature coupling loop ──
     import warnings as _warn
-    from solvers import tpms_calc as _tc
-    from solvers import fluid_props
-    from solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers import tpms_calc as _tc
+    from sjtu_tpmshx.solvers import fluid_props
 
     # 2026-05-09 (option B) — per-side fluid property accessors. Air uses
     # ideal-gas density (T, P); water is incompressible so P is ignored.
@@ -703,7 +718,7 @@ def _run_solvers(window, cfg, fields):
     # Local-Re Nu rescale (2D #1 fix 2026-04-25): per-cell h_v using local
     # |u_cc|·D_h·ρ/μ Reynolds. Wall cells with u→0 fall to the laminar
     # Hagen-Poiseuille floor (prevents Nu→0 non-physical extrapolation).
-    from solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
+    from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR_2D
 
     def _nu_dispatch(side_props, side_T_for_Pr, Re, eps_f, L_mm, D_h_mm,
                      side_P=None):
@@ -781,7 +796,6 @@ def _run_solvers(window, cfg, fields):
     tpms_type = cfg['tpms_type']
     Lcell = cfg['Lcell']; t_wall = cfg['t_wall']; k_s = cfg['k_s']
 
-    rho_A, rho_B = window._rho_A, window._rho_B
     mu_A, mu_B = window._mu_A, window._mu_B
     P_inA_val = cfg['compute_cfg'].fluid_A.P_in_Pa
     P_inB_val = cfg['compute_cfg'].fluid_B.P_in_Pa
@@ -797,7 +811,7 @@ def _run_solvers(window, cfg, fields):
     # and keeps diffusion / convection / duty per-side consistent. The kernel
     # itself receives the absolute eps_A = ε·s / eps_B = ε·(1−s) (Phase 1 hook).
     # See design add-2d-asym-porosity D2(b).
-    from solvers.asym_split import _asym_split_A as _asym_split_A_2d
+    from sjtu_tpmshx.solvers.asym_split import _asym_split_A as _asym_split_A_2d
     _delta_2d = float(cfg['compute_cfg'].geometry.delta_levelset)
     _asym_2d = (_delta_2d != 0.0)
     _split_A_2d = _asym_split_A_2d({'delta_levelset': _delta_2d},
@@ -817,8 +831,8 @@ def _run_solvers(window, cfg, fields):
     def _hv_side_geom_ratio_2d(side_props, u_side, T_side, P_side):
         if not _asym_2d:
             return 1.0
-        from solvers.tpms_geometry import _phi_grid, _C_from_tL
-        from solvers import asym_geometry as _ag
+        from sjtu_tpmshx.solvers.tpms_geometry import _phi_grid, _C_from_tL
+        from sjtu_tpmshx.solvers import asym_geometry as _ag
         _N = 128
         _phi = _phi_grid(tpms_type, _N)
         _C = _C_from_tL(tpms_type, float(t_wall) / float(Lcell))
@@ -929,7 +943,7 @@ def _run_solvers(window, cfg, fields):
             # the retired D-7-6 ×3.39 — solver sCO2 Δp is now a SMOOTH-WALL
             # estimate until an experimental γ lands). air/water = 1.0,
             # bit-identical.
-            from df_surrogate.predict import sco2_cf_scale
+            from sjtu_tpmshx.df_surrogate.predict import sco2_cf_scale
             _cfsA = (sco2_cf_scale(
                 tpms_type, Lcell, t_wall, 0.5 * eps,
                 float(_pA['rho'](T_inA, P_inA_val)),
@@ -959,19 +973,31 @@ def _run_solvers(window, cfg, fields):
                 except BaseException as e:   # incl. InterruptedError
                     _err[idx] = e
 
+            # C8 shooting: hand the PREVIOUS iteration's (P_ref_abs, solved
+            # dP — reporting convention) to _run_simple, which recreates the
+            # solver each outer iter. First iteration has no previous solve
+            # → None (the 1D closed-form seed stands). _run_simple itself
+            # gates on the knob + ideal_gas, so passing unconditionally is
+            # inert when shooting is off or the side is incompressible.
+            _psA = ((float(simpA.P_ref_abs), _pipe_dp_2d(simpA))
+                    if simpA is not None else None)
+            _psB = ((float(simpB.P_ref_abs), _pipe_dp_2d(simpB))
+                    if simpB is not None else None)
             _tA = _threading.Thread(
                 target=_solve_side,
                 args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
                           'Fluid A', P_inA_val),
                       dict(T_field_real=_Ta_for_simpA,
-                           fluid_type=_ftA, cf_scale=_cfsA)),
+                           fluid_type=_ftA, cf_scale=_cfsA,
+                           p_shoot_prev=_psA)),
                 daemon=True)
             _tB = _threading.Thread(
                 target=_solve_side,
                 args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
                           'Fluid B', P_inB_val),
                       dict(T_field_real=_Tb_for_simpB,
-                           fluid_type=_ftB, cf_scale=_cfsB)),
+                           fluid_type=_ftB, cf_scale=_cfsB,
+                           p_shoot_prev=_psB)),
                 daemon=True)
             _tA.start(); _tB.start()
             _tA.join(); _tB.join()
@@ -1342,6 +1368,30 @@ def _run_solvers(window, cfg, fields):
         'ucB_disp': ucB_disp, 'vcB_disp': vcB_disp,
         'P_fA': P_fA, 'P_fB': P_fB,
         'dP_A': dP_A, 'dP_B': dP_B,
+        # ── C8 shooting diagnostics (openspec c8-p-in-shooting) ──────────
+        # Realized inlet absolute pressure = P_ref_abs (outlet anchor,
+        # ledger C8) + reported dP, vs the specified P_in. Ideal-gas sides
+        # only (incompressible P_ref_abs is a frozen inlet value — level
+        # inert, metric meaningless → NaN). With shooting OFF this exposes
+        # the legacy 1D-seed bias; ON, it certifies the shot landed.
+        'P_in_realized_A': (
+            float(simpA.P_ref_abs) + float(dP_A)
+            if getattr(simpA, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_shoot_resid_A': (
+            (float(simpA.P_ref_abs) + float(dP_A) - float(P_inA_val))
+            / float(P_inA_val)
+            if getattr(simpA, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_realized_B': (
+            float(simpB.P_ref_abs) + float(dP_B)
+            if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
+        'P_in_shoot_resid_B': (
+            (float(simpB.P_ref_abs) + float(dP_B) - float(P_inB_val))
+            / float(P_inB_val)
+            if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
+            else float('nan')),
         'Q_total': Q_total,
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,

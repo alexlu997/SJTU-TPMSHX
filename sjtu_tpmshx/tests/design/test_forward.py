@@ -1,5 +1,5 @@
-from design.cases import DesignCase
-from design.forward import forward, ForwardResult
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.forward import forward, ForwardResult
 
 def _case():
     return DesignCase(1,"air",688.23,1_088_700.0,0.2855,

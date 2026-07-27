@@ -1,4 +1,14 @@
-# SJTU-TPMSHX runtime dependencies
+# SJTU-TPMSHX runtime dependencies —— 三档依赖清单（2026-07-19 注）：
+#   1) 本文件：宽松下界（>=），面向新环境安装与 CI。⚠ 不含 BO 优化器栈
+#      （torch / botorch / gpytorch —— optimization/ 需要，历来由部署脚本按机器另装，
+#      HANDOFF-windows-server.md §9e）；下方 torch 注释里的 "Optional/GPU" 描述已过时。
+#   2) constraints-devbox-2026-07-11.txt：2026-07-11 开发机全量 freeze（187 行，== 精确，
+#      含 torch+cu128 / botorch / tensorflow / ansys-fluent）。复现彼时 golden 的历史锚点：
+#      pip install -r requirements.txt -c constraints-devbox-2026-07-11.txt
+#   3) requirements-lock-server.txt：E:\LWH EPYC 服务器验证环境 80 包精确锁
+#      （2026-07-19；全套 1245 绿 + golden 位同 + 上海双 gate；含完整 BO 栈）。
+#      服务器复刻首选，用法见该文件头注。
+#
 # Tested on Windows 11 + Python 3.11/3.12. Versions reflect the development
 # environment as of 2026-05-07; minor upgrades should be safe.
 

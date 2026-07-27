@@ -8,22 +8,18 @@ Pipeline2D.run() in its golden — this closes the asymmetry at the pytest
 level (physical-consistency assertions, not pinned values).
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from domain.compute_config import (ComputeConfig, ExtrapPolicy, FeatureFlags,
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, ExtrapPolicy, FeatureFlags,
                                    FluidConfig, GeometryConfig,
                                    PartialBCConfig, SolverConfig)
 
 
 @pytest.mark.slow
 def test_pipeline3d_run_end_to_end():
-    from controllers.compute_pipeline import Pipeline3D
-    from domain.compute_result import ComputeResult
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
+    from sjtu_tpmshx.domain.compute_result import ComputeResult
 
     cfg = ComputeConfig(
         fluid_A=FluidConfig(type='air', u_mps=10.0, T_in_K=422.0,

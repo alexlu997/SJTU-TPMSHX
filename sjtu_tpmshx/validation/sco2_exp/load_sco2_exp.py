@@ -36,9 +36,8 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent          # .../sjtu_tpmshx
-sys.path.insert(0, str(_PKG_ROOT))
-from solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
-from logutil import get_logger  # noqa: E402
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 _log = get_logger(__name__)
 

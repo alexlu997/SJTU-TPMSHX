@@ -14,10 +14,8 @@ import os, sys, json, hashlib
 import numpy as np
 
 # runs/_out/_golden_3d.py → sjtu_tpmshx root is 3 dirnames up.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, _ROOT)
 
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 def _air_air_cfg(**ov):

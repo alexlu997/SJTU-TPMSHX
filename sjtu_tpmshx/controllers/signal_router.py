@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import weakref
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional
 
 from PySide6.QtCore import QObject, Signal
 

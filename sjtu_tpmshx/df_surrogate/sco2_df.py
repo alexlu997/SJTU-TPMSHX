@@ -6,24 +6,45 @@
                             ≤ 4 %) cannot identify K; low-Re behaviour stays
                             anchored to the water CFD.
 
-Data: Diamond 4000 + Gyroid 3000 cases, ``data/raw_data/sCO2-CFD/`` (smooth
+Data: Diamond 5399 + Gyroid 5400 cases, ``data/raw_data/sCO2-CFD/`` (smooth
 wall RANS, no gravity; P ∈ {8,10,12,15} MPa on the pseudocritical line).
+REBUILT 2026-07-26 (iter 85) on the Gyroid L=8 completion: **20 D / 20 G**
+geometries, 10799 cases. That upload is PURELY ADDITIVE — the prior 4400
+Gyroid rows survive bit-identically (max rel dev 3e-16); the 1000 new rows are
+all L=8 (G_8_3 80→270 cases, G_8_4/5/6 0→270, previously ABSENT). Diamond is
+untouched and its table rebuilt bit-identically, which is the control.
+Prior: REBUILT 2026-07-25 (iter 78) on the corrected 2026-07-23 export,
+20 D / 17 G geometries (was 15 / 12), 9799 cases — ledger SCO2-F-REFIT-0725.
 Fit: per-geometry B (K fixed from SmoothDF), per-lattice pooled Re-slope m —
 identical math to ``validation/sco2_cfd/compare_smooth_df.py`` (which imports
 the fit helpers from HERE; keep single-sourced). Point-level refit RMSRE
-8.9 % (Diamond) / 7.1 % (Gyroid); cross-fluid back-test vs water CFD in
+8.86 % (Diamond, unchanged) / 8.01 % (Gyroid; was 7.80 % on 17 geometries —
+3 more geometries widen the fit, not a regression. The Nu LOGO metric moved
+the OTHER way, 8.4 %→7.9 %, i.e. the L=8 column was genuinely the weak spot).
+Gyroid pooled m 0.11784→0.11244 and its per-geometry B fell ~1.5 %, but the
+two changes cancel: cF = B·(Re/1000)^−m moves ≤0.64 % across the whole fit
+window for every geometry except G_8_3 (+4.2…+5.1 %, the one that gained
+3.4× more samples). Cross-fluid back-test vs water CFD in
 ``reports/sco2_cfd/`` (ledger SCO2-CFD).
 
-⚠ SEMANTICS (2026-07-15 user decision): this is the SMOOTH-WALL cF — SLM
-surface roughness is deliberately NOT modelled (no sCO2 roughness anchor yet;
-the retired D-7-6 experimental field calibration said effective-cF ≈ 3.4×
-smooth on that one geometry). Solver sCO2 Δp is therefore a smooth-wall
-estimate; expect real printed-part Δp to be SEVERAL TIMES higher until a
-γ-style experimental anchor lands. Re-anchor trigger: sCO2 experiment data
-upload (ledger SCO2-CFD / CF-REFIT).
+⚠ SEMANTICS: this module stays the SMOOTH-WALL cF — SLM roughness is
+deliberately NOT modelled HERE and must never be (double-count guard).
+Since 2026-07-22 the experimental anchor lands ONE LAYER UP:
+``predict.sco2_cf_scale`` multiplies this smooth value by the HX-level
+correction ``sco2_gamma_f.gamma_f_sco2`` (D6 hot-free, D-7-6/G-7-6
+experiments, in-window only — off-window the solver falls back to this
+smooth estimate with a loud warning). Validation baselines (γ ≡ f_exp/f_cfd,
+``validation/sco2_exp``) keep calling ``predict_cF_sco2`` directly so the
+correction never feeds back into its own definition. Baking roughness into
+THIS file would double-count with γ_f — don't.
 
-Geometry domain: Diamond L ∈ [4,7] × t ∈ [0.3,0.6] (no 7/0.6); Gyroid
-L ∈ [4,6] × t ∈ [0.3,0.6] (G_6_6 thin: 30 cases, Re 3000 only). Off-grid
+Geometry domain (2026-07-25 rebuild): Diamond the FULL 5×4 grid
+L ∈ {4,5,6,7,8} × t ∈ {0.3,0.4,0.5,0.6}; Gyroid the same minus
+(8, 0.4/0.5/0.6) — 17 nodes. **(7, 0.6) — the D-7-6 / G-7-6 prototype
+geometry — is now an interpolation NODE for both lattices** (it used to sit
+outside the hull: the old domain was D L ∈ [4,7] with no 7/0.6 and
+G L ∈ [4,6], so the prototype prediction rode an RBF extrapolation and
+tripped the warning below). Off-grid
 (L, t) interpolate via log-space RBF; outside the hull extrapolates with a
 one-shot warning. Re outside [~2600, ~66000] extrapolates the (Re/1000)^−m
 slope (below ~1000 it overshoots — water back-test measured +21 % medAPE at
@@ -42,9 +63,7 @@ import numpy as np
 import pandas as pd
 
 _THIS = Path(__file__).resolve()
-_PROJECT_ROOT = _THIS.parent.parent          # .../sjtu_tpmshx
-sys.path.insert(0, str(_PROJECT_ROOT))
-from logutil import get_logger  # noqa: E402
+from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 _log = get_logger(__name__)
 
@@ -97,8 +116,8 @@ def fit_pooled_m(core: pd.DataFrame, sm, tpms: str) -> float:
 
 def build_table() -> pd.DataFrame:
     """Fit per-geometry B + per-lattice m from the raw sCO2 CFD; write CSV."""
-    from df_surrogate.load_sco2_cfd import LATTICES, load_core
-    from df_surrogate.smooth_df import SmoothDF
+    from sjtu_tpmshx.df_surrogate.load_sco2_cfd import LATTICES, load_core
+    from sjtu_tpmshx.df_surrogate.smooth_df import SmoothDF
 
     sm = SmoothDF()
     rows = []

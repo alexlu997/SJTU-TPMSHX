@@ -17,9 +17,7 @@ no QApplication needed.
 """
 from __future__ import annotations
 
-import pytest
 
-from domain.validator import parse_unit_value
 
 
 # ── Qt-API mocks ────────────────────────────────────────────────────
@@ -110,7 +108,7 @@ def _bind_handler(win, le, attr):
     """Bind ``Main_Menu._make_field_handler`` to a mock window /
     line edit without importing ``Main_Menu`` (and therefore without
     needing Qt)."""
-    import main
+    import sjtu_tpmshx.main as main
     handler_fn = main.Main_Menu._make_field_handler
     fam_target = win._FIELD_UNITS.get(attr)
     is_positive = attr in win._POSITIVE_FIELDS

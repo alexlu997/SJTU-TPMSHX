@@ -50,18 +50,18 @@ _DATA = _ROOT.parent / 'data'                 # .../SJTU-TPMSHX/data
 sys.stdout.reconfigure(encoding='utf-8')
 warnings.filterwarnings('ignore')
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, compute as tpms_compute,
-    air_density, air_viscosity, air_conductivity, air_cp, P_atm,
+    air_density, air_viscosity, air_cp, P_atm,
     water_density, water_viscosity, water_conductivity, water_cp,
-    nu_from_Re, nu_water_topo,
+    nu_water_topo,
 )
-from solvers.simple_solver import SIMPLESolver
-from solvers.ltne_energy import solve_full_domain
-from solvers.df_projection import build_master_refined_grid, extract_dP_from_simple
-from df_surrogate.predict import predict_K_cF
-from solvers.roughness import (f_enhancement, nu_extra_factor,
-                                 apply_to_K_cF, resolve_mode_from_env)
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.df_projection import build_master_refined_grid, extract_dP_from_simple
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
+                                 resolve_mode_from_env)
 
 # 2026-05-13 — roughness mode from env (baseline / norris_1a / bhatti_shah_1b).
 _ROUGH_MODE, _ROUGH_EPS = resolve_mode_from_env()
@@ -82,8 +82,8 @@ _ALPHA_COUP   = 0.7
 
 # ── Geometry (Shanghai Electric Gyroid prototype) ──
 # Canonical params from configs/shanghai_baseline.json (Item 3 / AR8, 2026-05-28).
-from configs import load_shanghai_baseline
-from domain.compute_config import ComputeConfig
+from sjtu_tpmshx.configs import load_shanghai_baseline
+from sjtu_tpmshx.domain.compute_config import ComputeConfig
 # Audit C3 (2026-05-28): sourced through ComputeConfig.
 _SH = load_shanghai_baseline()
 _SH_CC = ComputeConfig.from_dict(_SH)
@@ -99,7 +99,7 @@ N_UNITS = _SH['domain']['n_units']
 A_FLOW_PER_UNIT = _SH['domain']['a_flow_per_unit_m2']
 A_FLOW = N_UNITS * A_FLOW_PER_UNIT
 
-from solvers.tpms_calc import adaptive_grid
+from sjtu_tpmshx.solvers.tpms_calc import adaptive_grid
 N_X_USER, N_Y_USER = adaptive_grid(L_DOM, H_DOM, D_H, alpha=0.2)
 DX_REFINED, DY_REFINED, N_X, N_Y = build_master_refined_grid(
     L_DOM, H_DOM, N_X_USER, N_Y_USER, n_refine=8, first_cell=0.02e-3, growth=1.8)
@@ -186,8 +186,8 @@ def _transform_simple_P_to_real(s):
 
 
 # ── Load Shanghai cases (canonical loader, B1 1.3) ──
-from validation.harness._harness import load_cases_df
-from validation.harness._case_sets import SHANGHAI_XLSX
+from sjtu_tpmshx.validation.harness._harness import load_cases_df
+from sjtu_tpmshx.validation.harness._case_sets import SHANGHAI_XLSX
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -208,10 +208,10 @@ def _run_one_case_pipeline(ci, df):
     the enthalpy-balance residual) are NaN here — they were only ever a
     self-consistency check on a prescribed profile.
     """
-    from domain.compute_config import (FluidConfig, GeometryConfig,
+    from sjtu_tpmshx.domain.compute_config import (FluidConfig, GeometryConfig,
                                        SolverConfig, PartialBCConfig,
                                        ExtrapPolicy, FeatureFlags)
-    from controllers.compute_pipeline import Pipeline2D
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
 
     case = ci + 1
     m_air = float(df.iloc[ci, 5])
@@ -531,7 +531,7 @@ if __name__ == "__main__":
 
 
     # ── Summary + save ──
-    from validation.harness._metrics import err_stats_pct
+    from sjtu_tpmshx.validation.harness._metrics import err_stats_pct
     out_df = pd.DataFrame(results)
     err_dp = np.array([r['err_dP%'] for r in results])
     err_q  = np.array([r['err_Q%']  for r in results])

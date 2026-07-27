@@ -39,10 +39,9 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent          # .../sjtu_tpmshx
-sys.path.insert(0, str(_PKG_ROOT))
 
-from df_surrogate.load_sco2_cfd import LATTICES, load_core  # noqa: E402
-from df_surrogate.smooth_df import SmoothDF, _geom          # noqa: E402
+from sjtu_tpmshx.df_surrogate.load_sco2_cfd import LATTICES, load_core  # noqa: E402
+from sjtu_tpmshx.df_surrogate.smooth_df import SmoothDF, _geom          # noqa: E402
 
 REPORT_DIR = _PKG_ROOT.parent / "reports" / "sco2_cfd"
 
@@ -58,8 +57,8 @@ def _medape(pred, obs):
 
 # 拟合数学已单源化到生产模块 df_surrogate/sco2_df.py（2026-07-15, cF 入产线
 # 时迁移）；此处保留旧名薄别名，供本目录脚本与 make_error_report 复用。
-from df_surrogate.sco2_df import fit_B as _fit_B                  # noqa: E402
-from df_surrogate.sco2_df import fit_pooled_m as _fit_pooled_m    # noqa: E402
+from sjtu_tpmshx.df_surrogate.sco2_df import fit_B as _fit_B                  # noqa: E402
+from sjtu_tpmshx.df_surrogate.sco2_df import fit_pooled_m as _fit_pooled_m    # noqa: E402
 
 def _run_lattice(tpms: str, sm: SmoothDF) -> pd.DataFrame:
     core = load_core(tpms)

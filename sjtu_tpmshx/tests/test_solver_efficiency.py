@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 
 def _make_solver(**kw):
@@ -63,7 +63,7 @@ def test_early_exit_state_matches_deep_run():
 # ────────────────────────────────────────────────────────────────────
 
 def _make_solver_3d(**kw):
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
     Ny, Nz = 12, 4
     kwargs = dict(Lx=0.04, Ly=0.06, Lz=0.02, Nx=8, Ny=Ny, Nz=Nz,
                   rho=1.2, mu=1.8e-5, T_in=322.0, v_inlet=5.0, eps=0.6,
@@ -88,8 +88,8 @@ def test_sou_flag_off_bit_identical_3d():
 def test_sou_axis_matches_2d_kernels():
     """_sou_axis (3D shared helper) reproduces the 2D reference kernels
     exactly on random 1D profiles — cross-check of the flag conventions."""
-    from solvers.simple_solver import _sou_corr_u_x, _sou_corr_v_y
-    from solvers.simple_solver_3d import _sou_axis
+    from sjtu_tpmshx.solvers.simple_solver import _sou_corr_u_x, _sou_corr_v_y
+    from sjtu_tpmshx.solvers.simple_solver_3d import _sou_axis
     rng = np.random.default_rng(3)
     Nx, Ny = 9, 9
     u = rng.standard_normal((Nx + 1, Ny))

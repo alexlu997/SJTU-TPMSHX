@@ -312,7 +312,7 @@ def build_actions(w) -> list[Action]:
         add("Optimize (qNEHVI BO)", "Compute", w._run_optimize,
             keywords=("pareto", "qnehvi", "bayesian", "optimise", "search"))
     def _open_sens():
-        from ui.sensitivity import open_sensitivity
+        from sjtu_tpmshx.ui.sensitivity import open_sensitivity
         open_sensitivity(w)
     add("Sensitivity sweep (2-param heatmap)…", "Compute", _open_sens,
         keywords=("sweep", "sensitivity", "heatmap", "parametric"))
@@ -373,7 +373,7 @@ def build_actions(w) -> list[Action]:
 
     # Presets — display de-branded (ui.fmt.preset_display); the internal
     # key passed to _load_named_preset keeps the historical spelling.
-    from ui.fmt import preset_display as _pd
+    from sjtu_tpmshx.ui.fmt import preset_display as _pd
     for name in getattr(w, '_BUILTIN_PRESETS', ()):
         add(f"Preset: {_pd(name)}", "Preset",
             (lambda n=name: w._load_named_preset(n)),

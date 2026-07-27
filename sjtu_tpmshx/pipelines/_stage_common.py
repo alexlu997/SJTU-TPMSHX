@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from domain.compute_config import ComputeConfig
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
 
 # Defensive unit firewall (GUI labels L/H in METERS but L_cell/t in MM;
 # mistyping the mm value into the metre field silently spawns a multi-metre
@@ -50,7 +50,7 @@ def surrogate_extrap_reasons(compute_cfg: ComputeConfig,
     warnings; that hush is gone.)
     """
     try:
-        from df_surrogate.surrogate_domain import check_surrogate_domain_at_point
+        from sjtu_tpmshx.df_surrogate.surrogate_domain import check_surrogate_domain_at_point
     except ImportError:
         return []
     geo = compute_cfg.geometry
@@ -79,7 +79,7 @@ def safe_float(v: Any) -> float:
 def geometry_props(compute_cfg: ComputeConfig) -> tuple[float, float, float]:
     """(epsilon, D_h_m, A_0_m2) triple for the ComputeResult ``props`` slot,
     derived from cfg geometry via the closed-form tpms_calc.geometry."""
-    from solvers.tpms_calc import geometry as _tpms_geom
+    from sjtu_tpmshx.solvers.tpms_calc import geometry as _tpms_geom
     g = _tpms_geom(compute_cfg.geometry.tpms,
                    compute_cfg.geometry.L_cell_mm,
                    compute_cfg.geometry.t_wall_mm,

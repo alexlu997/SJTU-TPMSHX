@@ -15,23 +15,16 @@ ComputeResult, asserts the ComputeResult surfaces the raw headline scalars
 Originally 2026-06-09 G1 (dual-representation sync); upgraded to the
 single-carrier contract guard in B3 C5.
 """
-import os
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, SolverConfig,
     PartialBCConfig, ExtrapPolicy, FeatureFlags,
 )
-from domain.compute_result import ComputeResult
-import pipelines.stages_3d as R
+from sjtu_tpmshx.domain.compute_result import ComputeResult
+import sjtu_tpmshx.pipelines.stages_3d as R
 
 
 def _small_air_air_cfg():

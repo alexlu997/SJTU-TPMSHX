@@ -22,36 +22,36 @@ class OptimizeUIMixin:
 
     # ── multi-objective optimization (delegate to ui.optimize_panel) ──────
     def _run_optimize(self):
-        from ui.optimize_panel import run_optimize
+        from sjtu_tpmshx.ui.optimize_panel import run_optimize
         return run_optimize(self)
 
     def _cancel_optimize(self):
-        from ui.optimize_panel import cancel_optimize
+        from sjtu_tpmshx.ui.optimize_panel import cancel_optimize
         return cancel_optimize(self)
 
     def _reshow_pareto(self):
-        from ui.optimize_panel import reshow_pareto
+        from sjtu_tpmshx.ui.optimize_panel import reshow_pareto
         return reshow_pareto(self)
 
     def _show_pareto(self, res):
-        from ui.optimize_panel import show_pareto
+        from sjtu_tpmshx.ui.optimize_panel import show_pareto
         return show_pareto(self, res)
 
     def _on_pareto_pick(self, event):
-        from ui.optimize_panel import on_pareto_pick
+        from sjtu_tpmshx.ui.optimize_panel import on_pareto_pick
         return on_pareto_pick(self, event)
 
     def _save_opt_results(self, res, cfg):
-        from ui.optimize_panel import save_opt_results
+        from sjtu_tpmshx.ui.optimize_panel import save_opt_results
         return save_opt_results(self, res, cfg)
 
     def _load_pareto_solution(self, x):
-        from ui.optimize_panel import load_pareto_solution
+        from sjtu_tpmshx.ui.optimize_panel import load_pareto_solution
         return load_pareto_solution(self, x)
 
     # ── quick-design tool (Phase 2 Task 4) ───────────────────────────────
     def _open_quick_design(self):
-        from ui.quick_design_panel import build_quick_design_dialog
+        from sjtu_tpmshx.ui.quick_design_panel import build_quick_design_dialog
         if getattr(self, "_qd_dialog", None) is None:
             self._qd_dialog = build_quick_design_dialog(self)
         self._qd_dialog.show()

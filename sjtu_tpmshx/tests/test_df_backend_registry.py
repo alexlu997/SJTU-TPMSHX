@@ -8,10 +8,10 @@ means the registry refactor changed numbers — it must not.
 import numpy as np
 import pytest
 
-from df_surrogate import predict as P
-from df_surrogate.backend import (DFBackend, available_methods,
+from sjtu_tpmshx.df_surrogate import predict as P
+from sjtu_tpmshx.df_surrogate.backend import (DFBackend, available_methods,
                                   get_backend)
-from solvers.tpms_calc import geometry as _geom
+from sjtu_tpmshx.solvers.tpms_calc import geometry as _geom
 
 _EF = {tp: _geom(tp, 7.0, 0.6, 16.0)['epsilon'] / 2
        for tp in ('Gyroid', 'Diamond')}

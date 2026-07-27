@@ -87,3 +87,6 @@ sjtu_tpmshx/runs/_out/
 # Claude Code worktree leftovers (isolation:worktree scratch dirs; root .claude/
 # itself stays tracked for agents/ + commands/). Per-machine, not project content.
 .claude/worktrees/
+
+# Python packaging metadata (editable installs write into the source tree)
+*.egg-info/

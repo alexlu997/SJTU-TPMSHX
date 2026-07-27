@@ -77,7 +77,7 @@ from pathlib import Path
 import numpy as np
 
 from .smooth_df import SmoothDF, _geom
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 

@@ -11,15 +11,17 @@ CONFIG_FIELDS is the single source for scalar field wiring (dataclass slot
      stub-window → cfg → json → cfg equality;
   4. 2D vs 3D required-set parity (Lz/Nz only demanded in 3D).
 """
-import json
 
 import pytest
 
-from domain.compute_config import (ComputeConfig, FluidConfig,
+from sjtu_tpmshx.domain.compute_config import (ComputeConfig, FluidConfig,
                                     GeometryConfig, SolverConfig)
-from ui.window_config import (CONFIG_FIELDS, config_from_window,
+from sjtu_tpmshx.ui.window_config import (CONFIG_FIELDS, config_from_window,
                               _validate_required_widgets)
-from tests.test_compute_config import _StubWindow
+# P1.8b F2: import via the name pytest itself uses (tests/ dir is on
+# sys.path — no __init__.py there), keeping a single module identity;
+# the old `from tests....` spelling depended on the retired bootstrap.
+from test_compute_config import _StubWindow
 
 _SECTION_TYPES = {
     'geometry': GeometryConfig,
@@ -137,7 +139,7 @@ def test_optional_pin_blank_keeps_default():
 def test_pipe_widget_garbage_raises():
     """Malformed partial-BC width used to silently zero the pipe geometry
     (bc degraded to full-face). Non-empty must parse."""
-    from tests.test_compute_config import _StubLineEdit
+    from test_compute_config import _StubLineEdit
     window = _StubWindow()
     window.le_pipeA_in_w = _StubLineEdit('0,042')
     with pytest.raises(ValueError) as e:
@@ -146,7 +148,7 @@ def test_pipe_widget_garbage_raises():
 
 
 def test_pipe_widget_zero_and_blank_stay_legal():
-    from tests.test_compute_config import _StubLineEdit
+    from test_compute_config import _StubLineEdit
     window = _StubWindow()
     window.le_pipeA_in_w = _StubLineEdit('0.0')
     window.le_pipeA_out_w = _StubLineEdit('')

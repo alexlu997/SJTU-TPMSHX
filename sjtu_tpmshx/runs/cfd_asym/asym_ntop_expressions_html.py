@@ -21,12 +21,18 @@ Output: C:/Users/ALEX/Desktop/asym-ntop-expressions.html
 Usage:  python -u runs/cfd_asym/asym_ntop_expressions_html.py
 """
 import html as _html
+import os
 from pathlib import Path
 
 import pandas as pd
 
 XLSX = Path(__file__).resolve().parents[1] / "_out" / "asym_cfd" / "asym_cfd_worklist.xlsx"
-OUT = Path(r"C:\Users\ALEX\Desktop\asym-ntop-expressions.html")
+# P1.7: was a dead C:\Users\ALEX\Desktop path from the old dev box. Default
+# to the gitignored runs/_out; TPMSHX_TOOL_OUT_DIR overrides.
+_OUT_DIR = Path(os.environ.get('TPMSHX_TOOL_OUT_DIR',
+                               str(Path(__file__).resolve().parents[1] / "_out")))
+_OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT = _OUT_DIR / "asym-ntop-expressions.html"
 
 # φ in nTop convention (X,Y,Z uppercase spatial coords, Pi built-in, L = cell size)
 PHI = {

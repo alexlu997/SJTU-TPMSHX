@@ -7,7 +7,7 @@ swap was gate-tested 2026-06-11: Shanghai 3D dP RMSRE 7.19% -> 58.78%.
 import numpy as np
 import pytest
 
-from df_surrogate.smooth_df import SmoothDF, PREBUILT_CSV, _geom
+from sjtu_tpmshx.df_surrogate.smooth_df import SmoothDF, PREBUILT_CSV, _geom
 
 pytestmark = pytest.mark.skipif(
     not PREBUILT_CSV.exists(),

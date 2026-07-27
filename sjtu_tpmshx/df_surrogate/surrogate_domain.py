@@ -11,9 +11,9 @@ This file used to live in `optimization.optimizer` but was hoisted out when the
 patch-zoning optimizer was retired in favor of the continuous-field design.
 """
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List
 
-from solvers.tpms_props import air_density, air_viscosity, geometry as _geom
+from sjtu_tpmshx.solvers.tpms_props import air_density, air_viscosity, geometry as _geom
 
 # ConstDF-v1 surrogate fitted window — single source in df_surrogate/_domain.py.
 from ._domain import (
@@ -74,7 +74,7 @@ def check_surrogate_domain_at_point(tpms_type: str,
         # Deferred ON PURPOSE (runtime-only upward dep): fluid_props sits
         # ABOVE df_surrogate in the import DAG (arch-b-c-e batch B) and pulls
         # CoolProp; only the sCO2 path needs it.
-        from solvers.fluid_props import get as _get_fluid
+        from sjtu_tpmshx.solvers.fluid_props import get as _get_fluid
         _m = _get_fluid('sco2')
         rho = float(_m.rho(T, P))
         mu = float(_m.mu(T, P))

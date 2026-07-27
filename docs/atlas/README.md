@@ -1,6 +1,13 @@
 # Atlas 索引
 
 生成日期 2026-07-11，基于 commit f33d30e 附近的 `master`。
+**2026-07-20 起随 upgrade/loop 分支滚动收编**：已收编卷在其头部标注并附文末"2026-07 升级分支收编"节
+（进度：`tests.md`、`repo-infra.md` ✓ iter 34；`pipelines.md`、`controllers.md`、`core-domain.md`、
+`optimization.md` ✓ iter 35——⚠ pipelines 卷的 run_stack_3d 行号为拆分前旧值，见该卷头注；
+`ui-core.md`、`runs.md`、`solvers-2d.md`、`solvers-closures.md` + PROJECT_MANUAL §6 增量索引 ✓ iter 36。
+**P4.1 收案**：未收编卷（dataflow/design/df-surrogate/solvers-3d/solvers-fields-mesh/ui-widgets/
+validation）经盘点无分支级失准；HANDOFF ✓ iter 39（文首状态总更新表 + 三节行内戳，原文证据链不动）；ui-widgets/dataflow 的 run_controller
+行号引用受 P2.5a 位移影响者极少且方向可循，未逐一标注。）
 
 本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Windows Server 2022 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
 
@@ -86,7 +93,7 @@ design 模块为快速反向定尺工具，与主管线解耦，测试用最小 
 
 ### ui-core.md — ui — 主窗口与 mixins
 
-该文档描述桌面 GUI 主窗口层：Main_Menu 由 13 个 mixin 多重继承组装，config_from_window 为控件到 ComputeConfig 的唯一转换器；覆盖计算入口分派、结果桥、session/preset 恢复策略、默认值表、点文件持久化及服务器移植注意。
+该文档描述桌面 GUI 主窗口层：Main_Menu 由 14 个 mixin 多重继承组装（⟨07-20⟩ +RunResultsMixin），config_from_window 为控件到 ComputeConfig 的唯一转换器；覆盖计算入口分派、结果桥、session/preset 恢复策略、默认值表、点文件持久化及服务器移植注意。
 
 ### ui-widgets.md — ui — 其余组件
 
@@ -102,4 +109,4 @@ design 模块为快速反向定尺工具，与主管线解耦，测试用最小 
 
 ### runs.md — runs — 入口脚本目录
 
-编目 sjtu_tpmshx/runs/ 全部49个脚本(根/_out/archive/demos/diagnostics/smokes/tools/cfd_asym)，标出生产入口polygon_calc、优化器M0-M4系列、golden gate，并核实出1处确认死链接导入+2处过期usage文档。
+编目 sjtu_tpmshx/runs/ 全部49个脚本(根/_out/archive/demos/diagnostics/smokes/tools/cfd_asym)，优化器M0-M4系列、golden gate（⟨07-20⟩ polygon_calc 已迁 ui/，生产入口条目撤销），并核实出1处确认死链接导入+2处过期usage文档。

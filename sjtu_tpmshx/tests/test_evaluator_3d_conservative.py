@@ -15,14 +15,10 @@ design must run end-to-end and return finite, physical Q/dP/mass.
 """
 from __future__ import annotations
 
-import os
-import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from optimization.evaluator_3d import evaluate_design_3d
+from sjtu_tpmshx.optimization.evaluator_3d import evaluate_design_3d
 
 
 def test_evaluator_3d_runs_conservative_kernel():

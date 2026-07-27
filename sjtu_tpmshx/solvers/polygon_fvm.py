@@ -26,14 +26,13 @@ import numpy as np
 from numba import njit
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
-from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from .tpms_calc import (air_density, air_conductivity, P_atm,
-                       Sa_mm as _SA_MM, nu_from_Re)
-from .unstructured_mesh import (BC_INTERIOR, BC_WALL,
-                               BC_INLET_A, BC_OUTLET_A,
+                       nu_from_Re)
+from .unstructured_mesh import (BC_INTERIOR, BC_INLET_A, BC_OUTLET_A,
                                BC_INLET_B, BC_OUTLET_B)
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -85,8 +84,6 @@ def _assemble_momentum(mesh, u_cell, v_cell, P, face_flux,
             bc   = mesh.bc_type[ci, fi]
             fl   = mesh.face_len[ci, fi]
             d    = max(mesh.dCF[ci, fi], 1e-12)
-            nx   = mesh.face_nx[ci, fi]
-            ny   = mesh.face_ny[ci, fi]
             Df   = mu_eff * fl / d
             Ff   = face_flux[ci, fi]  # rho * U_n * S_f
 

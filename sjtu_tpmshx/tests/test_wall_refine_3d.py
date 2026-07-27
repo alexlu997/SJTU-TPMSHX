@@ -7,13 +7,9 @@ defect lived exactly there, undetected. Assertions are physical-consistency
 checks, not pinned values, so the test is valid both before and after the
 N4 kernel fix; the refined-vs-uniform agreement bands are the guard.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _full_face_cfg(**overrides):
@@ -43,7 +39,7 @@ def _full_face_cfg(**overrides):
 def test_wall_refine_3d_solves_and_matches_uniform():
     """Refined-grid solve is finite, conservative, and agrees with the
     uniform-grid solution of the same physical case."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
     r = _run_3d_stack(_full_face_cfg())
     for key in ('T_A_out', 'T_B_out', 'dP_A',

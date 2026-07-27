@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from PySide6.QtCore import Qt, QEvent
-from PySide6.QtWidgets import QMenu, QApplication
+from PySide6.QtWidgets import QApplication
 
 
 def install_field_menus(window):
@@ -34,7 +33,6 @@ def install_field_menus(window):
 
 
 def _attach_context_menu(window, le, attr):
-    orig = le.contextMenuEvent
 
     def _ctx(event):
         # Pull the stock menu (cut/copy/paste/select-all) and append ours.

@@ -25,7 +25,6 @@ from __future__ import annotations
 import numpy as np
 from numba import njit
 
-from . import sco2_props
 
 _T_LO, _T_HI = 240.0, 420.0
 

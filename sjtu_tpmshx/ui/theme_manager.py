@@ -69,7 +69,7 @@ class ThemeManager(QObject):
     # ------------------------------------------------------------------ helpers
 
     def _theme_module(self):
-        from ui import theme as _theme
+        from sjtu_tpmshx.ui import theme as _theme
         return _theme
 
     # ------------------------------------------------------------------ state

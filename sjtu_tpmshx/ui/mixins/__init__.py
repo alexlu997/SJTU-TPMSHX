@@ -8,18 +8,19 @@ never back) so mixins can be unit-tested against a lightweight fake window.
 Adoption: ``class Main_Menu(RunHistoryMixin, ..., QMainWindow)``.
 """
 
-from ui.mixins.run_history import RunHistoryMixin
-from ui.mixins.dialogs import DialogsMixin
-from ui.mixins.zone_panel import ZonePanelMixin
-from ui.mixins.optimize_ui import OptimizeUIMixin
-from ui.mixins.tab_view import TabViewMixin
-from ui.mixins.ui_builder import UIBuilderMixin
-from ui.mixins.fluid_input import FluidInputMixin
-from ui.mixins.run_controller import RunControllerMixin
-from ui.mixins.appearance import AppearanceMixin
-from ui.mixins.session_presets import SessionPresetsMixin
-from ui.mixins.shortcuts import ShortcutsMixin
-from ui.mixins.io_actions import IOActionsMixin
-from ui.mixins.result_bridge import ResultBridgeMixin
+from sjtu_tpmshx.ui.mixins.run_history import RunHistoryMixin
+from sjtu_tpmshx.ui.mixins.dialogs import DialogsMixin
+from sjtu_tpmshx.ui.mixins.zone_panel import ZonePanelMixin
+from sjtu_tpmshx.ui.mixins.optimize_ui import OptimizeUIMixin
+from sjtu_tpmshx.ui.mixins.tab_view import TabViewMixin
+from sjtu_tpmshx.ui.mixins.ui_builder import UIBuilderMixin
+from sjtu_tpmshx.ui.mixins.fluid_input import FluidInputMixin
+from sjtu_tpmshx.ui.mixins.run_controller import RunControllerMixin
+from sjtu_tpmshx.ui.mixins.run_results import RunResultsMixin
+from sjtu_tpmshx.ui.mixins.appearance import AppearanceMixin
+from sjtu_tpmshx.ui.mixins.session_presets import SessionPresetsMixin
+from sjtu_tpmshx.ui.mixins.shortcuts import ShortcutsMixin
+from sjtu_tpmshx.ui.mixins.io_actions import IOActionsMixin
+from sjtu_tpmshx.ui.mixins.result_bridge import ResultBridgeMixin
 
-__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin", "FluidInputMixin", "RunControllerMixin", "AppearanceMixin", "SessionPresetsMixin", "ShortcutsMixin", "IOActionsMixin", "ResultBridgeMixin"]
+__all__ = ["RunHistoryMixin", "DialogsMixin", "ZonePanelMixin", "OptimizeUIMixin", "TabViewMixin", "UIBuilderMixin", "FluidInputMixin", "RunControllerMixin", "RunResultsMixin", "AppearanceMixin", "SessionPresetsMixin", "ShortcutsMixin", "IOActionsMixin", "ResultBridgeMixin"]

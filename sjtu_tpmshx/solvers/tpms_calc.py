@@ -54,9 +54,9 @@ from .tpms_props import (  # noqa: F401 — re-exports
     water_conductivity, water_cp, water_density, water_viscosity,
     _warn_range_once,
 )
-from df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
 
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -274,7 +274,7 @@ def _compute_cached(tpms_type: str,
     # B1 1.1 (2026-06-12): property primitives via the fluid_props
     # registry (water rho ignores P — incompressible; air ideal-gas).
     # Function-level import: fluid_props imports tpms_calc at module level.
-    from solvers import fluid_props as _fluids
+    from sjtu_tpmshx.solvers import fluid_props as _fluids
     _m = _fluids.get(fluid_type)
     # Pass P to all primitives: air/water ignore it (T-only), sCO2 needs it
     # (real-gas cp/mu/k/rho depend on both T and P). Widened 2026-06-26.
@@ -341,7 +341,7 @@ def _compute_cached(tpms_type: str,
     # ⚠ smooth-wall estimate — real SLM-part Δp runs several × higher until
     # an experimental γ anchor lands. air/water keep the production cF.
     if fluid_type == 'sco2':
-        from df_surrogate.sco2_df import predict_cF_sco2
+        from sjtu_tpmshx.df_surrogate.sco2_df import predict_cF_sco2
         cF_df = predict_cF_sco2(tpms_type, float(L_cell_mm), float(t_mm), Re)
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 

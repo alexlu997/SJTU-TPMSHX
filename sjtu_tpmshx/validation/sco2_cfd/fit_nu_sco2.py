@@ -59,10 +59,9 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent          # .../sjtu_tpmshx
-sys.path.insert(0, str(_PKG_ROOT))
 
-from df_surrogate.load_sco2_cfd import LATTICES, load_segments  # noqa: E402
-from solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
+from sjtu_tpmshx.df_surrogate.load_sco2_cfd import LATTICES, load_segments  # noqa: E402
+from sjtu_tpmshx.solvers.nu_correlations import SCO2_NU_COEFFS              # noqa: E402
 
 REPORT_DIR = _PKG_ROOT.parent / "reports" / "sco2_cfd"
 

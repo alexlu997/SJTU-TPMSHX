@@ -24,22 +24,19 @@ import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from validation.cases.mms_3d_air_air import run_mms, L_DOM
-from validation.harness._provenance import write_csv_with_provenance
-from validation.harness._order_fit import fit_order_loglog
-from validation.harness._mms_driver import run_grid_sequence
+from sjtu_tpmshx.validation.cases.mms_3d_air_air import run_mms, L_DOM
+from sjtu_tpmshx.validation.harness._provenance import write_csv_with_provenance
+from sjtu_tpmshx.validation.harness._order_fit import fit_order_loglog
+from sjtu_tpmshx.validation.harness._mms_driver import run_grid_sequence
 
 _SCRIPT_REL = 'sjtu_tpmshx/validation/mms_phase_a3_h_refine.py'
 
@@ -65,7 +62,7 @@ def main():
     grids = [int(g) for g in args.grids.split(',')]
 
     print(f"{'='*72}")
-    print(f"  MMS Phase A.3 — h-refinement order verification")
+    print("  MMS Phase A.3 — h-refinement order verification")
     print(f"{'='*72}")
     print(f"  Cases:  {cases}")
     print(f"  Grids:  {grids}  (h_x = L/N = {L_DOM:.4f}/N)")
@@ -103,7 +100,7 @@ def main():
 
     # Order fit
     print(f"\n{'='*72}")
-    print(f"  Observed order (log-log fit, all grids)")
+    print("  Observed order (log-log fit, all grids)")
     print(f"{'='*72}")
     order_rows = []
     print(f"  {'case':<6} {'metric':<7} {'p_obs':>8} {'R^2':>7} {'L2(g30)':>10}")
@@ -129,7 +126,7 @@ def main():
 
     # Hard gates
     print(f"\n{'='*72}")
-    print(f"  Hard gates")
+    print("  Hard gates")
     print(f"{'='*72}")
     fail = []
     for c in cases:

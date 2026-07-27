@@ -26,21 +26,15 @@ right end, Δp ≈ 3 × P_in must be REJECTED, exactly as 3D rejects it. The old
 was the very thing the invariant forbids — a ChokedFlowError made to go away by
 arranging for the guard never to fire.
 """
-import sys
-from pathlib import Path
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from domain.compute_config import ComputeConfig
-from controllers.compute_pipeline import Pipeline2D
-from solvers.envelope import ChokedFlowError
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.domain.compute_config import ComputeConfig
+from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
+from sjtu_tpmshx.solvers.envelope import ChokedFlowError
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 
 def _run_2d(u, L=0.182, Nx=20, Ny=20):

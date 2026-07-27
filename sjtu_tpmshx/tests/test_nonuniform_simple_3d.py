@@ -9,17 +9,11 @@ Two guarantees:
      (mass conserved), proving the spacing actually flows through the kernels.
 2026-06-09 E1.
 """
-import sys
 import warnings
-from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 warnings.filterwarnings('ignore')
 
 import numpy as np
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 _LX, _LY, _LZ = 0.1, 0.04, 0.02
 _NX, _NY, _NZ = 12, 10, 4

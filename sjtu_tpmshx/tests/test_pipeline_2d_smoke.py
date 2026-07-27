@@ -17,14 +17,14 @@ import time
 
 import pytest
 
-from domain.compute_config import (
+from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig,
     FluidConfig,
     GeometryConfig,
     SolverConfig,
     PartialBCConfig,
 )
-from controllers.compute_pipeline import (
+from sjtu_tpmshx.controllers.compute_pipeline import (
     Pipeline2D,
     pipeline_for,
     ComputeResult,

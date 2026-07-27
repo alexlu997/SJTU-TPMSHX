@@ -17,13 +17,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from solvers.simple_solver import (
+from sjtu_tpmshx.solvers.simple_solver import (
     SIMPLESolver,
     _sweep_u_jit_df, _sweep_v_jit_df,
     _pseudo_u_jit_df, _pseudo_v_jit_df,
-    _porous_src_df, _umag_u, _umag_v,
-    _sou_corr_u_x, _sou_corr_u_y, _sou_corr_v_x, _sou_corr_v_y,
-    _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD,
+    _porous_src_df, _umag_u, _sou_corr_u_x, _sou_corr_u_y, _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD,
 )
 
 

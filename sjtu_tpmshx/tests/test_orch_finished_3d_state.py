@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ── ultra-lite Main_Menu stub ───────────────────────────────────────
@@ -52,7 +51,7 @@ class _DummyWindow:
         self._has_results = False
         # B3 C5: window._result_3d is the ComputeResult (raw_3d dict retired);
         # _on_orch_finished reads res.Q_W / res.dP_A_Pa / res.diagnostics.
-        from domain.compute_result import ComputeResult
+        from sjtu_tpmshx.domain.compute_result import ComputeResult
         self._result_3d = ComputeResult(Q_W=100.0, dP_A_Pa=50.0,
                                         diagnostics={'mode': '3d'})
         self._rendered_3d_slices = False
@@ -112,13 +111,13 @@ class _CacheBridgeWindow(_DummyWindow):
 
 def _run_finished(win, finalize_behavior):
     """Drive Main_Menu._on_orch_finished with finalize_plots_3d patched."""
-    import main
+    import sjtu_tpmshx.main as main
     if isinstance(finalize_behavior, BaseException):
         def _fb(_w):
             raise finalize_behavior
-        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d', _fb)
+        patch_fin = patch('sjtu_tpmshx.ui.plot_3d_results.finalize_plots_3d', _fb)
     else:
-        patch_fin = patch('ui.plot_3d_results.finalize_plots_3d',
+        patch_fin = patch('sjtu_tpmshx.ui.plot_3d_results.finalize_plots_3d',
                           return_value=finalize_behavior)
     with patch_fin, patch('PySide6.QtWidgets.QApplication') as qapp_mock:
         qapp_mock.processEvents = MagicMock()

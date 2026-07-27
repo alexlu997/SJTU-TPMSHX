@@ -9,9 +9,6 @@ Run with:
     python test_pp_sparse_assembly.py
 """
 
-import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
@@ -86,7 +83,7 @@ def _run_both(Nx, Ny, seed):
     A_ref, rhs_ref = _solve_pp_sparse_reference(
         Pp_ref, u, v, d_u, d_v, outlet_frac, Nx, Ny, dx_arr, dy_arr, rho_field)
 
-    from solvers.simple_solver import _solve_pp_sparse_fast, _build_pp_sparsity_pattern
+    from sjtu_tpmshx.solvers.simple_solver import _solve_pp_sparse_fast, _build_pp_sparsity_pattern
     sparsity = _build_pp_sparsity_pattern(Nx, Ny, outlet_frac)
     Pp_fast = np.zeros((Nx, Ny))
     A_fast, rhs_fast = _solve_pp_sparse_fast(

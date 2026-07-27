@@ -13,10 +13,10 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
-from solvers import fluid_props
-from solvers.roughness import (f_enhancement, nu_extra_factor,
+from sjtu_tpmshx.solvers import fluid_props
+from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
                                  resolve_mode_from_env)
 
 
@@ -191,19 +191,25 @@ def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
     keep the scalar-inlet path so the golden 2D/3D and Shanghai-3D baselines
     stay bit-identical.
     """
-    from solvers import sco2_props as _s2
-    from solvers.tpms_calc import nu_sco2_topo as _nu_s2
-    from solvers.nu_correlations import NU_LAM_FLOOR as _floor
+    from sjtu_tpmshx.solvers import sco2_props as _s2
+    from sjtu_tpmshx.solvers.tpms_calc import nu_sco2_topo as _nu_s2
+    from sjtu_tpmshx.solvers.nu_correlations import (
+        NU_LAM_FLOOR as _floor, gamma_nu_sco2 as _g_nu,
+    )
     T = np.asarray(T_field, dtype=np.float64)
     rho = _s2.sco2_density_field(T, P_Pa)
     mu = _s2.sco2_viscosity_field(T, P_Pa)
     k_f = _s2.sco2_conductivity_field(T, P_Pa)
     Pr = _s2.sco2_cp_field(T, P_Pa) * mu / np.maximum(k_f, 1e-30)
     Re_loc = rho * np.abs(u_abs) * D_h_m / np.maximum(mu, 1e-30)
+    # γ_Nu (D-2sc-3): element-wise experimental correction on the smooth
+    # fit, BEFORE the laminar floor (the floor is a physical lower bound on
+    # the effective Nu, corrected or not). Off-window cells keep γ=1.
     Nu_loc = np.maximum(
-        np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
-                          L_cell_mm, D_h_m * 1000.0),
-                   dtype=np.float64), _floor)
+        _g_nu(tpms_type, Re_loc)
+        * np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
+                            L_cell_mm, D_h_m * 1000.0),
+                     dtype=np.float64), _floor)
     return A_0 * Nu_loc * k_f / D_h_m
 
 

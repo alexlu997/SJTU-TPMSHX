@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from validation.harness._harness import SpecimenSpec
+from sjtu_tpmshx.validation.harness._harness import SpecimenSpec
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent.parent     # sjtu_tpmshx/
 _DATA = _PKG_ROOT.parent / 'data' / 'raw_data'
@@ -27,8 +27,8 @@ D76_EXCLUDE = frozenset({11})
 def shanghai_spec() -> SpecimenSpec:
     """Shanghai Electric gas-heater specimen, from the canonical baseline
     JSON (configs/shanghai_baseline.json, audit Item 3 / AR8)."""
-    from configs import load_shanghai_baseline
-    from domain.compute_config import ComputeConfig
+    from sjtu_tpmshx.configs import load_shanghai_baseline
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
     sh = load_shanghai_baseline()
     cc = ComputeConfig.from_dict(sh)
     return SpecimenSpec(
@@ -56,7 +56,7 @@ def d76_spec() -> SpecimenSpec:
     reference numbers move accordingly (re-baselined in the B1 PR).
     """
     sh = shanghai_spec()        # domain dims are shared with Shanghai
-    from solvers.tpms_calc import geometry as tpms_geometry
+    from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
     g = tpms_geometry('Diamond', 7.0, 0.6, 16.0)
     return SpecimenSpec(
         name='d76',

@@ -2,11 +2,11 @@
 满迭代参考解相同的收敛温度 (同解, 只是更快)。同时确认内核默认 (None) 不变。"""
 from __future__ import annotations
 import numpy as np
-from design.cases import DesignCase
-from design.forward import (forward, _hvol, K_STEEL, GEOM_N, NX, _ARR,
+from sjtu_tpmshx.design.cases import DesignCase
+from sjtu_tpmshx.design.forward import (forward, _hvol, K_STEEL, GEOM_N, NX, _ARR,
                             SIZING_QTOL, SIZING_CHUNK)
-from solvers.tpms_calc import geometry as tg
-from solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.tpms_calc import geometry as tg
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
 
 
 def _case():
@@ -16,7 +16,7 @@ def _case():
 
 def _ref_Tout(arrangement):
     """满迭代参考解 (默认收敛参数 + 大 max_iter), 不早停。"""
-    c = _case(); topo, l, t, s, Lx = "Diamond", 7., 0.5, 0.084, 0.084
+    _case(); topo, l, t, s, Lx = "Diamond", 7., 0.5, 0.084, 0.084
     geo = tg(topo, l, t, K_STEEL, N=GEOM_N)
     EPS, EPS_A, A0, Dh = geo["epsilon"], geo["epsilon_A"], geo["A_0"], geo["D_h"]
     arr = _ARR[arrangement]; Ny, Nz = arr["ny"], arr["nz"]

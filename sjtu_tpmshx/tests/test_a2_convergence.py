@@ -10,23 +10,16 @@ Covers the four A2 repairs:
   * ``OuterConvergence`` AND-gates over all three tracked temperature
     fields (the wiring contract for the Ta/Tb/Ts outer gates).
 """
-import sys
 import warnings
-from pathlib import Path
-
-_HERE = Path(__file__).resolve()
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 warnings.filterwarnings('ignore')
 
 import numpy as np
 
-from solvers.simple_solver import SIMPLESolver
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.coupling_skeleton import OuterConvergence
-from solvers import _solve_common
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence
+from sjtu_tpmshx.solvers import _solve_common
 
 
 # ── fixtures ─────────────────────────────────────────────────────────

@@ -11,13 +11,11 @@ and so can be CI-stable on any machine.
 """
 from __future__ import annotations
 
-import os
-import tempfile
 
 import numpy as np
 import pytest
 
-from optimization.optimizer_qnehvi import (
+from sjtu_tpmshx.optimization.optimizer_qnehvi import (
     _pareto_mask_max,
     hv_plateau_detected,
     request_cancel,
@@ -141,3 +139,33 @@ def test_save_pareto_csv_header_has_x_and_objective_columns(tmp_path):
     assert parts[:5] == ['x0', 'x1', 'x2', 'x3', 'x4']
     assert 'Q_W_per_m' in parts
     assert 'dP_Pa' in parts
+
+
+# ── P3.3: _resolve_core_budget (env parse/clamp/visibility) ──────────────────
+
+def test_core_budget_default_unset(monkeypatch):
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _resolve_core_budget
+    import os
+    monkeypatch.delenv('TPMSHX_BO_CORE_BUDGET', raising=False)
+    cores, src = _resolve_core_budget()
+    assert cores == (os.cpu_count() or 4)
+    assert src == 'default'
+
+
+@pytest.mark.parametrize('raw,expect', [
+    ('2', (2, 'env')),                     # honored (any box has >= 2 logical)
+    ('0', (1, 'env-clamped')),             # floor
+    ('-8', (1, 'env-clamped')),            # floor
+    ('99999999', (None, 'env-clamped')),   # ceil to whole machine
+    ('garbage', (None, 'invalid-env-default')),  # pre-P3.3 fallback kept
+    ('', (None, 'default')),
+])
+def test_core_budget_parse_matrix(monkeypatch, raw, expect):
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _resolve_core_budget
+    import os
+    monkeypatch.setenv('TPMSHX_BO_CORE_BUDGET', raw)
+    cores, src = _resolve_core_budget()
+    want_cores, want_src = expect
+    if want_cores is None:
+        want_cores = os.cpu_count() or 4
+    assert (cores, src) == (want_cores, want_src)

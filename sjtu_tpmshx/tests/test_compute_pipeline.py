@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from domain.compute_config import ComputeConfig, SolverConfig
-from controllers.compute_pipeline import (
+from sjtu_tpmshx.domain.compute_config import ComputeConfig, SolverConfig
+from sjtu_tpmshx.controllers.compute_pipeline import (
     CancelledError,
     ComputePipeline,
     ComputeResult,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from solvers._kernels_simple_3d import (
+from sjtu_tpmshx.solvers._kernels_simple_3d import (
     _sweep_u_jit_df_3d, _sweep_v_jit_df_3d, _sweep_w_jit_df_3d,
 )
 
@@ -95,7 +95,7 @@ def test_graded_eps_changes_momentum_3d():
 
 def test_solver_selects_use_eps_from_field():
     """The solve() entry computes use_eps from eps_field uniformity."""
-    from solvers.simple_solver_3d import SIMPLESolver3D
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
     s = SIMPLESolver3D(Lx=0.04, Ly=0.06, Lz=0.02, Nx=4, Ny=6, Nz=2,
                        rho=1.2, mu=1.8e-5, T_in=320.0, v_inlet=2.0,
                        eps=0.5,
@@ -114,7 +114,7 @@ def test_evaluate_3d_installs_per_cell_eps_field():
     code path (a full evaluate_3d solve is exercised by the frozen-values
     suite; here we verify the field plumbing contract cheaply)."""
     import inspect
-    from core import evaluators as ev
+    from sjtu_tpmshx.core import evaluators as ev
     src = inspect.getsource(ev.evaluate_3d)
     assert "sA.eps_field" in src and "transpose(1, 0, 2)" in src, \
         "fluid-A per-cell eps_field (axis-swapped) not installed"

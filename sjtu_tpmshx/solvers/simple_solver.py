@@ -41,12 +41,10 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
 import os
 
 import numpy as np
-from numba import njit
-from df_surrogate.predict import predict_K_cF, predict_K_cF_vec
-from ._kernels_2d import minmod
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._solve_common import LowReExit, F2Monitor
 from .tpms_calc import (air_density, air_viscosity, P_atm)
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
 
@@ -1241,7 +1239,7 @@ class SIMPLESolver:
           - Lalot et al. (1999): relative std dev for HX flow distribution
           - ~5% is the standard HX threshold; the code default is 0.045 (4.5%)
         """
-        Nx, Ny = self.Nx, self.Ny
+        Nx = self.Nx
         v_row = self.v[:, j]
         v_mean = v_row.mean()
         if v_mean < 1e-10:

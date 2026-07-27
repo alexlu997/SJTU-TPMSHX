@@ -90,7 +90,14 @@ but were missing above:
 - ``TPMSHX_ASYM_KAPPA`` (0) — activate the asym per-side κ correction
   after ``ingest_cfd_kappa``; ``df_surrogate/kappa_asym.py``.
 - ``TPMSHX_NUM_THREADS`` (unset → numba default) — headless/script numba
-  thread count; ``solvers/threads.py`` (GUI spinbox is primary).
+  thread count; ``solvers/threads.py`` (GUI spinbox is primary). Unset on a
+  many-core box + grid ≥ TPMSHX_PARALLEL_THRESHOLD → one-shot advisory log
+  recommends ``recommend_solver_threads()`` (≈ min(64, physical cores);
+  bandwidth-bound kernels; P3.2 — advisory only, pool never auto-changed).
+- ``TPMSHX_BO_CORE_BUDGET`` (unset → whole machine) — this BO process's
+  core share for the joblib workers×inner split; multi-arm launchers set
+  it per arm (``optimization/optimizer_qnehvi.py::_resolve_core_budget``,
+  engage-time INFO logs the resolved split).
 - ``TPMSHX_SCO2_COMPRESSIBLE`` (0, experimental) — opt-in sCO2
   compressible path; ``pipelines/run_stack_3d.py``.
 - ``TPMSHX_MAX_CELLS_3D`` (2000000) — hard 3D cell cap;
@@ -108,7 +115,7 @@ import json
 import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 
 FluidType = Literal['air', 'water', 'sco2']
@@ -293,6 +300,9 @@ def bc_to_dict(bc: 'PartialBCConfig', L_dom: float, H_dom: float,
     cross_dim = H_dom if is_x_flow else L_dom
     if side == 'B' and bc.in_w <= 0 and bc.out_w <= 0:
         return None
+    # Raw-cfg dicts are heterogeneous by design (int dir, float extents,
+    # Optional z-window) — say so instead of letting mypy infer float-only.
+    d: Dict[str, Any]
     if (bc.in_w > 0 and bc.out_w > 0) or side == 'B':
         d = dict(dir=bc.dir, in_ctr=bc.in_ctr, in_w=bc.in_w,
                  out_ctr=bc.out_ctr, out_w=bc.out_w)
@@ -501,24 +511,27 @@ class ComputeConfig:
         # outer_tol_K=-1 or tol_simple=1e9 loaded clean and produced a result
         # that looked like a solve. None = "use the dimension built-in" and
         # stays legal.
-        for name, v in (('solver.outer_tol_K', self.solver.outer_tol_K),
-                        ('solver.tol_simple', self.solver.tol_simple),
-                        # F2 gates (ledger C7). Same rule: positive and finite.
-                        # A zero or negative gate is strictly unreachable (all
-                        # three residuals are >= 0), so the solve could only ever
-                        # burn max_iter and report converged=False.
-                        ('solver.mom_tol', self.solver.mom_tol),
-                        ('solver.mass_local_tol', self.solver.mass_local_tol),
-                        ('solver.mass_global_tol',
-                         self.solver.mass_global_tol)):
-            if v is None:
+        _gate_checks: Tuple[Tuple[str, Optional[float]], ...] = (
+            ('solver.outer_tol_K', self.solver.outer_tol_K),
+            ('solver.tol_simple', self.solver.tol_simple),
+            # F2 gates (ledger C7). Same rule: positive and finite.
+            # A zero or negative gate is strictly unreachable (all
+            # three residuals are >= 0), so the solve could only ever
+            # burn max_iter and report converged=False.
+            ('solver.mom_tol', self.solver.mom_tol),
+            ('solver.mass_local_tol', self.solver.mass_local_tol),
+            ('solver.mass_global_tol', self.solver.mass_global_tol))
+        # Loop names deliberately distinct from the earlier all-float checks
+        # (mypy unifies a reused loop variable's type across the function).
+        for _gname, _gval in _gate_checks:
+            if _gval is None:
                 continue
             try:
-                fv = float(v)
+                fv = float(_gval)
             except (TypeError, ValueError):
-                _bad(name, v)
+                _bad(_gname, _gval)
             if not math.isfinite(fv) or fv <= 0.0:
-                _bad(name, v)
+                _bad(_gname, _gval)
         if self.solver.convergence_mode is not None:
             if self.solver.convergence_mode not in ('legacy', 'f2'):
                 raise ValueError(

@@ -10,16 +10,10 @@ NEGATIVE feedback → stable. It is also the physically-correct compressible
 inlet (velocity-inlet is ambiguous about density). For low-dP cases (water,
 aligned air) ρ≈ρ_ref so v≈v_specified → behaviour ≈ velocity-inlet.
 """
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 def _mock(rho_inlet, v_inlet=20.0, target_at_rho=1.0, flag=True,

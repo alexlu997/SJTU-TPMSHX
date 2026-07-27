@@ -42,10 +42,10 @@ from PySide6.QtWidgets import (
 )
 
 
-from ui.vis3d_constants import FIELD_ORDER, FIELD_META
+from sjtu_tpmshx.ui.vis3d_constants import FIELD_ORDER, FIELD_META
 
 # ── Theme-aware QSS generators for 3D panel controls ──
-from ui.theme import get_theme, get_theme_name
+from sjtu_tpmshx.ui.theme import get_theme, get_theme_name
 
 _CTRL_HEIGHT = 32
 
@@ -602,7 +602,7 @@ class ThreeDVisPanel(QWidget):
 
     def load_shanghai_demo(self, Nx=30, Ny=15, Nz=5, max_outer=3):
         """Run Shanghai case 8 on coarse grid and push fields in."""
-        from ui.demo_vis_3d import run_case_8_fields, build_demo_zoning_field
+        from sjtu_tpmshx.ui.demo_vis_3d import run_case_8_fields, build_demo_zoning_field
         self.status.setText("Running Shanghai case 8 … (~15 s)")
         self.repaint()
         sA, Ta, dx, dy, dz, nx, ny, nz, u_A, T_in = run_case_8_fields(
@@ -621,7 +621,7 @@ class ThreeDVisPanel(QWidget):
 
         L_mm = build_demo_zoning_field(nx, ny, nz, dx, dy, dz)
 
-        from ui.demo_vis_3d import L_DOM, H_DOM, LZ
+        from sjtu_tpmshx.ui.demo_vis_3d import L_DOM, H_DOM, LZ
         self.set_fields(Ta=Ta, vmag=vmag, P_kPa=P_kPa, L_mm=L_mm,
                         dx=dx, dy=dy, dz=dz,
                         real_dims=(L_DOM, H_DOM, LZ))

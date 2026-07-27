@@ -7,9 +7,9 @@ implementation plan (kernel dual-ε consistency, balance-coef match, κ=1 ULP).
 import numpy as np
 import pytest
 
-from pipelines.stages_3d import _asym_split_A, _eps_sides_for_run, _run_3d_stack
-from runs._out._golden_3d import _air_air_cfg
-from df_surrogate import kappa_asym
+from sjtu_tpmshx.pipelines.stages_3d import _asym_split_A, _eps_sides_for_run, _run_3d_stack
+from sjtu_tpmshx.runs._out._golden_3d import _air_air_cfg
+from sjtu_tpmshx.df_surrogate import kappa_asym
 
 
 # ── split + per-side void fraction ───────────────────────────────────────────

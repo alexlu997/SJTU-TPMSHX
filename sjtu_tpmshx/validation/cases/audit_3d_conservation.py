@@ -34,22 +34,18 @@ Test cases (synthetic, no Shanghai data):
 Output: vault/reports/3d-solver/2026-05-04-phase2-conservation-CN.md
 """
 from __future__ import annotations
-import argparse, os, sys, time, warnings
+import argparse, sys, time, warnings
 from pathlib import Path
-from typing import Any
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from pipelines.stages_3d import _run_3d_stack
-from solvers.tpms_calc import air_density
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -411,7 +407,6 @@ def compute_phase2a_surface(res):
     Ta = res['Ta']; Tb = res['Tb']; Ts = res['Ts']
     h_vA = res['h_vA_field']; h_vB = res['h_vB_field']
     K_ffA = res['_audit_K_ffA']; K_ffB = res['_audit_K_ffB']
-    K_ss = res['_audit_K_ss']
     eps_arr = res['_audit_eps_arr']
     rho_cp_A = res['_audit_rho_cp_fA']; rho_cp_B = res['_audit_rho_cp_fB']
     uc_A = res['uc_real']; vc_A = res['vc_real']; wc_A = res['wc_real']
@@ -650,7 +645,6 @@ def compute_phase2c_h3(res):
     perm_A = sA['solver_to_real_perm']
     inv_A = tuple(np.argsort(perm_A))
     Ta_solver = np.ascontiguousarray(np.transpose(Ta, inv_A))
-    rho_cp_A_solver = np.ascontiguousarray(np.transpose(rho_cp_A, inv_A))
 
     # Spurious enthalpy contamination
     # Per cell α: ΔE_cell = T_cell · NET_OUT · ε_α · cp
@@ -712,7 +706,6 @@ def compute_phase3(res):
     K_ffA = res['_audit_K_ffA']; K_ffB = res['_audit_K_ffB']
     K_ss = res['_audit_K_ss']
     dx = res['dx']; dy = res['dy']; dz = res['dz']
-    fA = res['_audit_fA']; fB = res.get('_audit_fB')
     cp_A = res['_audit_cp_A']
     cp_B = res.get('_audit_cp_B')
     T_inA = res['_audit_T_inA']; T_inB = res.get('_audit_T_inB')
@@ -1138,7 +1131,7 @@ def render_case(label, res, p2a, p2c, p3=None, p4=None, p5=None):
         gates3.append(('|global − volumetric| / max < 5 %',
                         p3['sigma_global_vs_volumetric_rel'] < 0.05))
         if p3['carnot_pass'] is not None:
-            gates3.append((f'ε_obs ≤ ε_max + 0.05', p3['carnot_pass']))
+            gates3.append(('ε_obs ≤ ε_max + 0.05', p3['carnot_pass']))
         gates3.append(('max principle (no violations)',
                        p3['max_principle_violations_A'] +
                        p3['max_principle_violations_B'] +
@@ -1213,8 +1206,8 @@ def write_report(out_path, sections, header_meta):
     lines = []
     lines.append('# Phase 2 — 3D LTNE Conservation Audit\n')
     lines.append(f'- Date: {header_meta["date"]}')
-    lines.append(f'- Spec: `vault/reports/3d-solver/2026-05-04-3d-conservation-spec-CN.md`')
-    lines.append(f'- Audit script: `sjtu_tpmshx/validation/audit_3d_conservation.py`\n')
+    lines.append('- Spec: `vault/reports/3d-solver/2026-05-04-3d-conservation-spec-CN.md`')
+    lines.append('- Audit script: `sjtu_tpmshx/validation/audit_3d_conservation.py`\n')
     lines.append('## Scope\n')
     lines.append('- Hybrid path: Phase 2a volumetric ε_α + Phase 2c per-cell mass-imbal audit (H3).')
     lines.append('- Read-only. No solver / closure / momentum changes.')

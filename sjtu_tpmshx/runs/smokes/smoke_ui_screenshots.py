@@ -1,11 +1,8 @@
 """runs/smoke_ui_screenshots.py — Phase E: offscreen render screenshots."""
 from __future__ import annotations
-import os, sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
+from sjtu_tpmshx.runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtCore import QSize
 from pathlib import Path
 
 
@@ -14,7 +11,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     app = _smoke_boot.get_app()
-    from main import Main_Menu
+    from sjtu_tpmshx.main import Main_Menu
     win = Main_Menu()
     win.resize(1600, 1000)
     win.show()

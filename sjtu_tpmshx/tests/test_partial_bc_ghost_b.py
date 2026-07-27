@@ -10,10 +10,9 @@ PASS/FAIL uses corrected criteria (v3):
   - Historical ghost-B fixture retains T_B<T_A as regression warning,
     NOT as universal thermodynamic gate (C_r-dependent, see P0 diag).
 """
-import os, sys, pytest, numpy as np
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest, numpy as np
 
-from solvers.tpms_calc import air_cp, air_density as _air_rho
+from sjtu_tpmshx.solvers.tpms_calc import air_cp, air_density as _air_rho
 
 
 def _partial_bc_air_air_cfg(**overrides):
@@ -79,7 +78,7 @@ def test_epsilon_ntu_bound():
     (v_out~30 m/s, dP~0.7 bar) and ε_obs returns below the bound. See
     test_air_air_offset_outlet_subsonic for the direct velocity gate.
     """
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     eps = _compute_epsilon(r)
     # ε_max for cross-flow C_r≈0.74, NTU≈7: ≈0.87
@@ -91,7 +90,7 @@ def test_air_air_offset_outlet_subsonic():
     below sonic. Pre-fix the compressible velocity-inlet feedback blew the
     narrow offset outlet to ~2912 m/s (M~8); the mass-flux inlet BC breaks the
     feedback so the solve converges physically. Gate: v_out < 5·u_inlet=100."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     sb = r.get('_audit_sB_face')
     assert sb is not None, "B-side audit face missing"
@@ -108,7 +107,7 @@ def test_ghost_B_T_out_regression():
     """Historical ghost-B case: T_B < T_A as regression warning.
     NOT a universal thermodynamic gate. C_r-dependent — if C_B >> C_A,
     T_B > T_A is physically possible. Use epsilon criteria for PASS/FAIL."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     if r['T_B_out'] > r['T_A_out']:
         # Warning only — check ε before failing
@@ -123,7 +122,7 @@ def test_ghost_B_T_out_regression():
 
 def test_solid_energy_balance():
     """Q_sA + Q_sB ≈ 0 (solid-phase steady-state energy conservation)."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     Q_sA = r.get('Q_sA', 0.0); Q_sB = r.get('Q_sB', 0.0)
     imbal = abs(Q_sA + Q_sB) / max(abs(Q_sA) + abs(Q_sB), 1e-30)
@@ -136,7 +135,7 @@ def test_solid_energy_balance():
 
 def test_enthalpy_solid_gap_diagnostic():
     """B-side Q_enth vs Q_solid must agree within 15% (A3 closed the gap)."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     Qe_B = abs(r['Q_enthalpy_B']); Q_sB = abs(r.get('Q_sB', 0.0))
     # Preconditions asserted (the old `if` guard let a dead heat path pass
@@ -152,7 +151,7 @@ def test_enthalpy_solid_gap_diagnostic():
 
 def test_eta_B_degenerate_zero_inlet():
     """u_B=0 → η_B bounded. Must not crash or div-by-zero."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg(u_B=0.0))
     assert np.isfinite(r['T_A_out']), "T_A must be finite"
     assert np.isfinite(r.get('T_B_out', 0)), "T_B must be finite"
@@ -168,7 +167,7 @@ def test_eta_B_degenerate_zero_inlet():
 # conserves → ε under bound. See test_epsilon_ntu_bound for the rationale.
 def test_full_face_B_recovers_identity():
     """Full-face B → r_eff=1 → η_eff=1. Should match no-closure."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     cfg = _partial_bc_air_air_cfg()
     cfg['fluid_B_cfg'] = dict(dir=3, in_ctr=0.091, in_w=0.182,
                               out_ctr=0.091, out_w=0.182,
@@ -187,7 +186,7 @@ def test_full_face_B_recovers_identity():
 
 def test_eta_B_field_bounds():
     """η_B (chi_B) must be in [0, 1] everywhere."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg())
     chi = r.get('chi_B')
     if chi is None:
@@ -214,7 +213,7 @@ def _energy_balanced(r, rel_max=0.15):
 def test_epsilon_ntu_bound_varrhocp():
     """variable_rho_cp=True makes the air-air OFFSET reverse case conservative:
     ε under bound + Q_A ≈ Q_B (energy balance = the conservation signature)."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     r = _run_3d_stack(_partial_bc_air_air_cfg(variable_rho_cp=True))
     eps = _compute_epsilon(r)
     assert eps <= 0.90, f"ε_obs={eps:.4f} > 0.90 even with variable_rho_cp"
@@ -225,7 +224,7 @@ def test_epsilon_ntu_bound_varrhocp():
 def test_full_face_B_varrhocp():
     """variable_rho_cp=True: full-face air-air reverse returns ε under bound
     + energy-balanced (isolates pure compressibility, no partial-BC)."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     cfg = _partial_bc_air_air_cfg(variable_rho_cp=True)
     cfg['fluid_B_cfg'] = dict(dir=3, in_ctr=0.091, in_w=0.182,
                               out_ctr=0.091, out_w=0.182,
@@ -242,7 +241,7 @@ def test_variable_rho_cp_off_override():
     """The legacy inlet-P density is reachable via variable_rho_cp=False and is
     NOT a silent no-op: it gives a materially higher ε than the default ON path
     (which conserves). Guards both the OFF override and the default flip."""
-    from pipelines.stages_3d import _run_3d_stack
+    from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
     eps_on = _compute_epsilon(_run_3d_stack(_partial_bc_air_air_cfg()))
     eps_off = _compute_epsilon(
         _run_3d_stack(_partial_bc_air_air_cfg(variable_rho_cp=False)))

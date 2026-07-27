@@ -6,15 +6,11 @@ by ~0.914 cell-widths of open area per pipe edge (grid-dependent). The fix
 scales v_inlet_field (and the mass-flux target) so the tapered profile
 carries exactly the geometric open-area flux.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 
 
 def _make(inlet_lo, inlet_hi, Nx=30, Ny=20):

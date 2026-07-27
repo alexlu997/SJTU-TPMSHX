@@ -15,7 +15,7 @@ Run: python -u ui/demo_vis_3d.py
 """
 
 from __future__ import annotations
-import os, sys, warnings
+import sys, warnings
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +23,6 @@ import pandas as pd
 import pyvista as pv
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -32,15 +30,15 @@ except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from solvers.tpms_calc import (
+from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp, P_atm,
 )
-from solvers.simple_solver_3d import SIMPLESolver3D
-from solvers.ltne_energy_3d import solve_full_domain_3d
-from solvers.sigmoid_field_3d import build_continuous_arrays_3d
-from solvers.sigmoid_field import get_geometry_lut
-from df_surrogate.predict import predict_K_cF
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.sigmoid_field_3d import build_continuous_arrays_3d
+from sjtu_tpmshx.solvers.sigmoid_field import get_geometry_lut
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
 
 R_AIR = 287.05
 
@@ -191,13 +189,13 @@ def build_pv_grid(Nx, Ny, Nz, dx, dy, dz):
 
 def main():
     out_path = Path(__file__).parent / 'demo_vis_3d.png'
-    print(f"[1/3] Running Shanghai case 8 on coarse grid…")
+    print("[1/3] Running Shanghai case 8 on coarse grid…")
     sA, Ta, dx, dy, dz, Nx, Ny, Nz, u_A, T_Ain_K = run_case_8_fields(
         Nx=30, Ny=15, Nz=5, max_outer=3)
     print(f"      Grid: {Nx}×{Ny}×{Nz}  u_A={u_A:.1f} m/s  T_in={T_Ain_K:.1f} K")
     print(f"      T_a range: [{Ta.min():.1f}, {Ta.max():.1f}] K")
 
-    print(f"[2/3] Building demo zoning field…")
+    print("[2/3] Building demo zoning field…")
     L_field = build_demo_zoning_field(Nx, Ny, Nz, dx, dy, dz)
     print(f"      L_field range: [{L_field.min():.2f}, {L_field.max():.2f}] mm")
 
@@ -285,7 +283,7 @@ def main():
     p.link_views()
     p.screenshot(str(out_path))
     print(f"      Saved: {out_path}")
-    print(f"\nDONE.")
+    print("\nDONE.")
 
 
 if __name__ == '__main__':

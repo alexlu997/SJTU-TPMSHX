@@ -9,10 +9,7 @@ Output PNGs (per field):
   3. Iso — isosurface of the median value
 """
 import os
-import sys
 import numpy as np
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Force offscreen before any pyvista import
 os.environ['PYVISTA_OFF_SCREEN'] = 'true'
@@ -22,13 +19,12 @@ pv.OFF_SCREEN = True
 pv.global_theme.background = 'white'
 pv.global_theme.font.color = 'black'
 
-from solvers.tpms_calc import geometry as tpms_geometry
-from pipelines.stages_3d import _run_3d_stack
+from sjtu_tpmshx.pipelines.stages_3d import _run_3d_stack
 
 
 def build_cube_cfg():
     # B2 2.6: canonical template; cube deltas = 50 mm cube, 20^3 grid.
-    from runs._case_template import build_cfg as _template_cfg
+    from sjtu_tpmshx.runs._case_template import build_cfg as _template_cfg
     return _template_cfg(L=0.050, H=0.050, Lz=0.050, Nx=20, Ny=20, Nz=20)
 
 

@@ -57,23 +57,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 import time
 import warnings
 from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 warnings.filterwarnings('ignore')
 
-from core.evaluators import (
+from sjtu_tpmshx.core.evaluators import (
     evaluate_3d,
-    _build_3d_arrays,
 )
 
 def _load_pareto_row(pareto_csv: str, row_index: int,

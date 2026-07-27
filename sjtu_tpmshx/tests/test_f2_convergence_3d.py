@@ -16,7 +16,7 @@ F2 a static field only TRIGGERS a check.
 import numpy as np
 import pytest
 
-from solvers.simple_solver_3d import SIMPLESolver3D
+from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
 def _make_solver(Nx=8, Ny=12, Nz=4, v_inlet=3.0, **kw):
@@ -215,7 +215,7 @@ def test_solved_cell_mass_excludes_the_dirichlet_outlet_row():
     """The solved-cell mass residual must select on `cell_kind`, not on a row
     index: a partial / tapered outlet pins only SOME cells of the last row, and
     the unpinned ones DO have a continuity equation that must be counted."""
-    from solvers._kernels_simple_3d import _mass_res_solved_jit_3d
+    from sjtu_tpmshx.solvers._kernels_simple_3d import _mass_res_solved_jit_3d
     s = _make_solver(convergence_mode='f2')
     # Block half the outlet face -> those cells are walls, not Dirichlet pins.
     frac = np.ones((s.Nx, s.Nz))

@@ -24,23 +24,23 @@ from typing import TYPE_CHECKING, Any
 import os
 
 import numpy as np
-from domain.compute_config import ComputeConfig, bc_to_dict
-from domain.compute_result import ComputeResult
-from solvers.simple_solver import SIMPLESolver
-from solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
-from solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
-from pipelines._stage_common import (
+from sjtu_tpmshx.domain.compute_config import ComputeConfig, bc_to_dict
+from sjtu_tpmshx.domain.compute_result import ComputeResult
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute, geometry as tpms_geometry
+from sjtu_tpmshx.solvers.df_projection import override_simple_K_cF, extract_dP_from_simple
+from sjtu_tpmshx.pipelines._stage_common import (
     validate_domain_dims, surrogate_extrap_reasons, safe_float,
     geometry_props,
 )
-from logutil import get_logger
+from sjtu_tpmshx.logutil import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 # Re-exports — external consumers (controllers/compute_pipeline, tests)
 # import these from pipelines.stages_2d; keep every moved name reachable.
-from pipelines.solve_2d import (
+from sjtu_tpmshx.pipelines.solve_2d import (
     _enthalpy_balance_2d, _PipelineWindowShim, _compute_pressure_2d,
     _apply_zone_stats_2d, _compute_Q_richardson, _run_solvers,
 )
@@ -96,7 +96,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # 2026-05-09 (option B) — water + air supported in 2D Compute. sCO2
     # still blocks. Per-side fluid type captured into cfg so _run_solvers
     # picks the right property accessors.
-    from solvers.tpms_calc import validate_fluid_type
+    from sjtu_tpmshx.solvers.tpms_calc import validate_fluid_type
     fluid_A = compute_cfg.fluid_A.type
     fluid_B = compute_cfg.fluid_B.type
     validate_fluid_type(fluid_A, 'A')
@@ -160,7 +160,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
                 grid = compute_cfg.zones.grid
                 _x_dec = compute_cfg.zones.pareto_x_decision
                 if _x_dec is not None:
-                    from solvers.sigmoid_field import (
+                    from sjtu_tpmshx.solvers.sigmoid_field import (
                         build_continuous_arrays, get_geometry_lut,
                     )
                     _lut = get_geometry_lut(tpms_type)
@@ -176,7 +176,7 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
                         fluid_type=fluid_A)  # air-only builder; non-air raises
                     _log.info(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
                 else:
-                    from solvers.zone_config import ZoneConfig
+                    from sjtu_tpmshx.solvers.zone_config import ZoneConfig
                     za = ZoneConfig.build_grid_arrays(
                         N_x, N_y, L, H,
                         grid['cells'],
@@ -260,8 +260,6 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     """
     L = cfg['L']; H = cfg['H']
     N_x = cfg['N_x']; N_y = cfg['N_y']
-    u_A = cfg['u_A']; u_B = cfg['u_B']
-    T_inA = cfg['T_inA']; T_inB = cfg['T_inB']
     cfgA = cfg['cfgA']; cfgB = cfg['cfgB']
     tpms_type = cfg['tpms_type']
     Lcell = cfg['Lcell']; t_wall = cfg['t_wall']; k_s = cfg['k_s']
@@ -272,20 +270,13 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     def _build_zone_arrays_for_simple(za_dict, N_flow, N_perp, is_x_flow, mu_fluid):
         """Build 1D per-row arrays for SIMPLE from 2D zone arrays.
         SIMPLE's y-axis = flow direction. Need per-row porous params."""
-        from solvers import tpms_calc as _tc
+        from sjtu_tpmshx.solvers import tpms_calc as _tc
         mu_eff = np.empty(N_flow, dtype=np.float64)
         r_h_a  = np.empty(N_flow, dtype=np.float64)
         ln_eps = np.empty(N_flow, dtype=np.float64)
         ln_tL  = np.empty(N_flow, dtype=np.float64)
         ln_XSa = np.empty(N_flow, dtype=np.float64)
-        eps_2d = za_dict['eps_arr']
         for j in range(N_flow):
-            if is_x_flow:
-                # SIMPLE y-axis = real x-axis; average over real y
-                e = eps_2d[j, :].mean()
-            else:
-                # SIMPLE y-axis = real y-axis; average over real x
-                e = eps_2d[:, j].mean()
             # Find matching grid cell for representative L/t
             gc = za_dict.get('grid_cells', za_dict.get('zone_params', []))
             if gc:
@@ -320,7 +311,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                 'ln_eps_arr': ln_eps, 'ln_tL_arr': ln_tL, 'ln_XSa_arr': ln_XSa}
 
     # Build aligned grid arrays for energy solver
-    from solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
     _x_breaks = set()
     _y_breaks = set()
     # Fluid B (y-flow): inlet/outlet on x-axis
@@ -350,7 +341,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         and zone_config is None and za is None
     )
     if _wall_refine_gui:
-        from solvers.df_projection import build_master_refined_grid
+        from sjtu_tpmshx.solvers.df_projection import build_master_refined_grid
         try:
             energy_dx, energy_dy, N_x, N_y = build_master_refined_grid(
                 L, H, N_x, N_y, n_refine=8, first_cell=0.02e-3, growth=1.8)
@@ -419,7 +410,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0):
+                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0,
+                    p_shoot_prev=None):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -431,6 +423,11 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         fluid_type : 'ideal_gas' (default, air) or 'incompressible' (water).
         Controls whether SIMPLE's _update_density runs ρ = P / (R·T) per
         iter or treats ρ as fixed (water). Option B 2026-05-09.
+
+        p_shoot_prev : optional (P_ref_abs_prev, dP_solved_prev) from the
+        PREVIOUS outer iteration's converged SIMPLE (this pipeline recreates
+        the solver each outer iter). Consumed only when the C8 shooting knob
+        is ON and fluid_type is ideal_gas — see the shooting block below.
         """
         d = cfg_fluid['dir']
         is_x = d in (0, 1)  # x-flow = dirs {+x, -x}
@@ -441,7 +438,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
 
         # Build zone arrays for SIMPLE if zones are active
         z_arr = None
-        from solvers.zone_config import ZoneConfig
+        from sjtu_tpmshx.solvers.zone_config import ZoneConfig
         if za is not None:
             if is_x:
                 z_arr = _build_zone_arrays_for_simple(za, N_x, N_y, True, mu_f)
@@ -511,8 +508,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # can never drift from the drag it is seeding for.
         L_stream = float(L if is_x else H)
         if fluid_type == 'ideal_gas':
-            from df_surrogate.predict import predict_K_cF as _pred_KcF
-            from solvers.envelope import predict_outlet_p_sq
+            from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
+            from sjtu_tpmshx.solvers.envelope import predict_outlet_p_sq
             _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
                                   0.5 * float(eps))
             _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
@@ -636,6 +633,25 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                     float(P_in_abs), float(T_in_f),
                     float(np.mean(_C_rows)), L_stream)
                 s.P_ref_abs = float(np.sqrt(max(_P_out_sq_g, 1.0e4)))
+        # ── C8 shooting: reseed from the PREVIOUS iteration's MEASURED drag
+        # (openspec c8-p-in-shooting). The 1D seed above (and its graded
+        # refinement) only ESTIMATE the drag, so the realized inlet absolute
+        # pressure P_ref_abs + Δp_solved misses the specified P_in (ledger
+        # C8: case 16 realized 288980 vs spec 304746, −5.2%). The P² update
+        #     P_out²_new = P_in² − (realized_prev² − P_ref_prev²)
+        # reuses the 1D compressible invariant (P_in²−P_out² = 2RT̄CL, level-
+        # free) with the solver-measured drag integral, landing the realized
+        # inlet on spec in 1–2 outer iterations. Overrides BOTH seeds above
+        # (measured drag supersedes any estimate). Same clip posture as the
+        # seeds: 1e4 Pa floor, no raise (2D has no choke guard — ledger O1,
+        # deliberately a separate change).
+        if (fluid_type == 'ideal_gas' and p_shoot_prev is not None
+                and cfg.get('p_in_shooting',
+                            os.environ.get('TPMSHX_P_IN_SHOOT', '0') == '1')):
+            _pref_prev, _dp_prev = float(p_shoot_prev[0]), float(p_shoot_prev[1])
+            _P_out_sq_shoot = (float(P_in_abs) ** 2
+                               - _dp_prev * (_dp_prev + 2.0 * _pref_prev))
+            s.P_ref_abs = float(np.sqrt(max(_P_out_sq_shoot, 1.0e4)))
         _has_partial = np.any(s.outlet_frac < 0.99) and np.any(s.outlet_frac > 0.5)
         # R3 (2026-07-07): production solver knobs, precedence
         # env > SolverConfig > dim-specific auto. The autos are the
@@ -831,7 +847,7 @@ def _finalize_cfg(raw: dict[str, Any],
                   T_in_K, P_in_Pa):
         # B1 1.1: param renamed from `fluid_props` — it shadowed the
         # solvers.fluid_props module this function now dispatches through.
-        from solvers import fluid_props as _fluids
+        from sjtu_tpmshx.solvers import fluid_props as _fluids
         # Same convention as ``_enthalpy_balance_2d`` outlet plane.
         import numpy as _np
         # Zoned-ε outlet weighting (2026-07-13 audit): the physical mass flux
@@ -962,6 +978,17 @@ def _finalize_cfg(raw: dict[str, Any],
             'envelope_valid': raw.get('envelope_valid', True),
             'envelope_reasons': list(raw.get('envelope_reasons', [])),
             'p_clip_hits': int(raw.get('p_clip_hits', 0)),
+            # C8 shooting diagnostics (openspec c8-p-in-shooting): realized
+            # inlet absolute pressure vs the specified P_in, per ideal-gas
+            # side (NaN otherwise). Forwarded here for the same reason as
+            # envelope_valid above — a raw-dict-only key is invisible to
+            # every ComputeResult consumer.
+            'P_in_realized_A': float(raw.get('P_in_realized_A', float('nan'))),
+            'P_in_shoot_resid_A': float(
+                raw.get('P_in_shoot_resid_A', float('nan'))),
+            'P_in_realized_B': float(raw.get('P_in_realized_B', float('nan'))),
+            'P_in_shoot_resid_B': float(
+                raw.get('P_in_shoot_resid_B', float('nan'))),
             # Per-gate breakdown behind ComputeResult.converged, so a caller
             # can see WHICH gate failed (convergence truth-table).
             'convergence_detail': raw.get('convergence_detail'),

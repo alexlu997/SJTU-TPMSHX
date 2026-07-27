@@ -9,7 +9,7 @@ Run from repo root:
     python -m pytest sjtu_tpmshx/tests/test_quick_design_dialog.py -v
 """
 from unittest.mock import patch
-from ui.quick_design_panel import build_quick_design_dialog
+from sjtu_tpmshx.ui.quick_design_panel import build_quick_design_dialog
 
 CONTRACT = [
     "le_qd_file", "combo_qd_mode", "combo_qd_arr", "le_qd_rho",
@@ -30,7 +30,7 @@ def test_dialog_builds_with_contract_attrs():
 
 def test_run_button_invokes_run_quick_design():
     dlg = build_quick_design_dialog()
-    with patch("ui.quick_design_panel.run_quick_design") as m:
+    with patch("sjtu_tpmshx.ui.quick_design_panel.run_quick_design") as m:
         dlg._qd_run_btn.click()   # expose the run button as dlg._qd_run_btn
         assert m.called
     dlg.deleteLater()

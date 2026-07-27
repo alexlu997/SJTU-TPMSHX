@@ -38,21 +38,17 @@ import argparse
 import sys
 import time
 import warnings
-from pathlib import Path
 
 import numpy as np
 import sympy as sp
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 warnings.filterwarnings('ignore')
 
-from solvers.ltne_energy_3d import _gs_full_chunk_3d_stag
+from sjtu_tpmshx.solvers.ltne_energy_3d import _gs_full_chunk_3d_stag
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -318,7 +314,7 @@ def main():
     print(f"                      h_vA/B={H_VA:.0e} W/m3K")
     print(f"                      rho_cp_A/B={RHO_CP_A:.0f}  u_A/B={U_A}/{U_B} m/s")
     print(f"  T0={T0}K  Delta_A={DA}  Delta_B={DB}  Delta_s={DS} K")
-    print(f"  PDE: eps*rho_cp*u*dT/dx_i - K*Lap(T) - h_v*(T_other - T) = S_mms")
+    print("  PDE: eps*rho_cp*u*dT/dx_i - K*Lap(T) - h_v*(T_other - T) = S_mms")
     print()
 
     results = []
@@ -338,7 +334,7 @@ def main():
 
     # Summary
     print(f"\n{'='*72}")
-    print(f"  Summary")
+    print("  Summary")
     print(f"{'='*72}")
     print(f"  {'case':<6} {'L2_A':>9} {'L2_B':>9} {'L2_s':>9} "
           f"{'Linf_A':>8} {'Linf_B':>8} {'Linf_s':>8} {'iters':>6}")
@@ -350,7 +346,7 @@ def main():
     if fail_cases:
         print(f"\n  FAILED cases: {fail_cases}")
         return 1
-    print(f"\n  All cases PASS hard gates.")
+    print("\n  All cases PASS hard gates.")
     return 0
 
 

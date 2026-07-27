@@ -17,7 +17,7 @@ See vault reports/engineering/audit/2026-06-28-* (D1/D2/D3 detail).
 import numpy as np
 import pytest
 
-from solvers import sco2_props, fluid_props
+from sjtu_tpmshx.solvers import sco2_props, fluid_props
 
 pytestmark = pytest.mark.skipif(
     not sco2_props._HAVE_COOLPROP, reason="CoolProp required for sCO2 tests")
@@ -29,7 +29,7 @@ _P = 8.0e6  # Pa — CO2 pseudocritical T ≈ 307.7 K at this pressure
 def test_d1_2d_duty_uses_true_enthalpy_for_sco2():
     """`_enthalpy_balance_2d` with an enthalpy_fn returns ṁ·Δh (= the true
     duty), not ṁ·cp(T_in)·ΔT, and the two differ materially for sCO2."""
-    from pipelines.stages_2d import _enthalpy_balance_2d
+    from sjtu_tpmshx.pipelines.stages_2d import _enthalpy_balance_2d
     m = fluid_props.get('sco2')
 
     Nx, Ny = 4, 3
@@ -63,7 +63,7 @@ def test_d1_2d_duty_uses_true_enthalpy_for_sco2():
 
 def test_d1_air_path_unchanged_without_enthalpy_fn():
     """No enthalpy_fn → byte-identical legacy ρcp·ΔT arithmetic (air/water)."""
-    from pipelines.stages_2d import _enthalpy_balance_2d
+    from sjtu_tpmshx.pipelines.stages_2d import _enthalpy_balance_2d
     rng = np.random.default_rng(0)
     Ta = 300.0 + rng.random((5, 4)) * 50.0
     uc = rng.random((5, 4)) + 0.1
@@ -90,7 +90,7 @@ def _fake_outlet_solver(Nx, Nz):
 
 
 def test_d2_mass_weighted_outlet_enthalpy_not_h_of_mean():
-    from pipelines.stages_3d import _mass_weighted_h_out, _mass_weighted_T_out
+    from sjtu_tpmshx.pipelines.stages_3d import _mass_weighted_h_out, _mass_weighted_T_out
     Nx, Nz = 2, 2
     T_face = np.array([[300.0, 315.0], [305.0, 312.0]])   # straddles the spike
     solver = _fake_outlet_solver(Nx, Nz)
@@ -112,9 +112,16 @@ def test_d2_mass_weighted_outlet_enthalpy_not_h_of_mean():
 
 
 # ── D3 : 3D h_v with LOCAL-temperature transport props (sCO2) ────────────────
-def test_d3_sco2_hv_uses_local_temperature_props():
-    from pipelines.stages_3d import _sco2_hv_local_field
-    from solvers.tpms_calc import nu_sco2_topo
+def test_d3_sco2_hv_uses_local_temperature_props(monkeypatch):
+    # Pin the SMOOTH chain explicitly: this test compares local-T props vs
+    # frozen-inlet props, and its in-test reference is built from the smooth
+    # nu_sco2_topo. The D-2sc-3 γ_Nu correction (2026-07-22) multiplies the
+    # production path by a common factor that the reference does not carry —
+    # kill it here so the original local-vs-frozen intent stays verbatim
+    # (γ_Nu's own behaviour is covered by test_sco2_gamma_nu.py).
+    monkeypatch.setenv('TPMSHX_SCO2_GAMMA_NU', '0')
+    from sjtu_tpmshx.pipelines.stages_3d import _sco2_hv_local_field
+    from sjtu_tpmshx.solvers.tpms_calc import nu_sco2_topo
 
     A_0, D_h_m = 500.0, 1.0e-3
     u_abs = np.full((2, 2, 2), 1.5)

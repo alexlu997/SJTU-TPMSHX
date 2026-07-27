@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
-from df_surrogate.predict import predict_K_cF_vec
+from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
 from .tpms_calc import geometry as tpms_geometry
 from .simple_solver import build_wall_refined_1d
 

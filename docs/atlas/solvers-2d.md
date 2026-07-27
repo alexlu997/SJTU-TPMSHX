@@ -1,5 +1,6 @@
 # solvers — 2D SIMPLE + 能量
-生成日期 2026-07-10，基于 commit f33d30e 附近的 master
+生成日期 2026-07-10，基于 commit f33d30e 附近的 master；
+**2026-07-20 收编 upgrade/loop 分支漂移**（本卷仅 threads.py 受影响，失准处标 ⟨07-20 更新⟩）
 
 > 本文档所有断言均以代码为唯一真源，逐条附 file:line（行号对应上述 commit 的工作区文件）。目标读者为在 **Windows Server 2022** 服务器上移植/改造本库的编码代理。
 
@@ -27,7 +28,7 @@
 | `sjtu_tpmshx/solvers/_solve_common.py` | 86 | `LowReExit` — 速度静止/残差平台早退判据，2D/3D 单一真源，纯 Python 保位一致 |
 | `sjtu_tpmshx/solvers/anderson_acceleration.py` | 153 | `AndersonSIMPLE` Type-II 加速器 + `stack_state`/`unstack_state` 状态向量打包 |
 | `sjtu_tpmshx/solvers/ltne_energy.py` | 920 | `solve_full_domain`（双流体三温 LTNE）+ 串行核 `_gs_full_chunk` + 红黑并行核 `_gs_full_chunk_rb` |
-| `sjtu_tpmshx/solvers/threads.py` | 52 | Numba 线程数三层控制（`NUMBA_NUM_THREADS` 硬上限 / `TPMSHX_NUM_THREADS` 运行时 / `set_solver_threads` GUI 旋钮） |
+| `sjtu_tpmshx/solvers/threads.py` | 102 ⟨07-20 更新；原 52，P3.2⟩ | Numba 线程数三层控制 + 大网格建议机制（`recommend_solver_threads` ≈min(64,逻辑核/2)；`warn_if_default_pool` 对未钉扎全核默认打一次性建议，**绝不自动改池**——prange 归约序无 golden 覆盖） |
 
 ## 公开接口
 
@@ -90,7 +91,7 @@
 
 ### threads（`sjtu_tpmshx/solvers/threads.py`）
 
-`max_threads()`（`:23`，= `numba.config.NUMBA_NUM_THREADS`）；`get_solver_threads()`（`:29`）；`set_solver_threads(n)` 钳位 [1, max]（`:34-40`）；`init_from_env()` 读 `TPMSHX_NUM_THREADS`（`:43-52`），在 `sjtu_tpmshx/solvers/__init__.py:10` 包导入时调用一次。线程数对 Numba 全局生效，管辖所有 `parallel=True` 核（`sjtu_tpmshx/solvers/threads.py:15-16`）。
+`max_threads()`（`:23`，= `numba.config.NUMBA_NUM_THREADS`）；`get_solver_threads()`（`:29`）；`set_solver_threads(n)` 钳位 [1, max]（`:34-40`）；`init_from_env()` 读 `TPMSHX_NUM_THREADS`（`:43-52`），在 `sjtu_tpmshx/solvers/__init__.py:10` 包导入时调用一次。⟨07-20 新增（P3.2）⟩ `recommend_solver_threads()` 与 `warn_if_default_pool(n_cells)`：挂钩 `simple_solver_3d._should_parallelize` 真分支，三静默分支（env 已设 / GUI 已调低 / cap≤rec）；advisory-only，池永不自动改；测试在 `test_solver_threads.py`（logutil 挂 `tpmshx.` 前缀根且 propagate=False，caplog 捕不到，须直挂模块 logger）。线程数对 Numba 全局生效，管辖所有 `parallel=True` 核（`sjtu_tpmshx/solvers/threads.py:15-16`）。
 
 ## 关键配置项与开关
 
