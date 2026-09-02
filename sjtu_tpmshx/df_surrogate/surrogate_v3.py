@@ -15,7 +15,7 @@ Model:
         (L, t) + log-clip ±0.1 dex; no K clamp. Wins the training-domain
         metrics by a wide margin (LOO dP MAPE G 17.5/D 11.5 vs RBF
         24.7/32.1; leave-one-L-out bounded ~240% vs RBF 2000-5800%
-        divergence) — selection study runs/diag_df_model_zoo.py.
+        divergence) — measured in the historical model-selection study.
         ⚠ REJECTED as production default by end-to-end evidence: its
         robust trend discounts the L6 c_F hump, but the Shanghai 3D
         pipeline measurement (2026-06-10, Nz=3) gives dP RMSRE 62.79%
@@ -111,7 +111,7 @@ class SurrogateV3:
         Training-domain winner (LOO/LOLO) but rejected as default —
         Shanghai 3D dP RMSRE 62.79% (see module docstring).
 
-    RBF-only experiment kwargs (see runs/diag_rbf_feature_ablation.py):
+    RBF-only experiment kwargs retained from the feature-ablation study:
 
     standardize : z-score the RBF features before interpolation (tested
         2026-06-10: degrades LOO badly — the unscaled L_mm-dominated
@@ -322,7 +322,7 @@ class SurrogateV3:
         WhiteKernel — restores per-geometry detail near data, decays to
         zero away from it (prediction reverts to the robust trend).
         Output log-clipped to the training range ± clip_margin dex.
-        Selected via runs/diag_df_model_zoo.py (LOO + leave-one-L-out).
+        Selected by LOO + leave-one-L-out comparison.
         """
         from sklearn.gaussian_process import GaussianProcessRegressor
         from sklearn.gaussian_process.kernels import (

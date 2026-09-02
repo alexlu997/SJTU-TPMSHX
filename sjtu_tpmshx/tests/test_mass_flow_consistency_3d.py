@@ -122,13 +122,12 @@ def test_uniform_box_bc_matches_inlet_integral():
 def test_partial_mask_mass_flow_match_inlet_BC():
     """Partial inlet/outlet mask reproducer for Shanghai case 1 2.04× anomaly.
 
-    Geometry mirrors `runs/diag_shanghai_flow_topology.py:_build_partial_B_masks`
-    (top-right inlet, bottom-left outlet, both 1/6 of the cross-stream extent).
+    The reproducer uses opposing partial inlet/outlet masks on the cross-stream
+    face.
 
     Three possible outcomes (categorised in task 2b):
-      A: inlet and outlet ratios both ≈ 1 → solver kernel is fine; the diag
-         formula at `diag_shanghai_flow_topology.py:172-180` is what produces
-         the 2.04× number.
+      A: inlet and outlet ratios both ≈ 1 → solver kernel is fine; the removed
+         historical diagnostic's reporting formula produced the 2.04× number.
       B: inlet ≈ 1 but outlet ≠ inlet → PPE drift triggered by asymmetric mask
          (Category B per audit).
       C: inlet ≈ 2× target → BC injection is multiplying by something
@@ -152,8 +151,7 @@ def test_partial_mask_mass_flow_match_inlet_BC():
     open_frac = float(in_mask.mean())   # 0.5
 
     # v_inlet_field is the superficial velocity at face cells (zero on walls,
-    # U_super on open cells) — same convention as
-    # diag_shanghai_flow_topology.py line 99.
+    # U_super on open cells).
     v_inlet_field = (in_mask * U_super).astype(np.float64)
 
     K_arr  = np.full((NY, NZ), K,  dtype=np.float64)

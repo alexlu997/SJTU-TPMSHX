@@ -116,8 +116,8 @@ from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
 R_AIR = 287.05
 
 # ── Specimen geometry — canonical spec from validation/_case_sets ──
-# (B1 1.3, 2026-06-12: replaces the module-global derivation block that
-# validate_d76_3d had to monkey-patch. The globals below are kept as a
+# (B1 1.3, 2026-06-12: replaces the old module-global monkey-patch. The
+# globals below are kept as a
 # read-only Shanghai view for printing and test back-compat (V.EPS);
 # the runner itself threads `spec` explicitly.)
 from sjtu_tpmshx.validation.harness._harness import load_cases_df
@@ -252,8 +252,8 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
     """Run one experimental case (index ci). Returns result dict.
 
     max_outer : override module-level MAX_OUTER (default None → use MAX_OUTER).
-    spec      : SpecimenSpec (default None → Shanghai). B1 1.3: replaces
-                the module-global monkey-patch that validate_d76_3d used —
+    spec      : SpecimenSpec (default None → Shanghai). B1 1.3 replaces the
+                old module-global specimen monkey-patch —
                 the locals unpacked below shadow the Shanghai module
                 globals for the rest of this function body.
     """
@@ -695,7 +695,8 @@ def main():
     ap.add_argument('--max-outer', type=int, default=MAX_OUTER,
                     help=f'Outer SIMPLE<->LTNE coupling iters (default {MAX_OUTER})')
     # Hard gate (blind-spot audit T1, 2026-07-07): this script is the
-    # CLAUDE.md-designated gate for surrogate-backend changes, yet it always
+    # docs/architecture.md designates this gate for surrogate-backend changes,
+    # yet it always
     # exited 0 — headline accuracy could degrade with every automatic check
     # green. Thresholds are deliberately generous (current Nz=3 gate values
     # are RMSRE_dP 4.88% / RMSRE_Q 2.12% — production pipeline, F2 default;

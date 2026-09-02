@@ -50,7 +50,7 @@ term and without double-counting the calibrated drag.
 BOUNDARY CONDITIONS (be precise — the two ends are NOT symmetric):
   * INLET (j=0): MASS-FLUX. ρ·v is held at the physical throughput and
     `v_inlet_field` is recomputed from the current inlet ρ every density update
-    (`_apply_massflux_inlet`). HARD INVARIANT — see CLAUDE.md.
+    (`_apply_massflux_inlet`). HARD INVARIANT — see docs/architecture.md.
   * OUTLET (j=Ny-1): DIRICHLET PRESSURE. Every open outlet cell is pinned
     `Pp = 0` and its P is never corrected (`_correct_jit_3d`), so its GAUGE
     pressure stays 0 for the whole solve ⇒ **the outlet ABSOLUTE pressure is
@@ -113,7 +113,7 @@ def _should_parallelize(Nx: int, Ny: int, Nz: int) -> bool:
 # Below this N the pressure-correction system uses scipy.sparse.linalg.spsolve
 # (sparse LU); above it, PyAMG ruge_stuben_solver as a preconditioner for
 # BiCGStab. The old "break-even ~30 k" was never measured on the mid band:
-# D4(b)-1 (2026-07-22, upgrade/tools/d4b_pp_cost_curve.py) measured per-call
+# D4(b)-1 profiling (2026-07-22) measured per-call
 # pp cost LU vs AMG on identical assembled systems — AMG wins at EVERY size
 # ≥ 2 k cells (2.0k: 13→3 ms, 4.9k: 79→5 ms, 11.6k: 459→20 ms, 19.7k:
 # 1505→169 ms, 29.8k: 4896→219 ms; spsolve refactorizes every call, the
@@ -667,7 +667,8 @@ class SIMPLESolver3D:
         The inlet is then re-imposed as a MASS-FLUX inlet (`_apply_massflux_inlet`
         at the tail of this method): ρ·v at the inlet is held at the physical
         throughput and `v_inlet_field` is recomputed as G_target / ρ_inlet. This
-        is a HARD INVARIANT (CLAUDE.md) and the DEFAULT (`massflux_inlet=True`).
+        is a HARD INVARIANT (docs/architecture.md) and the DEFAULT
+        (`massflux_inlet=True`).
 
         (Corrected 2026-07-12. This docstring previously read "v_inlet_field
         stays fixed (velocity-inlet BC); mass flux at inlet floats with density"

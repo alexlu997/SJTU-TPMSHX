@@ -214,6 +214,9 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 
 #### ✔️ Tests
 
+Reproducibility gates set `PYTHONHASHSEED=0` before Python starts; CI and the
+Windows test scripts already do this.
+
 ```bash
 # full suite
 python -m pytest sjtu_tpmshx/tests/ -q

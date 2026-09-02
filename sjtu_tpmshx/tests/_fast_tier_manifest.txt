@@ -1,6 +1,6 @@
 # fast-tier heavy manifest — GENERATED, do not hand-edit.
 # regen: python sjtu_tpmshx/runs/tools/build_fast_tier_manifest.py --log <census.log> --threshold 30
-# census: upgrade/logs/p31-durations.log · threshold 30s · 21 heavy of 265 timed tests · 4096s of 4620s call-compute (89%)
+# census: 2026-07-20 server run (historical log not retained) · threshold 30s · 21 heavy of 265 timed tests · 4096s of 4620s call-compute (89%)
 # semantics: conftest marks these nodeids `heavy` at collection; the
 # FULL suite (run_tests_server.ps1) still runs them — only
 # run_tests_fast.ps1 (-m "not heavy") skips them. NOT the gate.

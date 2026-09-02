@@ -101,7 +101,7 @@ _OVERRIDES: dict[str, list[tuple[float, float, float]]] = {
     # value is total-dP convention (specimen incl. manifolds), while the
     # production target convention is CORE-only dP.  The mechanism stays for
     # future core-clean calibrations (e.g. rough-wall CFD).  Known open issue
-    # documented by validation/validate_d76_3d.py: the pure RBF extrapolation
+    # documented by the historical D_7_6 validation: pure RBF extrapolation
     # at Diamond L7/t0.6 over-predicts the specimen total dP by ~1.86x.
 }
 _OVR_TAU_L = 0.5    # influence radius in L [mm]

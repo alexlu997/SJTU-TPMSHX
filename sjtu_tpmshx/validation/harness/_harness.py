@@ -2,8 +2,8 @@
 
 Replaces the per-script pattern of module-global specimen geometry +
 hand-rolled Excel parsing. Before this module, switching specimen meant
-monkey-patching another script's globals (``validate_d76_3d._patch_to_d76``)
-— which silently FAILED to reach helper-function default arguments frozen
+monkey-patching another runner's globals, which failed to reach
+helper-function default arguments frozen
 at import time (``_compute_h_vA_field_3d(eps=EPS, ...)`` kept Shanghai
 geometry under the D_7_6 patch). A ``SpecimenSpec`` is passed explicitly
 instead, so there is nothing left to patch and nothing left to freeze.
