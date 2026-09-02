@@ -18,7 +18,21 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QScrollArea  # noqa: E40
 
 
 @pytest.fixture(scope="module")
-def win():
+def win(tmp_path_factory):
+    import sjtu_tpmshx.controllers.session_manager as sm_mod
+
+    session_dir = tmp_path_factory.mktemp("ui-layout-session")
+    original_init = sm_mod.SessionManager.__init__
+    patch = pytest.MonkeyPatch()
+
+    def _init(self, base_dir=None, parent=None):
+        original_init(
+            self,
+            base_dir=base_dir if base_dir is not None else session_dir,
+            parent=parent,
+        )
+
+    patch.setattr(sm_mod.SessionManager, '__init__', _init)
     app = QApplication.instance() or QApplication([])
     from sjtu_tpmshx.main import Main_Menu
     w = Main_Menu()
@@ -28,6 +42,7 @@ def win():
     yield w
     w.close()
     app.processEvents()
+    patch.undo()
 
 
 def test_param_pages_have_no_horizontal_scroll(win):
@@ -216,13 +231,13 @@ def test_copy_figure_clipboard_no_data_safe(win):
 # ── ui-plan3-workbench T1: three-tab toolbar + result aggregation ────
 
 def test_workbench_toolbar_visible_set(win):
-    """Toolbar shows only 几何布局/结果/优化; legacy buttons live off-toolbar."""
+    """Toolbar exposes only the three real workbench tabs."""
     assert win.btn_tab_layout.isVisibleTo(win)
     assert win.btn_tab_result.isVisibleTo(win)
     assert win.btn_tab_pareto.isVisibleTo(win)
-    for b in (win.btn_tab_temp, win.btn_tab_pres, win.btn_tab_vel,
-              win.btn_tab_3d, win.btn_tab_2d_view):
-        assert not b.isVisibleTo(win), b.text()
+    for attr in ('btn_tab_temp', 'btn_tab_pres', 'btn_tab_vel',
+                 'btn_tab_3d', 'btn_tab_2d_view'):
+        assert not hasattr(win, attr)
 
 
 def test_legacy_switch_lights_result_button(win):

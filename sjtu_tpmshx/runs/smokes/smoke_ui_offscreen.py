@@ -65,8 +65,7 @@ def main():
 
     # Tab switching — try by attribute names
     print("\n[4/5] Tab navigation test", flush=True)
-    tab_attrs = ['btn_tab_params', 'btn_tab_temp', 'btn_tab_pres', 'btn_tab_vel',
-                  'btn_tab_3d', 'btn_tab_optimize', 'btn_tab_2d_view']
+    tab_attrs = ['btn_tab_layout', 'btn_tab_result', 'btn_tab_pareto']
     for t in tab_attrs:
         b = getattr(win, t, None)
         if b is None:
