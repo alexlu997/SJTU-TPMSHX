@@ -210,6 +210,9 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py
 
 # 3D real solver (SIMPLE, Nz=10, mass-flux inlet)
 python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
+
+# Independent Diamond L7/t0.6 pressure-drop gate
+python -m sjtu_tpmshx.validation.cases.validate_d76_3d
 ```
 
 #### ✔️ Tests

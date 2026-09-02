@@ -173,7 +173,6 @@ SJTU-TPMSHX/                       ← 仓库根
 │   │   ├── smokes/                ← 冒烟测试（UI 离屏、2D/3D 管线端到端）
 │   │   ├── tools/                 ← 构建/导出工具（CFD xlsx、HTML 渲染、3D 出图）
 │   │   ├── cfd_asym/              ← asym 偏置等值面的 Fluent 交叉验证（PyFluent runner、κ 后处理、nTop 表达式）
-│   │   └── archive/               ← 冻结的一次性诊断脚本（diag_shanghai_*、D_7_6 等）
 │   ├── domain/                    ← 输入合法性校验（纯函数，无界面）
 │   │
 │   ├── optimization/              ← 多目标贝叶斯优化（qNEHVI，搜帕累托前沿）
@@ -551,6 +550,7 @@ SJTU-TPMSHX/                       ← 仓库根
 |---|---|---|
 | `validate_shanghai_lumped_dual_nu.py` | 上海 16 工况的**集总 ε-NTU** 基准（不解流场，只用进口条件，无出口泄漏，论文级基准） | Q 误差 RMSRE **1.73%** |
 | `validate_shanghai_3d_real.py` | 上海 16 工况的 **3D SIMPLE+LTNE 生产验证**（空气可压缩，水侧温度规定为线性） | dP 5.28% / Q 3.21%（Nz=3 门，mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
+| `validate_d76_3d.py` | Diamond L7/t0.6 的独立 3D 压降门，防止 D-F 代理模型外推失真 | D_7_6 有效工况，仅对 dP 评分 |
 | `validate_shanghai_aligned.py` | 2D 验证，精确复刻界面“计算”路径，确保求解器按界面意图工作 | dP ~8.4%（mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
 | `mms_3d_air_air.py` | MMS 人造解法（用 sympy 推导解析解+源项）验证 3D LTNE 求解器离散一致性 | 单网格 rel L2<2%、Linf<3K |
 | `mms_phase_a3_h_refine.py` | 5 套网格的 MMS 阶数验证（log-log 拟合观测收敛阶 p_obs） | p_obs≥1.5~1.8、网格30的 L2<1% |
