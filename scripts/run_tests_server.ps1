@@ -34,8 +34,6 @@ if ($venvHome -match 'Anaconda') {
     throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild: C:\Python312\python.exe -m venv .venv"
 }
 
-# Required by pytest.ini header: 3D pipeline output is hash-seed sensitive,
-# and hash randomisation can only be pinned before interpreter start.
 $env:PYTHONHASHSEED = "0"
 $env:OMP_NUM_THREADS = "1"; $env:OPENBLAS_NUM_THREADS = "1"
 $env:MKL_NUM_THREADS = "1"; $env:NUMEXPR_NUM_THREADS = "1"
@@ -45,24 +43,12 @@ $env:QT_QPA_PLATFORM = "offscreen"
 
 Set-Location $repo
 
-# test_df_projection_equivalence.py is ORDER-SENSITIVE (2026-07-13 finding):
-# its bit-exact baseline JSON was captured with warm in-process DF caches —
-# the whole module must run in-order in ONE process, or the nonuni cases
-# compare cold-cache values against warm-cache references and fail by ~0.14%.
-# Known latent test-isolation bug (predates the server port); worksteal
-# splits the module across workers and trips it, so it runs separately.
-Write-Host "=== Pass 1: full suite minus order-sensitive module (-n 64 worksteal) ===" -ForegroundColor Cyan
-& $py -u -m pytest sjtu_tpmshx/tests/ -q -n 64 --dist worksteal --durations=15 `
-    --ignore=sjtu_tpmshx/tests/test_df_projection_equivalence.py
-$main = $LASTEXITCODE
+Write-Host "=== Full suite (-n 64 worksteal) ===" -ForegroundColor Cyan
+& $py -u -m pytest sjtu_tpmshx/tests/ -q -n 64 --dist worksteal --durations=15
 
-Write-Host "=== Pass 2: test_df_projection_equivalence.py serial in-order (~9 s) ===" -ForegroundColor Cyan
-& $py -u -m pytest sjtu_tpmshx/tests/test_df_projection_equivalence.py -q
-$ordered = $LASTEXITCODE
-
-if (($main -eq 0) -and ($ordered -eq 0)) {
+if ($LASTEXITCODE -eq 0) {
     Write-Host "READY — suite green." -ForegroundColor Green
 } else {
-    Write-Host "FAILED — main exit=$main, ordered-module exit=$ordered" -ForegroundColor Red
+    Write-Host "FAILED — pytest exit=$LASTEXITCODE" -ForegroundColor Red
     exit 1
 }

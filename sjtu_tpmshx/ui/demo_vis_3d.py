@@ -56,8 +56,8 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
     """Run Shanghai case 8 (mid-Re) and return solver + Ta for visualisation."""
     data_path = (ROOT.parent / 'data' / 'raw_data'
                  / '20260401-上海电气天然气加热器实验工况.xlsx')
-    if not data_path.exists():  # rename-proof legacy fallback
-        data_path = Path(r'D:\Postgraduate\Homogenize\SJTU-TPMSHX\data\raw_data\20260401-上海电气天然气加热器实验工况.xlsx')
+    if not data_path.exists():
+        raise FileNotFoundError(f'required demo data not found: {data_path}')
     df = pd.read_excel(data_path, engine='openpyxl', sheet_name='Sheet1',
                        header=None, skiprows=2)
 

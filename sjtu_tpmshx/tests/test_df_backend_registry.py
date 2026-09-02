@@ -27,21 +27,12 @@ _GOLDEN = {
 }
 
 
-# Same-machine bit-repro gate: the pinned values are exact float comparisons
-# captured on the Windows dev box; libm/FMA differences shift the last ULP on
-# other platforms (measured rel ~1e-13 on ubuntu CI). Skip off-machine.
-_CI = pytest.mark.skipif(__import__('os').environ.get('CI') == 'true',
-                         reason='same-machine exact-equality gate (ULP '
-                                'differs across platforms)')
-
-
-@_CI
 @pytest.mark.parametrize('tpms,method', list(_GOLDEN))
-def test_golden_point_values_exact(tpms, method):
+def test_golden_point_values_cross_platform(tpms, method):
     K, cF = P.predict_K_cF(tpms, 7.0, 0.6, _EF[tpms], method=method)
     K_ref, cF_ref = _GOLDEN[(tpms, method)]
-    assert K == K_ref
-    assert cF == cF_ref
+    np.testing.assert_allclose(K, K_ref, rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(cF, cF_ref, rtol=1e-12, atol=0.0)
 
 
 @pytest.mark.parametrize('method', ('gamma_df', 'rbf'))

@@ -4,8 +4,7 @@
 # durations census upgrade/logs/p31-durations.log — 1.7% of tests carrying
 # 89% of call-compute; manifest: sjtu_tpmshx/tests/_fast_tier_manifest.txt,
 # applied by tests/conftest.py at collection). Everything else is identical
-# to run_tests_server.ps1: same env pinning, same order-sensitive serial
-# pass. Measured wall ~1 min vs ~19 min full.
+# to run_tests_server.ps1. Measured wall ~1 min vs ~19 min full.
 #
 # "Before claiming done" remains the FULL suite (run_tests_server.ps1) —
 # the heavy set is exactly the 3D conservation/BC/asym integration tests
@@ -32,17 +31,11 @@ $env:QT_QPA_PLATFORM = "offscreen"
 Set-Location $repo
 
 Write-Host "=== FAST TIER (-m 'not heavy') — dev feedback, NOT the gate ===" -ForegroundColor Yellow
-& $py -u -m pytest sjtu_tpmshx/tests/ -q -n 32 --dist worksteal -m "not heavy" `
-    --ignore=sjtu_tpmshx/tests/test_df_projection_equivalence.py
-$main = $LASTEXITCODE
+& $py -u -m pytest sjtu_tpmshx/tests/ -q -n 32 --dist worksteal -m "not heavy"
 
-Write-Host "=== order-sensitive module serial (~9 s) ===" -ForegroundColor Cyan
-& $py -u -m pytest sjtu_tpmshx/tests/test_df_projection_equivalence.py -q
-$ordered = $LASTEXITCODE
-
-if (($main -eq 0) -and ($ordered -eq 0)) {
+if ($LASTEXITCODE -eq 0) {
     Write-Host "FAST TIER green — run scripts/run_tests_server.ps1 before claiming done." -ForegroundColor Green
 } else {
-    Write-Host "FAST TIER FAILED — main exit=$main, ordered-module exit=$ordered" -ForegroundColor Red
+    Write-Host "FAST TIER FAILED — pytest exit=$LASTEXITCODE" -ForegroundColor Red
     exit 1
 }

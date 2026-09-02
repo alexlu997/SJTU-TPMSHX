@@ -4,8 +4,9 @@ tests/_data_df_projection_baseline.json was captured from the
 pre-refactor projectors (2026-06-12) on deterministic synthetic fields:
 2D + 3D × fluid A/B × uniform/non-uniform streamwise (and z) spacings.
 The shared-helper extraction (_cell_centre_fracs / _nearest_src_idx /
-_stream_profile) must reproduce every value EXACTLY — the golden 3D gate
-runs uniform cfgs only, so this file is the gate for the projector.
+_stream_profile) must reproduce every value within cross-platform floating
+point tolerance; the golden 3D gate runs uniform cfgs only, so this file is
+the gate for the projector.
 """
 import json
 from pathlib import Path
@@ -49,36 +50,27 @@ def _fields_3d():
     return L3, t3, e3
 
 
-# Same-machine bit-repro gates (exact float ==): skip on CI — libm/FMA ULP
-# differences across platforms; same rationale as test_df_backend_registry.
-_CI = pytest.mark.skipif(__import__('os').environ.get('CI') == 'true',
-                         reason='same-machine exact-equality gate (ULP '
-                                'differs across platforms)')
-
-
-@_CI
 @pytest.mark.parametrize('fluid', ('A', 'B'))
 @pytest.mark.parametrize('tag,dx', (('uni', None), ('nonuni', _DX_NU)))
-def test_2d_projector_baseline_exact(fluid, tag, dx):
+def test_2d_projector_baseline_cross_platform(fluid, tag, dx):
     L2, t2 = _fields_2d()
     K, cF = p2d(L2, t2, 'Gyroid', 16.0, _NX, _NY, 6, fluid,
                 streamwise_dx=dx)
     K_ref, cF_ref = _BASE[f'2d_{fluid}_{tag}']
-    assert K.tolist() == K_ref
-    assert cF.tolist() == cF_ref
+    np.testing.assert_allclose(K, K_ref, rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(cF, cF_ref, rtol=1e-12, atol=0.0)
 
 
-@_CI
 @pytest.mark.parametrize('fluid', ('A', 'B'))
 @pytest.mark.parametrize('tag,sdx,zdx', (('uni', None, None),
                                          ('nonuni', _DX_NU, _ZDX_NU)))
-def test_3d_projector_baseline_exact(fluid, tag, sdx, zdx):
+def test_3d_projector_baseline_cross_platform(fluid, tag, sdx, zdx):
     L3, t3, e3 = _fields_3d()
     K, cF = p3d(L3, t3, e3, 'Gyroid', 6, 4, fluid,
                 streamwise_dx=sdx, z_dx=zdx)
     K_ref, cF_ref = _BASE[f'3d_{fluid}_{tag}']
-    assert K.ravel().tolist() == K_ref
-    assert cF.ravel().tolist() == cF_ref
+    np.testing.assert_allclose(K.ravel(), K_ref, rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(cF.ravel(), cF_ref, rtol=1e-12, atol=0.0)
 
 
 def test_helper_semantics():
