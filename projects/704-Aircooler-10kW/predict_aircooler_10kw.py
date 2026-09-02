@@ -499,7 +499,6 @@ def write_combined_html(path, cross_runs, counter_runs, A_f):
     """汇报版 HTML: 结论先行 + 术语速查 + 需求 + 方法 + 叉流/逆流对比 + 注意事项。
     面向非专业听众, 术语全部人话解释。"""
     K0 = 273.15
-    side = math.sqrt(A_f) * 1e3
     flows = [("叉流", cross_runs), ("逆流", counter_runs)]
 
     def comp_rows():

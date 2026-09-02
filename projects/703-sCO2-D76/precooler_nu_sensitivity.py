@@ -86,7 +86,7 @@ def pitla(T_b, T_w, p=PH):
 def main():
     print(f"703 precooler Nu cross-check — Diamond 7/0.6, P={PH/1e6:.2f}MPa, "
           f"A_front={A_FRONT} m² (G={G_MASS:.1f} kg/m²s)")
-    print(f"  Tpc(7.7MPa)≈306 K.  Wall T (cooling) estimated as bulk − 0.5·(bulk − T_water_local).\n")
+    print("  Tpc(7.7MPa)≈306 K.  Wall T (cooling) estimated as bulk − 0.5·(bulk − T_water_local).\n")
     # representative bulk states from hot-inlet (371) down through the spike (308)
     # local water T rises 297→307 counterflow; approximate T_water at each bulk
     states = [(371.0, 306.0), (340.0, 304.0), (320.0, 301.0),

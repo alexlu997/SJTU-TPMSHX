@@ -182,11 +182,10 @@ def solve_face_centered(s, max_iter=30000, tol=1e-10):
 
 
 def compute_metrics(Ta, Tb, Ts, s):
-    Nx, dx = s["Nx"], s["dx"]
+    dx = s["dx"]
     Apipe = s["Apipe"]
     cp, hv = s["cp"], s["h_v"]
     Vc = dx * Apipe
-    rho = s["rho"]
 
     # Boundary face mass flux (single shared value, mass-conserving)
     m_in_A = abs(s["m_dot_A"])

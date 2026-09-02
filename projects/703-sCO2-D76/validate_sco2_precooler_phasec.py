@@ -113,7 +113,6 @@ def run(n_x=240, n_y=12, max_outer=40, alpha=0.30, verbose=False):
     cp_A0 = S.sco2_cp(TH_IN, PM)
     u_A = MH / (rho_A0 * A_FLOW)
 
-    K_ffA = EPS_A * S.sco2_conductivity(TH_IN, PM)
     K_ss = (1.0 - EPS) * K_S
 
     # cold water B (prescribed counterflow): warm (307.15) at hot-inlet end i=0,
@@ -224,7 +223,7 @@ def main():
     print(f"703 precooler Phase C field-solver check — Diamond 7/0.6, "
           f"A_front={A_FRONT} m2, L={L_DOM} m")
     print(f"  target: hot sCO2 {TH_IN:.1f}->{TH_OUT:.1f} K  Q_ref(enthalpy)={Q_ref:.0f} kW")
-    print(f"  Tpc(7.7MPa)~306 K -> cp spike x17 at the hot outlet\n")
+    print("  Tpc(7.7MPa)~306 K -> cp spike x17 at the hot outlet\n")
     print(f"{'grid':>10} {'it':>3} {'conv':>5} {'T_out C':>8} {'Q kW':>8} {'errQ%':>7}")
     last = None
     for (nx, ny) in [(160, 10), (240, 12), (360, 14)]:
@@ -237,7 +236,7 @@ def main():
         last = r
     if last is not None:
         # grid convergence between the two finest
-        print(f"\n  (cross-check vs segmented enthalpy eps-NTU sizing, NOT a measurement)")
+        print("\n  (cross-check vs segmented enthalpy eps-NTU sizing, NOT a measurement)")
     return 0
 
 
