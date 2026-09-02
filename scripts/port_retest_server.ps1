@@ -160,6 +160,7 @@ if (-not (Test-Path $Py)) {
 
 # ── 4. 四臂并行 ──
 Set-Location $Repo
+$env:PYTHONHASHSEED = "0"
 $env:PYTHONPATH     = Join-Path $Repo "sjtu_tpmshx"
 
 # 线程预算 (P1): 探测逻辑处理器数, 按 arm 数均分. 原脚本硬编码 8 且注释假设

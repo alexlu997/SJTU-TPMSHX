@@ -34,6 +34,7 @@ if ($venvHome -match 'Anaconda') {
     throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild: C:\Python312\python.exe -m venv .venv"
 }
 
+$env:PYTHONHASHSEED = "0"
 $env:OMP_NUM_THREADS = "1"; $env:OPENBLAS_NUM_THREADS = "1"
 $env:MKL_NUM_THREADS = "1"; $env:NUMEXPR_NUM_THREADS = "1"
 $env:NUMBA_NUM_THREADS = "1"

@@ -19,6 +19,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
+      PYTHONHASHSEED: "0"
       QT_QPA_PLATFORM: offscreen
       SJTU_TPMSHX_DISABLE_3D_PANEL: "1"
     steps:
