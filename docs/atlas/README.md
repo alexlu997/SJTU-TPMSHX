@@ -9,11 +9,11 @@
 validation）经盘点无分支级失准；HANDOFF ✓ iter 39（文首状态总更新表 + 三节行内戳，原文证据链不动）；ui-widgets/dataflow 的 run_controller
 行号引用受 P2.5a 位移影响者极少且方向可循，未逐一标注。）
 
-本目录（`docs/atlas/`）是 SJTU-TPMSHX 代码库的全景文档集，17 册，面向**将在 Windows Server 2022 服务器上移植/改造此库的另一个 AI 编码代理**（假定它容易臆断、需要每条事实带 `file:line` 溯源）。
+本目录（`docs/atlas/`）是 2026-07 的代码库历史快照，保留当时的逐文件证据与迁移记录。当前结构和约束以 `docs/architecture.md` 与运行代码为准。
 
 ## 与 `PROJECT_MANUAL.md` 的关系
 
-`PROJECT_MANUAL.md` 第 6 节也有一份逐文件 API 索引，定位更概览；本 atlas 是**更细粒度**的补充——每册都有独立的「关键配置项与开关」「可扩展接口」「已知不足与 TODO」「服务器移植注意」章节，且经过对抗性核查（见下表「核查」列）。**两处描述冲突时以 atlas 为准**——它标注了生成日期与核实方式，`PROJECT_MANUAL.md` 未必同步更新。
+`PROJECT_MANUAL.md` 第 6 节提供当前概览；本 atlas 仅作为更细粒度的历史证据。两处描述冲突时，以 `docs/architecture.md` 和运行代码为准。
 
 ## 建议阅读顺序
 

@@ -1,7 +1,7 @@
 # Fast-tier suite runner — DEV INNER LOOP ONLY, NOT THE VERIFICATION GATE.
 #
-# P3.1 (2026-07-20): excludes the 21 `heavy` tests (call >= 30s in the
-# durations census upgrade/logs/p31-durations.log — 1.7% of tests carrying
+# P3.1 (2026-07-20): the duration census (retained in Git history) found
+# 21 `heavy` tests (call >= 30s): 1.7% of tests carrying
 # 89% of call-compute; manifest: sjtu_tpmshx/tests/_fast_tier_manifest.txt,
 # applied by tests/conftest.py at collection). Everything else is identical
 # to run_tests_server.ps1. Measured wall ~1 min vs ~19 min full.

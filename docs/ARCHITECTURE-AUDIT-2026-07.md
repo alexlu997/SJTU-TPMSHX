@@ -1,7 +1,7 @@
 # 架构审计 2026-07（P1.1，升级循环 iter 6）
 
 证据基线：master `4b32da4` + upgrade/loop 前 5 轮。取证方式：AST 实测 import 图
-（`sjtu_tpmshx/runs/tools/audit_import_graph.py`，日志 `upgrade/logs/p11-import-graph.txt`）+
+（`sjtu_tpmshx/runs/tools/audit_import_graph.py`，原始日志保留于 Git 历史）+
 两路只读代码侦察（file:line 全部核对到当前代码，非文档转述）。本文是 P1 后续条目的工作底稿；
 与 `docs/atlas/HANDOFF-windows-server.md` 冲突处**以本文为准**（HANDOFF 部分条目已过时，见 §3）。
 

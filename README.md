@@ -240,7 +240,7 @@ SJTU-TPMSHX/                   # repo root
 │   ├── assets/logos/          # branding images (gitignored png)
 │   ├── runs/                  # orchestration: production entry-points + helpers + golden gate
 │   │   ├── demos/ diagnostics/ smokes/ tools/   # scripts grouped by role
-│   │   └── archive/ cfd_asym/ _out/
+│   │   └── cfd_asym/ _out/
 │   ├── validation/            # V&V — result CSVs + status docs at this root
 │   │   ├── harness/           # reusable test infra (_harness, _metrics, _case_sets, …)
 │   │   └── cases/             # runners (Shanghai, MMS, GCI, conservation audits)
@@ -251,9 +251,20 @@ SJTU-TPMSHX/                   # repo root
 └── reports/ opt_runs/ poc/ benchmarks/   # computed outputs / PoC / perf benchmarks
 ```
 
-Research notes & experiment reports live in **[`vault/`](vault/)** — organised into
-`method/`, `validation/`, and `engineering/` buckets (plus `_deferred/`, `_archive/`).
-See `vault/reports/README.md` for the index.
+Local experiment and CFD inputs live under `data/raw_data/` and are intentionally
+ignored by Git. The current local layout includes the experiment spreadsheets,
+`sCO2-CFD/{Diamond,Gyroid}/`, and `CO2-CFD/{Diamond,Gyroid}/`. Keep those names:
+the loaders resolve them relative to the repository.
+The sCO2 experiment loader expects `data/raw_data/sCO2-Experient.xlsx`
+(the historical project spelling).
+
+For reproducible runs, use the `SJTU-TPMSHX-data` commit recorded in
+`data-revision.txt`. On Windows Server, `scripts/port_retest_server.ps1`
+checks out that revision and copies its `raw_data/` directory automatically.
+
+Current architecture and physical invariants are documented in
+[`docs/architecture.md`](docs/architecture.md). Contributor and coding-agent
+scope rules are in [`AGENTS.md`](AGENTS.md).
 
 ---
 

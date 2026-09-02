@@ -22,7 +22,7 @@
 - **切片 B（后续迭代）**：两评估器 post-solve 接 `assess_solution_validity`/`gate_solution`
   语义——失败 → `invalid=True` + 罚值（沿用现有 choke 罚值通道），**不 raise**（BO 战役不许中断）。
 - **切片 C（后续迭代）**：补传 `rho_inlet_ref`（口径对齐 stages_2d:475 的入口密度）；
-  预期 `test_evaluator_frozen_values`（rel=1e-12）可能移动 → 走 upgrade/PROTOCOL.md §5
+  预期 `test_evaluator_frozen_values`（rel=1e-12）可能移动 → 按仓库现行数值回归流程处理
   有据重基准流程。
 
 ## Capabilities

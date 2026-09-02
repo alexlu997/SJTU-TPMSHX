@@ -91,7 +91,7 @@ D-1sc 第一步收编差异）。卡片形态：
 - **CF-REFIT 搁置因由**（台账）：两段法 K 已切、cF 刻意保留实验锚——因为当时唯一
   的 cF 实验真源就是试件锚。候选 D 的新架构（CFD 形状 × 实验幅值）与其不冲突：
   D-2a 只升级 cF_smooth 的"形状面"，幅值仍归 γ。
-- **C8 定价教训**（openspec/changes/archive/c8-p-in-shooting/design.md §6）：
+- **C8 定价教训**（历史 change `c8-p-in-shooting`，完整设计见 Git 历史）：
   口径修正与 γ 重锚必须同波——本章程即其制度化。
 
 ## 7. D-1sc 已知待办（本审计移交）

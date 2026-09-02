@@ -18,7 +18,7 @@
       "QT_QPA_PLATFORM": "offscreen"
     }
   },
-  "history_note": "golden_3d.json is COMMITTED alongside this sidecar since 2026-07-19 (decision D1 by Alex; it was untracked before, the HANDOFF §9 'zero version records' era). Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update json + this sidecar in the SAME commit, with a `!` commit type (upgrade/PROTOCOL.md §5).",
+  "history_note": "golden_3d.json is COMMITTED alongside this sidecar since 2026-07-19 (decision D1 by Alex; it was untracked before, the HANDOFF §9 'zero version records' era). Generated on the main checkout circa 2026-07-13/14 post-C12 fixes; the exact generating commit predates this record. Any golden re-baseline MUST update json + this sidecar in the SAME commit; the retired upgrade protocol remains available in Git history.",
   "history": [
     {
       "date": "2026-07-23",
@@ -26,7 +26,7 @@
     },
     {
       "date": "2026-07-22",
-      "event": "RE-BASELINE (D4(b)-2): _AMG_GATE 30_000 -> 2_000 �� 15^3 golden grids moved to the AMG pp path. All 27 changed scalars are ULP-tail only (max rel ~5e-12; e.g. air_air.Q 385.47142867386947 -> ...88874); field hashes re-captured. Cost-curve evidence: upgrade/tools/d4b_pp_cost_curve.py + upgrade/logs/iter55-costcurve.log. Pre-change code commit: 4622a07."
+      "event": "RE-BASELINE (D4(b)-2): _AMG_GATE 30_000 -> 2_000; 15^3 golden grids moved to the AMG pp path. All 27 changed scalars are ULP-tail only (max rel ~5e-12; e.g. air_air.Q 385.47142867386947 -> ...88874); field hashes re-captured. Cost-curve tool and log remain available in Git history. Pre-change code commit: 4622a07."
     }
   ]
 }

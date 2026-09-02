@@ -12,7 +12,7 @@ removed the shim. These tests pin the END state:
 
 If someone re-introduces a bootstrap or finder, or a module regrows a
 top-level import, these assertions are the tripwire. History: see the
-openspec change's tasks.md and upgrade/PROGRESS.md iters 43–48.
+openspec change's tasks.md and the retired upgrade records in Git history.
 """
 import subprocess
 import sys

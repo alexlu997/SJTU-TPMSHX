@@ -42,7 +42,6 @@ tpmshx-run = "sjtu_tpmshx.cli:main"
 [tool.ruff]
 # Lint keeps the existing source formatting and checks error-level rules only.
 target-version = "py312"
-exclude = ["sjtu_tpmshx/runs/archive"]
 
 [tool.ruff.lint]
 # F = pyflakes（真错误类），E9 = 语法级。F841 存量 52 处已于 P2.1b（iter 23）
