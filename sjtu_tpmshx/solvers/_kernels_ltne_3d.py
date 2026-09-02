@@ -1,6 +1,6 @@
 """3D LTNE numba kernels, moved verbatim from ltne_energy_3d.py (openspec
 split-solver-kernels, 2026-07-03); bit-identical. Epsilon-split contract
-untouched — see ltne_energy_3d.py / CLAUDE.md."""
+untouched — see ltne_energy_3d.py / docs/architecture.md."""
 
 import numpy as np
 from numba import njit, prange
@@ -1175,4 +1175,3 @@ def _apply_outlet_3d(T, dir_code, Nx, Ny, Nz):
         for i in range(Nx):
             for j in range(Ny):
                 T[i, j, 0] = T[i, j, 1]
-

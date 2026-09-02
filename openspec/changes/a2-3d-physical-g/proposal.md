@@ -16,7 +16,7 @@ Alex 2026-07-21 拍板启动调查。
    `simple_solver_3d.py:600` 构造平铺 rho_field → `solve()` 入口 hasattr 守卫单次捕获
    （"before any pressure build-up"，:846-857）。3D BO 评估器同构
    （`core/evaluators.py:247,315` 传 `air_density(T_inA, P_inA)`）。
-2. **仪器实测**（`upgrade/tools/a2_g_capture_probe.py`，partial-BC 构型抬高 P_inA 至
+2. **仪器实测**（探针脚本保留于 Git 历史，partial-BC 构型抬高 P_inA 至
    Δp/P≈9%）：G_captured/G_physical = **0.995103**。若为出口基准应为 **0.912**。
 3. **台账独立记载**：ledger C10（2026-07-12 逐行核对）早已记"mass-flux 目标捕获不棘轮
    ——只捕获一次（prescribed v × 初始 ρ(T_in,P_in)）"，与 D3 背景矛盾；本调查裁决

@@ -1,9 +1,7 @@
 """Canonical validation case sets: specimen specs + truth-table locations.
 
-Single source for "which specimen, which workbook, which cases" so the
-runner scripts (validate_shanghai_3d_real / validate_d76_3d /
-validate_shanghai_aligned / validate_shanghai_lumped_dual_nu) cannot
-drift apart on geometry or column conventions (refactor B1 1.3).
+Single source for "which specimen, which workbook, which cases" so validation
+runners cannot drift apart on geometry or column conventions (refactor B1 1.3).
 """
 from __future__ import annotations
 

@@ -128,7 +128,7 @@ def main() -> None:
     (OUT_DIR / "compute_baseline_callees.txt").write_text(
         buf3.getvalue(), encoding='utf-8')
 
-    print(f"\n[profile-compute] === TOP 20 BY SELF TIME ===")
+    print("\n[profile-compute] === TOP 20 BY SELF TIME ===")
     print(tottime)
 
 

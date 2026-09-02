@@ -15,7 +15,8 @@ P_in + Δp. Everything stayed positive, so the gate had nothing to catch — but
 density was wrong everywhere, and at Δp ≈ 3 × P_in the operating point is one
 whose true outlet pressure would be **−2 atm**.
 
-There is no steady solution there. CLAUDE.md's hard invariant says so:
+There is no steady solution there. The physical invariant in
+``docs/architecture.md`` says so:
 
     "valid only while the Forchheimer Δp stays below the inlet absolute pressure
      ... Once Δp ≳ P_in the outlet goes to vacuum, the flow chokes / goes
@@ -110,7 +111,7 @@ def test_2d_choked_operating_point_is_rejected():
 
     NEVER "fix" a failure here by widening the guard, clipping harder, or
     reverting the anchor. Move the operating point (lower u, shorter L, higher
-    P_in) — CLAUDE.md.
+    P_in) — see ``docs/architecture.md``.
     """
     with pytest.raises(ChokedFlowError):
         _run_2d(u=40.0, L=0.7)

@@ -40,7 +40,6 @@ if str(_PKG_DIR) not in sys.path:
 from optimization.evaluator import evaluate_design, DEFAULT_CONFIG
 # field_param was renamed to continuous_field in b0822dd (Tier-1 rename).
 from solvers.continuous_field import (
-    ContinuousFieldConfig,
     from_decision_vector,
     decision_bounds,
     DEFAULT_N_CTRL_X,
@@ -94,7 +93,7 @@ def main() -> None:
     x_nom = _build_nominal_x()
 
     # Warm-up (JIT, cache fills)
-    print(f"[profile] warm-up call ...", flush=True)
+    print("[profile] warm-up call ...", flush=True)
     t0 = time.perf_counter()
     Q_neg, dP, mass = evaluate_design(x_nom, cfg, fc)
     t_warm = time.perf_counter() - t0
@@ -143,12 +142,12 @@ def main() -> None:
     (OUT_DIR / "eval_baseline_tottime.txt").write_text(
         tottime, encoding='utf-8')
 
-    print(f"\n[profile] wrote:")
+    print("\n[profile] wrote:")
     print(f"  {prof_path}")
     print(f"  {OUT_DIR/'eval_baseline_top30.txt'}")
     print(f"  {OUT_DIR/'eval_baseline_tottime.txt'}")
     print(f"  {OUT_DIR/'eval_baseline_callees.txt'}")
-    print(f"\n[profile] === TOP 20 BY SELF TIME ===")
+    print("\n[profile] === TOP 20 BY SELF TIME ===")
     print(tottime)
 
 

@@ -210,21 +210,26 @@ class ThreeDVisPanel(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
 
-        # ── Toolbar (two-row: parameters on top, actions on bottom) ──
-        # Single-row layout was overflowing when left-side parameter panel
-        # was wide, hiding the view/clear/color/save buttons. Splitting by
-        # logical group keeps every control reachable at any window width.
+        opacity_default = self._build_toolbar(root)
+        self._build_viewport(root)
+        self._init_state(opacity_default)
+        self._init_timers()
+        self._render_placeholder()
+        self._setup_hover()
+
+    def _build_toolbar(self, root):
+        """Build the two-row field, slice, view, and export toolbar."""
         toolbar_col = QVBoxLayout()
         toolbar_col.setContentsMargins(6, 4, 6, 4)
         toolbar_col.setSpacing(4)
 
-        def _divider():
-            d = QFrame()
-            d.setFrameShape(QFrame.Shape.VLine)
-            d.setStyleSheet(_divider_qss())
-            d.setFixedHeight(_CTRL_HEIGHT)
-            return d
+        opacity_default = self._build_parameter_controls(toolbar_col)
+        self._build_action_controls(toolbar_col)
+        root.addLayout(toolbar_col)
+        return opacity_default
 
+    def _build_parameter_controls(self, toolbar_col):
+        """Build field, plane, coordinate, and opacity controls."""
         # ── Row 1: Parameters (Field, Plane, Coord, Opacity) ──
         params = QHBoxLayout(); params.setSpacing(6)
         params.setAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -290,8 +295,6 @@ class ThreeDVisPanel(QWidget):
         self.slider_opacity.setFixedHeight(_CTRL_HEIGHT)
         self.slider_opacity.setStyleSheet(_slider_qss())
         self.slider_opacity.setEnabled(False)
-        self.slider_opacity.setToolTip(
-            "Volume transparency — 0% fully transparent, 100% solid")
         self.slider_opacity.valueChanged.connect(self._on_opacity_changed)
         self.slider_opacity.setToolTip(
             "Volume density: lower values keep long ducts readable")
@@ -302,7 +305,16 @@ class ThreeDVisPanel(QWidget):
         params.addWidget(self.lbl_opacity_val)
         params.addStretch(1)
         toolbar_col.addLayout(params)
+        return _op_default
 
+    def _build_action_controls(self, toolbar_col):
+        """Build slice, range, view-preset, and screenshot controls."""
+        def _divider():
+            d = QFrame()
+            d.setFrameShape(QFrame.Shape.VLine)
+            d.setStyleSheet(_divider_qss())
+            d.setFixedHeight(_CTRL_HEIGHT)
+            return d
         # ── Row 2: Actions (Apply, Clear, Range, View, Save) ──
         actions = QHBoxLayout(); actions.setSpacing(6)
         actions.setAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -401,8 +413,9 @@ class ThreeDVisPanel(QWidget):
 
         actions.addStretch(1)
         toolbar_col.addLayout(actions)
-        root.addLayout(toolbar_col)
 
+    def _build_viewport(self, root):
+        """Build the PyVista interactor and status line."""
         # ── Divider ──
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -428,6 +441,8 @@ class ThreeDVisPanel(QWidget):
         self.status.setStyleSheet(_status_qss())
         root.addWidget(self.status)
 
+    def _init_state(self, opacity_default):
+        """Initialize field, actor, slice, and camera state."""
         # ── State ──
         self._grid: Optional[pv.RectilinearGrid] = None
         self._arrays: dict[str, np.ndarray] = {}     # {key: (Nx,Ny,Nz) array}
@@ -446,7 +461,7 @@ class ThreeDVisPanel(QWidget):
         self._last_hover_text = ''
         self._base_status_text = ''
         self._popup_dialogs: list = []               # keep refs so they aren't GC'd
-        self._opacity = _op_default / 100.0          # 0..1, mirrors slider/100
+        self._opacity = opacity_default / 100.0       # 0..1, mirrors slider/100
         self._flow_dir = '+x'                        # Fluid A arrow direction
         self._flow_dir_B = None                      # Fluid B arrow direction
         self._tween_timer: Optional[QTimer] = None   # active camera interp
@@ -454,6 +469,9 @@ class ThreeDVisPanel(QWidget):
         # PyVistaQt paint events so switching away from the 3D tab doesn't
         # burn CPU on ray-casting a volume the user can't see.
         self._render_gated = False
+
+    def _init_timers(self):
+        """Configure slice and opacity debounce timers."""
         # Realtime-apply debounce: user typing in coord field keeps firing
         # textChanged; we single-shot a QTimer (240 ms) so the slice rebuilds
         # only after typing pauses, instead of on every keystroke.
@@ -471,9 +489,6 @@ class ThreeDVisPanel(QWidget):
         # drag (user pain point).
         self._opacity_debounce.setInterval(120)
         self._opacity_debounce.timeout.connect(self._apply_opacity_now)
-
-        self._render_placeholder()
-        self._setup_hover()
 
     # ─────────────────────────── public API ───────────────────────────
 

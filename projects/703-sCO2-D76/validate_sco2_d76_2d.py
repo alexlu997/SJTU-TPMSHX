@@ -47,14 +47,12 @@ except Exception:
     pass
 
 from CoolProp.CoolProp import PropsSI                         # noqa: E402
-from solvers.tpms_calc import (geometry as tpms_geometry,     # noqa: E402
-                               compute as tpms_compute, adaptive_grid,
+from solvers.tpms_calc import (compute as tpms_compute, adaptive_grid,
                                nu_sco2_topo)
 from solvers import sco2_props as S                           # noqa: E402
 from solvers.simple_solver import SIMPLESolver                # noqa: E402
 from solvers.ltne_energy import solve_full_domain             # noqa: E402
 from solvers.df_projection import (build_master_refined_grid,  # noqa: E402
-                                   extract_dP_from_simple,
                                    extract_dP_mass_flux_from_simple)
 from df_surrogate.predict import predict_K_cF  # noqa: E402
 # Historical D-7-6 experimental effective-cF multiplier (retired from
@@ -192,7 +190,7 @@ def main():
     ws = wb.active
     case = _col(ws, 'B')
     mh, ThI, PhI = _col(ws, 'G'), _col(ws, 'H'), _col(ws, 'I')
-    mc, McI, NcI = _col(ws, 'L'), _col(ws, 'M'), _col(ws, 'N')
+    mc, McI = _col(ws, 'L'), _col(ws, 'M')
     TcO, Pc = _col(ws, 'O'), _col(ws, 'P')
     Qexp = _col(ws, 'S')
     dPhot = _col(ws, 'T')                                  # hot Δp [MPa] (in-out)

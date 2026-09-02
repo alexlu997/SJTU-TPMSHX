@@ -89,12 +89,8 @@ sjtu_tpmshx/nTop_inputs/
 
 # Agent / tooling scratch (per-machine, not project content)
 sjtu_tpmshx/.agents/
-sjtu_tpmshx/.claude/
 sjtu_tpmshx/skills-lock.json
 sjtu_tpmshx/runs/_out/
-# Claude Code worktree leftovers (isolation:worktree scratch dirs; root .claude/
-# itself stays tracked for agents/ + commands/). Per-machine, not project content.
-.claude/worktrees/
 
 # Python packaging metadata (editable installs write into the source tree)
 *.egg-info/

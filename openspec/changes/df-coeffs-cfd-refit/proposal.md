@@ -27,5 +27,5 @@ We now have a far better, **unused** foundation: the **raw water CFD** (`data/ra
 
 - **Code**: new `df_surrogate/` extraction + surface modules and a registered backend; `df_surrogate/_prebuilt/` regenerated coefficient table. No change to the solver momentum source (still consumes `(K, c_F)`).
 - **Gates**: per-geometry LOO `c_F` RMSRE (target ≪ the current 2.5 % gamma_df trusted-LOO, now over 40 geometries not 6); `K` LOO; end-to-end water-Δp RMSRE on `7-6-Water-dp`; **Shanghai 3D headline must not regress** (`validate_shanghai_3d_real`).
-- **Non-breaking**: production default stays `gamma_df` until the new backend passes all gates; switch is a separate, gated decision (CLAUDE.md: a surrogate-backend change must reproduce the Shanghai 3D baseline before it becomes default).
+- **Non-breaking**: production default stays `gamma_df` until the new backend passes all gates; switch is a separate, gated decision (`docs/architecture.md`: a surrogate-backend change must reproduce the Shanghai 3D baseline before it becomes default).
 - **Out of scope**: changing the Nu correlations; the air ×1.28 roughness; the asymmetric-δ per-side κ.

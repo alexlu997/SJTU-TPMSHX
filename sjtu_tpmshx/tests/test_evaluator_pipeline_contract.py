@@ -100,8 +100,8 @@ def test_2d_choke_policy_evaluator_raises_pipeline_clips():
 
 
 def test_g_reference_density_convention_post_d3c():
-    """G-reference convention after D3(c) (Alex 2026-07-20, upgrade/
-    DECISIONS-NEEDED.md D3): per-dimension INTERNAL consistency.
+    """G-reference convention after D3(c) (Alex 2026-07-20; the original
+    decision record remains in Git history): per-dimension INTERNAL consistency.
 
     2D: BOTH the pipeline (stages_2d) and the evaluator now pin the physical
     inlet mass flux via an explicit rho_inlet_ref = rho(T_in, P_in) — the

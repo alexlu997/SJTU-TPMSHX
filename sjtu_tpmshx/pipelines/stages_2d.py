@@ -498,7 +498,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # kernel-direct and seeds this correctly itself — the gate was validating
         # a path production does not run.
         #
-        # (CLAUDE.md described this as "2D is inlet-anchored ... rarely chokes".
+        # (An older project guide described this as "2D is inlet-anchored ... rarely chokes".
         # That was a description of the SYMPTOM, not a design: it "rarely chokes"
         # because it never lets the outlet pressure fall.)
         #

@@ -1,6 +1,6 @@
 """Negative tests for hard invariants with no prior guard (audit T7, 2026-07-07).
 
-Three CLAUDE.md hard rules were previously enforced nowhere (or only on a
+Three repository physical invariants were previously enforced nowhere (or only on a
 single non-production caller):
 
 1. ε is split ONCE — the production pipelines (stages_2d / stages_3d) must

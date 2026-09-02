@@ -173,7 +173,6 @@ SJTU-TPMSHX/                       ← 仓库根
 │   │   ├── smokes/                ← 冒烟测试（UI 离屏、2D/3D 管线端到端）
 │   │   ├── tools/                 ← 构建/导出工具（CFD xlsx、HTML 渲染、3D 出图）
 │   │   ├── cfd_asym/              ← asym 偏置等值面的 Fluent 交叉验证（PyFluent runner、κ 后处理、nTop 表达式）
-│   │   └── archive/               ← 冻结的一次性诊断脚本（diag_shanghai_*、D_7_6 等）
 │   ├── domain/                    ← 输入合法性校验（纯函数，无界面）
 │   │
 │   ├── optimization/              ← 多目标贝叶斯优化（qNEHVI，搜帕累托前沿）
@@ -200,8 +199,11 @@ SJTU-TPMSHX/                       ← 仓库根
 ├── data/                          ← 实验原始数据（Excel，部分 gitignore）
 ├── reports/                       ← 计算结果、图、CSV
 ├── models/                        ← 模型/几何文件
+├── data-revision.txt              ← 与代码配套的数据仓库提交版本
 ├── README.md / devlog.md          ← 仓库说明与开发日志
-└── requirements.txt               ← Python 依赖清单
+├── requirements.txt               ← macOS/Windows 通用安装入口
+├── requirements-lock.txt          ← Python 3.12/3.13 共用的精确依赖锁
+└── requirements-lock-server.txt   ← Windows 优化服务器附加依赖锁（CPU PyTorch/BoTorch）
 ```
 
 ---
@@ -210,23 +212,22 @@ SJTU-TPMSHX/                       ← 仓库根
 
 > 下面按文件夹组织。每个文件给出：**作用**、**关键函数/类**、**输入输出**、**依赖**、**注意点**。
 
-> **2026-07-20 增量（upgrade/loop 分支）**——以下新增/迁移未展开成子节，细节见
-> `docs/atlas/` 各卷文末"2026-07 升级分支收编"节（本手册与 atlas 冲突时以 atlas 为准）：
+> **2026-07-20 增量（upgrade/loop 分支）**——以下新增/迁移未展开成子节。
+> 当前架构和物理约束以 `docs/architecture.md` 为准；`docs/atlas/` 是历史快照：
 > - `sjtu_tpmshx/cli.py` ⭐新 — `tpmshx-run` headless 入口（ComputeConfig JSON 进、摘要出，
 >   `--dry-run`/`--json`，exit 2 = 解出但被旗标；Qt 零导入）。注意与 `design/cli.py`（选型
 >   子模块 CLI，本节 6.x 既有条目）是两个不同入口。
 > - `sjtu_tpmshx/_version.py` ⭐新 — 版本号单源（pyproject dynamic 指向；main.py 再导出）。
-> - `pyproject.toml` / `requirements-lock-server.txt` / `mypy-core-files.txt` ⭐新（仓库根）—
->   打包地基 + 服务器 83 包精确冻结 + 类型门核心面清单。
+> - `pyproject.toml` / `mypy-core-files.txt` ⭐新（仓库根）—
+>   包元数据与类型门核心面清单；可复现安装以 `requirements-lock.txt` 为准。
 > - `ui/mixins/run_results.py` ⭐新 — 结果呈现 mixin（write_result 等五方法自 run_controller
 >   逐字节迁出；Main_Menu 现 14 mixin）。
 > - `ui/polygon_calc.py` ⬅迁入（原 `runs/polygon_calc.py`）— 多边形域计算编排（Qt 耦合，
 >   分层审计迁移）。
-> - `runs/tools/audit_import_graph.py` / `build_fast_tier_manifest.py` / `seam_surgery_3d.py`
->   ⭐新 — 分层审计（常驻门）/ fast-tier 清单生成 / AST 搬移手术工具（一次性）。
+> - `runs/tools/audit_import_graph.py` / `build_fast_tier_manifest.py`
+>   ⭐新 — 分层审计（常驻门）/ fast-tier 清单生成。
 > - `solvers/threads.py` 增 `recommend_solver_threads` / `warn_if_default_pool`（大网格线程
->   一次性建议，池不自动改）；`scripts/run_tests_server.ps1`（标准全量门）与
->   `run_tests_fast.ps1`（~56s 快档，非门）。
+>   一次性建议，池不自动改）。
 
 ---
 
@@ -549,6 +550,7 @@ SJTU-TPMSHX/                       ← 仓库根
 |---|---|---|
 | `validate_shanghai_lumped_dual_nu.py` | 上海 16 工况的**集总 ε-NTU** 基准（不解流场，只用进口条件，无出口泄漏，论文级基准） | Q 误差 RMSRE **1.73%** |
 | `validate_shanghai_3d_real.py` | 上海 16 工况的 **3D SIMPLE+LTNE 生产验证**（空气可压缩，水侧温度规定为线性） | dP 5.28% / Q 3.21%（Nz=3 门，mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
+| `validate_d76_3d.py` | Diamond L7/t0.6 的独立 3D 压降门，防止 D-F 代理模型外推失真 | D_7_6 有效工况，仅对 dP 评分 |
 | `validate_shanghai_aligned.py` | 2D 验证，精确复刻界面“计算”路径，确保求解器按界面意图工作 | dP ~8.4%（mass-flux 入口后；现值以 `validation/_CSV_STATUS.md` 为准） |
 | `mms_3d_air_air.py` | MMS 人造解法（用 sympy 推导解析解+源项）验证 3D LTNE 求解器离散一致性 | 单网格 rel L2<2%、Linf<3K |
 | `mms_phase_a3_h_refine.py` | 5 套网格的 MMS 阶数验证（log-log 拟合观测收敛阶 p_obs） | p_obs≥1.5~1.8、网格30的 L2<1% |
@@ -559,7 +561,6 @@ SJTU-TPMSHX/                       ← 仓库根
 | `audit_partial_b_ltne.py` | 部分进出口下 LTNE 守恒的归档诊断（问题已修，只读存档） | — |
 | `cross_check_water_nu.py` | 水侧 Nu 和文献（Wakao、Dittus-Boelter、Yan[6]）交叉核对 | 出对比图 |
 | `verify_pareto_3d.py` | 把 2D 优化挑出的帕累托点拉伸到 3D 重算，量化 3D 物理修正 | 报告 ΔQ%、ΔdP% |
-| `phase_b_postprocess.py` | 归档：极限工况门槛重分类（输入 CSV 已不存在，仅参考） | — |
 | `_provenance.py` | 给所有验证 CSV 加“出处头”（脚本名、git 提交、时间戳）保证可复现 | — |
 | `_metrics.py` | 共享误差度量函数（RMSRE、偏差、最大相对误差） | — |
 | `README.md` / `_CSV_STATUS.md` | 验证脚本索引 + CSV 现行/过时状态说明（引用数字前必读） | — |
@@ -580,7 +581,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | `expr_eval.py` | 输入框安全表达式求值（用户可输 `0.042/2`，基于 AST 白名单，不用 eval）。 |
 | `ui_constants.py` | 提示时长、V&V 速度/雷诺数阈值等常数。 |
 | `matplotlib_canvas.py` | matplotlib 画布，画 2D 等值线、分区热图、帕累托散点。 |
-| `panel_vis_3d.py`（~1500 行） | 嵌入式 PyVista 3D 可视化面板（体渲染 + 切片平面 + 不透明度/等值面滑块）。 |
+| `panel_vis_3d.py` | 嵌入式 PyVista 3D 可视化面板；构造阶段按工具栏、参数控件、操作控件、视口、状态和定时器拆分，渲染逻辑保留在同一组件内。 |
 | `optimize_panel.py` | 优化器界面绑定（后台线程跑 qNEHVI、帕累托散点、点击载入解）。 |
 | `quick_design_panel.py` | 快速设计面板（调用 design 模块定尺，结果表格）。 |
 | `command_palette.py` | Ctrl+K 模糊搜索命令面板（仿 VSCode）。 |
@@ -621,7 +622,7 @@ SJTU-TPMSHX/                       ← 仓库根
 - **作用**：应用入口和主窗口类。
 - **主类**：`Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin, TabViewMixin, UIBuilderMixin, FluidInputMixin, RunControllerMixin, AppearanceMixin, SessionPresetsMixin, ShortcutsMixin, IOActionsMixin, ResultBridgeMixin, QMainWindow)`（13 mixin）。
 - **职责**：窗口初始化；持有编排器/会话/缓存/主题/信号路由五大控制器；温度单位切换；计算状态与重入保护；会话自动恢复；预检/onboarding（`__file__` 锚定，设计上留在 main）。
-- **不再拆的记录**（split-ui-main 决策）：`panel_vis_3d.py` 整体 Qt 类无非 Qt 缝；`builders_canvas.build_canvas_area` 单体构建函数嵌套闭包持 Qt 局部态，只抽出了诊断侧栏三函数（`ui/builders_sidebar.py`，builders_canvas re-export）。
+- **当前 UI 边界**：`builders_canvas.build_canvas_area` 只编排同文件的具名构建函数；`ThreeDVisPanel.__init__` 只编排控件、视口、状态和定时器初始化。没有第二个消费者的 Qt/PyVista 渲染逻辑继续留在原组件内。
 
 ---
 
@@ -649,7 +650,7 @@ SJTU-TPMSHX/                       ← 仓库根
 
 ### 6.11 `runs/` — 生产/演示/诊断脚本
 
-生产入口 + 助手脚本；golden gate（`runs/_out/_golden_2d.py`、`_golden_3d.py`，gitignored，本地）也挂在这里。计算主路径已迁往 `pipelines/`（见 6.10）；一次性诊断脚本冻结在 `runs/archive/`。
+生产入口 + 助手脚本；golden gate（`runs/_out/_golden_2d.py`、`_golden_3d.py`，gitignored，本地）也挂在这里。计算主路径已迁往 `pipelines/`（见 6.10）。
 
 | 位置 | 文件 | 用途 |
 |---|---|---|
@@ -663,7 +664,6 @@ SJTU-TPMSHX/                       ← 仓库根
 | `diagnostics/` | `asym_geometry_scan.py`、`asym_a0_convergence.py`、`asym_target_scan.py`、`asym_porosity_preview.py`、`asym_geometry_report_html.py` | asym 几何扫描/收敛/预览/报告。 |
 | `tools/` | `asym_build_cfd_design_xlsx.py`、`asym_build_cfd_worklist_xlsx.py`、`asym_plan_to_html.py`、`render_3d_styles.py` | CFD 工况簿构建、HTML 渲染、3D 出版图。 |
 | `cfd_asym/` | `asym_pyfluent_runner.py`、`asym_postproc_kappa.py`、`asym_ntop_expressions_html.py` | Fluent 交叉验证批跑（PyFluent）、κ 后处理（喂 `df_surrogate/ingest_cfd_kappa`）、nTop 表达式。 |
-| `archive/` | `diag_shanghai_*.py`、`diag_ab_imbal.py`、`validate_d76_3d.py` 等 | 冻结的一次性诊断（见各自头注）。 |
 
 ---
 
@@ -706,7 +706,7 @@ SJTU-TPMSHX/                       ← 仓库根
 | 冒烟与集成 | 界面实例化、流水线端到端 | `test_main_smoke.py`、`test_pipeline_2d_smoke.py`、`test_evaluator_sanity.py` |
 | design 子模块（`tests/design/`，15 文件） | 定尺、枚举、工况读取 | `test_cases.py`、`test_sizing_inner.py`、`test_optimize.py` |
 
-运行示例：`$env:PYTHONHASHSEED="0"; pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`（桌面机全量并行，~4.5 分钟）；`pytest -m "not slow"`（快子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。**多核服务器（2026-07-20 增）**：`-n auto` 在 128 逻辑核上会超额订阅卡死——标准全量门用 `scripts/run_tests_server.ps1`（双 pass，~11–19 min）；开发内循环用 `scripts/run_tests_fast.ps1`（~56 s，排除 census 标记的 21 个 heavy 测试，**非验证门**）。
+运行示例：`python -m pytest sjtu_tpmshx/tests/ -q`（全套件）；`python -m pytest -q -m "not slow and not heavy"`（开发子集，同 CI）；`TPMSHX_RUN_SHANGHAI_REGRESSION=1 python -m pytest sjtu_tpmshx/tests/test_shanghai_regression.py -v`（慢回归）。
 
 ---
 

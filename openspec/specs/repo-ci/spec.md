@@ -4,14 +4,14 @@
 仓库 CI 门（GitHub Actions，headless pytest 子集）及其安装/排除约定。来自 openspec archive `2026-07-02-cleanup-ci`（架构扫描批次 D+F）。
 ## Requirements
 ### Requirement: Headless CI gate on push/PR
-仓库 SHALL 提供 GitHub Actions workflow（`.github/workflows/ci.yml`），在 push 到 master 与 PR 时运行 `pytest sjtu_tpmshx/tests/ -m "not slow"`（ubuntu，Python 3.12，`PYTHONHASHSEED=0`，`--timeout=600 --timeout-method=thread`）。PySide6（offscreen）与 CoolProp SHALL 安装（大量 controller/pipeline 测试在模块顶部无门 import Qt；一批 sCO2 测试运行时 raise 而非 import 门）；pyvista SHALL NOT 安装——对应测试依既有 skip 门自动跳过。CI SHALL NOT 依赖任何 gitignored 资产（joblib 模型、data/ 原始 xlsx）。CI SHALL 保持单进程（不并行）——thread-mode timeout 的挂起诊断与 xdist 交互未验证，属显式非目标。
+仓库 SHALL 提供 GitHub Actions workflow（`.github/workflows/ci.yml`），在 push 到 master 与 PR 时分别使用 macOS/Python 3.13 和 Windows/Python 3.12，从 `requirements.txt` 的共同精确锁安装，并在 `PYTHONHASHSEED=0` 下运行 `pytest sjtu_tpmshx/tests/ -m "not slow and not heavy"`。Qt SHALL 使用 offscreen 模式，3D 面板 SHALL 在该快速门中禁用。CI SHALL NOT 依赖 gitignored 的本地数据资产。
 
 #### Scenario: CI green on a clean master
 - **WHEN** workflow 在当前 master 运行
 - **THEN** pytest 子集 0 failed（skipped 允许），职位状态绿
 
 #### Scenario: Environment-gated tests skip, not fail
-- **WHEN** CI 环境缺 pyvista/本地资产
+- **WHEN** CI 环境缺本地数据资产或禁用 3D 面板
 - **THEN** 相关测试被 skip 而非 fail
 
 ### Requirement: Dead-reference cleanup with history preserved
@@ -21,15 +21,15 @@
 - **WHEN** 搜索仓库内对 `validation/legacy/validate_shanghai.py` 的非注释引用
 - **THEN** 仅存在于 archive 与文档中，无声称可运行的脚本引用它
 
-### Requirement: openspec archive hygiene
-已完成的 restructure-1/2/3 changes SHALL 补勾遗留任务（对应工作已提交，注明 commit）并归档至 `openspec/changes/archive/`；活跃 change（df-coeffs-cfd-refit）SHALL NOT 被动。
+### Requirement: openspec history hygiene
+已完成的 changes SHALL 由 Git 历史保留；`openspec/changes/` SHALL 只包含真实活跃的 change，不在工作树内重复保存已归档副本。
 
 #### Scenario: Active list reflects reality
 - **WHEN** 运行 `openspec list`
 - **THEN** 仅剩真实活跃的 change
 
 ### Requirement: Pytest config single source
-仓库根 SHALL 提供 `pytest.ini`：`testpaths = sjtu_tpmshx/tests`（裸 `pytest` 不得收集 `.claude/worktrees/` 内的仓库副本）、`--strict-markers`、注册 `slow` 与 `fast` 标记。未注册标记 SHALL 导致收集期报错而非静默通过。
+仓库根 SHALL 提供 `pytest.ini`：`testpaths = sjtu_tpmshx/tests`、`--strict-markers`，并注册 `slow`、`fast` 与 `heavy` 标记。未注册标记 SHALL 导致收集期报错而非静默通过。
 
 #### Scenario: Bare pytest collects only the real suite
 - **WHEN** 在仓库根运行 `pytest --collect-only -q`
@@ -40,10 +40,10 @@
 - **THEN** pytest 收集期报错
 
 ### Requirement: Parallel local gate
-本地全量门 SHALL 支持 pytest-xdist 并行：`pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`，且 SHELL 层先设 `PYTHONHASHSEED=0`（3D 管线输出对 hash seed 敏感；env 无法从 pytest 配置内钉住）。`--dist loadscope` SHALL 为文档化默认（保持 module-scoped fixture 不跨 worker 重建）。pytest-xdist SHALL 列入 requirements.txt。
+本地全量门 SHALL 支持 pytest-xdist 并行：`pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`，且在启动 Python 前设置 `PYTHONHASHSEED=0`。`--dist loadscope` SHALL 为文档化默认，pytest-xdist SHALL 位于共同依赖锁中。
 
 #### Scenario: Parallel full suite green
-- **WHEN** `PYTHONHASHSEED=0` 下运行 `pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`
+- **WHEN** 在 `PYTHONHASHSEED=0` 下运行 `pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope`
 - **THEN** 结果与单进程一致（0 failed），墙钟时间显著低于单进程基线（~16 min）
 
 ### Requirement: Slow-marking policy — studies out, invariant gates in
@@ -52,4 +52,3 @@
 #### Scenario: Fast subset materially faster
 - **WHEN** 运行 `pytest sjtu_tpmshx/tests/ -q -m "not slow" -n auto --dist loadscope`
 - **THEN** 0 failed，且墙钟时间低于全量并行运行
-

@@ -6,13 +6,12 @@ lists test node-ids whose measured `call` duration is >= the threshold;
 `scripts/run_tests_fast.ps1` excludes them (`-m "not heavy"`).
 
 Census input = a full-suite log produced with `--durations=0
---durations-min=0.05` under the server env (see
-`upgrade/logs/p31-durations.log` for the attested 2026-07-20 run).
+--durations-min=0.05` under the target environment.
 
 Usage (repo root)::
 
     python sjtu_tpmshx/runs/tools/build_fast_tier_manifest.py \
-        --log upgrade/logs/p31-durations.log --threshold 30
+        --log path/to/census.log --threshold 30
 
 The fast tier is a DEVELOPER inner-loop convenience. It is NOT the
 verification gate — "before claiming done" remains the FULL suite

@@ -19,6 +19,23 @@ from sjtu_tpmshx.ui.theme import get_theme
 class TabViewMixin:
     """Tab / canvas / detach-reattach UI handlers."""
 
+    def _canvas_tab_availability(self):
+        """Return availability from result state, independent of UI widgets."""
+        is_3d = (hasattr(self, 'combo_dim')
+                 and self.combo_dim.currentIndex() == 1)
+        has_2d = (not is_3d) and getattr(self, '_has_results_2d', False)
+        has_3d = is_3d and getattr(self, '_3d_view_ready', False)
+        return {
+            'layout': True,
+            'temp': has_2d,
+            'pres': has_2d,
+            'vel': has_2d,
+            '3d': has_3d,
+            'pareto': True,
+            '2d_view': has_2d,
+            'result': has_2d or has_3d,
+        }
+
     def _canvas_zoom(self, factor):
         from sjtu_tpmshx.ui.builders_canvas import canvas_zoom
         return canvas_zoom(self, factor)
@@ -47,49 +64,24 @@ class TabViewMixin:
         """
         if not hasattr(self, 'btn_tab_layout'):
             return  # Tab buttons not yet constructed (early _on_dim_changed)
-        is_3d = (hasattr(self, 'combo_dim')
-                 and self.combo_dim.currentIndex() == 1)
-        rules = {
-            'layout':  True,
-            'temp':    (not is_3d) and getattr(self, '_has_results_2d', False),
-            'pres':    (not is_3d) and getattr(self, '_has_results_2d', False),
-            'vel':     (not is_3d) and getattr(self, '_has_results_2d', False),
-            '3d':      is_3d and getattr(self, '_3d_view_ready', False),
-            # D-plan: Optimize tab is the entry point for NSGA-II — must be
-            # reachable before any compute so the user can click Launch.
-            # The Pareto plot stays empty until a run completes; the
-            # launch/status/progress header is always shown.
-            'pareto':  True,
-            # 2026-05-09 Phase 4 — 2D View aggregator: enable iff at least
-            # one of the underlying field tabs is enabled (i.e., 2D mode +
-            # results computed).
-            '2d_view': (not is_3d) and getattr(self, '_has_results_2d', False),
-        }
-        # ui-plan3-workbench: the 结果 tab aggregates every result rendering.
-        rules['result'] = rules['2d_view'] or rules['3d']
+        rules = self._canvas_tab_availability()
         btn_map = {
             'layout':  self.btn_tab_layout,
-            'temp':    self.btn_tab_temp,
-            'pres':    self.btn_tab_pres,
-            'vel':     self.btn_tab_vel,
-            '3d':      self.btn_tab_3d,
             'pareto':  self.btn_tab_pareto,
-            '2d_view': getattr(self, 'btn_tab_2d_view', None),
             'result':  getattr(self, 'btn_tab_result', None),
         }
-        for key, enabled in rules.items():
-            btn = btn_map[key]
+        for key, btn in btn_map.items():
+            enabled = rules[key]
             if btn is None:
-                continue   # 2d_view button may not yet exist (early init)
+                continue
             btn.setEnabled(enabled)
             if not enabled and key != 'layout':
                 btn.setStyleSheet(self._PTAB_DISABLED)
+        for key in ('temp', 'pres', 'vel', '3d'):
             card = self._canvas_cards.get(key)
-            if card is not None and not enabled:
+            if card is not None and not rules[key]:
                 card.hide()
-        # 2026-05-09 fix #1 — keep combo_2d_field gated alongside the
-        # btn_tab_2d_view button so a disabled tab doesn't have a vivid
-        # field selector beside it (visual clash from screenshot review).
+        # Keep the 2D field state and visible selector gated together.
         _combo = getattr(self, 'combo_2d_field', None)
         if _combo is not None:
             _combo.setEnabled(rules.get('2d_view', False))
@@ -122,15 +114,7 @@ class TabViewMixin:
         No-op if the shifted tab is the one already active (user would
         end up pairing X with X, which is just a single view). The split
         view persists until any normal (non-shifted) tab click."""
-        # 2026-05-20 UI sweep (Tier 19): the 2D View tab button binds
-        # its Shift+click callback to `_split_with_current('2d_view')`,
-        # but the `_en` map below has no '2d_view' key — it lists the
-        # underlying field cards (temp/pres/vel) plus layout/pareto/3d.
-        # Without this resolve step the lookup returned None, `_en`
-        # returned False, and Shift+click on 2D View always surfaced
-        # the misleading "Split view requires both tabs to have data"
-        # status message. Resolve '2d_view' to whichever field card is
-        # currently selected by the 2D field combo.
+        # Resolve aggregate result keys to their underlying canvas card.
         if tab == 'result':
             tab = ('3d' if getattr(self, '_result_view', '2d') == '3d'
                    else self._resolve_2d_view_card())
@@ -143,30 +127,24 @@ class TabViewMixin:
             return
         # Both tabs must be enabled (e.g., can't split into temp before
         # Compute has populated it).
-        def _en(k):
-            btn = {
-                'temp': self.btn_tab_temp, 'pres': self.btn_tab_pres,
-                'vel': self.btn_tab_vel, 'layout': self.btn_tab_layout,
-                'pareto': self.btn_tab_pareto, '3d': self.btn_tab_3d,
-            }.get(k)
-            return btn is not None and btn.isEnabled()
-        if not (_en(cur) and _en(tab)):
+        available = self._canvas_tab_availability()
+        if not (available.get(cur, False) and available.get(tab, False)):
             self.statusBar().showMessage(
                 "Split view requires both tabs to have data.", 4000)
             return
         from sjtu_tpmshx.ui.builders_canvas import _layout_split_cards
         _layout_split_cards(self, [cur, tab])
-        # Paint both tab buttons as active, others inactive.
-        for k, btn in (('temp', self.btn_tab_temp),
-                        ('pres', self.btn_tab_pres),
-                        ('vel',  self.btn_tab_vel),
-                        ('layout', self.btn_tab_layout),
-                        ('pareto', self.btn_tab_pareto),
-                        ('3d',   self.btn_tab_3d)):
+        # Paint the visible workbench tabs for the two selected cards.
+        for k, btn in (('layout', self.btn_tab_layout),
+                       ('pareto', self.btn_tab_pareto)):
             if k in (cur, tab):
                 btn.setStyleSheet(self._PTAB_ON)
-            elif btn.isEnabled():
+            else:
                 btn.setStyleSheet(self._PTAB_OFF)
+        if any(k in ('temp', 'pres', 'vel', '3d') for k in (cur, tab)):
+            self.btn_tab_result.setStyleSheet(self._PTAB_ON)
+        else:
+            self.btn_tab_result.setStyleSheet(self._PTAB_OFF)
         self._active_tab = cur  # keep primary tab as "active"
         self.statusBar().showMessage(
             f"Split view: {cur} ↔ {tab}. Click any tab to return "
@@ -244,18 +222,7 @@ class TabViewMixin:
             self._split_tabs = None
             from sjtu_tpmshx.ui.builders_canvas import _relayout_canvas_cards
             _relayout_canvas_cards(self, 1)
-        # Reject clicks on hidden tabs (defensive — buttons are hidden anyway)
-        btn_lookup = {
-            'layout':  getattr(self, 'btn_tab_layout', None),
-            'temp':    getattr(self, 'btn_tab_temp', None),
-            'pres':    getattr(self, 'btn_tab_pres', None),
-            'vel':     getattr(self, 'btn_tab_vel', None),
-            '3d':      getattr(self, 'btn_tab_3d', None),
-            'pareto':  getattr(self, 'btn_tab_pareto', None),
-            '2d_view': getattr(self, 'btn_tab_2d_view', None),
-        }
-        target_btn = btn_lookup.get(tab)
-        if target_btn is not None and not target_btn.isEnabled() and tab != 'layout':
+        if not self._canvas_tab_availability().get(tab, False):
             tab = 'layout'
 
         # Tab-switch fast path: no-op only when the active card is visible.
@@ -268,14 +235,7 @@ class TabViewMixin:
                 return
 
         self._active_tab = tab
-        tabs = [
-            ('temp',   self.btn_tab_temp),
-            ('pres',   self.btn_tab_pres),
-            ('vel',    self.btn_tab_vel),
-            ('layout', self.btn_tab_layout),
-            ('pareto', self.btn_tab_pareto),
-            ('3d',     self.btn_tab_3d),
-        ]
+        tabs = ('temp', 'pres', 'vel', 'layout', 'pareto', '3d')
         drawn = getattr(self, '_drawn_tabs', set())
         # Two-phase tab swap (UI report 2026-05-07 issue #4):
         #   Phase 1 — hide all non-target cards + restyle ALL tab buttons.
@@ -294,27 +254,13 @@ class TabViewMixin:
         _viewport = _scroll.viewport() if _scroll is not None else None
         if _viewport is not None:
             _viewport.setUpdatesEnabled(False)
-        for key, btn in tabs:
+        for key in tabs:
             card = self._canvas_cards.get(key)
-            if key == tab:
-                btn.setStyleSheet(self._PTAB_ON)
-            else:
-                if card:
-                    card.hide()
-                if btn.isEnabled():
-                    btn.setStyleSheet(self._PTAB_OFF)
-                else:
-                    btn.setStyleSheet(self._PTAB_DISABLED)
-        # 2026-05-09 Phase 4 — keep the consolidated 2D View button styled
-        # ON whenever the active card is one of the underlying 2D fields.
-        _btn_2d = getattr(self, 'btn_tab_2d_view', None)
-        if _btn_2d is not None:
-            if tab in ('temp', 'pres', 'vel'):
-                _btn_2d.setStyleSheet(self._PTAB_ON)
-            elif _btn_2d.isEnabled():
-                _btn_2d.setStyleSheet(self._PTAB_OFF)
-            else:
-                _btn_2d.setStyleSheet(self._PTAB_DISABLED)
+            if key != tab and card:
+                card.hide()
+        for key, btn in (('layout', self.btn_tab_layout),
+                         ('pareto', self.btn_tab_pareto)):
+            btn.setStyleSheet(self._PTAB_ON if key == tab else self._PTAB_OFF)
         # ui-plan3-workbench follow-up (user screenshot): the 温度/速度/压力
         # field seg is a CONTEXT control — visible only while a 2D field
         # card is active, not parked highlighted next to 优化.

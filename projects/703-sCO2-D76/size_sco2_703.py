@@ -234,7 +234,7 @@ DEVICES = [
 
 
 def main():
-    print(f"703 sCO2 PCHE — METHOD A (enthalpy-segmented ε-NTU), Diamond 7/0.6")
+    print("703 sCO2 PCHE — METHOD A (enthalpy-segmented ε-NTU), Diamond 7/0.6")
     print(f"  ε={EPS:.3f} ε_A={EPS_A:.3f} D_h={D_H*1e3:.3f}mm A_0={A0:.0f} m²/m³ "
           f"K={K0:.3e} cF_geom={CF0:.1f} cF_sCO2={CF0*SCO2_CF_SCALE:.1f} (×{SCO2_CF_SCALE})")
     print(f"  budget {DP_BUDGET*100:.0f}% (sized to {DP_TARGET*100:.1f}%), pinch≥{DT_MIN:.0f}K\n")

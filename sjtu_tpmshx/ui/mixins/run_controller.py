@@ -550,7 +550,7 @@ class RunControllerMixin:
 
         # 2D mode (default) — _end_compute_ui already called above.
         # 2026-05-09 — wrap finalize_plots so a panel crash (e.g. NaN
-        # contourf, water-side LTNE divergence) does NOT block 2D View
+        # contourf, water-side LTNE divergence) does NOT block 2D results
         # from unlocking. The user still benefits from valid velocity /
         # pressure canvases even when one panel fails to render.
         _finalize_ok = True
@@ -561,7 +561,7 @@ class RunControllerMixin:
             import traceback
             traceback.print_exc()
             self.statusBar().showMessage(
-                f"Plot finalize failed: {_fe!r} — partial 2D View available.",
+                f"Plot finalize failed: {_fe!r} — partial 2D results available.",
                 8000)
         self._has_results = True
         self._has_results_2d = True
@@ -808,12 +808,9 @@ class RunControllerMixin:
                     toast(self, f"Compute done · {_fmt_dur(elapsed)}", kind='success')
                 else:
                     toast(self, "Compute done", kind='success')
-                # E4 — if user is still on Geometry tab, nudge them to
-                # look at results by pulsing the first available result tab.
+                # If the user is still on Geometry, pulse the visible result tab.
                 if getattr(self, '_active_tab', None) == 'layout':
-                    is_3d = (hasattr(self, 'combo_dim')
-                              and self.combo_dim.currentIndex() == 1)
-                    nxt = self.btn_tab_3d if is_3d else self.btn_tab_temp
+                    nxt = self.btn_tab_result
                     if nxt is not None and nxt.isEnabled():
                         pulse_glow(nxt, color=_gt().get('accent_primary', '#3B82F6'),
                                     blur_peak=22, duration_ms=700)

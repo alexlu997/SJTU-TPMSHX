@@ -1138,7 +1138,7 @@ def _run_solvers(window, cfg, fields):
                 f"Energy solver produced NaN cells "
                 f"(Ta {n_nan_a}/{n_total}, Tb {n_nan_b}/{n_total}, "
                 f"Ts {n_nan_s}/{n_total}) — replacing with inlet T so "
-                f"2D View can render velocity/pressure. "
+                f"the 2D result view can render velocity/pressure. "
                 f"Q value is unreliable. Cause: {_cause}.")
             Ta = np.where(np.isnan(Ta), T_inA, Ta)
             Tb = np.where(np.isnan(Tb), T_inB, Tb)

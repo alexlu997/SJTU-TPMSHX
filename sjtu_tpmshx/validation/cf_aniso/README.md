@@ -26,7 +26,7 @@
 
 **角度实现方式（推荐）**：旋转**几何**而非流向——把 TPMS 水平集在采样坐标上绕 z
 轴转 θ 再抽 STL，流动保持 +x，完全复用现有周期平移 BC + 质量流量的工作流
-（见 workspace CLAUDE.md 的 Fluent 约定：ideal-gas、pressure-based steady、
+（见 `docs/architecture.md` 的流体与边界约定：ideal-gas、pressure-based steady、
 periodic + mass-flow-rate）。域取 ≥3×3×3 胞防止旋转后周期性破缺伪影；
 网格无关性沿用原 air CFD 的准则。
 

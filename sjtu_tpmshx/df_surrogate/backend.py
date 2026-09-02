@@ -14,9 +14,10 @@ owns its own semantics — notably the K clamp:
                    path is a per-unique-(L, t) scalar cache.
 
 REGISTRATION CONTRACT — read before adding a backend or switching the
-default: a new backend (or default switch) must be validated against the
-Shanghai 3D Nz=3 gate (validation/cases/validate_shanghai_3d_real.py) and the
-D_7_6 gate (validate_d76_3d.py), with both numbers recorded in the PR.
+default: a new backend (or default switch) must pass the Shanghai 3D Nz=3 gate
+(``validation/cases/validate_shanghai_3d_real.py``) and the independent
+Diamond L7/t0.6 gate (``validation/cases/validate_d76_3d.py``), with both
+results recorded in the PR.
 Training-domain metrics are NOT sufficient — precedent: plhub_gp won
 every training-domain metric (LOO 32.1→11.8%) and scored dP RMSRE 62.79%
 on the Shanghai end-to-end gate (2026-06-10).

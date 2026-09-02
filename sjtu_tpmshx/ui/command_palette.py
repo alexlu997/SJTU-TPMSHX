@@ -337,20 +337,8 @@ def build_actions(w) -> list[Action]:
             shortcut="Ctrl+I",
             keywords=("inspector", "probe", "hover", "values"))
 
-    # Tabs — 2026-05-20 UI sweep (Tier 19): skip entries whose tab
-    # button is disabled (no results yet). Without this filter the
-    # palette listed e.g. "Show 3D View tab" before any compute had
-    # run; selecting it silently fell back to the Layout tab via
-    # `_update_tab_visibility`, leaving the user wondering why their
-    # pick had no effect.
-    _tab_btn_map = {
-        'layout': getattr(w, 'btn_tab_layout', None),
-        'temp':   getattr(w, 'btn_tab_temp', None),
-        'pres':   getattr(w, 'btn_tab_pres', None),
-        'vel':    getattr(w, 'btn_tab_vel', None),
-        '3d':     getattr(w, 'btn_tab_3d', None),
-        'pareto': getattr(w, 'btn_tab_pareto', None),
-    }
+    # Tabs: list only views backed by currently available result state.
+    _available_tabs = w._canvas_tab_availability()
     # ui-shortcuts-persist: labels in Chinese to match the toolbar chrome;
     # the English keywords stay so "temp"/"pareto" still find the entries.
     for tab, key, desc in [
@@ -361,11 +349,7 @@ def build_actions(w) -> list[Action]:
         ('3d',     '3d',     '显示 3D 视图（结果）'),
         ('pareto', 'pareto', '显示 优化 页签'),
     ]:
-        _btn = _tab_btn_map.get(tab)
-        # `pareto` is always-on (entry point for the qNEHVI optimizer), `layout`
-        # always-on (no results required). Skip the rest if disabled.
-        if tab not in ('layout', 'pareto') and _btn is not None \
-                and not _btn.isEnabled():
+        if not _available_tabs.get(tab, False):
             continue
         add(desc, "Tabs",
             (lambda t=tab: w._switch_tab(t)),
@@ -413,16 +397,8 @@ def build_actions(w) -> list[Action]:
         add("Show quick tour", "Help", w._show_quick_tour,
             keywords=("onboarding", "guide"))
 
-    # 3D immersive / detach — 2026-05-20 UI sweep (Tier 20): gate these
-    # 3D-specific entries on the 3D tab being enabled (results
-    # available) AND the panel being initialised. Listing them
-    # unconditionally surfaced no-op actions in the palette before any
-    # 3D compute had run — selecting one either silently bounced back
-    # to Layout (immersive toggle) or popped "Click the 3D tab first"
-    # (detach), neither of which is useful from a fuzzy-search UI.
-    _btn_3d_palette = getattr(w, 'btn_tab_3d', None)
-    _3d_tab_ready = (_btn_3d_palette is not None
-                     and _btn_3d_palette.isEnabled())
+    # 3D commands require both an available result and an initialized panel.
+    _3d_tab_ready = _available_tabs.get('3d', False)
     _3d_panel_ready = getattr(w, 'canvas_3d', None) is not None
     if _3d_tab_ready and _3d_panel_ready:
         add("Toggle 3D immersive mode", "3D",
