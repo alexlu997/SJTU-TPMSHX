@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -86,3 +87,49 @@ def test_export_results_no_data_shows_dialog(monkeypatch, win):
     # cache and _result_3d are empty by construction.
     win._export_results()
     assert hits, 'expected the No Results dialog'
+
+
+def test_export_results_writes_2d_values(tmp_path, monkeypatch, win):
+    from PySide6.QtWidgets import QFileDialog
+
+    out = tmp_path / 'results.csv'
+    win._compute_results = {
+        'Q_total': 123.5, 'dP_A': 45.0, 'dP_B': 6.0,
+        'Ta': np.array([[300.0, 301.0], [302.0, 303.0]]),
+        'L': 0.2, 'H': 0.1,
+    }
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName',
+        staticmethod(lambda *a, **k: (str(out), 'CSV')),
+    )
+
+    win._export_results()
+
+    text = out.read_text()
+    assert 'Q [W],123.5000' in text
+    assert 'Grid Nx,2' in text
+
+
+def test_export_results_writes_3d_values_and_fields(tmp_path, monkeypatch, win):
+    from PySide6.QtWidgets import QFileDialog
+    from sjtu_tpmshx.domain.compute_result import ComputeResult
+
+    out = tmp_path / 'results.csv'
+    field = np.arange(8.0).reshape(2, 2, 2)
+    win._result_3d = ComputeResult(
+        Q_W=321.0,
+        dP_A_Pa=54.0,
+        dP_B_Pa=7.0,
+        fields={'Ta': field, 'Tb': field, 'Ts': field, 'vmag_A': field,
+                'P_fA': field, 'Lx': 0.2, 'Ly': 0.1, 'Lz': 0.05},
+    )
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName',
+        staticmethod(lambda *a, **k: (str(out), 'CSV')),
+    )
+
+    win._export_results()
+
+    assert 'Q [W],321.0000' in out.read_text()
+    with np.load(tmp_path / 'results_fields.npz') as fields:
+        assert fields['Ta'].shape == (2, 2, 2)
