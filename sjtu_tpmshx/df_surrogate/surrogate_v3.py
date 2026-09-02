@@ -165,7 +165,7 @@ class SurrogateV3:
                 "differ from the authoritative Excel-calibrated ones with no\n"
                 "further notice (the production GammaDF anchor derives from\n"
                 "this instance). Fix: copy raw_data/ from the SJTU-TPMSHX-data\n"
-                "repo at the commit recorded in data-repo.pin (repo root).\n"
+                "repo at the commit recorded in data-revision.txt (repo root).\n"
                 "===========================================================",
                 self.tpms, self.method)
             self._build_from_prebuilt()   # fallback: committed calibrated CSV

@@ -12,8 +12,8 @@
 # 臂的 144 点 Sobol init, 只有 2 个 BO worker, 与 --jobs 无关).
 #
 # ── 2026-07-11 交接审计后的修复 (docs/atlas/HANDOFF-windows-server.md) ──
-# P0  缺 raw_data 会让 DF 代理静默回退到 committed CSV 标定 (surrogate_v3.py:156
-#     的 XLSX.exists() 分支, 不抛异常只打 info) → 产出不同数字且零告警.
+# P0  缺 raw_data 会让 DF 代理回退到 committed CSV 标定 (surrogate_v3.py:156
+#     的 XLSX.exists() 分支会告警但继续) → 产出不同数字.
 #     原脚本没有 .sh:52-56 那个 FATAL 检查, 且 Copy-Item -Recurse 二次执行可能
 #     把目录嵌套成 data\raw_data\raw_data. 现在: 先删后拷 + 拷完硬校验.
 # P1  线程超订: optimizer_qnehvi.py 的 BO 阶段按 os.cpu_count() 切内层线程,
@@ -122,9 +122,9 @@ if ($actualDataCommit -ne $DataCommit) {
 Write-Host "data repo @ $actualDataCommit"
 
 # ── 2. 拼装标定数据 (P0) ──
-# 主仓 data/ 是 gitignored 的. 缺 raw_data 时 DF 代理不会报错, 而是静默回退到
-# committed CSV 标定 (df_surrogate/surrogate_v3.py:156), 产出与 Excel 标定
-# 不同的数字且无任何告警 — 四臂会照跑不误, 结果不可比.
+# 主仓 data/ 是 gitignored 的. 缺 raw_data 时 DF 代理会告警并回退到
+# committed CSV 标定 (df_surrogate/surrogate_v3.py:156), 但四臂仍会继续运行，
+# 产出与 Excel 标定不同的数字，结果不可比.
 $SrcRaw = Join-Path $DataRepo "raw_data"
 $DstRaw = Join-Path $Repo "data\raw_data"
 if (-not (Test-Path $SrcRaw)) {

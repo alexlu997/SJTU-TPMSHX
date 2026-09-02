@@ -1,8 +1,0 @@
-# SJTU-TPMSHX-data provenance pin（HANDOFF §8；upgrade loop P0.3，2026-07-19）
-#
-# 本机 gitignored 的 data/raw_data/ 应当来自私有数据仓的下述 commit。
-# 权威 DF 标定源（surrogate_v3 → 生产 GammaDF 锚）是
-# data/raw_data/试验记录表_整理版.xlsx；缺失时代码回退到已提交的 prebuilt CSV
-# 并打 WARNING 横幅指向本文件。
-# 数据仓前进时：重拷 raw_data/ 并在同一个 commit 里更新本 pin。
-SJTU-TPMSHX-data @ 823847e  (init: DF calibration raw data)

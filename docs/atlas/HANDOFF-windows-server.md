@@ -27,7 +27,7 @@
 | §5 | port_retest_server.ps1 无实跑证据 | 部分超越：**本升级循环即 Server 2022 实跑证据**（venv/锁包/双跑脚本/1268 绿），但 .ps1 四臂脚本本身仍未整跑过 |
 | §6 | 四臂超订无依据 | **已解（候选 C-1，2026-07-21）**：TPMSHX_BO_CORE_BUDGET（P3.3）+ worker 钳制时序修复——轻模块 `optimization/_thread_caps.py` 做 executor initializer（spawn 反序列化只拉 os，钳制先于 numpy/OpenBLAS 加载）、补 NUMBA_NUM_THREADS、setdefault 改硬设 + TPMSHX_WORKER_THREADS 逃生阀；时序契约测试 4 断言（test_thread_caps_timing）实证 spawn 池内 pre-numpy 钳制 |
 | §7 | 中断/重启处理脆弱 | 未动（原样成立） |
-| §8a | 数据仓无 pin | **已解**：仓库根 `data-repo.pin`（P0.3） |
+| §8a | 数据仓无 pin | **已解**：仓库根 `data-revision.txt`（P0.3） |
 | §8b | XLSX/prebuilt 可能静默分叉 | 部分解：回退改响亮（P0.3，test_df_prebuilt_fallback_warns）；源等价性钉定仍依赖 xlsx 在位 |
 | §9a | golden 零版本记录 | **已解**：golden_3d.json 入库（D1）+ meta 侧车（sha256/认证 commit/环境指纹，P0.4） |
 | §9b | 依赖三重无 pin | **已解**：requirements-lock-server.txt 83 包精确冻结（P0.2）+ pyproject requires-python（P1.8） |
