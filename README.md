@@ -8,8 +8,8 @@
 
 <br><br>
 
-![Python](https://img.shields.io/badge/python-3.11%20|%203.12-3776AB?logo=python&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D6?logo=windows&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.12%20|%203.13-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555555)
 ![V&V](https://img.shields.io/badge/ASME%20V%26V%2020-Standard%20Tier-2ea44f)
 ![Status](https://img.shields.io/badge/status-research%20%2F%20dissertation-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -155,19 +155,34 @@
 
 ## ⚙️ Install
 
-> Tested on **Python 3.11 / 3.12, Windows 11 & Windows Server 2022** (128-core EPYC,
-> full suite + golden gate re-validated 2026-07). Linux should work; macOS untested.
+The supported environments are macOS with Python 3.13 and Windows with
+Python 3.12. Both use the exact shared versions in `requirements-lock.txt`.
+
+macOS:
 
 ```bash
 git clone https://github.com/alexlu997/SJTU-TPMSHX.git
 cd SJTU-TPMSHX
 
-python -m venv .venv
-.venv\Scripts\activate          # PowerShell
-# source .venv/bin/activate     # bash
-
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip check
 ```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/alexlu997/SJTU-TPMSHX.git
+cd SJTU-TPMSHX
+
+C:\Python312\python.exe -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip check
+```
+
+The Windows Server BO stack is optional: install
+`requirements-lock-server.txt` only when running optimization or retraining.
 
 GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate
 (the historical `rbf` backend; superseded by `gamma_df` as default 2026-06-12).
@@ -200,20 +215,12 @@ python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
 #### ✔️ Tests
 
 ```bash
-# full suite, parallel (~4.5 min on a desktop; ~160 test files). PYTHONHASHSEED
-# must be set in the shell — the 3D pipeline output is hash-seed sensitive.
-PYTHONHASHSEED=0 pytest sjtu_tpmshx/tests/ -q -n auto --dist loadscope
+# full suite
+python -m pytest sjtu_tpmshx/tests/ -q
 
-# fast subset (same selection CI runs)
-PYTHONHASHSEED=0 pytest -q -m "not slow" -n auto --dist loadscope
+# development subset
+python -m pytest -q -m "not slow and not heavy"
 ```
-
-> [!TIP]
-> On many-core servers `-n auto` oversubscribes and stalls (measured on 128 logical
-> cores) — use **`scripts/run_tests_server.ps1`** (`-n 64 --dist worksteal`, two passes,
-> the standing verification gate) instead. For the dev inner loop there is
-> **`scripts/run_tests_fast.ps1`** (~56 s, skips the 21 census-marked `heavy` tests —
-> **not** the verification gate).
 
 ---
 

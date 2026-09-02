@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1 status   # 查看四臂进度 + 存活/退出状态
 #   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1 stop     # 停掉本脚本启动的所有臂
 #
-# 前置: git + Python 3.11/3.12 在 PATH; gh auth 或 https 凭据可拉私有仓
+# 前置: git + C:\Python312\python.exe; gh auth 或 https 凭据可拉私有仓
 # (标定数据在私有仓 SJTU-TPMSHX-data, 脚本自动 clone 并拼进 data/raw_data).
 #
 # 四臂: ctrl4/ctrl6 x seed 7/123, SAAS, 无早停. 预计墙钟 ~4-7 h (瓶颈是 ctrl6
@@ -34,6 +34,7 @@ $DataRepo = Join-Path $WorkDir "SJTU-TPMSHX-data"
 $LogD     = Join-Path $WorkDir "logs"
 $PidD     = Join-Path $WorkDir "pids"
 $Branch   = if ($env:PORT_BRANCH) { $env:PORT_BRANCH } else { "master" }
+$Python312 = "C:\Python312\python.exe"
 $Py       = Join-Path $WorkDir "venv\Scripts\python.exe"
 
 # 四臂定义 (单一来源: run / status / stop 都用它)
@@ -107,16 +108,18 @@ if (-not (Test-Path (Join-Path $Repo ".git"))) {
     git -C $Repo checkout $Branch
     git -C $Repo pull --ff-only origin $Branch
 }
+$DataCommit = (Get-Content (Join-Path $Repo "data-revision.txt") -Raw).Trim()
 if (-not (Test-Path (Join-Path $DataRepo ".git"))) {
     git clone https://github.com/alexlu997/SJTU-TPMSHX-data.git $DataRepo
 } else {
-    git -C $DataRepo pull --ff-only
+    git -C $DataRepo fetch origin
 }
-# 注意: 数据仓没有 pin 到任何 commit — 永远拿远端默认分支的 HEAD. 代码仓 commit
-# 与数据仓 commit 的对应关系在仓库内无记录 (交接审计 Q8). 复现历史结果时需人工
-# 确认数据仓版本.
-$dataCommit = (git -C $DataRepo rev-parse --short HEAD)
-Write-Host "data repo @ $dataCommit"
+git -C $DataRepo checkout --detach $DataCommit
+$actualDataCommit = (git -C $DataRepo rev-parse HEAD)
+if ($actualDataCommit -ne $DataCommit) {
+    throw "Data revision mismatch: expected $DataCommit, got $actualDataCommit"
+}
+Write-Host "data repo @ $actualDataCommit"
 
 # ── 2. 拼装标定数据 (P0) ──
 # 主仓 data/ 是 gitignored 的. 缺 raw_data 时 DF 代理不会报错, 而是静默回退到
@@ -146,26 +149,17 @@ Write-Host "标定数据就位: $KeyXlsx"
 
 # ── 3. venv + deps (幂等) ──
 if (-not (Test-Path $Py)) {
-    python -m venv (Join-Path $WorkDir "venv")
+    if (-not (Test-Path $Python312)) {
+        throw "Python 3.12 not found at $Python312"
+    }
+    & $Python312 -m venv (Join-Path $WorkDir "venv")
     & $Py -m pip install --upgrade pip
 }
-# constraints 钉住开发机上验证过能复现 golden 的版本组合 (全量 pytest 1187
-# passed, 含 exact-== 的 DF 钉定门). requirements.txt 全是 >= 下限, 不加
-# constraints 会装到未验证的新版本上.
-$Constraints = Join-Path $Repo "constraints-devbox-2026-07-11.txt"
-if (Test-Path $Constraints) {
-    & $Py -m pip install -q -r (Join-Path $Repo "requirements.txt") -c $Constraints
-} else {
-    Write-Host "WARN: 没找到 constraints 文件, 依赖将装到最新版 (未验证)" -ForegroundColor Yellow
-    & $Py -m pip install -q -r (Join-Path $Repo "requirements.txt")
-}
-# 优化器栈额外依赖 (requirements.txt 只列求解器): CPU torch + botorch
-& $Py -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
-& $Py -m pip install -q botorch gpytorch
+& $Py -m pip install -q -r (Join-Path $Repo "requirements-lock-server.txt")
+& $Py -m pip check
 
 # ── 4. 四臂并行 ──
 Set-Location $Repo
-$env:PYTHONHASHSEED = "0"
 $env:PYTHONPATH     = Join-Path $Repo "sjtu_tpmshx"
 
 # 线程预算 (P1): 探测逻辑处理器数, 按 arm 数均分. 原脚本硬编码 8 且注释假设

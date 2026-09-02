@@ -72,7 +72,7 @@ XLSX = OUT / "asym_cfd_worklist.xlsx"
 # the locked L5/t0.4 geometry. We pre-fit (K, c_F) here so it doubles as a recipe-
 # match validation anchor: a freshly-meshed r=1 water run (same recipe as the asym
 # r>1 runs) should reproduce these K/c_F before its κ denominator is trusted.
-WATER_RAW = Path(__file__).resolve().parents[2] / "data" / "raw_data" / "water-cfd-raw.xlsx"
+WATER_RAW = Path(__file__).resolve().parents[3] / "data" / "raw_data" / "water-cfd-raw.xlsx"
 R1_RE_MAX = 3000   # fit Re window = the B-side operating range in this worklist
 
 # ── styles ───────────────────────────────────────────────────────

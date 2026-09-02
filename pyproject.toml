@@ -1,16 +1,8 @@
-# SJTU-TPMSHX packaging (P1.8, 2026-07-20 — upgrade/loop 分支立的地基).
-#
-# 导入约定（P1.8b F2 收官 2026-07-21）：全库唯一风格 = 包限定
-# `from sjtu_tpmshx.solvers import ...`；顶层风格与逐文件 sys.path 引导块
-# 已随 openspec p18b-import-style-migration（W0–F2）退役，过渡期身份垫片
-# 已撤（__init__.py 零导入副作用）。工作 venv editable 安装（--no-deps；
-# 依赖闭包由 requirements-lock-server.txt 管理）；裸启动 `python
-# sjtu_tpmshx/main.py` 由 main.py 的启动器自定位（仅插仓库根）支持。
-#
-# 版本号 0.1.0.dev0 为升级分支占位；对外版本语义合并时由 Alex 定。
+# Packaging and dependency source for local development and CI.
+# Repository imports use the package-qualified `sjtu_tpmshx.*` form.
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==78.1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,11 +10,11 @@ name = "sjtu-tpmshx"
 dynamic = ["version"]   # 单源：sjtu_tpmshx/_version.py（P1.9）
 description = "Compressible SIMPLE/LTNE solver suite for TPMS heat exchangers (SJTU)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 license = { file = "LICENSE" }
 dependencies = [
-    # 与 requirements.txt 同源的宽松下界（服务器精确复刻用
-    # requirements-lock-server.txt，见其头注）
+    # Normal installation uses this list. Historical machine snapshots remain
+    # separate and do not define current project dependencies.
     "numpy>=2.0",
     "scipy>=1.13",
     "pandas>=2.0",
@@ -40,18 +32,17 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["PySide6>=6.7", "pyvista>=0.45", "pyvistaqt>=0.11"]
 bo = ["torch>=2.2", "botorch>=0.10", "gpytorch>=1.11"]
-test = ["pytest>=8.0", "pytest-xdist>=3.5"]
+test = ["pytest>=8.0", "pytest-xdist>=3.5", "pytest-timeout>=2.3"]
 dev = ["ruff>=0.15", "mypy>=2.0"]
+tools = ["Markdown>=3.10"]
 
 [project.scripts]
 tpmshx-run = "sjtu_tpmshx.cli:main"
 
 [tool.ruff]
-# P2.1（2026-07-21）：lint 门从最小安全集起步。format 全库重排刻意不开
-# （会大规模改行号 → 腐蚀 atlas file:line 引用与源码标记 wiring 测试断言，
-# 需独立评估，见 ROADMAP P2.1c）。行宽不设限（存量长行合法）。
-target-version = "py311"
-exclude = ["sjtu_tpmshx/runs/archive"]   # frozen 历史归档（见其 README）
+# Lint keeps the existing source formatting and checks error-level rules only.
+target-version = "py312"
+exclude = ["sjtu_tpmshx/runs/archive"]
 
 [tool.ruff.lint]
 # F = pyflakes（真错误类），E9 = 语法级。F841 存量 52 处已于 P2.1b（iter 23）
@@ -74,9 +65,9 @@ select = ["F", "E9"]
 [tool.mypy]
 # P2.2（2026-07-21）：宽松档，只锁"核心公共面"——envelope 权威、compute_pipeline
 # 接缝、domain 配置/结果、CLI。运行方式（P1.8b F2 起仓库根基底，与包名风格一致）：
-#   .venv\Scripts\python.exe -m mypy @mypy-core-files.txt   （cwd = 仓库根）
+#   python -m mypy @mypy-core-files.txt   （cwd = 仓库根）
 # 文件清单在 mypy-core-files.txt；扩圈 = 往清单加文件并清零（后续波次）。
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = true
