@@ -99,6 +99,19 @@ class IOActionsMixin:
                 rows.append(["Lx [m]", f"{_rf.get('Lx', 0) or 0:.6f}"])
                 rows.append(["Ly [m]", f"{_rf.get('Ly', 0) or 0:.6f}"])
                 rows.append(["Lz [m]", f"{_rf.get('Lz', 0) or 0:.6f}"])
+            else:
+                res_2d = self._compute_results
+                rows.append(["Q [W]", f"{res_2d['Q_total']:.4f}"])
+                rows.append(["dP_A [Pa]", f"{res_2d['dP_A']:.2f}"])
+                rows.append(["dP_B [Pa]", f"{res_2d['dP_B']:.2f}"])
+                Ta = res_2d.get('Ta')
+                if Ta is not None:
+                    rows.append(["Ta_min [K]", f"{float(Ta.min()):.2f}"])
+                    rows.append(["Ta_max [K]", f"{float(Ta.max()):.2f}"])
+                    rows.append(["Grid Nx", str(Ta.shape[0])])
+                    rows.append(["Grid Ny", str(Ta.shape[1])])
+                rows.append(["Lx [m]", f"{res_2d.get('L', 0) or 0:.6f}"])
+                rows.append(["Ly [m]", f"{res_2d.get('H', 0) or 0:.6f}"])
             with open(path, 'w', newline='') as f:
                 w = csv.writer(f)
                 w.writerow(["Parameter", "Value"])
