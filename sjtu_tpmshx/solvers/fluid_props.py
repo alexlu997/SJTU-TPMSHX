@@ -37,16 +37,10 @@ def _nu_water(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
 
 
 def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
-    # sCO2 Nu = smooth-wall CFD fit × experimental HX-level correction γ_Nu
-    # (nu_correlations.gamma_nu_sco2, D-2sc-3 2026-07-22: D-7-6/G-7-6 anchor,
-    # element-wise in-window only — off-window cells keep the smooth value
-    # with a one-shot warning; TPMSHX_SCO2_GAMMA_NU=0 restores pre-anchor).
-    # L_mm / D_h_mm feed the (Dh/L)^d geometry term; eps_f stays unused
-    # (signature contract).
+    # V1 uses the smooth-wall CFD fit directly; experiment roughness/pressure
+    # losses are deliberately outside this validation round.
     del eps_f
-    from sjtu_tpmshx.solvers.nu_correlations import gamma_nu_sco2
-    return (gamma_nu_sco2(tpms_type, Re)
-            * tpms_calc.nu_sco2_topo(tpms_type, Re, Pr, L_mm, D_h_mm))
+    return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr, L_mm, D_h_mm)
 
 
 def _sco2_prop(key):

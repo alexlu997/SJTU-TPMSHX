@@ -694,6 +694,10 @@ def _run_solvers(window, cfg, fields):
                     enthalpy=m.enthalpy)
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
+    _sco2_v1 = (_pA['name'] == _pB['name'] == 'sco2'
+                and dir_A == 0 and dir_B == 1
+                and zone_config is None)
+    mA_rows = mB_rows = None
 
     # 2026-05-09 — bump _MAX_COUPLING 5→10 default. The loop short-circuits
     # once both drho_X and dT_X drop below their respective tolerances, so
@@ -917,6 +921,7 @@ def _run_solvers(window, cfg, fields):
     # `nonlocal`s are the vars that persist across iters or are read afterwards.
     def _step_2d(_coup_it):
         nonlocal ucA, vcA, ucB, vcB, simpA, simpB, Ta, Tb, Ts, e_info
+        nonlocal mA_rows, mB_rows
         nonlocal _energy_nan_hit
         nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
@@ -938,22 +943,9 @@ def _run_solvers(window, cfg, fields):
             # the registry's flow_model() instead of a per-site string check.
             _ftA = fluid_props.flow_model(_pA['name'])
             _ftB = fluid_props.flow_model(_pB['name'])
-            # sCO2 Forchheimer cF: rescale the production base cF onto the
-            # smooth-wall sCO2 CFD value at the inlet Re (2026-07-15; replaces
-            # the retired D-7-6 ×3.39 — solver sCO2 Δp is now a SMOOTH-WALL
-            # estimate until an experimental γ lands). air/water = 1.0,
-            # bit-identical.
-            from sjtu_tpmshx.df_surrogate.predict import sco2_cf_scale
-            _cfsA = (sco2_cf_scale(
-                tpms_type, Lcell, t_wall, 0.5 * eps,
-                float(_pA['rho'](T_inA, P_inA_val)),
-                float(_pA['mu'](T_inA, P_inA_val)), u_A)
-                if _pA['name'] == 'sco2' else 1.0)
-            _cfsB = (sco2_cf_scale(
-                tpms_type, Lcell, t_wall, 0.5 * eps,
-                float(_pB['rho'](T_inB, P_inB_val)),
-                float(_pB['mu'](T_inB, P_inB_val)), u_B)
-                if _pB['name'] == 'sco2' else 1.0)
+            from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
+            _dfA = SCO2_DF_METHOD if _pA['name'] == 'sco2' else None
+            _dfB = SCO2_DF_METHOD if _pB['name'] == 'sco2' else None
             # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
             # on two OS threads — the 2D port of run_stack_3d's
             # _run_two_simple_parallel. njit kernels + spsolve release the
@@ -988,7 +980,10 @@ def _run_solvers(window, cfg, fields):
                 args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
                           'Fluid A', P_inA_val),
                       dict(T_field_real=_Ta_for_simpA,
-                           fluid_type=_ftA, cf_scale=_cfsA,
+                           fluid_type=_ftA, df_method=_dfA,
+                           rho_inlet_ref=(
+                               float(_pA['rho'](T_inA, P_inA_val))
+                               if _pA['name'] == 'sco2' else None),
                            p_shoot_prev=_psA)),
                 daemon=True)
             _tB = _threading.Thread(
@@ -996,7 +991,10 @@ def _run_solvers(window, cfg, fields):
                 args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
                           'Fluid B', P_inB_val),
                       dict(T_field_real=_Tb_for_simpB,
-                           fluid_type=_ftB, cf_scale=_cfsB,
+                           fluid_type=_ftB, df_method=_dfB,
+                           rho_inlet_ref=(
+                               float(_pB['rho'](T_inB, P_inB_val))
+                               if _pB['name'] == 'sco2' else None),
                            p_shoot_prev=_psB)),
                 daemon=True)
             _tA.start(); _tB.start()
@@ -1048,25 +1046,43 @@ def _run_solvers(window, cfg, fields):
         # Build local-Re per-cell h_v fields (#1 fix). Use cell-center magnitude.
         u_mag_A = np.sqrt(ucA**2 + vcA**2)
         u_mag_B = np.sqrt(ucB**2 + vcB**2)
-        rho_A_scalar = float(rho_A_field.mean())
-        rho_B_scalar = float(rho_B_field.mean())
-        mu_A_scalar = float(np.asarray(mu_A).mean()) if np.ndim(mu_A) else float(mu_A)
-        mu_B_scalar = float(np.asarray(mu_B).mean()) if np.ndim(mu_B) else float(mu_B)
-        k_fA = float(_pA['k'](T_inA, P_inA_val))
-        k_fB = float(_pB['k'](T_inB, P_inB_val))
         # Zoned L/t fields (only if zone_config and grid mode); otherwise None
         L_field_2d = None; t_field_2d = None
         if zone_config is not None and za is not None:
             L_field_2d = za.get('L_mm_arr')
             t_field_2d = za.get('t_arr')
-        h_vA_local = _build_hv_local_2d(rho_A_scalar, mu_A_scalar, k_fA,
-                                         u_mag_A, L_field_2d, t_field_2d,
-                                         side_props=_pA, side_T_for_Pr=T_inA,
-                                         side_P=P_inA_val)
-        h_vB_local = _build_hv_local_2d(rho_B_scalar, mu_B_scalar, k_fB,
-                                         u_mag_B, L_field_2d, t_field_2d,
-                                         side_props=_pB, side_T_for_Pr=T_inB,
-                                         side_P=P_inB_val)
+        if _sco2_v1:
+            # Reuse the array-rank-agnostic 3D closure so 2D and 3D evaluate
+            # rho, mu, k, cp, Re and Pr from the same lagged local T field.
+            from sjtu_tpmshx.pipelines.flux_3d import _sco2_hv_local_field
+            _g_hv = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
+            _Ta_hv = (Ta if Ta is not None
+                      else np.full_like(u_mag_A, T_inA))
+            _Tb_hv = (Tb if Tb is not None
+                      else np.full_like(u_mag_B, T_inB))
+            h_vA_local = _sco2_hv_local_field(
+                _Ta_hv, P_inA_val, u_mag_A, _g_hv['A_0'], _g_hv['D_h'],
+                tpms_type, Lcell)
+            h_vB_local = _sco2_hv_local_field(
+                _Tb_hv, P_inB_val, u_mag_B, _g_hv['A_0'], _g_hv['D_h'],
+                tpms_type, Lcell)
+        else:
+            rho_A_scalar = float(rho_A_field.mean())
+            rho_B_scalar = float(rho_B_field.mean())
+            mu_A_scalar = (float(np.asarray(mu_A).mean())
+                           if np.ndim(mu_A) else float(mu_A))
+            mu_B_scalar = (float(np.asarray(mu_B).mean())
+                           if np.ndim(mu_B) else float(mu_B))
+            k_fA = float(_pA['k'](T_inA, P_inA_val))
+            k_fB = float(_pB['k'](T_inB, P_inB_val))
+            h_vA_local = _build_hv_local_2d(
+                rho_A_scalar, mu_A_scalar, k_fA,
+                u_mag_A, L_field_2d, t_field_2d,
+                side_props=_pA, side_T_for_Pr=T_inA, side_P=P_inA_val)
+            h_vB_local = _build_hv_local_2d(
+                rho_B_scalar, mu_B_scalar, k_fB,
+                u_mag_B, L_field_2d, t_field_2d,
+                side_props=_pB, side_T_for_Pr=T_inB, side_P=P_inB_val)
         # Per-side interfacial geometry under δ (1.0 at δ=0 → bit-identical).
         if _asym_2d:
             h_vA_local = h_vA_local * _hv_ratio_A_2d
@@ -1080,6 +1096,8 @@ def _run_solvers(window, cfg, fields):
         _has_water = (_pA['name'] == 'water') or (_pB['name'] == 'water')
         _e_max_iter = 12000 if _has_water else 5000
         _e_tol      = 1.0   if _has_water else 0.5
+        if _sco2_v1:
+            _e_tol = 0.1
 
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
         # Per-side porosity for the offset-isosurface δ. δ=0 → eps_A/eps_B None
@@ -1100,19 +1118,62 @@ def _run_solvers(window, cfg, fields):
         else:
             _Kffa_use = _Kffa_src; _Kffb_use = _Kffb_src
             _epsA_use = None; _epsB_use = None
-        Ta, Tb, Ts, e_info = solve_full_domain(
-            L, H, N_x, N_y, T_inA, T_inB,
-            _Kffa_use, _Kffb_use, _Kss_src,
-            h_vA_local, h_vB_local,
-            rho_cp_A, rho_cp_B,
-            _eps_src, ucA, vcA, ucB, vcB,
-            dir_A, dir_B,
-            max_iter=_e_max_iter, tol=_e_tol,
-            progress_cb=_on_progress, return_info=True,
-            Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-            dx_arr=energy_dx, dy_arr=energy_dy,
-            inlet_mask_A=_imA, inlet_mask_B=_imB,
-            eps_A=_epsA_use, eps_B=_epsB_use)
+        def _simp_P_abs_real(simp, direction, P_in, fluid_name):
+            if window._is_x_dir(direction):
+                gauge = simp.P.T.copy()
+                if direction == 1:
+                    gauge = gauge[::-1, :]
+            else:
+                gauge = simp.P.copy()
+                if direction == 3:
+                    gauge = gauge[:, ::-1]
+            if fluid_name == 'sco2':
+                inlet = gauge[0, :] if direction == 0 else gauge[-1, :]
+                return np.ascontiguousarray(P_in + gauge - inlet[None, :])
+            return np.ascontiguousarray(simp.P_ref_abs + gauge)
+
+        P_abs_A = _simp_P_abs_real(simpA, dir_A, P_inA_val, _pA['name'])
+        P_abs_B = _simp_P_abs_real(simpB, dir_B, P_inB_val, _pB['name'])
+        if _sco2_v1:
+            from sjtu_tpmshx.solvers.ltne_enthalpy_2d import (
+                solve_sco2_enthalpy_2d,
+            )
+            eps_side = np.asarray(_eps_src, dtype=np.float64) * 0.5
+            eps_A_in = (float(eps_side) if eps_side.ndim == 0
+                        else eps_side[0, :])
+            eps_B_in = (float(eps_side) if eps_side.ndim == 0
+                        else eps_side[-1, :])
+            rho_A_in = simpA.rho_field[:, 0]
+            rho_B_in = simpB.rho_field[:, 0]
+            # Use the SIMPLE-native inlet face, not the first cell-centre
+            # velocity (which averages inlet and interior faces and therefore
+            # does not exactly carry the prescribed mass flow).  Both +x and
+            # -x solves inject at SIMPLE j=0; the real-coordinate flip happens
+            # only in the reconstructed display/energy fields.
+            mA_rows = (eps_A_in * rho_A_in * np.abs(simpA.v[:, 0])
+                       * energy_dy)
+            mB_rows = (eps_B_in * rho_B_in * np.abs(simpB.v[:, 0])
+                       * energy_dy)
+            Ta, Tb, Ts, e_info = solve_sco2_enthalpy_2d(
+                T_inA, T_inB, P_abs_A, P_abs_B, mA_rows, mB_rows,
+                h_vA_local, h_vB_local, _Kss_src, energy_dx, energy_dy,
+                Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+                max_iter=_e_max_iter, tol=_e_tol,
+            )
+        else:
+            Ta, Tb, Ts, e_info = solve_full_domain(
+                L, H, N_x, N_y, T_inA, T_inB,
+                _Kffa_use, _Kffb_use, _Kss_src,
+                h_vA_local, h_vB_local,
+                rho_cp_A, rho_cp_B,
+                _eps_src, ucA, vcA, ucB, vcB,
+                dir_A, dir_B,
+                max_iter=_e_max_iter, tol=_e_tol,
+                progress_cb=_on_progress, return_info=True,
+                Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
+                dx_arr=energy_dx, dy_arr=energy_dy,
+                inlet_mask_A=_imA, inlet_mask_B=_imB,
+                eps_A=_epsA_use, eps_B=_epsB_use)
 
         # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side
         # stiffness (rho·cp 4100× + h_v 2-3× vs air). Replace nan with the
@@ -1149,19 +1210,6 @@ def _run_solvers(window, cfg, fields):
         # predicts density drop across the domain at high dP and diverges
         # from the 3D path (which already uses P_ref_abs + P). Transpose /
         # flip SIMPLE coords → real (Nx, Ny) to match Ta shape.
-        def _simp_P_abs_real(simp, dir_code):
-            P_loc = simp.P_ref_abs + simp.P  # (simp.Nx, simp.Ny) solver coords
-            if window._is_x_dir(dir_code):
-                P_real = P_loc.T
-                if dir_code == 1:
-                    P_real = P_real[::-1, :]
-            else:
-                P_real = P_loc
-                if dir_code == 3:
-                    P_real = P_real[:, ::-1]
-            return np.ascontiguousarray(P_real)
-        P_abs_A = _simp_P_abs_real(simpA, dir_A)
-        P_abs_B = _simp_P_abs_real(simpB, dir_B)
         rho_cp_A_new = _pA['rho'](Ta, P_abs_A) * _pA['cp'](Ta, P_abs_A)
         rho_cp_B_new = _pB['rho'](Tb, P_abs_B) * _pB['cp'](Tb, P_abs_B)
         rho_A_field_new = _pA['rho'](Ta, P_abs_A)
@@ -1297,16 +1345,25 @@ def _run_solvers(window, cfg, fields):
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
 
-    # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
-    (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
-     richardson_warn) = _compute_Q_richardson(
-        Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
-        simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
-        energy_dx, energy_dy, _x_breaks, _y_breaks,
-        T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
-        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
-        split_A=_split_A_2d,
-        hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d)
+    if _sco2_v1:
+        Q_A_fine = float(e_info['Q_A'])
+        Q_B_fine = float(e_info['Q_B'])
+        # Match the established 3D/Shanghai headline convention: Fluid-A
+        # advective enthalpy duty. Fluid B remains the conservation diagnostic.
+        Q_total = abs(Q_A_fine)
+        Q_solid_richardson = abs(Q_B_fine)
+        richardson_warn = False
+    else:
+        # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
+        (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
+         richardson_warn) = _compute_Q_richardson(
+            Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
+            simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
+            energy_dx, energy_dy, _x_breaks, _y_breaks,
+            T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
+            _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
+            split_A=_split_A_2d,
+            hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d)
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block
@@ -1393,6 +1450,10 @@ def _run_solvers(window, cfg, fields):
             if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
             else float('nan')),
         'Q_total': Q_total,
+        'mass_flow_A_kg_s_per_m': (
+            float(np.sum(mA_rows)) if mA_rows is not None else float('nan')),
+        'mass_flow_B_kg_s_per_m': (
+            float(np.sum(mB_rows)) if mB_rows is not None else float('nan')),
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
         # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──
@@ -1411,6 +1472,7 @@ def _run_solvers(window, cfg, fields):
             coupling_converged                       # outer ΔT+Δρ criterion
             and not simple_warnings                  # every SIMPLE side ok
             and bool(e_info.get('converged', False))  # LTNE inner pass
+            and (not _sco2_v1 or energy_rel < 0.05)   # true-h pair balance
             and not _energy_nan_hit                  # no patched-over NaN
             and bool(_env_valid)),                   # envelope gate
         'convergence_detail': {
@@ -1425,10 +1487,15 @@ def _run_solvers(window, cfg, fields):
             'ltne_ok': bool(e_info.get('converged', False)),
             'ltne_iterations': int(e_info.get('iterations', 0)),
             'ltne_residual': float(e_info.get('residual', float('inf'))),
+            'enthalpy_balance_ok': bool(not _sco2_v1 or energy_rel < 0.05),
             'energy_nan_hit': bool(_energy_nan_hit),
             'envelope_ok': bool(_env_valid),
         },
         'residuals_A': resid_A, 'residuals_B': resid_B,
+        'mass_imbalance_rel_A': float(getattr(
+            simpA, 'final_res_mass_global', float('nan'))),
+        'mass_imbalance_rel_B': float(getattr(
+            simpB, 'final_res_mass_global', float('nan'))),
         # Conservation diagnostics
         'Q_A': Q_A, 'Q_B': Q_B, 'Q_net': Q_net,
         'energy_imbalance_rel': energy_rel,

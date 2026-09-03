@@ -14,7 +14,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from sjtu_tpmshx.domain.compute_config import ComputeConfig  # noqa: E402
+from sjtu_tpmshx.domain.compute_config import (  # noqa: E402
+    ComputeConfig,
+    FluidConfig,
+    GeometryConfig,
+    PartialBCConfig,
+)
 from sjtu_tpmshx.domain.compute_result import ComputeResult  # noqa: E402
 
 
@@ -75,6 +80,29 @@ def test_shanghai_baseline_still_loads():
         pytest.skip('shanghai_baseline.json not present')
     cfg = ComputeConfig.from_json(base)
     assert cfg.geometry.L_cell_mm == 7.0
+
+
+def test_sco2_v1_config_boundary():
+    cfg = ComputeConfig(
+        fluid_A=FluidConfig(type='sco2', u_mps=0.8, T_in_K=500.0,
+                            P_in_Pa=12.0e6),
+        fluid_B=FluidConfig(type='sco2', u_mps=0.5, T_in_K=330.0,
+                            P_in_Pa=12.0e6),
+        geometry=GeometryConfig(tpms='Diamond', L_cell_mm=7.0,
+                                t_wall_mm=0.6),
+        bc_A=PartialBCConfig(dir=0),
+        bc_B=PartialBCConfig(dir=1),
+    )
+    assert cfg.validate() is cfg
+
+    cfg.bc_B.dir = 2
+    with pytest.raises(ValueError, match=r"A:\+x and B:-x"):
+        cfg.validate()
+
+    cfg.bc_B.dir = 1
+    cfg.bc_A.in_w = 0.01
+    with pytest.raises(ValueError, match="full-face"):
+        cfg.validate()
 
 
 # ── window strict boundary (duck-typed, no Qt) ────────────────────────

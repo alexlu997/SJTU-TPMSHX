@@ -275,10 +275,9 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
     Pr is the BULK Prandtl at (T_b, P) — no wall-property ratio by design.
     Validity/failure bands: see SCO2_NU_COEFFS block comment.
 
-    STAYS SMOOTH-WALL by contract: the validation baselines
-    (validation/sco2_exp, γ_Nu ≡ Nu_exp / Nu_cfd) and the phase-A form pins
-    ratio against THIS function — the experimental correction is applied by
-    the production consumers via ``gamma_nu_sco2`` below, never here."""
+    STAYS SMOOTH-WALL by contract. Experimental γ_Nu below is retained for
+    historical validation only; sCO2 V1 production calls this function
+    directly."""
     if tpms_type not in SCO2_NU_COEFFS:
         raise NotImplementedError(
             f"sCO2 Nu fit only available for {sorted(SCO2_NU_COEFFS)} "
@@ -329,11 +328,11 @@ _GAMMA_NU_WARNED: set[tuple[str, str]] = set()
 
 
 def gamma_nu_sco2(tpms_type, Re):
-    """Element-wise γ_Nu factor for the smooth ``nu_sco2_topo`` value.
+    """Historical validation-only γ_Nu for ``nu_sco2_topo``.
 
     Returns an array shaped like ``Re`` (or a scalar for scalar input):
     γ inside the experimental window, 1.0 outside / for unanchored
-    topologies. Production consumers multiply: Nu_eff = γ · Nu_smooth."""
+    topologies. The sCO2 V1 solver does not call this helper."""
     if os.environ.get('TPMSHX_SCO2_GAMMA_NU', '1') == '0':
         return np.ones_like(np.asarray(Re, dtype=np.float64)) \
             if np.ndim(Re) else 1.0

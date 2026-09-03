@@ -191,6 +191,7 @@ def _apply_override(tpms: str, L_mm: float, t_mm: float,
 from .backend import available_methods, get_backend  # noqa: E402
 
 _DF_DEFAULT = "gamma_df"     # default switched rbf -> gamma_df 2026-06-12
+SCO2_DF_METHOD = "cfd_full_core_3cell_fixed_v2"
 
 
 def _resolve_method(method: str | None = None) -> str:
@@ -228,7 +229,10 @@ def predict_K_cF(tpms_type: str, L_mm: float, t_mm: float,
     _OVERRIDES above) regardless of backend; outside the override
     regions this is the pure backend value.
     """
-    K, cF = _get_model(tpms_type, method).predict(L_mm, t_mm, eps_f)
+    resolved = _resolve_method(method)
+    K, cF = _get_model(tpms_type, resolved).predict(L_mm, t_mm, eps_f)
+    if resolved == SCO2_DF_METHOD:
+        return K, cF
     return K, _apply_override(tpms_type, L_mm, t_mm, cF)
 
 

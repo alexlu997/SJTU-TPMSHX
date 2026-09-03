@@ -40,13 +40,17 @@ _CP_NAME = {'sco2': 'CO2', 'water': 'Water', 'air': 'Air'}
 
 def _prop_field(key, T, P, fluid):
     T = np.ascontiguousarray(T, dtype=np.float64)
-    out = _PropsSI(key, "T", T.ravel(), "P", float(P), _CP_NAME.get(fluid, fluid))
+    P = np.broadcast_to(np.asarray(P, dtype=np.float64), T.shape)
+    out = _PropsSI(key, "T", T.ravel(), "P", np.ascontiguousarray(P).ravel(),
+                   _CP_NAME.get(fluid, fluid))
     return np.asarray(out, dtype=np.float64).reshape(T.shape)
 
 
 def _T_of_h_field(h, P, fluid):
     h = np.ascontiguousarray(h, dtype=np.float64)
-    out = _PropsSI("T", "H", h.ravel(), "P", float(P), _CP_NAME.get(fluid, fluid))
+    P = np.broadcast_to(np.asarray(P, dtype=np.float64), h.shape)
+    out = _PropsSI("T", "H", h.ravel(), "P", np.ascontiguousarray(P).ravel(),
+                   _CP_NAME.get(fluid, fluid))
     return np.asarray(out, dtype=np.float64).reshape(h.shape)
 
 
@@ -59,7 +63,7 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                            dhA, dhB, cpA, cpB,
                            TA_star, TB_star, hA_star, hB_star,
                            epsA, epsB, FmA_col, FmB_col,
-                           hvA_fld, hvB_fld, ks, dx, dy, dz,
+                           hvA_fld, hvB_fld, Kss, dx, dy, dz,
                            h_in_A, h_in_B, dir_A, dir_B,
                            n_sweep, omega, h_lo_A, h_hi_A, h_lo_B, h_hi_B):
     """In-place Gauss-Seidel sweeps for the enthalpy-form LTNE system.
@@ -232,16 +236,14 @@ def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
                         cpA[i, j, k] if cpA[i, j, k] > 1e-30 else 1e-30)
                     TBl = TB_star[i, j, k] + (hB[i, j, k] - hB_star[i, j, k]) / (
                         cpB[i, j, k] if cpB[i, j, k] > 1e-30 else 1e-30)
-                    # solid volume fraction = 1 − ε_full = 1 − (ε_A + ε_B)
-                    epsS_e = 1.0 - (epsA[i, j, k] + epsB[i, j, k])
                     hvA = hvA_fld[i, j, k]
                     hvB = hvB_fld[i, j, k]
-                    DxW = epsS_e * ks * Ax / dx if i > 0 else 0.0
-                    DxE = epsS_e * ks * Ax / dx if i < Nx - 1 else 0.0
-                    DyS = epsS_e * ks * Ay / dy if j > 0 else 0.0
-                    DyN = epsS_e * ks * Ay / dy if j < Ny - 1 else 0.0
-                    DzB = epsS_e * ks * Az / dz if k > 0 else 0.0
-                    DzT = epsS_e * ks * Az / dz if k < Nz - 1 else 0.0
+                    DxW = Kss[i, j, k] * Ax / dx if i > 0 else 0.0
+                    DxE = Kss[i, j, k] * Ax / dx if i < Nx - 1 else 0.0
+                    DyS = Kss[i, j, k] * Ay / dy if j > 0 else 0.0
+                    DyN = Kss[i, j, k] * Ay / dy if j < Ny - 1 else 0.0
+                    DzB = Kss[i, j, k] * Az / dz if k > 0 else 0.0
+                    DzT = Kss[i, j, k] * Az / dz if k < Nz - 1 else 0.0
                     aP = (DxW + DxE + DyS + DyN + DzB + DzT
                           + (hvA + hvB) * Vc)
                     nb = 0.0
@@ -293,6 +295,7 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
     hvA_fld = np.full(shape, float(h_vA))
     hvB_fld = np.full(shape, float(h_vB))
+    Kss = (1.0 - epsA - epsB) * float(k_s)
 
     h_in_A = _h_scalar(T_inA, P_A, fluid_A)
     h_in_B = _h_scalar(T_inB, P_B, fluid_B)
@@ -323,7 +326,7 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
         _gs_enthalpy_sweeps_3d(
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
-            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, float(k_s),
+            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, Kss,
             dx, dy, dz, h_in_A, h_in_B, int(dir_A), int(dir_B),
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
@@ -339,11 +342,12 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 fluid_A=fluid_A, fluid_B=fluid_B)
 
 
-def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
+def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                                     h_vA_field, h_vB_field, m_dot_A, m_dot_B,
                                     T_inA, T_inB, P_A, P_B, dir_A, dir_B,
                                     fluid_A='sco2', fluid_B='sco2',
                                     eps_A_field=None, eps_B_field=None,
+                                    pressure_A_field=None, pressure_B_field=None,
                                     Ta_init=None, Tb_init=None, Ts_init=None,
                                     n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
     """Pipeline-facing enthalpy-form LTNE energy solve (sCO2, SIMPLE-coupled).
@@ -367,6 +371,13 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
             if eps_B_field is not None else epsA.copy())
     hvA_fld = np.ascontiguousarray(h_vA_field, dtype=np.float64)
     hvB_fld = np.ascontiguousarray(h_vB_field, dtype=np.float64)
+    Kss = np.broadcast_to(np.asarray(K_ss, dtype=np.float64), shape).copy()
+    P_A_field = (np.full(shape, float(P_A)) if pressure_A_field is None
+                 else np.ascontiguousarray(pressure_A_field, dtype=np.float64))
+    P_B_field = (np.full(shape, float(P_B)) if pressure_B_field is None
+                 else np.ascontiguousarray(pressure_B_field, dtype=np.float64))
+    if P_A_field.shape != shape or P_B_field.shape != shape:
+        raise ValueError("local pressure fields must match the 3D LTNE grid")
     FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
     FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
 
@@ -379,9 +390,9 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
     h_lo_B = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_B, 230.0)), P_B, fluid_B)
     h_hi_B = _h_scalar(T_span_hi, P_B, fluid_B)
 
-    hA = (_prop_field("H", np.asarray(Ta_init, dtype=np.float64), P_A, fluid_A)
+    hA = (_prop_field("H", np.asarray(Ta_init, dtype=np.float64), P_A_field, fluid_A)
           if Ta_init is not None else np.full(shape, h_in_A))
-    hB = (_prop_field("H", np.asarray(Tb_init, dtype=np.float64), P_B, fluid_B)
+    hB = (_prop_field("H", np.asarray(Tb_init, dtype=np.float64), P_B_field, fluid_B)
           if Tb_init is not None else np.full(shape, h_in_B))
     Ts = (np.ascontiguousarray(Ts_init, dtype=np.float64).copy()
           if Ts_init is not None else np.full(shape, 0.5 * (T_inA + T_inB)))
@@ -391,19 +402,19 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
     n_done = 0
     resid = 0.0
     for outer in range(n_outer):
-        T_A = _T_of_h_field(hA, P_A, fluid_A)
-        T_B = _T_of_h_field(hB, P_B, fluid_B)
-        cpA = _prop_field("C", T_A, P_A, fluid_A)
-        cpB = _prop_field("C", T_B, P_B, fluid_B)
-        kA = _prop_field("L", T_A, P_A, fluid_A)
-        kB = _prop_field("L", T_B, P_B, fluid_B)
+        T_A = _T_of_h_field(hA, P_A_field, fluid_A)
+        T_B = _T_of_h_field(hB, P_B_field, fluid_B)
+        cpA = _prop_field("C", T_A, P_A_field, fluid_A)
+        cpB = _prop_field("C", T_B, P_B_field, fluid_B)
+        kA = _prop_field("L", T_A, P_A_field, fluid_A)
+        kB = _prop_field("L", T_B, P_B_field, fluid_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()
 
         _gs_enthalpy_sweeps_3d(
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
-            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, float(k_s),
+            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, Kss,
             dxs, dys, dzs, h_in_A, h_in_B, int(dir_A), int(dir_B),
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
@@ -411,13 +422,21 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
         denom = max(abs(h_in_A - h_in_B), 1.0)
         resid = max(np.max(np.abs(hA - hA_star)),
                     np.max(np.abs(hB - hB_star))) / denom
-        if resid < tol:
+        out_A = -1 if dir_A == 0 else 0
+        out_B = -1 if dir_B == 0 else 0
+        q_A = abs(float(m_dot_A)) * (h_in_A - float(np.mean(hA[out_A])))
+        q_B = abs(float(m_dot_B)) * (h_in_B - float(np.mean(hB[out_B])))
+        imbalance = abs(q_A + q_B) / max(abs(q_A), abs(q_B), 1e-30)
+        if resid < tol and imbalance < 0.05:
             break
 
-    Ta = _T_of_h_field(hA, P_A, fluid_A)
-    Tb = _T_of_h_field(hB, P_B, fluid_B)
-    info = dict(iterations=n_done, converged=bool(resid < tol),
-                residual=float(resid), enthalpy_mode=True)
+    Ta = _T_of_h_field(hA, P_A_field, fluid_A)
+    Tb = _T_of_h_field(hB, P_B_field, fluid_B)
+    info = dict(iterations=n_done,
+                converged=bool(resid < tol and imbalance < 0.05),
+                residual=float(resid), enthalpy_mode=True,
+                Q_A=float(q_A), Q_B=float(q_B),
+                energy_imbalance_rel=float(imbalance))
     return Ta, Tb, Ts, info
 
 

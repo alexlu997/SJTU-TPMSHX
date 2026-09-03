@@ -29,12 +29,27 @@ except Exception:                       # pragma: no cover - import guard
 
 
 _FLUID = "CO2"
+T_RANGE_K = (280.0, 700.0)
+P_RANGE_PA = (8.0e6, 16.0e6)
+
+
+def _validate_state(T_K, P_Pa) -> None:
+    import numpy as _np
+    T = _np.asarray(T_K, dtype=float)
+    P = _np.asarray(P_Pa, dtype=float)
+    if not (_np.all(_np.isfinite(T)) and _np.all(_np.isfinite(P))):
+        raise ValueError("sCO2 state must be finite")
+    if _np.any((T < T_RANGE_K[0]) | (T > T_RANGE_K[1])):
+        raise ValueError("sCO2 V1 temperature must be within 280..700 K")
+    if _np.any((P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])):
+        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
 
 
 @lru_cache(maxsize=4096)
 def _prop(key: str, T_K: float, P_Pa: float) -> float:
     """Cached scalar CoolProp query. CO2 EOS calls are ~µs but repeat heavily
     across solver iterations at near-identical (T,P); cache keeps it cheap."""
+    _validate_state(T_K, P_Pa)
     return float(_PropsSI(key, "T", float(T_K), "P", float(P_Pa), _FLUID))
 
 
@@ -59,6 +74,7 @@ def sco2_prop(key: str, T_K, P_Pa):
     P = _np.asarray(P_Pa, dtype=float)
     if T.ndim == 0 and P.ndim == 0:
         return _prop(key, float(T), float(P))
+    _validate_state(T, P)
     shape = _np.broadcast_shapes(T.shape, P.shape)
     Tf = _np.ascontiguousarray(_np.broadcast_to(T, shape)).ravel()
     Pf = _np.ascontiguousarray(_np.broadcast_to(P, shape)).ravel()
@@ -99,7 +115,29 @@ def sco2_temperature(h_Jkg: float, P_Pa: float) -> float:
     enthalpy formulation — across the pseudocritical line cp spikes ×10-20, so
     the energy balance is carried in enthalpy and converted back to T here
     rather than integrating an ill-conditioned cp·dT."""
-    return float(_PropsSI("T", "H", float(h_Jkg), "P", float(P_Pa), _FLUID))
+    if not P_RANGE_PA[0] <= float(P_Pa) <= P_RANGE_PA[1]:
+        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
+    T = float(_PropsSI("T", "H", float(h_Jkg), "P", float(P_Pa), _FLUID))
+    _validate_state(T, P_Pa)
+    return T
+
+
+def sco2_temperature_from_enthalpy(h_Jkg, P_Pa):
+    """Scalar-or-field inverse ``T(h, P)`` using direct CoolProp."""
+    import numpy as _np
+    h = _np.asarray(h_Jkg, dtype=float)
+    P = _np.asarray(P_Pa, dtype=float)
+    if h.ndim == 0 and P.ndim == 0:
+        return sco2_temperature(float(h), float(P))
+    shape = _np.broadcast_shapes(h.shape, P.shape)
+    hf = _np.ascontiguousarray(_np.broadcast_to(h, shape)).ravel()
+    Pf = _np.ascontiguousarray(_np.broadcast_to(P, shape)).ravel()
+    if _np.any((Pf < P_RANGE_PA[0]) | (Pf > P_RANGE_PA[1])):
+        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
+    T = _np.asarray(_PropsSI("T", "H", hf, "P", Pf, _FLUID), dtype=float)
+    T = T.reshape(shape)
+    _validate_state(T, _np.broadcast_to(P, shape))
+    return T
 
 
 # ── Vectorised field queries (Phase C: per-cell property updates) ──────────
@@ -108,45 +146,14 @@ def sco2_temperature(h_Jkg: float, P_Pa: float) -> float:
 # Used by the variable-property outer loop where the cp/ρ field is refreshed
 # every iteration as T evolves through the pseudocritical zone.
 
-# Content-keyed memo for vectorised field queries (audit 2026-06-28 E3). The
-# variable-property 3D outer loop evaluates k(Ta,P) and cp(Ta,P) in BOTH
-# _outer_post_3d (K_ff / ρcp build) and the next _outer_step_3d (h_v build) at
-# the IDENTICAL (Ta, P) — Ta is unchanged between the two. These vectorised
-# PropsSI calls bypass the scalar `_prop` lru_cache, so they were genuinely
-# re-evaluated over the whole grid. Cache the last few (key, P, T-content)
-# results; the key is the full array content (T.tobytes) so a hit is always
-# bit-identical, and hashing N float64s is far cheaper than a Span-Wagner
-# PropsSI sweep. Cached arrays are returned READ-ONLY so an accidental in-place
-# mutation by a downstream caller fails loud instead of corrupting a shared view.
-from collections import OrderedDict as _OrderedDict
-_FIELD_CACHE: "_OrderedDict" = _OrderedDict()
-_FIELD_CACHE_MAX = 16
-
-
 def clear_field_cache() -> None:
-    """Drop the sco2_field content cache (test isolation / memory release)."""
-    _FIELD_CACHE.clear()
+    """Clear the scalar CoolProp cache (kept for existing callers/tests)."""
+    _prop.cache_clear()
 
 
 def sco2_field(key: str, T_K, P_Pa: float):
-    """Vectorised CoolProp query of `key` over a temperature array/field at a
-    single pressure. Returns a (read-only) array shaped like `T_K`. Identical
-    (key, T-content, P) queries are served from a small content-keyed cache
-    (E3) — bit-identical, skips the redundant PropsSI sweep."""
-    import numpy as _np
-    T = _np.ascontiguousarray(T_K, dtype=float)
-    ck = (key, float(P_Pa), T.shape, T.tobytes())
-    hit = _FIELD_CACHE.get(ck)
-    if hit is not None:
-        _FIELD_CACHE.move_to_end(ck)
-        return hit
-    out = _PropsSI(key, "T", T.ravel(), "P", float(P_Pa), _FLUID)
-    arr = _np.asarray(out, dtype=float).reshape(T.shape)
-    arr.flags.writeable = False           # fail-loud on accidental mutation
-    _FIELD_CACHE[ck] = arr
-    if len(_FIELD_CACHE) > _FIELD_CACHE_MAX:
-        _FIELD_CACHE.popitem(last=False)
-    return arr
+    """Direct vectorised CoolProp query over a temperature field."""
+    return sco2_prop(key, T_K, P_Pa)
 
 
 def sco2_density_field(T_K, P_Pa: float):
@@ -179,10 +186,7 @@ def sco2_temperature_field(h_Jkg, P_Pa: float):
     primary fluid unknown; the pipeline inverts T = T(h,P) each outer iteration
     to feed the diffusion / inter-phase coupling. Array form of
     ``sco2_temperature``."""
-    import numpy as _np
-    h = _np.ascontiguousarray(h_Jkg, dtype=float)
-    out = _PropsSI("T", "H", h.ravel(), "P", float(P_Pa), _FLUID)
-    return _np.asarray(out, dtype=float).reshape(h.shape)
+    return sco2_temperature_from_enthalpy(h_Jkg, P_Pa)
 
 
 def sco2_viscosity_field(T_K, P_Pa: float):

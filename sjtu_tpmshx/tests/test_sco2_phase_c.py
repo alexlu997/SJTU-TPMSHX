@@ -19,7 +19,7 @@ from sjtu_tpmshx.solvers import sco2_props as S
 # ── enthalpy inverse ────────────────────────────────────────────────
 def test_sco2_temperature_round_trips_enthalpy():
     """T -> h -> T recovers the temperature (Span-Wagner monotone in h at P)."""
-    P = 7.8e6
+    P = 8.0e6
     for T in (320.0, 340.0, 371.0, 450.0):
         h = S.sco2_enthalpy(T, P)
         assert S.sco2_temperature(h, P) == pytest.approx(T, abs=1e-3)
@@ -28,7 +28,7 @@ def test_sco2_temperature_round_trips_enthalpy():
 def test_sco2_temperature_through_pseudocritical():
     """Across the 7.7 MPa pseudocritical spike the inverse stays single-valued
     and monotone (no branch flip where cp peaks)."""
-    P = 7.7e6
+    P = 8.0e6
     Ts = np.linspace(307.5, 371.0, 25)
     hs = np.array([S.sco2_enthalpy(T, P) for T in Ts])
     assert np.all(np.diff(hs) > 0)                      # h strictly increasing
@@ -38,7 +38,7 @@ def test_sco2_temperature_through_pseudocritical():
 
 # ── vectorised field helpers ────────────────────────────────────────
 def test_sco2_field_helpers_match_scalar():
-    P = 7.8e6
+    P = 8.0e6
     T = np.array([[320.0, 340.0], [360.0, 371.0]])
     rho = S.sco2_density_field(T, P)
     cp = S.sco2_cp_field(T, P)
@@ -49,7 +49,7 @@ def test_sco2_field_helpers_match_scalar():
 
 
 def test_sco2_rho_cp_field_is_density_times_cp():
-    P = 7.8e6
+    P = 8.0e6
     T = np.linspace(310.0, 371.0, 8)
     rc = S.sco2_rho_cp_field(T, P)
     ref = S.sco2_density_field(T, P) * S.sco2_cp_field(T, P)
@@ -59,7 +59,7 @@ def test_sco2_rho_cp_field_is_density_times_cp():
 
 def test_sco2_rho_cp_spikes_near_pseudocritical():
     """The whole point of Phase C: rho*cp swings strongly toward Tpc(7.7)~306 K."""
-    P = 7.7e6
+    P = 8.0e6
     rc_far = S.sco2_rho_cp_field(np.array([371.0]), P)[0]
     rc_near = S.sco2_rho_cp_field(np.array([308.0]), P)[0]
     assert rc_near > 5.0 * rc_far                       # order-of-magnitude swing
@@ -73,7 +73,7 @@ def test_sco2_rho_cp_spikes_near_pseudocritical():
 def test_sco2_prop_scalar_and_field_dispatch():
     from sjtu_tpmshx.solvers.fluid_props import FLUIDS
     m = FLUIDS['sco2']
-    P = 7.8e6
+    P = 8.0e6
     # scalar path (cached) returns a float
     rho_s = m.rho(371.0, P)
     assert isinstance(rho_s, float) and rho_s > 0

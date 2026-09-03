@@ -92,6 +92,10 @@ def test_finalize_3d_result_matches_raw():
     assert result.props['u_A_in_mps'] == pytest.approx(raw['u_A'])
     assert result.props['T_in_A_K'] == pytest.approx(raw['T_in'])
     assert result.diagnostics['_max_outer'] == raw['_max_outer']
+    assert result.diagnostics['mass_flow_A_kg_s'] == pytest.approx(
+        raw['mass_flow_A_kg_s'])
+    assert result.diagnostics['mass_flow_B_kg_s'] == pytest.approx(
+        raw['mass_flow_B_kg_s'])
     assert result.diagnostics['mode'] == '3d'
 
     # ── B3 C5: the raw_3d carrier is GONE — the ComputeResult is what

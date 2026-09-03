@@ -24,7 +24,7 @@
     ok_dp   ΔP > 0（负压差 = 坏点, 用户裁决 2026-07-15 剔除）
     ok_dT   ΔT_streams = |T̄_h − T̄_c| > 10 K（Nu 构造伪影阈, 历史惯例）
     ok_hb   |热平衡| ≤ 0.15
-    ok_done 完成情况列非 作废/需重做
+    ok_done 完成情况列非 作废/重做（含“需重做”）
 """
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def load_exp(topo: str = "Diamond") -> pd.DataFrame:
     df["ok_dp"] = df["dP_MPa"] > 0
     df["ok_dT"] = df["dT_streams_K"] > _DT_MIN_K
     df["ok_hb"] = df["HB"].abs() <= _HB_MAX
-    df["ok_done"] = ~df["done"].str.contains("作废|需重做", na=False)
+    df["ok_done"] = ~df["done"].str.contains("作废|重做", na=False)
 
     df.attrs.update(dict(L_ch_m=L_ch, Dh_m=Dh, Dh_sheet_m=Dh_sheet,
                          A_flow_m2=A_flow, A_heat_m2=A_heat))

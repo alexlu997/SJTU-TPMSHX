@@ -410,8 +410,9 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0,
-                    p_shoot_prev=None):
+                    T_field_real=None, fluid_type='ideal_gas',
+                    p_shoot_prev=None, df_method=None,
+                    rho_inlet_ref=None):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -467,10 +468,10 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # density the pipeline used to convert ṁ → u_f. Passed explicitly so the
         # pin holds the PHYSICAL throughput even though this pipeline recreates
         # the solver every outer iter with an already-compressed rho_f (a
-        # field-based capture would ratchet here). Ideal gas only — water is
-        # incompressible (SIMPLE._update_density is a no-op → massflux inert).
-        rho_inlet_ref = (float(P_in_abs) / (287.05 * float(T_in_f))
-                         if fluid_type == 'ideal_gas' else None)
+        # field-based capture would ratchet here). sCO2 passes its CoolProp
+        # inlet density explicitly; water leaves this unset.
+        if rho_inlet_ref is None and fluid_type == 'ideal_gas':
+            rho_inlet_ref = float(P_in_abs) / (287.05 * float(T_in_f))
 
         # ── P_ref_abs is the OUTLET absolute pressure, not the inlet ────────
         # BUG FIX 2026-07-12 (ledger C8). This used to pass `P_ref_abs=P_in_abs`.
@@ -511,7 +512,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
             from sjtu_tpmshx.solvers.envelope import predict_outlet_p_sq
             _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
-                                  0.5 * float(eps))
+                                  0.5 * float(eps), method=df_method)
             _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
             _G = _rho_in * abs(float(u_f))                   # mass flux ρ·u
             _mu_in = float(np.mean(mu_f)) if np.ndim(mu_f) else float(mu_f)
@@ -541,8 +542,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              wall_refine=False,
                              P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type,
-                             cf_scale=cf_scale)
+                             fluid_type=fluid_type, df_method=df_method)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = energy_dx.copy()
@@ -556,8 +556,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              wall_refine=False,
                              P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type,
-                             cf_scale=cf_scale)
+                             fluid_type=fluid_type, df_method=df_method)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
@@ -954,10 +953,16 @@ def _finalize_cfg(raw: dict[str, Any],
             'r_Q': 1.0 if raw.get('Q_richardson_warn') else 0.0,
             'simple_A': raw.get('residuals_A'),
             'simple_B': raw.get('residuals_B'),
+            'mass_imbalance_rel_A': float(
+                raw.get('mass_imbalance_rel_A', float('nan'))),
+            'mass_imbalance_rel_B': float(
+                raw.get('mass_imbalance_rel_B', float('nan'))),
             'Q_A': float(raw.get('Q_A', float('nan'))),
             'Q_B': float(raw.get('Q_B', float('nan'))),
             'Q_net': float(raw.get('Q_net', float('nan'))),
             'energy_imbalance_rel': float(
+                raw.get('energy_imbalance_rel', float('nan'))),
+            'enthalpy_imbalance_rel': float(
                 raw.get('energy_imbalance_rel', float('nan'))),
         },
         zones=zones_slot,
@@ -970,6 +975,10 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_enthalpy_B': raw.get('Q_enthalpy_B'),
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
+            'mass_flow_A_kg_s_per_m': float(
+                raw.get('mass_flow_A_kg_s_per_m', float('nan'))),
+            'mass_flow_B_kg_s_per_m': float(
+                raw.get('mass_flow_B_kg_s_per_m', float('nan'))),
             # 2026-07-12: solve_2d produced all three of these on the raw dict
             # and none of them were forwarded — every ComputeResult consumer
             # was blind to the 2D compressible-envelope verdict and to the

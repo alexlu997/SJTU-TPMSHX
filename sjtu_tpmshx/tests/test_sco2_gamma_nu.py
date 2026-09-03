@@ -65,8 +65,8 @@ def test_kill_switch(monkeypatch):
     assert gamma_nu_sco2("Diamond", 0.5 * (p["re_lo"] + p["re_hi"])) == 1.0
 
 
-def test_registry_chokepoint_multiplies_exactly_gamma(monkeypatch):
-    """fluid_props._nu_sco2 (both dims' hv builders) — ON/OFF ratio == γ."""
+def test_registry_chokepoint_stays_smooth(monkeypatch):
+    """V1 runtime ignores the retained experimental correction helper."""
     from sjtu_tpmshx.solvers import fluid_props
 
     m = fluid_props.get("sco2")
@@ -77,14 +77,11 @@ def test_registry_chokepoint_multiplies_exactly_gamma(monkeypatch):
     nu_off = float(m.nu(*args))
     monkeypatch.setenv("TPMSHX_SCO2_GAMMA_NU", "1")
     nu_on = float(m.nu(*args))
-    assert nu_on / nu_off == pytest.approx(p["gamma"], rel=1e-12)
+    assert nu_on == nu_off
 
 
-def test_hv_local_field_chokepoint_applies_gamma(monkeypatch):
-    """flux_3d._sco2_hv_local_field (3D local-T path): BOTH branches pinned
-    deterministically — an in-window velocity must gain exactly ×γ over the
-    kill-switched run (floor inactive at turbulent Re, ratio exact), an
-    off-window one must stay at the smooth value."""
+def test_hv_local_field_chokepoint_stays_smooth(monkeypatch):
+    """The shared 2D/3D local-property path stays on smooth-wall CFD Nu."""
     from sjtu_tpmshx.pipelines.flux_3d import _sco2_hv_local_field
     from sjtu_tpmshx.solvers import sco2_props as _s2
 
@@ -102,7 +99,7 @@ def test_hv_local_field_chokepoint_applies_gamma(monkeypatch):
     assert p["re_lo"] < Re_of(u_in) < p["re_hi"]
     assert Re_of(u_out) > p["re_hi"]
 
-    for u_val, expect in ((u_in, p["gamma"]), (u_out, 1.0)):
+    for u_val in (u_in, u_out):
         u = np.full((2, 2, 2), u_val)
         monkeypatch.setenv("TPMSHX_SCO2_GAMMA_NU", "0")
         hv_off = _sco2_hv_local_field(T, P, u, **kw)
@@ -110,7 +107,21 @@ def test_hv_local_field_chokepoint_applies_gamma(monkeypatch):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")   # off-window one-shot notice
             hv_on = _sco2_hv_local_field(T, P, u, **kw)
-        assert np.allclose(hv_on / hv_off, expect, rtol=1e-12)
+        assert np.array_equal(hv_on, hv_off)
+
+
+def test_hv_local_field_uses_each_cells_temperature():
+    """Uniform velocity must not freeze sCO2 transport properties at inlet T."""
+    from sjtu_tpmshx.pipelines.flux_3d import _sco2_hv_local_field
+
+    T = np.array([[320.0, 360.0], [400.0, 440.0]])
+    hv = _sco2_hv_local_field(
+        T, 12.0e6, np.full_like(T, 0.5),
+        A_0=500.0, D_h_m=2.6e-3,
+        tpms_type="Diamond", L_cell_mm=7.0)
+
+    assert hv.shape == T.shape
+    assert np.ptp(hv) > 0.0
 
 
 def test_smooth_base_function_untouched():

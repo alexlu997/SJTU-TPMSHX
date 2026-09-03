@@ -125,6 +125,7 @@
 | **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct · solid-conduction tortuosity **χ_s(type, ε)** from unit-cell periodic homogenization (≈0.59–0.83; thin-sheet limit ⅔) |
 | **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
+| **sCO2 V1** | 2D/3D full-face `+x/-x` dual-sCO2 counterflow · direct CoolProp at 280–700 K / 8–16 MPa · fixed three-cell CFD Darcy–Forchheimer coefficients · smooth-wall CFD Nu · true-enthalpy conservation |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
 | **Validation** | Shanghai 16-case — Q air RMSRE **1.73 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
@@ -263,6 +264,22 @@ ignored by Git. The current local layout includes the experiment spreadsheets,
 the loaders resolve them relative to the repository.
 The sCO2 experiment loader expects `data/raw_data/sCO2-Experient.xlsx`
 (the historical project spelling).
+
+Run the sCO2 V1 CFD, conservation, pressure-drop, and 2D/3D parity gate with
+`python -m sjtu_tpmshx.validation.cases.validate_sco2_v1`.
+
+Run the full-core experimental-Q smoke with
+`python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q`. The validation
+maps measured mass flow to the solver's interstitial inlet velocity with
+`A_void = (epsilon / 2) * (0.042 m)^2` and
+`u_in = mdot / (rho(T_in, P_in) * A_void)`. The loader's mean-state `u` remains
+only an experimental Re/f reduction and is not passed to the field solver.
+The 2D mass flow and duty are per metre of depth and are multiplied by the
+physical 0.042 m core depth before comparison with the workbook. The runner
+also checks the inlet-face integral of `epsilon/2 * rho * u * dA` against the
+measured mass flow at `1e-6` relative tolerance. Experimental Q is the midpoint
+of the hot- and cold-side `mdot * abs(h_in - h_out)` values; it is a validation
+reference only and does not refit Nu or the fixed CFD D-F coefficients.
 
 For reproducible runs, use the `SJTU-TPMSHX-data` commit recorded in
 `data-revision.txt`. On Windows Server, `scripts/port_retest_server.ps1`

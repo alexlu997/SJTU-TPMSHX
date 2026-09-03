@@ -278,7 +278,7 @@ class SIMPLESolver:
                  wall_refine=True,
                  n_wall_refine=8,
                  wall_first_cell=0.02e-3,
-                 cf_scale=1.0,
+                 df_method=None,
                  **_legacy_kw):
         # Historical 'closure' kwarg is accepted but ignored; ConstDF-v1 D-F
         # is the only closure since 2026-04-19 f-Re cleanup.
@@ -409,24 +409,18 @@ class SIMPLESolver:
                 t_row[j] = z.t_mm
                 z_eps = z.props_A['epsilon'] if z.props_A else eps
                 eps_f_row[j] = 0.5 * z_eps  # ε_A: per-stream void fraction
-            K_vec, cF_vec = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_row)
+            K_vec, cF_vec = predict_K_cF_vec(
+                tpms_type, L_row, t_row, eps_f_row, method=df_method)
             self._K_arr = K_vec.astype(np.float64)
             self._cF_arr = cF_vec.astype(np.float64)
         else:
             # Uniform (or zone_arrays fallback): single (K, c_F), broadcast
             K_val, cF_val = predict_K_cF(
                 tpms_type, float(L_cell_mm), float(t_mm), 0.5 * float(eps),
+                method=df_method,
             )
             self._K_arr = np.full(Ny, K_val, dtype=np.float64)
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
-
-        # Fluid-dependent Forchheimer scale (default 1.0 = air/water, untouched).
-        # The base cF is the air/water-anchored production value; sCO2 passes a
-        # per-run ratio (df_surrogate.predict.sco2_cf_scale, 2026-07-15) that
-        # lands the effective cF on the smooth-wall sCO2 CFD fit. Applied here
-        # so the field momentum source uses the right inertial resistance.
-        if cf_scale != 1.0:
-            self._cF_arr = self._cF_arr * float(cf_scale)
 
         # 2026-07-10 lateral-K: optional per-cell (Nx, Ny) K/cF override in
         # SIMPLE coords. None → solve() tiles the per-row _K_arr laterally
@@ -797,12 +791,12 @@ class SIMPLESolver:
         # inlet density the caller used to define v_inlet) — that is grid- and
         # datum-independent, so it pins the *physical* throughput identically
         # on every grid and on every recreation of the solver. When it is not
-        # supplied, fall back to the 3D-style capture from rho_field[:,0]: this
-        # is correct for a reused solver (3D) or an outlet-datum P_ref_abs
-        # (the inlet row then stays at the reference density), which is why the
-        # 2D pipeline and validation pass rho_inlet_ref explicitly.
+        # supplied, fall back to the 3D-style capture from rho_field[:,0]. An
+        # explicit reference also enables this invariant for a variable-density
+        # fluid whose momentum model is otherwise labelled incompressible.
         if (getattr(self, 'massflux_inlet', True)
-                and self.fluid_type == 'ideal_gas'
+                and (self.fluid_type == 'ideal_gas'
+                     or self._rho_inlet_ref is not None)
                 and not hasattr(self, '_massflux_target')):
             if self._rho_inlet_ref is not None:
                 _rho_ref_in = self._rho_inlet_ref
@@ -816,6 +810,8 @@ class SIMPLESolver:
             self._massflux_target = (float(self.v_inlet) * _rho_ref_in
                                      * getattr(self, '_inlet_taper_flux_scale',
                                                1.0))
+            if self.fluid_type != 'ideal_gas':
+                self._apply_massflux_inlet()
 
         # 2026-07-10 lateral-K: kernels consume 2D (Nx, Ny) K/cF fields. An
         # explicit per-cell override (set_K_cF_field) wins; otherwise tile the
