@@ -66,6 +66,9 @@ explicit numerical-model change with directly relevant validation.
    otherwise. TPMS cell size and wall thickness use mm.
 9. **Surrogate promotion.** A new default surrogate must reproduce the
    Shanghai 3D validation path before replacing the current backend.
+10. **sCO2 V1 closure.** Paired sCO2 uses the exact-node three-cell CFD
+    Darcy–Forchheimer table and the smooth-wall CFD Nu correlation directly.
+    Do not apply the historical experimental gamma corrections in this path.
 
 ## Extension points
 
