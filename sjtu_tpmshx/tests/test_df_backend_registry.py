@@ -24,6 +24,10 @@ _GOLDEN = {
     ('Gyroid', 'rbf'):      (3.218806963975885e-08, 534.7664446055616),
     ('Diamond', 'gamma_df'): (5.1135209299724466e-08, 454.19001394852256),
     ('Diamond', 'rbf'):      (2.4688411110399566e-08, 745.0133131278383),
+    ('Gyroid', 'cfd_full_core_3cell_fixed_v2'):
+        (5.3704042886967827e-08, 199.05002405781562),
+    ('Diamond', 'cfd_full_core_3cell_fixed_v2'):
+        (4.4351442017543415e-08, 241.08433725023596),
 }
 
 
@@ -35,7 +39,9 @@ def test_golden_point_values_cross_platform(tpms, method):
     np.testing.assert_allclose(cF, cF_ref, rtol=1e-12, atol=0.0)
 
 
-@pytest.mark.parametrize('method', ('gamma_df', 'rbf'))
+@pytest.mark.parametrize(
+    'method', ('gamma_df', 'rbf', 'cfd_full_core_3cell_fixed_v2')
+)
 def test_scalar_vec_parity(method):
     """Vectorised path must agree with the scalar path (modulo the
     scalar-only override layer, empty since 2026-06-11).
@@ -55,7 +61,7 @@ def test_scalar_vec_parity(method):
     for i in range(L.size):
         Ks, cs = P.predict_K_cF('Gyroid', float(L[i]), float(t[i]),
                                 float(ef[i]), method=method)
-        if method == 'gamma_df':
+        if method != 'rbf':
             assert Kv[i] == Ks and cv[i] == cs
         else:
             assert Kv[i] == pytest.approx(Ks, rel=1e-12)
@@ -76,12 +82,22 @@ def test_rbf_clamp_engages_internally():
 def test_registry_surface():
     # 2026-06-30: the CFD-refit K surface was folded INTO gamma_df (it now is
     # the default K source); the transient 'cfd_refit' backend was removed.
-    assert set(available_methods()) == {'gamma_df', 'rbf'}
+    assert set(available_methods()) == {
+        'gamma_df', 'rbf', 'cfd_full_core_3cell_fixed_v2'
+    }
     with pytest.raises(ValueError, match='unknown DF method'):
         P.predict_K_cF('Gyroid', 7.0, 0.6, 0.36, method='plhub_gp_typo')
     b = get_backend('Gyroid', 'gamma_df')
     assert isinstance(b, DFBackend) and b.name == 'gamma_df'
     assert get_backend('Gyroid', 'gamma_df') is b   # cached
+
+
+def test_fixed_sco2_backend_rejects_off_grid_geometry():
+    with pytest.raises(ValueError, match='outside the fixed sCO2 CFD grid'):
+        P.predict_K_cF(
+            'Diamond', 7.1, 0.6, _EF['Diamond'],
+            method='cfd_full_core_3cell_fixed_v2',
+        )
 
 
 def test_diagnostics_passthrough():

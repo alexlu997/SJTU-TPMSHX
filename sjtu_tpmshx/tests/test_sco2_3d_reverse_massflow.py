@@ -39,8 +39,8 @@ def test_reverse_dir_sco2_massflow_recovered(monkeypatch):
     monkeypatch.setenv("TPMSHX_ALLOW_EXTRAP", "1")  # test-local; auto-restored
     # 703 recuperator: sCO2 both sides, counterflow (A dir 0 +x, B dir 1 -x).
     MH = MC = 37.6
-    TH, PH = 737.0, 8.017e6          # hot  (A, forward)
-    TC, PC = 361.0, 18.48e6          # cold (B, reverse) — dense, strong rho(T)
+    TH, PH = 650.0, 8.5e6            # hot  (A, forward)
+    TC, PC = 350.0, 15.0e6           # cold (B, reverse) — dense, strong rho(T)
     A_FRONT, L = 0.740, 0.344
     H = LZ = A_FRONT ** 0.5
     rho_h = PropsSI("D", "T", TH, "P", PH, "CO2")

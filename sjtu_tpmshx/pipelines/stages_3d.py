@@ -367,6 +367,8 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             'Q_interior': _safe_float(raw.get('Q_interior')),
             'energy_imbalance_rel': _safe_float(
                 raw.get('energy_imbalance_rel')),
+            'enthalpy_imbalance_rel': _safe_float(
+                raw.get('Q_AB_imbalance_rel')),
             'mass_imbalance_rel_A': _safe_float(
                 raw.get('mass_imbalance_rel_A')),
             'mass_imbalance_rel_B': _safe_float(

@@ -27,7 +27,10 @@ from sjtu_tpmshx.solvers import sco2_props
 from sjtu_tpmshx.solvers.asym_split import (
     _asym_split_A, _per_side_eps_override, _eps_sides_for_run,
 )
-from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, sco2_cf_scale
+from sjtu_tpmshx.df_surrogate.predict import (
+    SCO2_DF_METHOD,
+    predict_K_cF,
+)
 from sjtu_tpmshx.df_surrogate.kappa_asym import kappa_KcF
 from sjtu_tpmshx.solvers.envelope import (check_compressible_envelope, gate_solution,
                                mach_field_max, ChokedFlowError,
@@ -750,7 +753,8 @@ def _build_3d_problem(cfg):
             zone_cells, Nx, Ny, Nz, L, H, tpms_type, k_s, Lcell, t_wall)
         from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
         K_field_3d, cF_field_3d = predict_K_cF_vec(
-            tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0)
+            tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0,
+            method=(SCO2_DF_METHOD if fluid_type_A == 'sco2' else None))
         # Real → solver coord permutation (inverse equals same tuple for 2-swaps),
         # then mean over solver Nx axis (cross1) → (N_stream, N_cross2) for K_arr.
         K_sol = K_field_3d.transpose(solver_to_real_perm)
@@ -764,7 +768,9 @@ def _build_3d_problem(cfg):
         # Zoned path is a uniform-only-δ exception: no asymmetric split here.
         K_pred_B, cF_pred_B = K_pred, cF_pred
     else:
-        K0, cF0 = predict_K_cF(tpms_type, Lcell, t_wall, 0.5 * eps)
+        K0, cF0 = predict_K_cF(
+            tpms_type, Lcell, t_wall, 0.5 * eps,
+            method=(SCO2_DF_METHOD if fluid_type_A == 'sco2' else None))
         # Per-side asymmetric D-F κ correction (offset-isosurface δ). κ=1 when
         # δ=0 / disabled / no-CFD-table → K_pred_B==K_pred==K0 (bit-identical).
         # κ multiplies the symmetric baseline output; backend (gamma_df/rbf)
@@ -783,17 +789,6 @@ def _build_3d_problem(cfg):
     # (`nu_water_topo`) embeds AM roughness).
     K_A_arr, cF_A_arr = _apply_roughness_KcF(
         K_A_arr, cF_A_arr, fluid_type_A, rho_A, mu_A, u_A, D_h)
-    # sCO2: rescale the production base cF onto the smooth-wall sCO2 CFD value
-    # at the inlet Re (2026-07-15; replaces the retired D-7-6 ×3.39 — solver
-    # sCO2 Δp is now a SMOOTH-WALL estimate until an experimental γ lands).
-    # Roughness modes already skipped for sco2 (embeds_roughness). Scale both
-    # the field and the seed scalar; κ/zoned structure is preserved (uniform
-    # ratio, exactly like the old constant).
-    if fluid_type_A == 'sco2':
-        _cfs_A = sco2_cf_scale(tpms_type, Lcell, t_wall, 0.5 * eps,
-                               rho_A, mu_A, u_A)
-        cF_A_arr = cF_A_arr * _cfs_A
-        cF_pred = cF_pred * _cfs_A
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream).
     solver_fluid_type_A = fluid_props.flow_model(fluid_type_A)
@@ -844,7 +839,8 @@ def _build_3d_problem(cfg):
             sA.eps_field = eps_sol
             sA._mu_eff_field = np.ascontiguousarray(
                 sA.mu_field / sA.eps_field, dtype=np.float64)
-    sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
+    if fluid_type_A != 'sco2':
+        sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
     sA.outlet_frac = (sA.outlet_frac * out_mask_2d).astype(np.float64)
     # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
     # A.solve() deferred — build B first then run both in parallel threads.
@@ -879,13 +875,6 @@ def _build_3d_problem(cfg):
         K_B_arr, cF_B_arr = _apply_roughness_KcF(
             K_B_arr, cF_B_arr, fluid_type_B,
             rho_B, mu_B, u_B, D_h)
-        # sCO2 B side: same smooth-wall CFD rescale as A (inlet-Re anchored);
-        # roughness already skipped (embeds_roughness). Field + seed scalar.
-        if fluid_type_B == 'sco2':
-            _cfs_B = sco2_cf_scale(tpms_type, Lcell, t_wall, 0.5 * eps,
-                                   rho_B, mu_B, u_B)
-            cF_B_arr = cF_B_arr * _cfs_B
-            cF_pred_B = cF_pred_B * _cfs_B
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
@@ -929,7 +918,8 @@ def _build_3d_problem(cfg):
                 sB.eps_field = eps_sol_B
                 sB._mu_eff_field = np.ascontiguousarray(
                     sB.mu_field / sB.eps_field, dtype=np.float64)
-        sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
+        if fluid_type_B != 'sco2':
+            sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
         sB.outlet_frac = (sB.outlet_frac * out_mask_B).astype(np.float64)
         # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
         # sB.solve deferred — dispatched with sA below in parallel threads.
@@ -1126,7 +1116,6 @@ def _build_hv_machinery(prob: _Problem3D):
     eps = prob.eps
     fluid_type_A = prob.fluid_type_A
     fluid_type_B = prob.fluid_type_B
-    k_s = prob.k_s
     mu_A = prob.mu_A
     mu_B = prob.mu_B
     rho_A = prob.rho_A
@@ -1142,6 +1131,7 @@ def _build_hv_machinery(prob: _Problem3D):
     # cannot raise UnboundLocalError on guarded paths. Downstream
     # reads keep their original guards.
     h_vB_field = None
+    k_s = prob.k_s
     # h_v from Nu correlation. Per-cell when zoned (#4): tpms_compute uses
     # local (Lcell_ij, t_wall_ij) so A_0, H_sf track the design field.
     # Uniform case reduces to the old scalar path.
@@ -2219,7 +2209,6 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     h_vB_field = hv.h_vB_field
     in_mask_2d = prob.in_mask_2d
     in_mask_B = prob.in_mask_B
-    k_s = prob.k_s
     mu_A = prob.mu_A
     mu_B = prob.mu_B
     out_mask_B = prob.out_mask_B
@@ -2604,13 +2593,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # eps_f_arr (= ε_A, correct for diffusion); only the convective
         # epsilon arg must be FULL ε.
         _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
-        # Option B gate: sCO2-both-sides counterflow-x with ltne_enthalpy_mode on.
-        # sCO2-both (recuperator) OR sCO2 + water (precooler); ≥1 variable-cp
-        # sCO2 side. air/water-only stays on the legacy ρcp·u·T path.
-        _enth_gate = (bool(cfg.get('ltne_enthalpy_mode', False))
-                      and fluid_type_A in ('sco2', 'water')
-                      and fluid_type_B in ('sco2', 'water')
-                      and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
+        # sCO2 V1 gate: paired counterflow-x always uses true enthalpy.
+        # Air/water and mixed-fluid cases stay on the existing ρcp·u·T path.
+        _enth_gate = (fluid_type_A == fluid_type_B == 'sco2'
                       and sB is not None
                       and fA['dir'] in (0, 1) and fB['dir'] in (0, 1))
         # When the enthalpy solve will overwrite the result below, run the legacy
@@ -2665,10 +2650,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
         # for sCO2 (cp spikes near the pseudocritical line) is NOT the true
         # enthalpy ṁ·h → the 703 recuperator ~41% A/B imbalance / wrong cold
-        # outlet. When opted in (`ltne_enthalpy_mode`, default OFF) for an
-        # sCO2-both-sides counterflow-x case, replace the result with the
-        # enthalpy-form solve (true ṁ·h transport). Default-off + the strict
-        # gate keep air/water and every other config bit-identical.
+        # outlet. For a paired sCO2 counterflow-x case, replace the result with
+        # the enthalpy-form solve (true ṁ·h transport). The strict gate keeps
+        # air/water and every other config bit-identical.
         # (Plan: vault reports/method/3d/2026-06-28-3d-ltne-enthalpy-*.)
         if _enth_gate:
             from sjtu_tpmshx.solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
@@ -2685,11 +2669,23 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _mdB = (1.0 if fB['dir'] == 0 else -1.0) * abs(
                 _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps,
                                   eps_side_override=_ov_B_e))
+            _dPA = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
+            _P_A_local = np.ascontiguousarray(
+                ((P_inA - _dPA) + sA.P).transpose(solver_to_real_perm))
+            _dPB = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
+            _P_B_local = np.ascontiguousarray(
+                ((P_inB - _dPB) + sB.P).transpose(
+                    axis_map_B['solver_to_real_perm']))
+            if axis_map_B['is_reverse']:
+                _P_B_local = np.ascontiguousarray(np.flip(
+                    _P_B_local, axis=axis_map_B['stream_real_axis']))
             Ta, Tb, Ts, _ltne_info_d = solve_ltne_enthalpy_3d_pipeline(
-                Nx, Ny, Nz, dx, dy, dz, eps_arr, k_s,
+                Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                 h_vA_field, h_vB_field, _mdA, _mdB,
                 T_inA, T_inB, P_inA, P_inB, fA['dir'], fB['dir'],
                 fluid_A=fluid_type_A, fluid_B=fluid_type_B,
+                pressure_A_field=_P_A_local,
+                pressure_B_field=_P_B_local,
                 eps_A_field=(eps_fA_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
                 eps_B_field=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
@@ -2808,8 +2804,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                        warn_list=_env_warnings,
                                        context=_shoot_ctx)
         else:
-            # sco2-A reseed: 1D Darcy-Forchheimer dP (cF_pred already rescaled
-            # onto the smooth-wall sCO2 CFD cF via sco2_cf_scale).
+            # sCO2-A reseed: the fixed CFD D-F coefficients use a constant cF.
             mu_avg = float(sco2_props.sco2_viscosity(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
             _sco2_compress = (os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '')
@@ -3041,5 +3036,3 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         rho_cp_fA=rho_cp_fA,
         rho_cp_fB=rho_cp_fB,
     )
-
-

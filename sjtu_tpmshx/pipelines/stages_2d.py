@@ -410,8 +410,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     simple_warnings = {}
 
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
-                    T_field_real=None, fluid_type='ideal_gas', cf_scale=1.0,
-                    p_shoot_prev=None):
+                    T_field_real=None, fluid_type='ideal_gas',
+                    p_shoot_prev=None, df_method=None):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -511,7 +511,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
             from sjtu_tpmshx.solvers.envelope import predict_outlet_p_sq
             _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
-                                  0.5 * float(eps))
+                                  0.5 * float(eps), method=df_method)
             _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
             _G = _rho_in * abs(float(u_f))                   # mass flux ρ·u
             _mu_in = float(np.mean(mu_f)) if np.ndim(mu_f) else float(mu_f)
@@ -541,8 +541,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              wall_refine=False,
                              P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type,
-                             cf_scale=cf_scale)
+                             fluid_type=fluid_type, df_method=df_method)
             # Override grid to match energy solver (SIMPLE x = real y)
             s.dx_arr = energy_dy.copy()
             s.dy_arr = energy_dx.copy()
@@ -556,8 +555,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
                              wall_refine=False,
                              P_ref_abs=P_ref_out,
                              rho_inlet_ref=rho_inlet_ref,
-                             fluid_type=fluid_type,
-                             cf_scale=cf_scale)
+                             fluid_type=fluid_type, df_method=df_method)
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
@@ -954,10 +952,16 @@ def _finalize_cfg(raw: dict[str, Any],
             'r_Q': 1.0 if raw.get('Q_richardson_warn') else 0.0,
             'simple_A': raw.get('residuals_A'),
             'simple_B': raw.get('residuals_B'),
+            'mass_imbalance_rel_A': float(
+                raw.get('mass_imbalance_rel_A', float('nan'))),
+            'mass_imbalance_rel_B': float(
+                raw.get('mass_imbalance_rel_B', float('nan'))),
             'Q_A': float(raw.get('Q_A', float('nan'))),
             'Q_B': float(raw.get('Q_B', float('nan'))),
             'Q_net': float(raw.get('Q_net', float('nan'))),
             'energy_imbalance_rel': float(
+                raw.get('energy_imbalance_rel', float('nan'))),
+            'enthalpy_imbalance_rel': float(
                 raw.get('energy_imbalance_rel', float('nan'))),
         },
         zones=zones_slot,

@@ -278,7 +278,7 @@ class SIMPLESolver:
                  wall_refine=True,
                  n_wall_refine=8,
                  wall_first_cell=0.02e-3,
-                 cf_scale=1.0,
+                 df_method=None,
                  **_legacy_kw):
         # Historical 'closure' kwarg is accepted but ignored; ConstDF-v1 D-F
         # is the only closure since 2026-04-19 f-Re cleanup.
@@ -409,24 +409,18 @@ class SIMPLESolver:
                 t_row[j] = z.t_mm
                 z_eps = z.props_A['epsilon'] if z.props_A else eps
                 eps_f_row[j] = 0.5 * z_eps  # ε_A: per-stream void fraction
-            K_vec, cF_vec = predict_K_cF_vec(tpms_type, L_row, t_row, eps_f_row)
+            K_vec, cF_vec = predict_K_cF_vec(
+                tpms_type, L_row, t_row, eps_f_row, method=df_method)
             self._K_arr = K_vec.astype(np.float64)
             self._cF_arr = cF_vec.astype(np.float64)
         else:
             # Uniform (or zone_arrays fallback): single (K, c_F), broadcast
             K_val, cF_val = predict_K_cF(
                 tpms_type, float(L_cell_mm), float(t_mm), 0.5 * float(eps),
+                method=df_method,
             )
             self._K_arr = np.full(Ny, K_val, dtype=np.float64)
             self._cF_arr = np.full(Ny, cF_val, dtype=np.float64)
-
-        # Fluid-dependent Forchheimer scale (default 1.0 = air/water, untouched).
-        # The base cF is the air/water-anchored production value; sCO2 passes a
-        # per-run ratio (df_surrogate.predict.sco2_cf_scale, 2026-07-15) that
-        # lands the effective cF on the smooth-wall sCO2 CFD fit. Applied here
-        # so the field momentum source uses the right inertial resistance.
-        if cf_scale != 1.0:
-            self._cF_arr = self._cF_arr * float(cf_scale)
 
         # 2026-07-10 lateral-K: optional per-cell (Nx, Ny) K/cF override in
         # SIMPLE coords. None → solve() tiles the per-row _K_arr laterally

@@ -115,6 +115,13 @@ class GammaBackend(DFBackend):
         return K, cF
 
 
+@register('cfd_full_core_3cell_fixed_v2')
+class FullCore3CellFixedBackend(DFBackend):
+    def _build(self, tpms_type):
+        from .full_core_3cell_fixed_v2 import FullCore3CellFixedDFV2
+        return FullCore3CellFixedDFV2(tpms_type)
+
+
 @register('rbf')
 class RBFBackend(DFBackend):
     def _build(self, tpms_type):

@@ -333,16 +333,10 @@ def _compute_cached(tpms_type: str,
     # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
     # convention, see df_surrogate/predict.py). Import is module-level since
     # arch-b-c-e batch B (tpms_props leaf broke the old two-way coupling).
-    K_df, cF_df = predict_K_cF(tpms_type, float(L_cell_mm), float(t_mm),
-                               float(eps) / 2.0)
-    # sCO2: cF comes from the smooth-wall sCO2 unit-cell CFD fit
-    # (df_surrogate.sco2_df, 2026-07-15; replaces the retired D-7-6 ×3.39).
-    # K stays the production CFD-refit face (sCO2 data cannot identify K).
-    # ⚠ smooth-wall estimate — real SLM-part Δp runs several × higher until
-    # an experimental γ anchor lands. air/water keep the production cF.
-    if fluid_type == 'sco2':
-        from sjtu_tpmshx.df_surrogate.sco2_df import predict_cF_sco2
-        cF_df = predict_cF_sco2(tpms_type, float(L_cell_mm), float(t_mm), Re)
+    K_df, cF_df = predict_K_cF(
+        tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
+        method=_df_env[0] or None,
+    )
     dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
     # ── Effective thermal conductivities (volume-averaged) ────
@@ -396,7 +390,10 @@ def compute(tpms_type: str,
        mutating its result would silently poison every later hit. The
        wrapper returns a shallow copy (values are scalars).
     """
-    _df_env = (os.environ.get('TPMSHX_DF_METHOD', ''),
+    from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
+    _df_method = (SCO2_DF_METHOD if fluid_type == 'sco2'
+                  else os.environ.get('TPMSHX_DF_METHOD', ''))
+    _df_env = (_df_method,
                os.environ.get('TPMSHX_DF_OVERRIDES', ''))
     return dict(_compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
                                 P_in_Pa, k_s, fluid_type, _df_env))

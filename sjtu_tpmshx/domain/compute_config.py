@@ -576,6 +576,62 @@ class ComputeConfig:
                     "sweep, drive pipelines.stages_3d._run_3d_stack directly "
                     "with a raw cfg dict and read convergence_detail — do not "
                     "route it through the typed production config.")
+
+        # sCO2 V1 is deliberately narrow: it reuses the existing full-face
+        # counterflow pipelines and the exact-node CFD D-F table.  Rejecting
+        # unsupported combinations here is smaller and safer than scattering
+        # fallbacks through the 2D and 3D solvers.
+        sco2_A = self.fluid_A.type == 'sco2'
+        sco2_B = self.fluid_B.type == 'sco2'
+        if sco2_A or sco2_B:
+            if not (sco2_A and sco2_B):
+                raise ValueError("sCO2 V1 requires both fluids to be sCO2")
+            for side, fl in (('A', self.fluid_A), ('B', self.fluid_B)):
+                if not 280.0 <= fl.T_in_K <= 700.0:
+                    raise ValueError(
+                        f"sCO2 V1 fluid {side} temperature must be 280..700 K")
+                if not 8.0e6 <= fl.P_in_Pa <= 16.0e6:
+                    raise ValueError(
+                        f"sCO2 V1 fluid {side} pressure must be 8..16 MPa")
+            if self.geometry.L_cell_mm not in {4.0, 5.0, 6.0, 7.0, 8.0} \
+                    or self.geometry.t_wall_mm not in {0.3, 0.4, 0.5, 0.6}:
+                raise ValueError(
+                    "sCO2 V1 geometry must be an exact CFD node: "
+                    "L=4..8 mm, t=0.3..0.6 mm")
+            if self.bc_A.dir != 0 or self.bc_B.dir != 1:
+                raise ValueError("sCO2 V1 requires A:+x and B:-x counterflow")
+            if self.zones.enabled:
+                raise ValueError("sCO2 V1 does not support zones")
+            if self.geometry.delta_levelset != 0.0:
+                raise ValueError("sCO2 V1 requires delta_levelset=0")
+
+            def _full_face(bc: PartialBCConfig) -> bool:
+                transverse = self.geometry.H_dom_m
+                xy_full = (
+                    bc.in_w <= 0.0 and bc.out_w <= 0.0
+                ) or (
+                    math.isclose(bc.in_w, transverse)
+                    and math.isclose(bc.out_w, transverse)
+                    and math.isclose(bc.in_ctr, transverse / 2.0)
+                    and math.isclose(bc.out_ctr, transverse / 2.0)
+                )
+                if not xy_full or not self.is_3d:
+                    return xy_full
+                if bc.in_z_ctr is None and bc.out_z_ctr is None:
+                    return True
+                depth = self.geometry.Lz_m
+                return bool(
+                    depth is not None
+                    and bc.in_z_w is not None and bc.out_z_w is not None
+                    and bc.in_z_ctr is not None and bc.out_z_ctr is not None
+                    and math.isclose(bc.in_z_w, depth)
+                    and math.isclose(bc.out_z_w, depth)
+                    and math.isclose(bc.in_z_ctr, depth / 2.0)
+                    and math.isclose(bc.out_z_ctr, depth / 2.0)
+                )
+
+            if not _full_face(self.bc_A) or not _full_face(self.bc_B):
+                raise ValueError("sCO2 V1 requires full-face inlet and outlet")
         return self
 
     @classmethod

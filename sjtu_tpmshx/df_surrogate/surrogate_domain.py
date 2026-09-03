@@ -85,18 +85,29 @@ def check_surrogate_domain_at_point(tpms_type: str,
     Re = rho * u * D_h / mu
 
     reasons: list[str] = []
-    if Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
+    if fluid == 'sco2':
+        from sjtu_tpmshx.solvers.nu_correlations import SCO2_NU_RE_RANGE
+        if not SCO2_NU_RE_RANGE[0] <= Re <= SCO2_NU_RE_RANGE[1]:
+            reasons.append(
+                f"Fluid {side}: Re = {Re:.0f} outside sCO2 CFD Nu window "
+                f"[{SCO2_NU_RE_RANGE[0]:.0f}, {SCO2_NU_RE_RANGE[1]:.0f}]."
+            )
+        if float(L_mm) not in {4.0, 5.0, 6.0, 7.0, 8.0}:
+            reasons.append("sCO2 V1 L_cell must be an exact 4..8 mm node.")
+        if float(t_mm) not in {0.3, 0.4, 0.5, 0.6}:
+            reasons.append("sCO2 V1 wall thickness must be an exact 0.3..0.6 mm node.")
+    elif Re < _SURROGATE_RE[0] or Re > _SURROGATE_RE[1]:
         reasons.append(
             f"Fluid {side}: Re = {Re:.0f} outside ConstDF-v1 window "
             f"[{_SURROGATE_RE[0]:.0f}, {_SURROGATE_RE[1]:.0f}] "
             f"(u={u} m/s, T={T} K, P={P:.0f} Pa, L={L_mm}mm, t={t_mm}mm)."
         )
-    if not (_SURROGATE_L_MM[0] <= L_mm <= _SURROGATE_L_MM[1]):
+    if fluid != 'sco2' and not (_SURROGATE_L_MM[0] <= L_mm <= _SURROGATE_L_MM[1]):
         reasons.append(
             f"L_cell = {L_mm} mm outside ConstDF-v1 range "
             f"[{_SURROGATE_L_MM[0]}, {_SURROGATE_L_MM[1]}] mm."
         )
-    if not (_SURROGATE_T_MM[0] <= t_mm <= _SURROGATE_T_MM[1]):
+    if fluid != 'sco2' and not (_SURROGATE_T_MM[0] <= t_mm <= _SURROGATE_T_MM[1]):
         reasons.append(
             f"Wall thickness t = {t_mm} mm outside ConstDF-v1 range "
             f"[{_SURROGATE_T_MM[0]}, {_SURROGATE_T_MM[1]}] mm."
@@ -105,7 +116,7 @@ def check_surrogate_domain_at_point(tpms_type: str,
     if reasons:
         if allow_extrap:
             for r in reasons:
-                _w.warn("[ConstDF-v1 extrap] " + r, stacklevel=2)
+                _w.warn("[surrogate extrap] " + r, stacklevel=2)
         else:
             raise ValueError(" | ".join(reasons))
     return reasons
