@@ -828,6 +828,10 @@ def _build_3d_problem(cfg):
     _apply_accel_flags(sA, cfg)
     sA.inlet_frac = in_mask_2d
     sA.outlet_frac = out_mask_2d
+    # sCO2 keeps pressure frozen in V1 but rho(T) still changes; retain the
+    # measured inlet mass flux when the outer property loop updates rho.
+    if fluid_type_A == 'sco2':
+        sA._massflux_target = (v_inlet_field * rho_A).copy()
     # Zoned ε → push to SIMPLE so its continuity ∇·(ε·ρ·u)=0 picks up the
     # ∇ε contribution. Uniform ε leaves the default unchanged.
     if eps_field_3d is not None:
@@ -908,6 +912,8 @@ def _build_3d_problem(cfg):
         _apply_accel_flags(sB, cfg)
         sB.inlet_frac = in_mask_B
         sB.outlet_frac = out_mask_B
+        if fluid_type_B == 'sco2':
+            sB._massflux_target = (v_inlet_B * rho_B).copy()
         # Zoned ε for sB.
         if eps_field_3d is not None:
             eps_sol_B = np.ascontiguousarray(
@@ -1857,6 +1863,8 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         Lx=L, Ly=H, Lz=Lz,
         Q=Q, Q_total=Q, Q_enthalpy_A=Q_enthalpy_A, Q_enthalpy_B=Q_enthalpy_B,
         Q_solid_B=Q_solid_B,
+        mass_flow_A_kg_s=m_dot_A_simple,
+        mass_flow_B_kg_s=(m_dot_B_simple if sB is not None else None),
         dP=dP, dP_A=dP, u_A=u_A, T_in=T_inA,
         # C8 shooting diagnostics: realized inlet abs P vs specified P_in
         # (NaN on non-ideal-gas sides; see computation above).
@@ -2773,6 +2781,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         eps_eff_A = sA.eps_field if hasattr(sA, 'eps_field') else sA.eps
         sA._mu_eff_field = np.ascontiguousarray(
             sA.mu_field / eps_eff_A, dtype=np.float64)
+        if fluid_type_A == 'sco2':
+            sA._apply_massflux_inlet()
 
         T_avg = float(Ta_sA.mean())
         if _mA.compressible:
@@ -2950,6 +2960,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             eps_eff_B = sB.eps_field if hasattr(sB, 'eps_field') else sB.eps
             sB._mu_eff_field = np.ascontiguousarray(
                 sB.mu_field / eps_eff_B, dtype=np.float64)
+            if fluid_type_B == 'sco2':
+                sB._apply_massflux_inlet()
 
             if _mB.compressible:   # P_ref recompute is compressible-only
                 Tb_avg = float(Tb_sB.mean())

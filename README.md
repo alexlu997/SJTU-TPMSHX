@@ -268,6 +268,19 @@ The sCO2 experiment loader expects `data/raw_data/sCO2-Experient.xlsx`
 Run the sCO2 V1 CFD, conservation, pressure-drop, and 2D/3D parity gate with
 `python -m sjtu_tpmshx.validation.cases.validate_sco2_v1`.
 
+Run the full-core experimental-Q smoke with
+`python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q`. The validation
+maps measured mass flow to the solver's interstitial inlet velocity with
+`A_void = (epsilon / 2) * (0.042 m)^2` and
+`u_in = mdot / (rho(T_in, P_in) * A_void)`. The loader's mean-state `u` remains
+only an experimental Re/f reduction and is not passed to the field solver.
+The 2D mass flow and duty are per metre of depth and are multiplied by the
+physical 0.042 m core depth before comparison with the workbook. The runner
+also checks the inlet-face integral of `epsilon/2 * rho * u * dA` against the
+measured mass flow at `1e-6` relative tolerance. Experimental Q is the midpoint
+of the hot- and cold-side `mdot * abs(h_in - h_out)` values; it is a validation
+reference only and does not refit Nu or the fixed CFD D-F coefficients.
+
 For reproducible runs, use the `SJTU-TPMSHX-data` commit recorded in
 `data-revision.txt`. On Windows Server, `scripts/port_retest_server.ps1`
 checks out that revision and copies its `raw_data/` directory automatically.

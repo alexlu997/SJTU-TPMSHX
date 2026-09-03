@@ -1,0 +1,296 @@
+"""Compare the bounded sCO2 V1 field solver with full-core experiment Q.
+
+The workbook's ``u`` column is a mean-state reduction used for Re/f.  Solver
+input velocity is rebuilt from the measured mass flow at the inlet state:
+
+    A_void,side = (epsilon / 2) * (0.042 m)^2
+    u_in = mdot_exp / (rho(T_in, P_in) * A_void,side)
+
+The runner refuses to interpret Q error unless the mass flow reconstructed by
+the production pipeline matches the workbook value.  Experimental pressure
+drop is printed only as a diagnostic; V1 uses smooth-wall CFD D-F coefficients.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D, Pipeline3D
+from sjtu_tpmshx.domain.compute_config import (
+    ComputeConfig,
+    FluidConfig,
+    GeometryConfig,
+    PartialBCConfig,
+    SolverConfig,
+)
+from sjtu_tpmshx.solvers import fluid_props
+from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry
+from sjtu_tpmshx.validation.sco2_exp.load_sco2_exp import load_exp
+
+
+CELL_M = 7.0e-3
+N_STREAM = 26
+N_CROSS = 6
+CORE_LENGTH_M = N_STREAM * CELL_M
+CORE_WIDTH_M = N_CROSS * CELL_M
+CORE_DEPTH_M = CORE_WIDTH_M
+GROSS_FACE_M2 = CORE_WIDTH_M * CORE_DEPTH_M
+FLOW_REL_TOL = 1.0e-6
+SMOKE_CASES = {"Diamond": 8, "Gyroid": 41}
+
+
+def _solver_geometry(topology: str) -> dict[str, float]:
+    geo = tpms_geometry(topology, 7.0, 0.6, 16.0)
+    return {
+        "epsilon": float(geo["epsilon"]),
+        "void_area_m2": 0.5 * float(geo["epsilon"]) * GROSS_FACE_M2,
+        "heat_area_m2": float(geo["A_0"]) * GROSS_FACE_M2 * CORE_LENGTH_M,
+    }
+
+
+def _flow_velocity(mdot_kg_s: float, rho_in_kg_m3: float,
+                   void_area_m2: float) -> float:
+    if mdot_kg_s <= 0.0 or rho_in_kg_m3 <= 0.0 or void_area_m2 <= 0.0:
+        raise ValueError("mass flow, inlet density, and void area must be positive")
+    return mdot_kg_s / (rho_in_kg_m3 * void_area_m2)
+
+
+def _valid_case_numbers(df: pd.DataFrame) -> list[int]:
+    in_range = (
+        df["ok_done"]
+        & df["ok_hb"]
+        & (df["Tin_C"] + 273.15).between(280.0, 700.0)
+        & (df["Tout_C"] + 273.15).between(280.0, 700.0)
+        & df["Pin_MPa"].between(8.0, 16.0)
+        & df["Pout_MPa"].between(8.0, 16.0)
+    )
+    counts = df[in_range].groupby("case")["side"].nunique()
+    return [int(case) for case in counts[counts == 2].index]
+
+
+def _case_rows(df: pd.DataFrame, case: int) -> tuple[pd.Series, pd.Series]:
+    selected = df[df["case"] == case]
+    if set(selected["side"]) != {"hot", "cold"}:
+        raise ValueError(f"case {case} does not contain one hot and one cold row")
+    return (
+        selected[selected["side"] == "hot"].iloc[0],
+        selected[selected["side"] == "cold"].iloc[0],
+    )
+
+
+def _config(topology: str, hot: pd.Series, cold: pd.Series,
+            u_hot: float, u_cold: float, dimension: str) -> ComputeConfig:
+    # ponytail: this is a porous-domain validation grid, not a grid-convergence
+    # study; add a refinement sweep only after the smooth-wall model is useful.
+    nz = N_CROSS if dimension == "3d" else 1
+    return ComputeConfig(
+        fluid_A=FluidConfig(
+            type="sco2", u_mps=u_hot,
+            T_in_K=float(hot["Tin_C"]) + 273.15,
+            P_in_Pa=float(hot["Pin_MPa"]) * 1.0e6,
+        ),
+        fluid_B=FluidConfig(
+            type="sco2", u_mps=u_cold,
+            T_in_K=float(cold["Tin_C"]) + 273.15,
+            P_in_Pa=float(cold["Pin_MPa"]) * 1.0e6,
+        ),
+        geometry=GeometryConfig(
+            tpms=topology, L_cell_mm=7.0, t_wall_mm=0.6,
+            k_s_W_mK=16.0, L_dom_m=CORE_LENGTH_M,
+            H_dom_m=CORE_WIDTH_M,
+            Lz_m=CORE_DEPTH_M if dimension == "3d" else None,
+        ),
+        solver=SolverConfig(
+            Nx=2 * N_STREAM, Ny=2 * N_CROSS, Nz=nz,
+        ),
+        bc_A=PartialBCConfig(dir=0),
+        bc_B=PartialBCConfig(dir=1),
+    )
+
+
+def _run_case(topology: str, case: int, dimension: str,
+              df: pd.DataFrame) -> dict[str, object]:
+    hot, cold = _case_rows(df, case)
+    geo = _solver_geometry(topology)
+    model = fluid_props.get("sco2")
+    rho_hot = float(model.rho(
+        float(hot["Tin_C"]) + 273.15, float(hot["Pin_MPa"]) * 1.0e6))
+    rho_cold = float(model.rho(
+        float(cold["Tin_C"]) + 273.15, float(cold["Pin_MPa"]) * 1.0e6))
+    u_hot = _flow_velocity(float(hot["mdot"]), rho_hot, geo["void_area_m2"])
+    u_cold = _flow_velocity(float(cold["mdot"]), rho_cold, geo["void_area_m2"])
+
+    cfg = _config(topology, hot, cold, u_hot, u_cold, dimension)
+    result = (Pipeline3D(cfg).run() if dimension == "3d"
+              else Pipeline2D(cfg).run())
+    if dimension == "3d":
+        q_solver = float(result.Q_W)
+        mdot_hot_actual = float(result.diagnostics["mass_flow_A_kg_s"])
+        mdot_cold_actual = float(result.diagnostics["mass_flow_B_kg_s"])
+    else:
+        q_solver = float(result.Q_W) * CORE_DEPTH_M
+        mdot_hot_actual = float(
+            result.diagnostics["mass_flow_A_kg_s_per_m"]) * CORE_DEPTH_M
+        mdot_cold_actual = float(
+            result.diagnostics["mass_flow_B_kg_s_per_m"]) * CORE_DEPTH_M
+
+    mdot_hot = float(hot["mdot"])
+    mdot_cold = float(cold["mdot"])
+    flow_err_hot = abs(mdot_hot_actual / mdot_hot - 1.0)
+    flow_err_cold = abs(mdot_cold_actual / mdot_cold - 1.0)
+    q_hot = abs(float(hot["Q_kW"])) * 1.0e3
+    q_cold = abs(float(cold["Q_kW"])) * 1.0e3
+    q_ref = 0.5 * (q_hot + q_cold)
+    t_hot_out_exp = float(hot["Tout_C"]) + 273.15
+    t_cold_out_exp = float(cold["Tout_C"]) + 273.15
+    t_lo = min(cfg.fluid_A.T_in_K, cfg.fluid_B.T_in_K)
+    t_hi = max(cfg.fluid_A.T_in_K, cfg.fluid_B.T_in_K)
+    numerical_ok = bool(
+        result.converged
+        and flow_err_hot <= FLOW_REL_TOL
+        and flow_err_cold <= FLOW_REL_TOL
+        and result.residuals["mass_imbalance_rel_A"] <= 1.0e-6
+        and result.residuals["mass_imbalance_rel_B"] <= 1.0e-6
+        and result.residuals["enthalpy_imbalance_rel"] <= 0.05
+        and math.isfinite(q_solver) and q_solver > 0.0
+        and t_lo <= result.T_out_A_K <= t_hi
+        and t_lo <= result.T_out_B_K <= t_hi
+    )
+    return {
+        "topology": topology,
+        "case": case,
+        "dimension": dimension,
+        "mdot_hot_exp_kg_s": mdot_hot,
+        "mdot_hot_solver_kg_s": mdot_hot_actual,
+        "flow_err_hot_rel": flow_err_hot,
+        "mdot_cold_exp_kg_s": mdot_cold,
+        "mdot_cold_solver_kg_s": mdot_cold_actual,
+        "flow_err_cold_rel": flow_err_cold,
+        "rho_hot_in_kg_m3": rho_hot,
+        "rho_cold_in_kg_m3": rho_cold,
+        "u_hot_solver_m_s": u_hot,
+        "u_cold_solver_m_s": u_cold,
+        "void_area_sheet_m2": float(df.attrs["A_flow_m2"]),
+        "void_area_solver_m2": geo["void_area_m2"],
+        "heat_area_sheet_m2": float(df.attrs["A_heat_m2"]),
+        "heat_area_solver_m2": geo["heat_area_m2"],
+        "Q_hot_exp_W": q_hot,
+        "Q_cold_exp_W": q_cold,
+        "Q_ref_W": q_ref,
+        "Q_solver_W": q_solver,
+        "Q_error_rel": q_solver / q_ref - 1.0,
+        "Q_in_exp_band": min(q_hot, q_cold) <= q_solver <= max(q_hot, q_cold),
+        "T_hot_out_exp_K": t_hot_out_exp,
+        "T_hot_out_solver_K": float(result.T_out_A_K),
+        "T_cold_out_exp_K": t_cold_out_exp,
+        "T_cold_out_solver_K": float(result.T_out_B_K),
+        "dP_hot_exp_Pa": float(hot["dP_MPa"]) * 1.0e6,
+        "dP_hot_solver_Pa": float(result.dP_A_Pa),
+        "dP_cold_exp_Pa": float(cold["dP_MPa"]) * 1.0e6,
+        "dP_cold_solver_Pa": float(result.dP_B_Pa),
+        "mass_imbalance_A_rel": float(
+            result.residuals["mass_imbalance_rel_A"]),
+        "mass_imbalance_B_rel": float(
+            result.residuals["mass_imbalance_rel_B"]),
+        "enthalpy_imbalance_rel": float(
+            result.residuals["enthalpy_imbalance_rel"]),
+        "converged": bool(result.converged),
+        "numerical_ok": numerical_ok,
+    }
+
+
+def _print_geometry(topology: str, df: pd.DataFrame) -> None:
+    geo = _solver_geometry(topology)
+    area_flow = float(df.attrs["A_flow_m2"])
+    area_heat = float(df.attrs["A_heat_m2"])
+    print(
+        f"{topology}: A_void sheet={area_flow:.9f}, "
+        f"solver=(eps/2)A_gross={geo['void_area_m2']:.9f} m2 "
+        f"({geo['void_area_m2'] / area_flow - 1.0:+.2%}); "
+        f"A_heat sheet={area_heat:.6f}, solver=A0*V={geo['heat_area_m2']:.6f} "
+        f"m2 ({geo['heat_area_m2'] / area_heat - 1.0:+.2%})"
+    )
+
+
+def _print_summary(results: pd.DataFrame) -> None:
+    for (dimension, topology), group in results.groupby(
+            ["dimension", "topology"], sort=False):
+        err = group["Q_error_rel"].to_numpy(float)
+        outlet_errors = np.concatenate([
+            group["T_hot_out_solver_K"].to_numpy(float)
+            - group["T_hot_out_exp_K"].to_numpy(float),
+            group["T_cold_out_solver_K"].to_numpy(float)
+            - group["T_cold_out_exp_K"].to_numpy(float),
+        ])
+        print(
+            f"SUMMARY {dimension} {topology}: n={len(group)}, "
+            f"Q RMSRE={np.sqrt(np.mean(err**2)):.2%}, "
+            f"median APE={np.median(np.abs(err)):.2%}, "
+            f"P90 APE={np.quantile(np.abs(err), 0.9):.2%}, "
+            f"bias={np.mean(err):+.2%}, "
+            f"Q-band hit={group['Q_in_exp_band'].mean():.1%}, "
+            f"Tout MAE={np.mean(np.abs(outlet_errors)):.2f} K"
+        )
+
+
+def run(topologies: list[str], dimensions: list[str], *, case: int | None,
+        all_valid: bool) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for topology in topologies:
+        df = load_exp(topology)
+        _print_geometry(topology, df)
+        cases = (_valid_case_numbers(df) if all_valid else
+                 [case if case is not None else SMOKE_CASES[topology]])
+        for case_no in cases:
+            for dimension in dimensions:
+                row = _run_case(topology, int(case_no), dimension, df)
+                rows.append(row)
+                print(
+                    f"{topology} case {case_no:02d} {dimension}: "
+                    f"mdot hot/cold err=({row['flow_err_hot_rel']:.2e}, "
+                    f"{row['flow_err_cold_rel']:.2e}), "
+                    f"Q={row['Q_solver_W']:.1f} W vs "
+                    f"[{min(row['Q_hot_exp_W'], row['Q_cold_exp_W']):.1f}, "
+                    f"{max(row['Q_hot_exp_W'], row['Q_cold_exp_W']):.1f}] W "
+                    f"({row['Q_error_rel']:+.1%}), "
+                    f"enthalpy={row['enthalpy_imbalance_rel']:.2%}, "
+                    f"ok={row['numerical_ok']}"
+                )
+    result = pd.DataFrame(rows)
+    _print_summary(result)
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--topology", choices=("Diamond", "Gyroid"))
+    parser.add_argument("--case", type=int)
+    parser.add_argument("--dimension", choices=("2d", "3d", "both"),
+                        default="both")
+    parser.add_argument("--all-valid", action="store_true")
+    parser.add_argument("--csv", type=Path)
+    args = parser.parse_args()
+    if args.all_valid and args.case is not None:
+        parser.error("--all-valid and --case are mutually exclusive")
+    if args.case is not None and args.topology is None:
+        parser.error("--case requires --topology")
+
+    topologies = [args.topology] if args.topology else ["Diamond", "Gyroid"]
+    dimensions = (["2d", "3d"] if args.dimension == "both"
+                  else [args.dimension])
+    result = run(topologies, dimensions, case=args.case,
+                 all_valid=args.all_valid)
+    if args.csv is not None:
+        args.csv.parent.mkdir(parents=True, exist_ok=True)
+        result.to_csv(args.csv, index=False, encoding="utf-8-sig")
+        print(f"Saved: {args.csv.resolve()}")
+    return int(not bool(result["numerical_ok"].all()))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

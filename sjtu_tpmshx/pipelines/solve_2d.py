@@ -697,6 +697,7 @@ def _run_solvers(window, cfg, fields):
     _sco2_v1 = (_pA['name'] == _pB['name'] == 'sco2'
                 and dir_A == 0 and dir_B == 1
                 and zone_config is None)
+    mA_rows = mB_rows = None
 
     # 2026-05-09 — bump _MAX_COUPLING 5→10 default. The loop short-circuits
     # once both drho_X and dT_X drop below their respective tolerances, so
@@ -920,6 +921,7 @@ def _run_solvers(window, cfg, fields):
     # `nonlocal`s are the vars that persist across iters or are read afterwards.
     def _step_2d(_coup_it):
         nonlocal ucA, vcA, ucB, vcB, simpA, simpB, Ta, Tb, Ts, e_info
+        nonlocal mA_rows, mB_rows
         nonlocal _energy_nan_hit
         nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
@@ -979,6 +981,9 @@ def _run_solvers(window, cfg, fields):
                           'Fluid A', P_inA_val),
                       dict(T_field_real=_Ta_for_simpA,
                            fluid_type=_ftA, df_method=_dfA,
+                           rho_inlet_ref=(
+                               float(_pA['rho'](T_inA, P_inA_val))
+                               if _pA['name'] == 'sco2' else None),
                            p_shoot_prev=_psA)),
                 daemon=True)
             _tB = _threading.Thread(
@@ -987,6 +992,9 @@ def _run_solvers(window, cfg, fields):
                           'Fluid B', P_inB_val),
                       dict(T_field_real=_Tb_for_simpB,
                            fluid_type=_ftB, df_method=_dfB,
+                           rho_inlet_ref=(
+                               float(_pB['rho'](T_inB, P_inB_val))
+                               if _pB['name'] == 'sco2' else None),
                            p_shoot_prev=_psB)),
                 daemon=True)
             _tA.start(); _tB.start()
@@ -1135,10 +1143,17 @@ def _run_solvers(window, cfg, fields):
                         else eps_side[0, :])
             eps_B_in = (float(eps_side) if eps_side.ndim == 0
                         else eps_side[-1, :])
-            rho_A_in = np.asarray(_pA['rho'](T_inA, P_abs_A[0, :]))
-            rho_B_in = np.asarray(_pB['rho'](T_inB, P_abs_B[-1, :]))
-            mA_rows = eps_A_in * rho_A_in * np.abs(ucA[0, :]) * energy_dy
-            mB_rows = eps_B_in * rho_B_in * np.abs(ucB[-1, :]) * energy_dy
+            rho_A_in = simpA.rho_field[:, 0]
+            rho_B_in = simpB.rho_field[:, 0]
+            # Use the SIMPLE-native inlet face, not the first cell-centre
+            # velocity (which averages inlet and interior faces and therefore
+            # does not exactly carry the prescribed mass flow).  Both +x and
+            # -x solves inject at SIMPLE j=0; the real-coordinate flip happens
+            # only in the reconstructed display/energy fields.
+            mA_rows = (eps_A_in * rho_A_in * np.abs(simpA.v[:, 0])
+                       * energy_dy)
+            mB_rows = (eps_B_in * rho_B_in * np.abs(simpB.v[:, 0])
+                       * energy_dy)
             Ta, Tb, Ts, e_info = solve_sco2_enthalpy_2d(
                 T_inA, T_inB, P_abs_A, P_abs_B, mA_rows, mB_rows,
                 h_vA_local, h_vB_local, _Kss_src, energy_dx, energy_dy,
@@ -1435,6 +1450,10 @@ def _run_solvers(window, cfg, fields):
             if getattr(simpB, 'fluid_type', None) == 'ideal_gas'
             else float('nan')),
         'Q_total': Q_total,
+        'mass_flow_A_kg_s_per_m': (
+            float(np.sum(mA_rows)) if mA_rows is not None else float('nan')),
+        'mass_flow_B_kg_s_per_m': (
+            float(np.sum(mB_rows)) if mB_rows is not None else float('nan')),
         'energy_dx': energy_dx, 'energy_dy': energy_dy,
         'warnings_list': warnings_list,
         # ── Convergence verdict — explicit AND over every gate (2026-07-12) ──

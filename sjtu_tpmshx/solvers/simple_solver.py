@@ -791,12 +791,12 @@ class SIMPLESolver:
         # inlet density the caller used to define v_inlet) — that is grid- and
         # datum-independent, so it pins the *physical* throughput identically
         # on every grid and on every recreation of the solver. When it is not
-        # supplied, fall back to the 3D-style capture from rho_field[:,0]: this
-        # is correct for a reused solver (3D) or an outlet-datum P_ref_abs
-        # (the inlet row then stays at the reference density), which is why the
-        # 2D pipeline and validation pass rho_inlet_ref explicitly.
+        # supplied, fall back to the 3D-style capture from rho_field[:,0]. An
+        # explicit reference also enables this invariant for a variable-density
+        # fluid whose momentum model is otherwise labelled incompressible.
         if (getattr(self, 'massflux_inlet', True)
-                and self.fluid_type == 'ideal_gas'
+                and (self.fluid_type == 'ideal_gas'
+                     or self._rho_inlet_ref is not None)
                 and not hasattr(self, '_massflux_target')):
             if self._rho_inlet_ref is not None:
                 _rho_ref_in = self._rho_inlet_ref
@@ -810,6 +810,8 @@ class SIMPLESolver:
             self._massflux_target = (float(self.v_inlet) * _rho_ref_in
                                      * getattr(self, '_inlet_taper_flux_scale',
                                                1.0))
+            if self.fluid_type != 'ideal_gas':
+                self._apply_massflux_inlet()
 
         # 2026-07-10 lateral-K: kernels consume 2D (Nx, Ny) K/cF fields. An
         # explicit per-cell override (set_K_cF_field) wins; otherwise tile the

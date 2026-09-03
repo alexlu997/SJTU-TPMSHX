@@ -384,6 +384,8 @@ def _finalize_3d_cfg(raw: dict[str, Any],
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
             '_max_outer': raw.get('_max_outer'),
+            'mass_flow_A_kg_s': _safe_float(raw.get('mass_flow_A_kg_s')),
+            'mass_flow_B_kg_s': _safe_float(raw.get('mass_flow_B_kg_s')),
             # Dimension marker for write_result dispatch (C4); '3d' here,
             # '2d' in stages_2d._finalize_cfg.
             'mode': '3d',
