@@ -68,6 +68,9 @@ _log = get_logger(__name__)
 # own Re support (slightly narrower than exam_sco2's pooled exam window —
 # interpolation-only discipline binds to what the FIT saw).
 #
+# RE-FROZEN 2026-09-03 (DIAMOND ONLY): rows marked "重做" are now rejected by
+# the experiment loader, removing cases 25 and 42 from the hot-side fit.
+#
 # RE-FROZEN 2026-07-26 (iter 85, GYROID ONLY): the smooth base was rebuilt on
 # the Gyroid L=8 completion (17→20 G geometries; purely additive upload, prior
 # rows bit-identical). **Diamond re-derived bit-identically** — its CFD did not
@@ -91,13 +94,13 @@ _log = get_logger(__name__)
 # (base −8…−13 % at Re 2e4) — that is the new CFD's information, not drift.
 GAMMA_F_HOT: dict[str, dict[str, float]] = {
     "Diamond": dict(
-        G0=6.8944008137665165,
-        dexp=0.11774435618983282,
-        Re_c=18842.643482804368,
-        sig_ln=0.05948535319139833,
+        G0=6.902662778552573,
+        dexp=0.12642592155119411,
+        Re_c=19398.07036278048,
+        sig_ln=0.05236223952741611,
         re_lo=8801.07548108971,
         re_hi=40949.35902093758,
-        n=51,
+        n=49,
     ),
     "Gyroid": dict(
         G0=7.699836173022563,
