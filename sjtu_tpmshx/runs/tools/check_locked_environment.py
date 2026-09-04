@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from importlib import metadata
 from pathlib import Path
 import sys
+from sysconfig import get_paths
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -99,7 +100,8 @@ def read_lock(
 def installed_versions() -> dict[str, set[str]]:
     """Return every installed distribution, preserving duplicate versions."""
     installed: dict[str, set[str]] = {}
-    for distribution in metadata.distributions():
+    site_packages = {get_paths()[key] for key in ("purelib", "platlib")}
+    for distribution in metadata.distributions(path=site_packages):
         name = distribution.metadata.get("Name")
         if name:
             installed.setdefault(canonicalize_name(name), set()).add(

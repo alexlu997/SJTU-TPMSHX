@@ -10,6 +10,7 @@ import pytest
 from sjtu_tpmshx.runs.tools.check_locked_environment import (
     LockFileError,
     environment_issues,
+    installed_versions,
     read_lock,
 )
 
@@ -91,3 +92,15 @@ def test_environment_issues_report_drift_but_ignore_pip():
         'missing: beta==2',
         'unexpected package: extra==3',
     ]
+
+
+def test_installed_versions_ignores_source_tree_metadata(tmp_path, monkeypatch):
+    egg_info = tmp_path / 'source-tree-only.egg-info'
+    egg_info.mkdir()
+    (egg_info / 'PKG-INFO').write_text(
+        'Metadata-Version: 2.1\nName: source-tree-only\nVersion: 1\n',
+        encoding='utf-8',
+    )
+    monkeypatch.syspath_prepend(tmp_path)
+
+    assert 'source-tree-only' not in installed_versions()
