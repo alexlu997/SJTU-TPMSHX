@@ -1,17 +1,10 @@
-"""Pytest fixtures + sys.path bootstrap for sjtu_tpmshx tests.
+"""Pytest fixtures and child-process source-root bootstrap.
 
-Several test modules import top-level packages (`solvers`, `optimization`,
-`df_surrogate`, `controllers`, `runs`, `ui`, etc.) without their own sys.path
-boilerplate. When those tests are run individually (e.g. in subprocess
-from a CI runner) they fail with ModuleNotFoundError because pytest's
-auto-rootdir does not add `sjtu_tpmshx/` to sys.path.
-
-Some test files do have the boilerplate (test_3d_direction_invariance.py,
-test_compute_orchestrator.py, test_ltne_energy_3d.py). Running the
-full suite in one process incidentally populates sys.path via those
-modules, which masked the issue. Per-file subprocess runs surfaced it.
-
-This conftest.py injects the package root once per pytest session.
+The shared worktree venv intentionally has no editable project install. Some
+tests start fresh Python processes from the package directory or a temporary
+script directory, where the repository root is not on ``sys.path``. Export the
+current checkout root through ``PYTHONPATH`` so those children import
+``sjtu_tpmshx`` from the same worktree as pytest.
 
 2026-05-09 Phase Qt-headless fix: also forces ``QT_QPA_PLATFORM=offscreen``
 *before* any test module imports PySide6. Without this, full-suite runs
@@ -25,6 +18,11 @@ before any PySide6 module is imported.
 """
 import os
 from pathlib import Path
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+_INHERITED_PYTHONPATH = os.environ.get('PYTHONPATH')
+os.environ['PYTHONPATH'] = os.pathsep.join(
+    part for part in (_REPO_ROOT, _INHERITED_PYTHONPATH) if part)
 
 # Must run BEFORE any PySide6 import — pytest loads conftest.py at session
 # start, before collecting tests, so this env var is in place for every

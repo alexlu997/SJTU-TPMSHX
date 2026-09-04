@@ -340,8 +340,10 @@ first recorded confirmation that the two calibration sources have not diverged.
 
 This is *an* environment that reproduces the numbers; there is **no record**
 that it is the one they were originally captured on (that record never existed).
-Install the server with `pip install -r requirements.txt -c constraints-devbox-2026-07-11.txt`
-and reproduce the gate before upgrading anything.
+`constraints-devbox-2026-07-11.txt` is a historical machine snapshot only; do
+not use it to provision the current shared or BO server environment. Use
+`requirements-lock.txt` or `requirements-lock-server.txt`, run the exact-lock
+checker, and reproduce the gate before upgrading anything.
 
 **Porting note:** the exact-`==` DF gates skip only when `CI=true`. On a server
 running pytest by hand they *will* run, and cross-machine libm/FMA differences

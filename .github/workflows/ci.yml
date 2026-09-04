@@ -30,8 +30,8 @@ jobs:
           cache: pip
       - name: Install project
         run: |
-          python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt --allow-extra sjtu-tpmshx
           python -m pip check
       - name: Run fast test subset
         run: python -m pytest sjtu_tpmshx/tests/ -q -m "not slow and not heavy" --timeout=600 --timeout-method=thread

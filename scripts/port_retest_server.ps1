@@ -1,11 +1,12 @@
 # port_retest_server.ps1 — Windows Server 2022 上并行跑端口维数复测四臂.
 #
 # 用法 (PowerShell, 任意目录):
-#   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1          # 首次: clone + venv + 四臂并行
+#   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1          # clone/update + 四臂并行
 #   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1 status   # 查看四臂进度 + 存活/退出状态
 #   powershell -ExecutionPolicy Bypass -File port_retest_server.ps1 stop     # 停掉本脚本启动的所有臂
 #
-# 前置: git + C:\Python312\python.exe; gh auth 或 https 凭据可拉私有仓
+# 前置: git + 按 requirements-lock-server.txt 预置的 $PORT_WORKDIR\venv;
+#       gh auth 或 https 凭据可拉私有仓. 本脚本不创建环境、不安装或升级依赖.
 # (标定数据在私有仓 SJTU-TPMSHX-data, 脚本自动 clone 并拼进 data/raw_data).
 #
 # 四臂: ctrl4/ctrl6 x seed 7/123, SAAS, 无早停. 预计墙钟 ~4-7 h (瓶颈是 ctrl6
@@ -34,7 +35,6 @@ $DataRepo = Join-Path $WorkDir "SJTU-TPMSHX-data"
 $LogD     = Join-Path $WorkDir "logs"
 $PidD     = Join-Path $WorkDir "pids"
 $Branch   = if ($env:PORT_BRANCH) { $env:PORT_BRANCH } else { "master" }
-$Python312 = "C:\Python312\python.exe"
 $Py       = Join-Path $WorkDir "venv\Scripts\python.exe"
 
 # 四臂定义 (单一来源: run / status / stop 都用它)
@@ -99,6 +99,9 @@ if ($Mode -eq "stop") {
 }
 
 New-Item -ItemType Directory -Force $WorkDir, $LogD, $PidD | Out-Null
+if (-not (Test-Path $Py -PathType Leaf)) {
+    throw "Pre-provisioned Python not found at $Py; create it from requirements-lock-server.txt while attended"
+}
 
 # ── 1. clone / update — 主仓 (public) + 数据仓 (private) ──
 if (-not (Test-Path (Join-Path $Repo ".git"))) {
@@ -147,21 +150,18 @@ if (-not (Test-Path $KeyXlsx)) {
 }
 Write-Host "标定数据就位: $KeyXlsx"
 
-# ── 3. venv + deps (幂等) ──
-if (-not (Test-Path $Py)) {
-    if (-not (Test-Path $Python312)) {
-        throw "Python 3.12 not found at $Python312"
-    }
-    & $Python312 -m venv (Join-Path $WorkDir "venv")
-    & $Py -m pip install --upgrade pip
-}
-& $Py -m pip install -q -r (Join-Path $Repo "requirements-lock-server.txt")
+# ── 3. 预置环境验证（只读，不安装） ──
+Set-Location $Repo
+& $Py -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock-server.txt
+if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment differs from requirements-lock-server.txt" }
 & $Py -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment failed pip check" }
+& $Py -c "import torch, botorch, gpytorch"
+if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment is missing server BO dependencies" }
 
 # ── 4. 四臂并行 ──
-Set-Location $Repo
 $env:PYTHONHASHSEED = "0"
-$env:PYTHONPATH     = Join-Path $Repo "sjtu_tpmshx"
+$env:PYTHONPATH     = $Repo
 
 # 线程预算 (P1): 探测逻辑处理器数, 按 arm 数均分. 原脚本硬编码 8 且注释假设
 # "64 核", 既不探测也不区分物理核/逻辑核; 更要命的是 BO 阶段的
@@ -205,7 +205,7 @@ function Launch($a) {
     # 上 — 关掉那个窗口 / logoff 会把四个臂一起杀掉. 不带 -NoNewWindow 时
     # Start-Process 给子进程新控制台, 父窗口关闭不再波及它.
     $p = Start-Process -FilePath $Py -PassThru -WindowStyle Hidden `
-        -ArgumentList "-u", "sjtu_tpmshx/runs/run_port_dim_retest.py",
+        -ArgumentList "-u", "-m", "sjtu_tpmshx.runs.run_port_dim_retest",
                       "--ctrl", "$($a.Ctrl)", "--seed", "$($a.Seed)", "--jobs", "$Jobs" `
         -RedirectStandardOutput $log -RedirectStandardError $errLog
     Set-Content -Path $pidFile -Value $p.Id

@@ -27,11 +27,21 @@
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
-$py = Join-Path $repo ".venv\Scripts\python.exe"
+$venvPathFile = Join-Path $repo ".venv-path"
+if (-not (Test-Path -Path $venvPathFile -PathType Leaf)) {
+    throw "Missing .venv-path. Follow README.md to configure the shared venv."
+}
+$py = [string](Get-Content -Path $venvPathFile -TotalCount 1)
+$py = $py.Trim()
+if ([string]::IsNullOrWhiteSpace($py) -or
+    -not (Test-Path -Path $py -PathType Leaf)) {
+    throw "Shared Python interpreter not found: $py"
+}
 
-$venvHome = (Select-String -Path (Join-Path $repo ".venv\pyvenv.cfg") -Pattern '^home = (.+)$').Matches[0].Groups[1].Value
+$venvRoot = Split-Path (Split-Path $py -Parent) -Parent
+$venvHome = (Select-String -Path (Join-Path $venvRoot "pyvenv.cfg") -Pattern '^home = (.+)$').Matches[0].Groups[1].Value
 if ($venvHome -match 'Anaconda') {
-    throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild: C:\Python312\python.exe -m venv .venv"
+    throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild it from C:\Python312\python.exe"
 }
 
 $env:PYTHONHASHSEED = "0"
@@ -40,8 +50,16 @@ $env:MKL_NUM_THREADS = "1"; $env:NUMEXPR_NUM_THREADS = "1"
 $env:NUMBA_NUM_THREADS = "1"
 # Headless server — Qt tests need the offscreen platform plugin.
 $env:QT_QPA_PLATFORM = "offscreen"
+$env:MPLCONFIGDIR = Join-Path $repo ".cache\matplotlib"
+$env:XDG_CACHE_HOME = Join-Path $repo ".cache\xdg"
+New-Item -ItemType Directory -Force $env:MPLCONFIGDIR, $env:XDG_CACHE_HOME | Out-Null
 
 Set-Location $repo
+
+& $py -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt
+if ($LASTEXITCODE -ne 0) { throw "Shared environment differs from requirements-lock.txt" }
+& $py -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Shared environment failed pip check" }
 
 Write-Host "=== Full suite (-n 64 worksteal) ===" -ForegroundColor Cyan
 & $py -u -m pytest sjtu_tpmshx/tests/ -q -n 64 --dist worksteal --durations=15
