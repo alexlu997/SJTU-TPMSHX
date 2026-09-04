@@ -12,7 +12,7 @@ Includes:
   - Darcy-Forchheimer dP closure (no f-Re): dP via df_surrogate K / c_F
 
 Supported TPMS types: 'Diamond', 'Gyroid'
-Fluid: air (Pr = 0.72, properties from T_in and P_in)
+Fluids: air, water, and sCO2 through the shared property registry
 
 ──────────────────────────────────────────────────────────────────────
 REYNOLDS NUMBER CONVENTION (project-wide, confirmed 2026-04-22)
@@ -37,7 +37,6 @@ convention on both sides, so downstream Q calculations are consistent.
 """
 
 import functools
-import os
 import warnings
 import numpy as np
 from .tpms_geometry import compute_geometry as _tpms_geom
@@ -96,13 +95,8 @@ def nu_water_gyroid_yan6(Re, Pr):
 
 # ── Fluid type validation ─────────────────────────────────────
 
-# 2026-05-09 (option B) — water unblocked for the 2D Compute path. The
-# D-F surrogate (predict_K_cF) was fitted on air training data only, so the
-# per-cell K / c_F coefficients for water are NOT physically calibrated; the
-# water-side dP is a placeholder. Heat transfer is still rigorous via
-# nu_water_topo (per-topology direct water-CFD fit, WATER_NU_COEFFS, Re
-# 100-50000, smooth-wall, no air ×1.28). Treat water dP as engineering
-# estimate; water Q is publication-grade for Gyroid and engineering for Diamond.
+# Each fluid keeps its own property and Nu model. Production pressure loss uses
+# one geometry-only fixed CFD table shared by both sides and all fluid types.
 _SUPPORTED_FLUIDS = {'air', 'water', 'sco2'}
 
 
@@ -122,12 +116,10 @@ def parse_fluid_type(combo):
 def validate_fluid_type(fluid_type: str, side: str) -> None:
     """Raise NotImplementedError for fluid types without fitted correlations.
 
-    Air + water + sCO2 are supported. sCO2 (2026-07-15): SMOOTH-WALL unit-cell
-    CFD closures for BOTH topologies — Nu = c·Re^a·Pr^⅓·(Dh/L)^d
-    (nu_sco2_topo, SCO2_NU_COEFFS) + cF from df_surrogate.sco2_df + CoolProp
-    real-gas props; wired in the 2D and 3D pipelines (Phase A =
-    incompressible). Roughness deliberately unmodelled for sCO2 (no
-    experimental anchor yet) — Δp/Nu are smooth-wall estimates.
+    Air + water + sCO2 are supported. sCO2 uses direct CoolProp properties and
+    the smooth-wall CFD Nu correlation. Production K/cF are selected only by
+    TPMS topology, L, and t from the fixed water+sCO2 CFD table; they do not
+    depend on fluid type or Reynolds number.
 
     For water:
       * Properties: NIST-grade rho/mu/k (Vogel viscosity, < 2 % vs NIST 0–90 °C).
@@ -135,10 +127,7 @@ def validate_fluid_type(fluid_type: str, side: str) -> None:
         fit (WATER_NU_COEFFS, Re 100-50000, smooth-wall, no air ×1.28).
         nu_water_from_Re (Pr-substitution) and nu_water_gyroid_yan6 (Yan
         2024 [6]) are retired to cross-check / test only.
-      * dP closure: predict_K_cF reuses the air-fit ConstDF-v1 K/c_F. NOT
-        physically calibrated for water; dP for water side is engineering
-        placeholder. Use validate_shanghai_lumped_dual_nu.py for Shanghai
-        air-water Q validation (the production paper baseline).
+      * dP closure: the same geometry-only fixed CFD K/cF used by all fluids.
     """
     if fluid_type not in _SUPPORTED_FLUIDS:
         label = {'water': 'Water', 'sco2': 'sCO₂'}.get(fluid_type, fluid_type)
@@ -253,8 +242,8 @@ def _compute_cached(tpms_type: str,
         D_h       – hydraulic diameter [m]
         Re        – Reynolds number (based on D_h, interstitial velocity) [-]
         Nu        – Nusselt number [-]
-        K_df      – permeability [m²] (ConstDF-v1 D-F closure)
-        cF_df     – Forchheimer coefficient [1/m] (ConstDF-v1 D-F closure)
+        K_df      – permeability [m²] (fixed CFD D-F closure)
+        cF_df     – Forchheimer coefficient [1/m] (fixed CFD D-F closure)
         dP_per_L  – pressure drop per unit length [Pa/m]
         H_sf      – face heat transfer coefficient [W/(m²·K)]
         K_ff      – fluid effective thermal conductivity [W/(m·K)]
@@ -329,7 +318,7 @@ def _compute_cached(tpms_type: str,
 
     H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
 
-    # ── Pressure drop via ConstDF-v1 D-F surrogate ──────────────
+    # ── Pressure drop via fixed geometry-only CFD D-F table ─────────
     # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
     # convention, see df_surrogate/predict.py). Import is module-level since
     # arch-b-c-e batch B (tpms_props leaf broke the old two-way coupling).
@@ -357,8 +346,8 @@ def _compute_cached(tpms_type: str,
         'D_h':       D_h_m,
         'Re':        Re,
         'Nu':        Nu,
-        'K_df':      K_df,      # permeability [m²] (ConstDF-v1)
-        'cF_df':     cF_df,     # Forchheimer coeff [1/m] (ConstDF-v1)
+        'K_df':      K_df,      # permeability [m²] (fixed CFD)
+        'cF_df':     cF_df,     # Forchheimer coeff [1/m] (fixed CFD)
         'dP_per_L':  dP_per_L,
         'H_sf':      H_sf,
         'K_ff':      K_ff,
@@ -380,21 +369,20 @@ def compute(tpms_type: str,
             fluid_type: str = 'air') -> dict:
     """Public entry — see ``_compute_cached`` for the full docstring.
 
-    W7 (2026-07-07): two cache hazards fixed at this wrapper.
-    1. The lru_cache key now includes the DF-backend environment state
-       (``TPMSHX_DF_METHOD`` / ``TPMSHX_DF_OVERRIDES``): ``predict_K_cF``
-       reads those env vars per call, so an in-process backend switch
-       (A/B comparisons) used to serve the FIRST backend's cached (K, cF)
-       to the second — the same failure shape as the B4 props-cache trap.
-    2. Cache hits used to return the SAME mutable dict object; a caller
+    V2 production uses the fixed water+sCO2 CFD closure. Alternate backends
+    remain available through explicit ``predict_K_cF(..., method=...)`` calls
+    for research, but do not change this solver path through environment state.
+
+    Cache hits used to return the SAME mutable dict object; a caller
        mutating its result would silently poison every later hit. The
        wrapper returns a shallow copy (values are scalars).
     """
     from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
-    _df_method = (SCO2_DF_METHOD if fluid_type == 'sco2'
-                  else os.environ.get('TPMSHX_DF_METHOD', ''))
-    _df_env = (_df_method,
-               os.environ.get('TPMSHX_DF_OVERRIDES', ''))
+    # Production V2 closure is fluid-independent and fixed for a TPMS/L/t
+    # geometry. Research callers can still invoke predict_K_cF directly with
+    # another explicit backend.
+    _df_method = SCO2_DF_METHOD
+    _df_env = (_df_method, '')
     return dict(_compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
                                 P_in_Pa, k_s, fluid_type, _df_env))
 

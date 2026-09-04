@@ -14,17 +14,17 @@ from sjtu_tpmshx.solvers.envelope import ChokedFlowError
 
 
 def test_choked_case_raises_by_default():
-    # 0.7 m cube + 20 m/s air -> dP (~205 kPa) > inlet abs (192 kPa) -> choked.
+    # 0.7 m cube + 30 m/s air exceeds the current fixed-CFD choke limit.
     # Raises at the pre-solve 1D seed (grid-independent), so 20^3 is cheap.
     cfg = build_cfg(L=0.7, H=0.7, Lz=0.7, Nx=20, Ny=20, Nz=20,
-                    u_A=20.0, T_inA=800.0, u_B=10.0, T_inB=400.0)
+                    u_A=30.0, T_inA=800.0, u_B=10.0, T_inB=400.0)
     with pytest.raises(ChokedFlowError):
         _run_3d_stack(cfg)
 
 
 def test_choked_warn_mode_returns_flagged_result():
     cfg = build_cfg(L=0.7, H=0.7, Lz=0.7, Nx=12, Ny=12, Nz=12,
-                    u_A=20.0, T_inA=800.0, u_B=10.0, T_inB=400.0,
+                    u_A=30.0, T_inA=800.0, u_B=10.0, T_inB=400.0,
                     envelope_mode='warn', sweep_profile='fast_sweep')
     res = _run_3d_stack(cfg)
     assert res['envelope_valid'] is False

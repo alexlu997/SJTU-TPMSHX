@@ -1191,12 +1191,11 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             "Out-of-plane extent. 2D runs treat Lz as unit depth."),
         'le_Lcell': (
             "<b>TPMS unit-cell edge <i>L<sub>cell</sub></i></b> [mm]<br/>"
-            "Typical 4 – 8 mm. Drives D<sub>h</sub>, porosity, permeability "
-            "via the ConstDF-v1 surrogate."),
+            "Fixed-CFD grid: 4–8 mm; values between nodes are interpolated. "
+            "Drives D<sub>h</sub>, porosity and permeability."),
         'le_t': (
             "<b>TPMS wall thickness <i>t</i></b> [mm]<br/>"
-            "Training range [0.3, 0.5] mm. Values outside extrapolate — Shanghai"
-            " t = 0.6 mm is a known hard extrapolation."),
+            "Fixed-CFD grid: 0.3–0.6 mm; values between nodes are interpolated."),
         'le_ks': (
             "<b>Solid thermal conductivity <i>k<sub>s</sub></i></b> "
             "[W/(m·K)]<br/>"

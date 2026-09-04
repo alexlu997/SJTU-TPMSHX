@@ -21,30 +21,35 @@ def test_table_empty_in_production():
 
 def test_empty_table_is_pure_rbf(monkeypatch):
     """With the table empty, predict_K_cF must equal the raw surrogate."""
-    K, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7)
-    K0, cF0 = P._get_model('Diamond').predict(7.0, 0.6, _EF_D7)
+    K, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7,
+                           method='gamma_df')
+    K0, cF0 = P._get_model('Diamond', 'gamma_df').predict(7.0, 0.6, _EF_D7)
     assert (K, cF) == (K0, cF0)
-    _, cFg = P.predict_K_cF('Gyroid', 7.0, 0.6, _EF_G7)
-    _, cFg0 = P._get_model('Gyroid').predict(7.0, 0.6, _EF_G7)
+    _, cFg = P.predict_K_cF('Gyroid', 7.0, 0.6, _EF_G7,
+                            method='gamma_df')
+    _, cFg0 = P._get_model('Gyroid', 'gamma_df').predict(7.0, 0.6, _EF_G7)
     assert cFg == cFg0
 
 
 def test_mechanism_with_injected_entry(monkeypatch):
     monkeypatch.setitem(P._OVERRIDES, 'Diamond', [(7.0, 0.6, 454.3)])
-    _, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7)
+    _, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7,
+                           method='gamma_df')
     assert cF == pytest.approx(454.3, rel=1e-9)
     # far point untouched (w < cutoff)
     ef = tpms_geometry('Diamond', 5.0, 0.4, 16.0)['epsilon'] / 2
-    _, cF_far = P.predict_K_cF('Diamond', 5.0, 0.4, ef)
-    _, cF_far0 = P._get_model('Diamond').predict(5.0, 0.4, ef)
+    _, cF_far = P.predict_K_cF('Diamond', 5.0, 0.4, ef,
+                               method='gamma_df')
+    _, cF_far0 = P._get_model('Diamond', 'gamma_df').predict(5.0, 0.4, ef)
     assert cF_far == cF_far0
 
 
 def test_env_kill_switch(monkeypatch):
     monkeypatch.setitem(P._OVERRIDES, 'Diamond', [(7.0, 0.6, 454.3)])
     monkeypatch.setenv("TPMSHX_DF_OVERRIDES", "0")
-    _, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7)
-    _, cF0 = P._get_model('Diamond').predict(7.0, 0.6, _EF_D7)
+    _, cF = P.predict_K_cF('Diamond', 7.0, 0.6, _EF_D7,
+                           method='gamma_df')
+    _, cF0 = P._get_model('Diamond', 'gamma_df').predict(7.0, 0.6, _EF_D7)
     assert cF == cF0
 
 
@@ -53,7 +58,8 @@ def test_blend_smooth_with_injected_entry(monkeypatch):
     cfs = []
     for L in [6.6, 6.8, 6.9, 7.0]:
         ef = tpms_geometry('Diamond', L, 0.6, 16.0)['epsilon'] / 2
-        _, cF = P.predict_K_cF('Diamond', L, 0.6, ef)
+        _, cF = P.predict_K_cF('Diamond', L, 0.6, ef,
+                               method='gamma_df')
         cfs.append(cF)
     diffs = np.diff([abs(c - 454.3) for c in cfs])
     assert (diffs <= 1e-9).all()

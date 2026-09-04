@@ -119,12 +119,7 @@ def build_page_domain(window):
     window.combo_tpms.setStyleSheet(_COMBO)
     add_row(window, g0, 0, "Type", right_align_combo(window.combo_tpms))
     window.le_Lcell = row(window, g0, 1, "<i>L</i><sub>cell</sub> [mm]", "7.0")
-    # t default: 0.6 mm = the Shanghai Electric specimen wall thickness
-    # (canonical geometry). This is 20% above the ConstDF-v1 surrogate
-    # training window [0.3, 0.5], so the default GUI run WILL show the
-    # extrapolation watermark — `chk_allow_extrap` defaults ON, so it warns
-    # rather than aborts. Re-train the surrogate to expand the range when
-    # new CFD data arrives.
+    # t=0.6 mm is the Shanghai specimen and a supported fixed-CFD node.
     window.le_t     = row(window, g0, 2, "<i>t</i> [mm]", "0.6")
     window.le_ks    = row(window, g0, 3, "<i>k</i><sub>s</sub> [W/(m·K)]", "16.0")
     btn_tpms = QPushButton("计算 TPMS 几何")
@@ -223,19 +218,15 @@ def build_page_domain(window):
         }}
     """
 
-    # Surrogate-domain guard. Default ON — near-boundary extrapolation
-    # (e.g. Shanghai t=0.6 mm, 20% past the [0.3, 0.5] cap) is the common
-    # validation workflow. Unchecking reverts to strict: out-of-window
-    # inputs abort Compute. Either way, extrapolated results carry an
-    # `extrapolated=True` flag and a watermark on every plot for
-    # traceability.
-    window.chk_allow_extrap = QCheckBox("Allow surrogate extrapolation")
+    # Geometry cannot extrapolate beyond the fixed CFD grid. This switch only
+    # downgrades a fluid-specific Nu Reynolds-window violation to a warning.
+    window.chk_allow_extrap = QCheckBox("Allow Nu correlation extrapolation")
     window.chk_allow_extrap.setChecked(True)
     window.chk_allow_extrap.setToolTip(
-        "ConstDF-v1 训练域: L ∈ [4, 8] mm, t ∈ [0.3, 0.5] mm, Re ∈ [400, 16000].\n"
-        "默认严格: 超出任一范围 Compute 拒绝运行.\n"
-        "勾选后: 超出仅 warn, 结果标记为 extrapolated, 图上加水印.\n"
-        "用于算例工况 t=0.6 mm 等近边界验证工况."
+        "D-F 几何范围: 4 ≤ L ≤ 8 mm, 0.3 ≤ t ≤ 0.6 mm；"
+        "节点之间双线性插值。\n"
+        "未勾选: 超出当前工质 Nu 的 Re 拟合窗口时拒绝运行。\n"
+        "勾选: 超出 Re 窗口时继续运行，并在结果中告警。"
     )
     window.chk_allow_extrap.setStyleSheet(_chk_box_qss)
     g_adv.addWidget(window.chk_allow_extrap, 0, 0, 1, 2)
