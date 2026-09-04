@@ -168,6 +168,31 @@ def test_enthalpy_3d_mixed_sco2_water_precooler():
     assert m["e_imb_LTNE"] < 0.02
 
 
+def test_enthalpy_3d_custom_cross_ports_use_face_mass_flow():
+    from sjtu_tpmshx.solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
+
+    nx, ny, nz = 5, 6, 1
+    shape = (nx, ny, nz)
+    dx = np.full(nx, 0.01); dy = np.full(ny, 0.01); dz = np.ones(nz)
+    flux_a = [np.zeros((nx + 1, ny, nz)), np.zeros((nx, ny + 1, nz)),
+              np.zeros((nx, ny, nz + 1))]
+    flux_b = [np.zeros((nx + 1, ny, nz)), np.zeros((nx, ny + 1, nz)),
+              np.zeros((nx, ny, nz + 1))]
+    flux_a[1][1:4, :, :] = 0.01   # +y, partial x-span
+    flux_b[0][:, 2:5, :] = -0.01  # -x, partial y-span
+    eps = np.full(shape, 0.65)
+    Ta, Tb, _, info = solve_ltne_enthalpy_3d_pipeline(
+        nx, ny, nz, dx, dy, dz, eps, np.full(shape, 5.0),
+        np.full(shape, 1e5), np.full(shape, 1e5), 0.0, 0.0,
+        500.0, 300.0, 12e6, 2e6, 2, 1,
+        fluid_A='sco2', fluid_B='water', eps_A_field=eps / 2,
+        eps_B_field=eps / 2, mass_flux_A=flux_a, mass_flux_B=flux_b,
+        n_outer=1000, n_sweep=5, tol=1e-3)
+    assert info['converged']
+    assert info['energy_imbalance_rel'] < 0.05
+    assert np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
+
+
 def test_enthalpy_3d_offset_porosity_conserves():
     """#3: offset-isosurface (δ≠0) per-side void fractions ε_A≠ε_B. The kernel
     consumes per-side ε fields; conservation holds with an asymmetric split."""

@@ -82,7 +82,7 @@ def test_shanghai_baseline_still_loads():
     assert cfg.geometry.L_cell_mm == 7.0
 
 
-def test_sco2_v1_config_boundary():
+def test_sco2_v2_accepts_mixed_directions_and_partial_ports():
     cfg = ComputeConfig(
         fluid_A=FluidConfig(type='sco2', u_mps=0.8, T_in_K=500.0,
                             P_in_Pa=12.0e6),
@@ -96,13 +96,47 @@ def test_sco2_v1_config_boundary():
     assert cfg.validate() is cfg
 
     cfg.bc_B.dir = 2
-    with pytest.raises(ValueError, match=r"A:\+x and B:-x"):
+    assert cfg.validate() is cfg
+
+    cfg.bc_A.in_w = 0.01
+    cfg.bc_A.out_w = 0.01
+    cfg.bc_A.in_ctr = cfg.bc_A.out_ctr = 0.02
+    assert cfg.validate() is cfg
+
+    cfg.fluid_B = FluidConfig(type='water', u_mps=0.5, T_in_K=330.0,
+                              P_in_Pa=2.0e5)
+    assert cfg.validate() is cfg
+
+
+@pytest.mark.parametrize('fluid_a', ('air', 'water', 'sco2'))
+@pytest.mark.parametrize('fluid_b', ('air', 'water', 'sco2'))
+def test_all_ordered_fluid_pairs_validate(fluid_a, fluid_b):
+    def fluid(name, hot):
+        return FluidConfig(
+            type=name, u_mps=0.5, T_in_K=500.0 if hot else 300.0,
+            P_in_Pa=12e6 if name == 'sco2' else 2e6)
+
+    cfg = ComputeConfig(
+        fluid_A=fluid(fluid_a, True),
+        fluid_B=fluid(fluid_b, False),
+        geometry=GeometryConfig(L_cell_mm=7.0, t_wall_mm=0.6),
+    )
+    assert cfg.validate() is cfg
+
+
+def test_compute_config_shared_port_validation():
+    cfg = ComputeConfig(
+        geometry=GeometryConfig(L_dom_m=0.08, H_dom_m=0.04),
+        bc_A=PartialBCConfig(dir=0, in_ctr=0.05, in_w=0.02,
+                             out_ctr=0.02, out_w=0.01),
+    )
+    with pytest.raises(ValueError, match=r"bc_A.*out_of_domain"):
         cfg.validate()
 
-    cfg.bc_B.dir = 1
-    cfg.bc_A.in_w = 0.01
-    with pytest.raises(ValueError, match="full-face"):
-        cfg.validate()
+
+def test_compute_config_default_widths_mean_full_face():
+    cfg = ComputeConfig()
+    assert cfg.validate() is cfg
 
 
 # ── window strict boundary (duck-typed, no Qt) ────────────────────────

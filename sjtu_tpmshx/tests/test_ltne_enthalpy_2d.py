@@ -1,7 +1,9 @@
 import numpy as np
 
 from sjtu_tpmshx.solvers import sco2_props
-from sjtu_tpmshx.solvers.ltne_enthalpy_2d import solve_sco2_enthalpy_2d
+from sjtu_tpmshx.solvers.ltne_enthalpy_2d import (
+    solve_enthalpy_2d, solve_sco2_enthalpy_2d,
+)
 
 
 def test_fullface_counterflow_conserves_true_enthalpy():
@@ -24,3 +26,28 @@ def test_fullface_counterflow_conserves_true_enthalpy():
     assert Ta[-1].mean() < 500.0
     assert Tb[0].mean() > 330.0
     assert Tb.min() <= Ts.mean() <= Ta.max()
+
+
+def test_mixed_fluid_custom_ports_use_face_mass_flow():
+    nx, ny = 5, 6
+    dx = np.full(nx, 0.01)
+    dy = np.full(ny, 0.01)
+    fx_a = np.zeros((nx + 1, ny))
+    fy_a = np.zeros((nx, ny + 1))
+    fy_a[1:4, :] = 0.01  # sCO2 +y, partial x-span
+    fx_b = np.zeros((nx + 1, ny))
+    fy_b = np.zeros((nx, ny + 1))
+    fx_b[:, 2:5] = -0.01  # water -x, partial y-span
+    shape = (nx, ny)
+    Ta, Tb, _, info = solve_enthalpy_2d(
+        500.0, 300.0, np.full(shape, 12e6), np.full(shape, 2e6),
+        (fx_a, fy_a), (fx_b, fy_b), np.full(shape, 1e5),
+        np.full(shape, 1e5), np.full(shape, 5.0), np.full(shape, 0.325),
+        np.full(shape, 0.325), dx, dy, fluid_A='sco2', fluid_B='water',
+        max_iter=1000, tol=0.1,
+    )
+    assert info['converged']
+    assert info['energy_imbalance_rel'] < 0.05
+    assert np.all(np.isfinite(Ta)) and np.all(np.isfinite(Tb))
+    assert Ta[:, -1].mean() < 500.0
+    assert Tb[0, :].mean() > 300.0

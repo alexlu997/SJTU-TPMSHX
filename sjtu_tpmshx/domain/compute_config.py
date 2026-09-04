@@ -82,13 +82,14 @@ site or one shared helper, listed here. Adding a flag = add a row.
 Registry sync 2026-07-03 (maintainability-closeout) — flags that existed
 but were missing above:
 
-- ``TPMSHX_DF_METHOD`` (gamma_df) — D-F closure backend selector
-  (gamma_df | rbf | cfd_refit…); ``df_surrogate/predict.py`` +
-  ``solvers/_kernels_simple_2d.py``.
-- ``TPMSHX_DF_OVERRIDES`` (unset) — JSON per-geometry (K, cF) override
-  table for the D-F prediction; ``df_surrogate/predict.py``.
-- ``TPMSHX_ASYM_KAPPA`` (0) — activate the asym per-side κ correction
-  after ``ingest_cfd_kappa``; ``df_surrogate/kappa_asym.py``.
+- ``TPMSHX_DF_METHOD`` — research-only D-F backend selector for direct
+  ``df_surrogate.predict`` calls. Production 2D/3D compute paths pin the
+  fixed water+sCO2 CFD table.
+- ``TPMSHX_DF_OVERRIDES`` — research-only legacy per-geometry cF override;
+  it is not applied to the production fixed-CFD backend.
+- ``TPMSHX_ASYM_KAPPA`` (0) — research-only asym per-side κ correction
+  after ``ingest_cfd_kappa``; production 2D/3D compute paths do not apply it.
+  Read in ``df_surrogate/kappa_asym.py``.
 - ``TPMSHX_NUM_THREADS`` (unset → numba default) — headless/script numba
   thread count; ``solvers/threads.py`` (GUI spinbox is primary). Unset on a
   many-core box + grid ≥ TPMSHX_PARALLEL_THRESHOLD → one-shot advisory log
@@ -507,6 +508,28 @@ class ComputeConfig:
                 "0.042 m). Set geometry.Lz_m, or set Nz=1 for a 2D run.")
 
         # ── Numerical solver settings (2026-07-12) ───────────────────────────
+        # All production callers pass here through ComputePipeline.run().
+        # Normalise the typed-config full-face sentinel before applying the
+        # shared port validator. ComputeConfig always has two fluids, so side
+        # B uses the same full-face rule as A; its legacy None means
+        # single-fluid only below this boundary.
+        from .validator import validate_pipe_config
+        for side, bc in (('A', self.bc_A), ('B', self.bc_B)):
+            if (bc.in_w <= 0.0) != (bc.out_w <= 0.0):
+                raise ValueError(
+                    f"ComputeConfig.bc_{side}.in_w and out_w must both be "
+                    "positive, or both be <= 0 for a full-face port")
+            pipe = bc_to_dict(
+                bc, ge.L_dom_m, ge.H_dom_m, side='A', with_z=self.is_3d)
+            problems = validate_pipe_config(
+                pipe, ge.L_dom_m, ge.H_dom_m,
+                Lz_dom=ge.Lz_m, is_3d=self.is_3d)
+            errors = [str(problem) for problem in problems
+                      if problem.severity == 'error']
+            if errors:
+                raise ValueError(
+                    f"ComputeConfig.bc_{side} is invalid: " + "; ".join(errors))
+
         # These were previously UNVALIDATED: a JSON with max_outer_ltne=0,
         # outer_tol_K=-1 or tol_simple=1e9 loaded clean and produced a result
         # that looked like a solve. None = "use the dimension built-in" and
@@ -577,61 +600,30 @@ class ComputeConfig:
                     "with a raw cfg dict and read convergence_detail — do not "
                     "route it through the typed production config.")
 
-        # sCO2 V1 is deliberately narrow: it reuses the existing full-face
-        # counterflow pipelines and the exact-node CFD D-F table.  Rejecting
-        # unsupported combinations here is smaller and safer than scattering
-        # fallbacks through the 2D and 3D solvers.
+        # V2 production D-F closure is a water+sCO2 CFD table with bilinear
+        # interpolation in geometry only. Extrapolation is not supported.
+        if not 4.0 <= self.geometry.L_cell_mm <= 8.0 \
+                or not 0.3 <= self.geometry.t_wall_mm <= 0.6:
+            raise ValueError(
+                "V2 geometry must lie inside the CFD grid: "
+                "4 <= L <= 8 mm, 0.3 <= t <= 0.6 mm")
+
         sco2_A = self.fluid_A.type == 'sco2'
         sco2_B = self.fluid_B.type == 'sco2'
         if sco2_A or sco2_B:
-            if not (sco2_A and sco2_B):
-                raise ValueError("sCO2 V1 requires both fluids to be sCO2")
             for side, fl in (('A', self.fluid_A), ('B', self.fluid_B)):
+                if fl.type != 'sco2':
+                    continue
                 if not 280.0 <= fl.T_in_K <= 700.0:
                     raise ValueError(
-                        f"sCO2 V1 fluid {side} temperature must be 280..700 K")
+                        f"sCO2 fluid {side} temperature must be 280..700 K")
                 if not 8.0e6 <= fl.P_in_Pa <= 16.0e6:
                     raise ValueError(
-                        f"sCO2 V1 fluid {side} pressure must be 8..16 MPa")
-            if self.geometry.L_cell_mm not in {4.0, 5.0, 6.0, 7.0, 8.0} \
-                    or self.geometry.t_wall_mm not in {0.3, 0.4, 0.5, 0.6}:
-                raise ValueError(
-                    "sCO2 V1 geometry must be an exact CFD node: "
-                    "L=4..8 mm, t=0.3..0.6 mm")
-            if self.bc_A.dir != 0 or self.bc_B.dir != 1:
-                raise ValueError("sCO2 V1 requires A:+x and B:-x counterflow")
+                        f"sCO2 fluid {side} pressure must be 8..16 MPa")
             if self.zones.enabled:
-                raise ValueError("sCO2 V1 does not support zones")
+                raise ValueError("sCO2 V2 does not support zones")
             if self.geometry.delta_levelset != 0.0:
-                raise ValueError("sCO2 V1 requires delta_levelset=0")
-
-            def _full_face(bc: PartialBCConfig) -> bool:
-                transverse = self.geometry.H_dom_m
-                xy_full = (
-                    bc.in_w <= 0.0 and bc.out_w <= 0.0
-                ) or (
-                    math.isclose(bc.in_w, transverse)
-                    and math.isclose(bc.out_w, transverse)
-                    and math.isclose(bc.in_ctr, transverse / 2.0)
-                    and math.isclose(bc.out_ctr, transverse / 2.0)
-                )
-                if not xy_full or not self.is_3d:
-                    return xy_full
-                if bc.in_z_ctr is None and bc.out_z_ctr is None:
-                    return True
-                depth = self.geometry.Lz_m
-                return bool(
-                    depth is not None
-                    and bc.in_z_w is not None and bc.out_z_w is not None
-                    and bc.in_z_ctr is not None and bc.out_z_ctr is not None
-                    and math.isclose(bc.in_z_w, depth)
-                    and math.isclose(bc.out_z_w, depth)
-                    and math.isclose(bc.in_z_ctr, depth / 2.0)
-                    and math.isclose(bc.out_z_ctr, depth / 2.0)
-                )
-
-            if not _full_face(self.bc_A) or not _full_face(self.bc_B):
-                raise ValueError("sCO2 V1 requires full-face inlet and outlet")
+                raise ValueError("sCO2 V2 requires delta_levelset=0")
         return self
 
     @classmethod

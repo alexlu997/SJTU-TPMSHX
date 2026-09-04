@@ -235,6 +235,43 @@ def _pipe_dp_2d(simp):
                              simp.outlet_frac.astype(np.float64)))
 
 
+def _simple_staggered_to_real_2d(simp, direction):
+    """Map SIMPLE's +y-stream staggered faces to signed real x/y faces."""
+    if direction in (0, 1):
+        faces = [simp.v.T.copy(), simp.u.T.copy()]
+        stream_axis = 0
+    else:
+        faces = [simp.u.copy(), simp.v.copy()]
+        stream_axis = 1
+    if direction in (1, 3):
+        faces[stream_axis] *= -1.0
+        faces = [np.flip(face, axis=stream_axis) for face in faces]
+    return tuple(np.ascontiguousarray(face, dtype=np.float64) for face in faces)
+
+
+def _simple_scalar_to_real_2d(field, direction):
+    out = np.asarray(field, dtype=np.float64).T.copy() \
+        if direction in (0, 1) else np.asarray(field, dtype=np.float64).copy()
+    if direction in (1, 3):
+        out = np.flip(out, axis=0 if direction == 1 else 1)
+    return np.ascontiguousarray(out)
+
+
+def _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy):
+    """Actual signed SIMPLE face mass flows per metre depth."""
+    ux, uy = _simple_staggered_to_real_2d(simp, direction)
+    rho = _simple_scalar_to_real_2d(simp.rho_field, direction)
+    coef = rho * np.broadcast_to(np.asarray(eps_side, dtype=np.float64), rho.shape)
+    cx = np.empty(ux.shape, dtype=np.float64)
+    cy = np.empty(uy.shape, dtype=np.float64)
+    cx[1:-1] = 0.5 * (coef[:-1] + coef[1:])
+    cx[0] = coef[0]; cx[-1] = coef[-1]
+    cy[:, 1:-1] = 0.5 * (coef[:, :-1] + coef[:, 1:])
+    cy[:, 0] = coef[:, 0]; cy[:, -1] = coef[:, -1]
+    return (np.ascontiguousarray(cx * ux * np.asarray(dy)[None, :]),
+            np.ascontiguousarray(cy * uy * np.asarray(dx)[:, None]))
+
+
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     """Real-coordinate pressure fields + pipe-weighted dP from converged SIMPLE.
 
@@ -694,9 +731,8 @@ def _run_solvers(window, cfg, fields):
                     enthalpy=m.enthalpy)
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
-    _sco2_v1 = (_pA['name'] == _pB['name'] == 'sco2'
-                and dir_A == 0 and dir_B == 1
-                and zone_config is None)
+    _enthalpy_mode = ('sco2' in (_pA['name'], _pB['name'])
+                      and zone_config is None)
     mA_rows = mB_rows = None
 
     # 2026-05-09 — bump _MAX_COUPLING 5→10 default. The loop short-circuits
@@ -944,8 +980,9 @@ def _run_solvers(window, cfg, fields):
             _ftA = fluid_props.flow_model(_pA['name'])
             _ftB = fluid_props.flow_model(_pB['name'])
             from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
-            _dfA = SCO2_DF_METHOD if _pA['name'] == 'sco2' else None
-            _dfB = SCO2_DF_METHOD if _pB['name'] == 'sco2' else None
+            # V2 uses one water+sCO2 CFD-only closure for every fluid. K and
+            # cF depend on TPMS/L/t only and stay fixed through the solve.
+            _dfA = _dfB = SCO2_DF_METHOD
             # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
             # on two OS threads — the 2D port of run_stack_3d's
             # _run_two_simple_parallel. njit kernels + spsolve release the
@@ -1051,21 +1088,28 @@ def _run_solvers(window, cfg, fields):
         if zone_config is not None and za is not None:
             L_field_2d = za.get('L_mm_arr')
             t_field_2d = za.get('t_arr')
-        if _sco2_v1:
-            # Reuse the array-rank-agnostic 3D closure so 2D and 3D evaluate
-            # rho, mu, k, cp, Re and Pr from the same lagged local T field.
+        if _enthalpy_mode:
             from sjtu_tpmshx.pipelines.flux_3d import _sco2_hv_local_field
             _g_hv = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
             _Ta_hv = (Ta if Ta is not None
                       else np.full_like(u_mag_A, T_inA))
             _Tb_hv = (Tb if Tb is not None
                       else np.full_like(u_mag_B, T_inB))
-            h_vA_local = _sco2_hv_local_field(
-                _Ta_hv, P_inA_val, u_mag_A, _g_hv['A_0'], _g_hv['D_h'],
-                tpms_type, Lcell)
-            h_vB_local = _sco2_hv_local_field(
-                _Tb_hv, P_inB_val, u_mag_B, _g_hv['A_0'], _g_hv['D_h'],
-                tpms_type, Lcell)
+
+            def _enthalpy_side_hv(props, T_field, P_in, u_mag):
+                if props['name'] == 'sco2':
+                    return _sco2_hv_local_field(
+                        T_field, P_in, u_mag, _g_hv['A_0'], _g_hv['D_h'],
+                        tpms_type, Lcell)
+                rho = float(np.asarray(props['rho'](T_field, P_in)).mean())
+                mu = float(np.asarray(props['mu'](T_field, P_in)).mean())
+                return _build_hv_local_2d(
+                    rho, mu, float(props['k'](float(np.mean(T_field)), P_in)),
+                    u_mag, None, None, side_props=props,
+                    side_T_for_Pr=float(np.mean(T_field)), side_P=P_in)
+
+            h_vA_local = _enthalpy_side_hv(_pA, _Ta_hv, P_inA_val, u_mag_A)
+            h_vB_local = _enthalpy_side_hv(_pB, _Tb_hv, P_inB_val, u_mag_B)
         else:
             rho_A_scalar = float(rho_A_field.mean())
             rho_B_scalar = float(rho_B_field.mean())
@@ -1096,7 +1140,7 @@ def _run_solvers(window, cfg, fields):
         _has_water = (_pA['name'] == 'water') or (_pB['name'] == 'water')
         _e_max_iter = 12000 if _has_water else 5000
         _e_tol      = 1.0   if _has_water else 0.5
-        if _sco2_v1:
+        if _enthalpy_mode:
             _e_tol = 0.1
 
         # Step 2: Full-domain coupled energy solve (warm-start from previous iteration)
@@ -1119,6 +1163,7 @@ def _run_solvers(window, cfg, fields):
             _Kffa_use = _Kffa_src; _Kffb_use = _Kffb_src
             _epsA_use = None; _epsB_use = None
         def _simp_P_abs_real(simp, direction, P_in, fluid_name):
+            del fluid_name
             if window._is_x_dir(direction):
                 gauge = simp.P.T.copy()
                 if direction == 1:
@@ -1127,39 +1172,39 @@ def _run_solvers(window, cfg, fields):
                 gauge = simp.P.copy()
                 if direction == 3:
                     gauge = gauge[:, ::-1]
-            if fluid_name == 'sco2':
-                inlet = gauge[0, :] if direction == 0 else gauge[-1, :]
-                return np.ascontiguousarray(P_in + gauge - inlet[None, :])
-            return np.ascontiguousarray(simp.P_ref_abs + gauge)
+            inlet_gauge = _pipe_weighted(
+                simp.P[:, 0], simp.inlet_frac.astype(np.float64))
+            return np.ascontiguousarray(P_in + gauge - inlet_gauge)
 
         P_abs_A = _simp_P_abs_real(simpA, dir_A, P_inA_val, _pA['name'])
         P_abs_B = _simp_P_abs_real(simpB, dir_B, P_inB_val, _pB['name'])
-        if _sco2_v1:
-            from sjtu_tpmshx.solvers.ltne_enthalpy_2d import (
-                solve_sco2_enthalpy_2d,
-            )
-            eps_side = np.asarray(_eps_src, dtype=np.float64) * 0.5
-            eps_A_in = (float(eps_side) if eps_side.ndim == 0
-                        else eps_side[0, :])
-            eps_B_in = (float(eps_side) if eps_side.ndim == 0
-                        else eps_side[-1, :])
-            rho_A_in = simpA.rho_field[:, 0]
-            rho_B_in = simpB.rho_field[:, 0]
-            # Use the SIMPLE-native inlet face, not the first cell-centre
-            # velocity (which averages inlet and interior faces and therefore
-            # does not exactly carry the prescribed mass flow).  Both +x and
-            # -x solves inject at SIMPLE j=0; the real-coordinate flip happens
-            # only in the reconstructed display/energy fields.
-            mA_rows = (eps_A_in * rho_A_in * np.abs(simpA.v[:, 0])
-                       * energy_dy)
-            mB_rows = (eps_B_in * rho_B_in * np.abs(simpB.v[:, 0])
-                       * energy_dy)
-            Ta, Tb, Ts, e_info = solve_sco2_enthalpy_2d(
-                T_inA, T_inB, P_abs_A, P_abs_B, mA_rows, mB_rows,
-                h_vA_local, h_vB_local, _Kss_src, energy_dx, energy_dy,
+        if _enthalpy_mode:
+            from sjtu_tpmshx.solvers.ltne_enthalpy_2d import solve_enthalpy_2d
+            eps_total = np.broadcast_to(
+                np.asarray(_eps_src, dtype=np.float64), (N_x, N_y))
+            eps_A_ent = (_epsA_use if _epsA_use is not None
+                         else 0.5 * eps_total)
+            eps_B_ent = (_epsB_use if _epsB_use is not None
+                         else 0.5 * eps_total)
+            mass_flux_A = _face_mass_fluxes_2d(
+                simpA, dir_A, eps_A_ent, energy_dx, energy_dy)
+            mass_flux_B = _face_mass_fluxes_2d(
+                simpB, dir_B, eps_B_ent, energy_dx, energy_dy)
+            def _inflow_total(face_flux):
+                fx, fy = face_flux
+                return float(
+                    np.maximum(fx[0], 0.0).sum()
+                    + np.maximum(-fx[-1], 0.0).sum()
+                    + np.maximum(fy[:, 0], 0.0).sum()
+                    + np.maximum(-fy[:, -1], 0.0).sum())
+            mA_rows = np.array([_inflow_total(mass_flux_A)])
+            mB_rows = np.array([_inflow_total(mass_flux_B)])
+            Ta, Tb, Ts, e_info = solve_enthalpy_2d(
+                T_inA, T_inB, P_abs_A, P_abs_B, mass_flux_A, mass_flux_B,
+                h_vA_local, h_vB_local, _Kss_src, eps_A_ent, eps_B_ent,
+                energy_dx, energy_dy, fluid_A=_pA['name'], fluid_B=_pB['name'],
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-                max_iter=_e_max_iter, tol=_e_tol,
-            )
+                max_iter=_e_max_iter, tol=_e_tol)
         else:
             Ta, Tb, Ts, e_info = solve_full_domain(
                 L, H, N_x, N_y, T_inA, T_inB,
@@ -1345,7 +1390,7 @@ def _run_solvers(window, cfg, fields):
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
 
-    if _sco2_v1:
+    if _enthalpy_mode:
         Q_A_fine = float(e_info['Q_A'])
         Q_B_fine = float(e_info['Q_B'])
         # Match the established 3D/Shanghai headline convention: Fluid-A
@@ -1472,7 +1517,7 @@ def _run_solvers(window, cfg, fields):
             coupling_converged                       # outer ΔT+Δρ criterion
             and not simple_warnings                  # every SIMPLE side ok
             and bool(e_info.get('converged', False))  # LTNE inner pass
-            and (not _sco2_v1 or energy_rel < 0.05)   # true-h pair balance
+            and (not _enthalpy_mode or energy_rel < 0.05)  # true-h pair balance
             and not _energy_nan_hit                  # no patched-over NaN
             and bool(_env_valid)),                   # envelope gate
         'convergence_detail': {
@@ -1487,7 +1532,7 @@ def _run_solvers(window, cfg, fields):
             'ltne_ok': bool(e_info.get('converged', False)),
             'ltne_iterations': int(e_info.get('iterations', 0)),
             'ltne_residual': float(e_info.get('residual', float('inf'))),
-            'enthalpy_balance_ok': bool(not _sco2_v1 or energy_rel < 0.05),
+            'enthalpy_balance_ok': bool(not _enthalpy_mode or energy_rel < 0.05),
             'energy_nan_hit': bool(_energy_nan_hit),
             'envelope_ok': bool(_env_valid),
         },
