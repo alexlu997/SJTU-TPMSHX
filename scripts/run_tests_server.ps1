@@ -50,6 +50,9 @@ $env:MKL_NUM_THREADS = "1"; $env:NUMEXPR_NUM_THREADS = "1"
 $env:NUMBA_NUM_THREADS = "1"
 # Headless server — Qt tests need the offscreen platform plugin.
 $env:QT_QPA_PLATFORM = "offscreen"
+$env:MPLCONFIGDIR = Join-Path $repo ".cache\matplotlib"
+$env:XDG_CACHE_HOME = Join-Path $repo ".cache\xdg"
+New-Item -ItemType Directory -Force $env:MPLCONFIGDIR, $env:XDG_CACHE_HOME | Out-Null
 
 Set-Location $repo
 
