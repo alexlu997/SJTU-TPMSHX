@@ -2,10 +2,11 @@
 # port_retest_server.sh — 在 pyfluent 服务器上并行跑端口维数复测四臂.
 #
 # 用法 (服务器上, 任意目录):
-#   bash port_retest_server.sh            # 首次: clone + venv + 四臂并行
+#   bash port_retest_server.sh            # clone/update + 四臂并行
 #   bash port_retest_server.sh status     # 查看四臂进度
 #
-# 前置 (仅一次): 本地把标定数据传上来 (gitignored, clone 不带):
+# 前置 (仅一次): 按 requirements-lock-server.txt 预置
+# $PORT_WORKDIR/venv；本脚本不创建或安装环境。再把标定数据传上来:
 #   scp -r data/raw_data  <user>@<server>:~/tpmshx-port/SJTU-TPMSHX/data/
 #
 # 四臂: ctrl4/ctrl6 × seed 7/123, SAAS, 无早停. 每臂独立算 45 点均匀扫掠
@@ -30,6 +31,12 @@ fi
 
 mkdir -p "$WORKDIR" "$LOGD"
 
+if [ ! -x "$PY" ]; then
+    echo "FATAL: shared server Python not found: $PY"
+    echo "Provision it from requirements-lock-server.txt before running this script."
+    exit 1
+fi
+
 # 1. clone / update
 if [ ! -d "$REPO/.git" ]; then
     git clone -b "$BRANCH" https://github.com/alexlu997/SJTU-TPMSHX.git "$REPO"
@@ -38,15 +45,9 @@ else
         && git -C "$REPO" pull --ff-only origin "$BRANCH"
 fi
 
-# 2. venv + deps (幂等)
-if [ ! -x "$PY" ]; then
-    python3 -m venv "$WORKDIR/venv"
-    "$WORKDIR/venv/bin/pip" install --upgrade pip
-fi
-"$WORKDIR/venv/bin/pip" install -q -r "$REPO/requirements.txt"
-# 优化器栈额外依赖 (requirements.txt 只列求解器): CPU torch + botorch
-"$WORKDIR/venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
-"$WORKDIR/venv/bin/pip" install -q botorch gpytorch
+# 2. 预置环境验证（只读，不安装）
+"$PY" -m pip check
+"$PY" -c 'import torch, botorch, gpytorch'
 
 # 3. 标定数据在位检查 (worktree-rawdata 陷阱: 缺 raw_data 会静默回退 CSV 标定)
 if [ ! -d "$REPO/data/raw_data" ]; then
@@ -66,7 +67,7 @@ NCORE=$(nproc)
 PER_ARM=$(( NCORE / 4 )); [ "$PER_ARM" -lt 1 ] && PER_ARM=1
 THREADS=$PER_ARM; [ "$THREADS" -gt 8 ] && THREADS=8
 export PYTHONHASHSEED=0
-export PYTHONPATH="$REPO/sjtu_tpmshx"
+export PYTHONPATH="$REPO"
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMBA_NUM_THREADS=$THREADS
 export TPMSHX_BO_CORE_BUDGET=$PER_ARM
 echo "cores=$NCORE arms=4 -> 每臂预算 $PER_ARM 核, 每 worker $THREADS 线程"
@@ -76,7 +77,7 @@ launch() {  # launch <ctrl> <seed>
     if [ -f "$LOGD/$tag.log" ] && grep -q "\[PORT\] DONE" "$LOGD/$tag.log"; then
         echo "skip $tag (already DONE)"; return
     fi
-    nohup "$PY" -u sjtu_tpmshx/runs/run_port_dim_retest.py \
+    nohup "$PY" -u -m sjtu_tpmshx.runs.run_port_dim_retest \
         --ctrl "$1" --seed "$2" --jobs 4 \
         > "$LOGD/$tag.log" 2>&1 &
     echo "launched $tag pid=$!"

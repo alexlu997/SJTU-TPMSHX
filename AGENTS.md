@@ -15,6 +15,32 @@ before changing solver, pipeline, closure, or data-loading code.
   must not be committed.
 - Do not commit or push unless the user asks.
 
+## Python environment
+
+- `.venv-path` is required for local Python work. Use the absolute interpreter
+  on its first line for every Python, pip, smoke, and pytest command. If the
+  file or interpreter is missing, stop and report it instead of using another
+  environment.
+- Run project modules from the current repository root so `sjtu_tpmshx` resolves
+  from the current checkout or worktree.
+- For Matplotlib, Qt smoke, and pytest commands, use ignored worktree-local
+  `.cache/` paths for `MPLCONFIGDIR` and `XDG_CACHE_HOME`.
+- A shared worktree venv is dependency-only: install `requirements-lock.txt`,
+  not `requirements.txt`, and do not install this project into it editable.
+- Do not create, upgrade, or reinstall an environment or dependency unless the
+  user explicitly requests it. If the configured interpreter or a dependency is
+  missing, report the problem instead of changing the environment.
+- A requested dependency addition or removal must update `pyproject.toml` and
+  the appropriate lock file in the same change. Do not mutate the shared venv
+  as part of a code change; report that an explicit rebuild and prewarm are
+  required.
+- Do not rebuild a shared venv while another project Python process is using it;
+  all worktrees on that machine observe the replacement immediately.
+- Server launch scripts may synchronize code and data, but they must use their
+  pre-provisioned fixed interpreter and must not install or upgrade packages.
+- In source worktrees use `python -m sjtu_tpmshx.cli`, not the installed-only
+  `tpmshx-run` console script.
+
 ## Change discipline
 
 - Keep GUI concerns in `ui/` and `controllers/`; lower layers stay Qt-free.

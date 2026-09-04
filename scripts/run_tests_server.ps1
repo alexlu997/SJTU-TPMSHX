@@ -27,11 +27,21 @@
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
-$py = Join-Path $repo ".venv\Scripts\python.exe"
+$venvPathFile = Join-Path $repo ".venv-path"
+if (-not (Test-Path -Path $venvPathFile -PathType Leaf)) {
+    throw "Missing .venv-path. Follow README.md to configure the shared venv."
+}
+$py = [string](Get-Content -Path $venvPathFile -TotalCount 1)
+$py = $py.Trim()
+if ([string]::IsNullOrWhiteSpace($py) -or
+    -not (Test-Path -Path $py -PathType Leaf)) {
+    throw "Shared Python interpreter not found: $py"
+}
 
-$venvHome = (Select-String -Path (Join-Path $repo ".venv\pyvenv.cfg") -Pattern '^home = (.+)$').Matches[0].Groups[1].Value
+$venvRoot = Split-Path (Split-Path $py -Parent) -Parent
+$venvHome = (Select-String -Path (Join-Path $venvRoot "pyvenv.cfg") -Pattern '^home = (.+)$').Matches[0].Groups[1].Value
 if ($venvHome -match 'Anaconda') {
-    throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild: C:\Python312\python.exe -m venv .venv"
+    throw "venv is built from Anaconda ($venvHome) — PySide6 will crash (0xc0000139). Rebuild it from C:\Python312\python.exe"
 }
 
 $env:PYTHONHASHSEED = "0"

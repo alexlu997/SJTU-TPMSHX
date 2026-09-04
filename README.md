@@ -195,6 +195,9 @@ validation of that fluid pair.
 
 The supported environments are macOS with Python 3.13 and Windows with
 Python 3.12. Both use the exact shared versions in `requirements-lock.txt`.
+For local development, keep one dependency-only venv per machine in a stable
+path outside the repository. All worktrees on that machine can reuse it while
+importing `sjtu_tpmshx` from their own repository root.
 
 macOS:
 
@@ -202,10 +205,11 @@ macOS:
 git clone https://github.com/alexlu997/SJTU-TPMSHX.git
 cd SJTU-TPMSHX
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m pip check
+python3.13 -m venv "$HOME/.venvs/sjtu-tpmshx-py313"
+PYTHON="$HOME/.venvs/sjtu-tpmshx-py313/bin/python"
+"$PYTHON" -m pip install -r requirements-lock.txt
+"$PYTHON" -m pip check
+printf '%s\n' "$PYTHON" > .venv-path
 ```
 
 Windows PowerShell:
@@ -214,13 +218,61 @@ Windows PowerShell:
 git clone https://github.com/alexlu997/SJTU-TPMSHX.git
 cd SJTU-TPMSHX
 
-C:\Python312\python.exe -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m pip check
+$venv = Join-Path $env:USERPROFILE ".venvs\sjtu-tpmshx-py312"
+py -3.12 -m venv $venv
+$python = Join-Path $venv "Scripts\python.exe"
+& $python -m pip install -r requirements-lock.txt
+& $python -m pip check
+Set-Content -Path .venv-path -Value $python
 ```
 
-The Windows Server BO stack is optional: install
-`requirements-lock-server.txt` only when running optimization or retraining.
+If the Python Launcher is unavailable, replace `py -3.12` with the actual path
+to a python.org CPython 3.12 interpreter. The Windows test scripts reject an
+Anaconda-based venv because that combination has crashed PySide6 on the server.
+
+`.venv-path` is local and ignored by Git. Codex-managed worktrees copy it via
+`.worktreeinclude`; for a manually created Git worktree, copy the file once.
+Existing worktrees are not updated automatically. Remote/Cloud worktrees and CI
+use environments provisioned in those runtimes rather than this local pointer.
+Do not rely on shell activation in unattended work: read the interpreter from
+`.venv-path` and invoke it by absolute path. On macOS, for example:
+
+```bash
+PYTHON="$(<.venv-path)"
+"$PYTHON" -m sjtu_tpmshx.cli --help
+```
+
+`requirements.txt` deliberately adds `-e .` on top of the shared lock. Keep it
+for CI or a conventional editable package installation; do not install it into
+the shared worktree venv. In a dependency-only venv the `tpmshx-run` console
+script is absent, so use `python -m sjtu_tpmshx.cli` from the repository root.
+When a lock file changes, intentionally rebuild the affected shared venv at its
+fixed path, then rerun `pip check` and both smoke commands below. Do not use
+ad-hoc incremental `pip install` commands. Stop every project Python process
+using that venv before replacing it because all worktrees observe the change.
+
+After creating or intentionally rebuilding the shared venv, prewarm its native
+libraries while someone is present. This is also the acceptance smoke for
+Pillow, Matplotlib, PySide6, PyVista/VTK, Numba, NumPy/SciPy, and CoolProp:
+
+```bash
+mkdir -p .cache/matplotlib .cache/xdg
+MPLCONFIGDIR="$PWD/.cache/matplotlib" XDG_CACHE_HOME="$PWD/.cache/xdg" \
+  "$PYTHON" -m sjtu_tpmshx.runs.smokes.smoke_dependencies
+MPLCONFIGDIR="$PWD/.cache/matplotlib" XDG_CACHE_HOME="$PWD/.cache/xdg" \
+  "$PYTHON" -m sjtu_tpmshx.runs.smokes.smoke_ui_offscreen
+```
+
+PowerShell uses the same two modules after setting
+`$env:MPLCONFIGDIR = Join-Path $PWD ".cache\matplotlib"` and
+`$env:XDG_CACHE_HOME = Join-Path $PWD ".cache\xdg"`.
+The remaining `python ...` examples are shorthand: unattended macOS commands
+should use `"$PYTHON" ...`, and PowerShell commands should use `& $python ...`.
+
+The Windows Server BO stack is optional: provision the fixed
+`$PORT_WORKDIR\venv` from `requirements-lock-server.txt` while someone is
+present, then run `scripts/port_retest_server.ps1`. The server launch scripts
+only validate that environment; they never create it or install packages.
 
 GPU PyTorch is **optional** and only needed for research-backend retraining.
 The production runtime reads the packaged fixed-CFD CSV; `gamma_df` and `rbf`
@@ -244,10 +296,10 @@ python -m sjtu_tpmshx.main
 
 ```bash
 # Lumped ε-NTU dual-Nu — current paper baseline
-python sjtu_tpmshx/validation/cases/validate_shanghai_lumped_dual_nu.py
+python -m sjtu_tpmshx.validation.cases.validate_shanghai_lumped_dual_nu
 
 # 3D real solver (SIMPLE, Nz=10, mass-flux inlet)
-python sjtu_tpmshx/validation/cases/validate_shanghai_3d_real.py
+python -m sjtu_tpmshx.validation.cases.validate_shanghai_3d_real
 
 # Independent Diamond L7/t0.6 pressure-drop gate
 python -m sjtu_tpmshx.validation.cases.validate_d76_3d

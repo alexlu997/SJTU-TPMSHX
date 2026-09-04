@@ -7,6 +7,10 @@ __pycache__/
 venv/
 .serena/
 
+# Per-machine shared Python interpreter pointer and writable runtime caches
+/.venv-path
+/.cache/
+
 # Model artifacts (regeneratable by train_surrogate.py)
 models/*.joblib
 
