@@ -52,9 +52,11 @@ explicit numerical-model change with directly relevant validation.
    those values again.
 3. **Mass-flux inlet.** Compressible air uses the mass-flux inlet in both 2D
    and 3D. Solver velocities are interstitial, not superficial.
-4. **Darcy-Forchheimer ownership.** The default `gamma_df` closure is already
-   anchored to SLM experiment data. Do not add an unconditional downstream
-   friction or roughness multiplier. Explicit research modes remain opt-in.
+4. **Darcy-Forchheimer ownership.** Production uses one water+sCO2 CFD table
+   for both sides and every fluid. K and cF depend only on TPMS topology, L,
+   and t; values inside the 4–8 mm by 0.3–0.6 mm grid are bilinearly
+   interpolated. They must not depend on Re or fluid type. `gamma_df` and
+   `rbf` remain explicit research modes.
 5. **Nusselt ownership.** Air, water, and sCO2 coefficient tables live only in
    `solvers/nu_correlations.py`.
 6. **Compressible envelope.** `solvers/envelope.py` rejects operating points
@@ -64,11 +66,16 @@ explicit numerical-model change with directly relevant validation.
    SIMPLE pressure field is gauge pressure relative to it.
 8. **Units.** Runtime quantities use K, Pa, and m unless the name says
    otherwise. TPMS cell size and wall thickness use mm.
-9. **Surrogate promotion.** A new default surrogate must reproduce the
-   Shanghai 3D validation path before replacing the current backend.
-10. **sCO2 V1 closure.** Paired sCO2 uses the exact-node three-cell CFD
-    Darcy–Forchheimer table and the smooth-wall CFD Nu correlation directly.
-    Do not apply the historical experimental gamma corrections in this path.
+9. **Port boundary.** `ComputeConfig.validate()` normalizes both ports and
+   calls the shared validator. 2D supports every ±x/±y direction; 3D also
+   supports ±z, with both transverse extents validated against the correct
+   domain axes.
+10. **True-enthalpy ownership.** Any ordered fluid pair containing sCO2 uses
+    the conservative enthalpy kernel. It consumes SIMPLE's signed staggered
+    face mass flows and computes duty from boundary enthalpy fluxes; it must
+    not reconstruct a full-face x-flow from a scalar mass rate.
+11. **Current V2 limit.** sCO2 zones and offset level sets remain rejected;
+    air/water-only runs retain their existing temperature-form kernels.
 
 ## Extension points
 

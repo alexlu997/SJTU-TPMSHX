@@ -165,9 +165,11 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # representable → round is an identity). Projector baseline JSON recaptured
 # in the same change. Old: (-8023.328438019232, 8397.055931922105, ...) /
 # (-10759.937887695394, 5859.926835485792, ...).
-_FROZEN_2D_UNIFORM = (-8573.834141483694, 11320.610597603201,
+# V2: production D-F changed from experimental gamma_df to the geometry-only
+# water+sCO2 CFD table. Q and dP change; geometry mass remains bit-identical.
+_FROZEN_2D_UNIFORM = (-8487.736165623135, 4675.147100083514,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-8023.338274641158, 8397.068602254822,
+_FROZEN_2D_NONUNIF = (-7973.354160060764, 4052.0459272924345,
                       3.6729327392578126)
 # re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
 # eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the
@@ -198,9 +200,9 @@ _FROZEN_2D_NONUNIF = (-8023.338274641158, 8397.068602254822,
 # (-9736.62293019604, 5859.925022099803, ...).
 # 3D NONUNIF re-baselined 2026-07-13 (#2): see the smooth_df._geom purity
 # note above the 2D constants — same change, same mechanism.
-_FROZEN_3D_UNIFORM = (-9644.406654069786, 18176.77875067786,
+_FROZEN_3D_UNIFORM = (-9968.94601218934, 7546.892661164707,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10759.9420728641, 5859.7962293252385,
+_FROZEN_3D_NONUNIF = (-10850.667870259445, 2879.2940311398415,
                       3.675970458984375)
 
 

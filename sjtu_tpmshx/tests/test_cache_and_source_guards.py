@@ -139,10 +139,10 @@ def test_geometry_lut_cache_keys_on_kwargs(tmp_path):
     assert lut_a2 is lut_a
 
 
-# ── W7b: compute() cache — DF-env key + hit-copy poison guard ──────
+# ── compute() cache — fixed production DF + hit-copy poison guard ──
 
 
-def test_compute_cache_keys_on_df_backend(monkeypatch):
+def test_compute_pins_fixed_df_backend(monkeypatch):
     from sjtu_tpmshx.solvers import tpms_calc
     args = ('Gyroid', 7.0, 0.6, 10.0, 422.0, 192362.0, 16.0)
 
@@ -155,11 +155,9 @@ def test_compute_cache_keys_on_df_backend(monkeypatch):
     r_rbf = tpms_calc.compute(*args)
     info_after_switch = tpms_calc.compute.cache_info()
 
-    assert info_after_switch.misses == info_after_first.misses + 1, (
-        "switching TPMSHX_DF_METHOD did not miss the cache — the second "
-        "backend would silently receive the first backend's (K, cF)")
-    # gamma_df (CFD-refit K) and rbf K genuinely differ at the gate point
-    assert r_rbf['K_df'] != r_default['K_df']
+    assert info_after_switch.hits == info_after_first.hits + 1
+    assert r_rbf['K_df'] == r_default['K_df']
+    assert r_rbf['cF_df'] == r_default['cF_df']
 
 
 def test_compute_hit_returns_unpoisonable_copy():

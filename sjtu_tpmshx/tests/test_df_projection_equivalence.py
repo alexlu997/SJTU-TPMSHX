@@ -6,7 +6,8 @@ pre-refactor projectors (2026-06-12) on deterministic synthetic fields:
 The shared-helper extraction (_cell_centre_fracs / _nearest_src_idx /
 _stream_profile) must reproduce every value within cross-platform floating
 point tolerance; the golden 3D gate runs uniform cfgs only, so this file is
-the gate for the projector.
+the gate for the projector. The captured baseline used gamma_df, so this test
+pins that research backend; production closure selection is tested separately.
 """
 import json
 from pathlib import Path
@@ -26,6 +27,11 @@ _BASE = json.loads(
 _NX, _NY, _NZ = 9, 7, 5
 _DX_NU = np.array([1.0, 1.5, 0.5, 2.0, 1.0, 0.8])
 _ZDX_NU = np.array([1.0, 0.5, 1.5, 1.0])
+
+
+@pytest.fixture(autouse=True)
+def _captured_backend(monkeypatch):
+    monkeypatch.setenv('TPMSHX_DF_METHOD', 'gamma_df')
 
 
 def _fields_2d():

@@ -11,6 +11,7 @@ collected the user's text from ``QLineEdit.text()``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Dict, List, Optional, Tuple
 
 from sjtu_tpmshx.df_surrogate._domain import TRAIN_L_NODES, TRAIN_T_NODES
@@ -234,7 +235,7 @@ def cross_axes_for_dir(d: int) -> Tuple[str, str]:
 # ---------------------------------------------------------------- pipe config
 
 
-def validate_pipe_config(cfg: Dict[str, float],
+def validate_pipe_config(cfg: Dict[str, object],
                          L_dom: float, H_dom: float,
                          Lz_dom: Optional[float] = None,
                          is_3d: bool = False) -> List[Warning]:
@@ -246,15 +247,27 @@ def validate_pipe_config(cfg: Dict[str, float],
     Checks:
       * inlet/outlet centre ± width/2 stays inside the cross-axis range
       * width > 0
-      * z-partial fields present iff ``is_3d`` and direction is 0/1/2/3
-        (z-flow naturally fills in the streamwise axis)
+      * optional second-cross-axis fields are complete and in range in 3D
+      * 2D accepts only x/y directions; 3D also accepts z directions
     """
     out: List[Warning] = []
-    d = int(cfg.get('dir', 0))
+    try:
+        d = int(cfg.get('dir', 0))
+    except (TypeError, ValueError, OverflowError):
+        out.append(Warning(
+            'pipe_bad_dir',
+            f"pipe direction {cfg.get('dir')!r} is not an integer",
+            severity='error'))
+        return out
     if d not in _CROSS_AXES:
         out.append(Warning(
             'pipe_bad_dir',
             f'pipe direction {d} not in 0..5', severity='error'))
+        return out
+    if not is_3d and d in (4, 5):
+        out.append(Warning(
+            'pipe_bad_dir',
+            f'2D pipe direction {d} must be in 0..3', severity='error'))
         return out
 
     # Cross axis 1 length depends on flow axis
@@ -267,8 +280,21 @@ def validate_pipe_config(cfg: Dict[str, float],
         cross2_len = H_dom
 
     for io in ('in', 'out'):
-        ctr = float(cfg.get(f'{io}_ctr', 0.0))
-        w = float(cfg.get(f'{io}_w', 0.0))
+        try:
+            ctr = float(cfg.get(f'{io}_ctr', 0.0))
+            w = float(cfg.get(f'{io}_w', 0.0))
+        except (TypeError, ValueError):
+            out.append(Warning(
+                f'pipe_{io}_invalid',
+                f'{io} centre and width must be finite numbers',
+                severity='error'))
+            continue
+        if not math.isfinite(ctr) or not math.isfinite(w):
+            out.append(Warning(
+                f'pipe_{io}_invalid',
+                f'{io} centre and width must be finite numbers',
+                severity='error'))
+            continue
         if w <= 0:
             out.append(Warning(
                 f'pipe_{io}_w_nonpos',
@@ -283,13 +309,41 @@ def validate_pipe_config(cfg: Dict[str, float],
                 f'leaves the cross-axis range [0, {cross1_len:.3g}].',
                 severity='error'))
 
-    if is_3d and cross2_len is not None and d in (0, 1, 2, 3):
+    cross2_fields = tuple(
+        cfg.get(name) for name in
+        ('in_z_ctr', 'in_z_w', 'out_z_ctr', 'out_z_w'))
+    if not is_3d and any(value is not None for value in cross2_fields):
+        out.append(Warning(
+            'pipe_cross2_in_2d',
+            'second-cross-axis port fields are only valid in 3D',
+            severity='error'))
+    if is_3d and cross2_len is not None:
+        cross2_name = _CROSS_AXES[d][1]
         for io in ('in', 'out'):
             zc = cfg.get(f'{io}_z_ctr')
             zw = cfg.get(f'{io}_z_w')
+            if zc is None and zw is None:
+                continue   # omitted pair means full face on cross2
             if zc is None or zw is None:
-                continue   # optional — defaults applied elsewhere
-            zc, zw = float(zc), float(zw)
+                out.append(Warning(
+                    f'pipe_{io}_z_incomplete',
+                    f'{io} second-cross-axis centre and width must be set together',
+                    severity='error'))
+                continue
+            try:
+                zc, zw = float(zc), float(zw)
+            except (TypeError, ValueError):
+                out.append(Warning(
+                    f'pipe_{io}_z_invalid',
+                    f'{io} second-cross-axis centre and width must be finite numbers',
+                    severity='error'))
+                continue
+            if not math.isfinite(zc) or not math.isfinite(zw):
+                out.append(Warning(
+                    f'pipe_{io}_z_invalid',
+                    f'{io} second-cross-axis centre and width must be finite numbers',
+                    severity='error'))
+                continue
             if zw <= 0:
                 out.append(Warning(
                     f'pipe_{io}_z_w_nonpos',
@@ -301,7 +355,7 @@ def validate_pipe_config(cfg: Dict[str, float],
                     f'pipe_{io}_z_out_of_domain',
                     f'{io}_z_ctr ± {io}_z_w/2 = '
                     f'[{zc - zw/2:.3g}, {zc + zw/2:.3g}] m '
-                    f'leaves z-range [0, {cross2_len:.3g}].',
+                    f'leaves {cross2_name}-range [0, {cross2_len:.3g}].',
                     severity='error'))
     return out
 

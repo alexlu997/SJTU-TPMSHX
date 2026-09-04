@@ -8,10 +8,12 @@ owns its own semantics — notably the K clamp:
                    clamp INSIDE this adapter (the validated Shanghai RBF
                    numbers were measured with it). Vectorised path is the
                    native batched RBF evaluation.
-  * ``gamma_df`` — GammaDF (production default since v1.4.0). Clamp-free
+  * ``gamma_df`` — legacy/research GammaDF backend. Clamp-free
                    by design (the clamp floored true K ≈ 1e-9 of L4/L5
                    geometries and was the LOO error driver). Vectorised
                    path is a per-unique-(L, t) scalar cache.
+  * ``cfd_full_core_3cell_fixed_v2`` — V2 production default. Geometry-only
+                   water+sCO2 CFD table with bilinear L/t interpolation.
 
 REGISTRATION CONTRACT — read before adding a backend or switching the
 default: a new backend (or default switch) must pass the Shanghai 3D Nz=3 gate

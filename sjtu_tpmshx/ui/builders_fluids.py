@@ -130,38 +130,25 @@ def build_page_fluids(window):
     # ── Fluid A (input + computed) ────────────────────────
     g1, _ = section(window, _fluids_row_lay, "流体 A", _T_A, _F_A)
     _FLUID_TYPES = ["Air", "Water", "sCO₂"]
-    # Fluid A only supports Air right now (Water needs an incompressible
-    # SIMPLE A path; sCO₂ needs a real-gas property table). Disabling the
-    # unsupported combo entries instead of hiding them keeps the option
-    # visible as a "coming soon" hint without letting users hit
-    # NotImplementedError at compute time (fluid-type gate now lives in
-    # solvers/tpms_calc.validate_fluid_type, called by both parses).
     window.combo_fluidA = QComboBox()
     window.combo_fluidA.addItems(_FLUID_TYPES)
     window.combo_fluidA.setCurrentIndex(0)
     window.combo_fluidA.setStyleSheet(_COMBO)
     window.combo_fluidA.setToolTip(
-        "Fluid A supports Air and sCO₂ (2D + 3D).\n"
-        "Water-A is reserved (greyed) — needs an incompressible SIMPLE A path.")
-    # Water (1) disabled; sCO₂ (2) ENABLED — Fluid-A sCO2 is wired in both 2D and
-    # 3D (stages_3d A-path generalized 2026-06-28; 2D pipeline is symmetric).
+        "Fluid A supports Air, Water and sCO₂ (2D + 3D).")
     try:
         _modelA = window.combo_fluidA.model()
         _itA_w = _modelA.item(1)   # Water
         if _itA_w is not None:
-            _itA_w.setEnabled(False)
-            _itA_w.setToolTip(
-                "Water Fluid A not yet supported (needs incompressible SIMPLE A "
-                "path). Use Water on Fluid B.")
+            _itA_w.setEnabled(True)
+            _itA_w.setToolTip("Water Fluid A (2D + 3D).")
         _itA_s = _modelA.item(2)   # sCO₂
         if _itA_s is not None:
             _itA_s.setEnabled(True)
             _itA_s.setToolTip(
-                "sCO₂ Fluid A (2D + 3D). Real-gas CoolProp Span-Wagner; Diamond "
-                "7/0.6 only; tick 'allow extrapolation' (t=0.6 trips the ConstDF "
-                "geometric window — sCO₂ uses its own D-7-6 closure).\n"
-                "⚠ 3D coupled Q / cold-outlet carry the known LTNE B-side "
-                "conservation caveat; dP + hot-side duty are trustworthy.")
+                "sCO₂ Fluid A (2D + 3D). CoolProp real-gas properties and "
+                "face-mass-flow true-enthalpy transport; supports mixed fluids, "
+                "custom ports and all directions inside the CFD L/t grid.")
     except Exception:
         pass
     add_row(window, g1, 0, "Fluid type", right_align_combo(window.combo_fluidA))
@@ -171,31 +158,22 @@ def build_page_fluids(window):
 
     # ── Fluid B (input + computed) — sits to the right of Fluid A ─────
     g2b, _ = section(window, _fluids_row_lay, "流体 B", _T_B, _F_B)
-    # Fluid B supports Air + Water (incompressible SIMPLE B path is wired
-    # in pipelines/run_stack_3d + solve_2d). sCO₂ remains unsupported until
-    # a real-gas property table is added.
+    # Both sides expose the same three-fluid capability.
     window.combo_fluidB = QComboBox()
     window.combo_fluidB.addItems(_FLUID_TYPES)
     window.combo_fluidB.setCurrentIndex(1)  # default Water (Shanghai cold side)
     window.combo_fluidB.setStyleSheet(_COMBO)
     window.combo_fluidB.setToolTip(
-        "Fluid B supports Air, Water and sCO₂ (2D + 3D).\n"
-        "sCO₂: Diamond 7/0.6 only + tick 'allow extrapolation'.")
+        "Fluid B supports Air, Water and sCO₂ (2D + 3D).")
     try:
         _modelB = window.combo_fluidB.model()
         _it = _modelB.item(2)   # sCO₂ — wired in 2D + 3D (2026-06-28)
         if _it is not None:
             _it.setEnabled(True)
             _it.setToolTip(
-                "sCO₂ (2D + 3D). Real-gas CoolProp Span-Wagner properties.\n"
-                "Calibrated geometry = Diamond, L=7 mm, t=0.6 mm (D-7-6 Nu + cF); "
-                "other lattices raise NotImplementedError.\n"
-                "Tick 'allow extrapolation' — the ConstDF-v1 surrogate window is "
-                "t∈[0.3,0.5] mm, so t=0.6 trips the geometric domain guard "
-                "(sCO₂ uses its own D-7-6 closure, not ConstDF, so this is not a "
-                "true extrapolation).\n"
-                "⚠ 3D coupled Q / cold-outlet carry the known LTNE B-side "
-                "conservation caveat; dP + hot-side duty are trustworthy.")
+                "sCO₂ (2D + 3D). CoolProp real-gas properties and face-mass-flow "
+                "true-enthalpy transport; supports mixed fluids, custom ports "
+                "and all directions inside the CFD L/t grid.")
     except Exception:
         pass
     add_row(window, g2b, 0, "Fluid type", right_align_combo(window.combo_fluidB))

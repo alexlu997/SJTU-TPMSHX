@@ -1,8 +1,9 @@
-"""Exact-node Darcy--Forchheimer coefficients from three-cell sCO2 CFD."""
+"""Geometry-only Darcy--Forchheimer coefficients from water+sCO2 CFD."""
 
 from __future__ import annotations
 
 import csv
+from bisect import bisect_left
 from math import isfinite
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from pathlib import Path
 METHOD = "cfd_full_core_3cell_fixed_v2"
 TABLE_PATH = Path(__file__).parent / "_prebuilt" / f"{METHOD}.csv"
 _TOPOLOGIES = ("Diamond", "Gyroid")
-_L_NODES = {4.0, 5.0, 6.0, 7.0, 8.0}
-_T_NODES = {0.3, 0.4, 0.5, 0.6}
+_L_NODES = (4.0, 5.0, 6.0, 7.0, 8.0)
+_T_NODES = (0.3, 0.4, 0.5, 0.6)
 
 
 def _load_table() -> dict[str, dict[tuple[float, float], tuple[float, float]]]:
@@ -44,8 +45,22 @@ def _load_table() -> dict[str, dict[tuple[float, float], tuple[float, float]]]:
 _TABLE = _load_table()
 
 
+def _bracket(value: float, nodes: tuple[float, ...]) -> tuple[float, float, float]:
+    value = float(value)
+    tol = 1e-12 * max(1.0, abs(value))
+    if value < nodes[0] - tol or value > nodes[-1] + tol:
+        raise ValueError
+    value = min(max(value, nodes[0]), nodes[-1])
+    upper = bisect_left(nodes, value)
+    if upper < len(nodes) and abs(value - nodes[upper]) <= tol:
+        return nodes[upper], nodes[upper], 0.0
+    lower = upper - 1
+    lo, hi = nodes[lower], nodes[upper]
+    return lo, hi, (value - lo) / (hi - lo)
+
+
 class FullCore3CellFixedDFV2:
-    """Return fixed ``(K, cF)`` at the supported CFD geometry nodes."""
+    """Return node values or bilinear ``(L, t)`` interpolation within the CFD grid."""
 
     def __init__(self, tpms: str):
         if tpms not in _TABLE:
@@ -57,12 +72,23 @@ class FullCore3CellFixedDFV2:
     ) -> tuple[float, float]:
         del eps_f
         try:
-            return _TABLE[self.tpms][float(L_mm), float(t_mm)]
-        except KeyError as exc:
+            L0, L1, wL = _bracket(L_mm, _L_NODES)
+            t0, t1, wt = _bracket(t_mm, _T_NODES)
+        except ValueError as exc:
             raise ValueError(
                 "geometry is outside the fixed sCO2 CFD grid: "
-                "L=4..8 mm in 1 mm steps, t=0.3..0.6 mm in 0.1 mm steps"
+                "4 <= L <= 8 mm and 0.3 <= t <= 0.6 mm"
             ) from exc
+
+        table = _TABLE[self.tpms]
+        result = []
+        for index in (0, 1):
+            at_t0 = ((1.0 - wL) * table[L0, t0][index]
+                     + wL * table[L1, t0][index])
+            at_t1 = ((1.0 - wL) * table[L0, t1][index]
+                     + wL * table[L1, t1][index])
+            result.append((1.0 - wt) * at_t0 + wt * at_t1)
+        return result[0], result[1]
 
 
 __all__ = ["FullCore3CellFixedDFV2", "METHOD", "TABLE_PATH"]

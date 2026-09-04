@@ -92,12 +92,41 @@ def test_registry_surface():
     assert get_backend('Gyroid', 'gamma_df') is b   # cached
 
 
-def test_fixed_sco2_backend_rejects_off_grid_geometry():
+def test_fixed_sco2_backend_interpolates_geometry_and_rejects_extrapolation():
+    got = P.predict_K_cF(
+        'Diamond', 7.5, 0.55, _EF['Diamond'],
+        method='cfd_full_core_3cell_fixed_v2',
+    )
+    corners = [
+        P.predict_K_cF('Diamond', L, t, _EF['Diamond'],
+                       method='cfd_full_core_3cell_fixed_v2')
+        for L in (7.0, 8.0) for t in (0.5, 0.6)
+    ]
+    assert got == pytest.approx(tuple(np.mean(corners, axis=0)))
     with pytest.raises(ValueError, match='outside the fixed sCO2 CFD grid'):
         P.predict_K_cF(
-            'Diamond', 7.1, 0.6, _EF['Diamond'],
+            'Diamond', 8.1, 0.6, _EF['Diamond'],
             method='cfd_full_core_3cell_fixed_v2',
         )
+
+
+def test_production_fixed_df_is_independent_of_fluid_and_reynolds():
+    from sjtu_tpmshx.solvers.tpms_calc import compute
+
+    compute.cache_clear()
+    cases = (
+        ('air', 2.0, 320.0, 101325.0),
+        ('water', 0.2, 320.0, 200000.0),
+        ('sco2', 8.0, 320.0, 12e6),
+    )
+    coeffs = []
+    for fluid, velocity, temperature, pressure in cases:
+        result = compute(
+            'Gyroid', 7.0, 0.6, velocity, temperature, pressure, 16.0,
+            fluid_type=fluid,
+        )
+        coeffs.append((result['K_df'], result['cF_df']))
+    assert coeffs[0] == coeffs[1] == coeffs[2]
 
 
 def test_diagnostics_passthrough():

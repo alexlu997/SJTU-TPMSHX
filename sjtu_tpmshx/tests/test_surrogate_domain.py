@@ -2,9 +2,7 @@
 
 Covers:
   * In-window inputs return empty list
-  * Out-of-window L raises ValueError when allow_extrap=False
-  * Out-of-window L returns reason list (no raise) when allow_extrap=True
-  * Out-of-window t same behavior
+  * Out-of-grid L/t raise by default and become warnings when extrapolation is allowed
   * Out-of-window Re (via velocity) same behavior
   * Env var TPMSHX_ALLOW_EXTRAP=1 forces allow_extrap=True
   * side='A' / 'B' label propagates to reason text
@@ -51,10 +49,9 @@ def test_oow_L_above_max_raises_default():
 
 
 def test_oow_t_above_max_raises_default():
-    """t = 0.6 mm > 0.5 mm window (the original Shanghai 't=0.6 dead-end')."""
     with pytest.raises(ValueError):
         check_surrogate_domain_at_point(
-            'Diamond', L_mm=6.0, t_mm=0.6, k_s=16.0,
+            'Diamond', L_mm=6.0, t_mm=0.61, k_s=16.0,
             u=5.0, T=350.0, side='A')
 
 
@@ -71,10 +68,10 @@ def test_oow_L_with_allow_extrap_returns_reasons():
 def test_oow_t_with_allow_extrap_returns_reasons():
     with pytest.warns(UserWarning):
         reasons = check_surrogate_domain_at_point(
-            'Diamond', L_mm=6.0, t_mm=0.6, k_s=16.0,
+            'Diamond', L_mm=6.0, t_mm=0.61, k_s=16.0,
             u=5.0, T=350.0, side='B', allow_extrap=True)
     assert len(reasons) >= 1
-    assert any('Wall thickness' in r or 't =' in r for r in reasons)
+    assert any('thickness' in r for r in reasons)
 
 
 def test_oow_velocity_too_low_raises():
@@ -135,9 +132,16 @@ def test_exactly_at_L_lower_bound():
 
 
 def test_exactly_at_t_upper_bound():
-    """t = 0.5 (upper bound exactly) — inside."""
+    """t = 0.6 is a supported CFD node."""
     reasons = check_surrogate_domain_at_point(
-        'Diamond', L_mm=6.0, t_mm=_SURROGATE_T_MM[1], k_s=16.0,
+        'Diamond', L_mm=6.0, t_mm=_SURROGATE_T_MM[-1], k_s=16.0,
         u=5.0, T=350.0, side='A', allow_extrap=False)
     t_reasons = [r for r in reasons if 'thickness' in r or 't =' in r]
     assert t_reasons == []
+
+
+def test_between_geometry_nodes_is_supported():
+    reasons = check_surrogate_domain_at_point(
+        'Diamond', L_mm=5.5, t_mm=0.45, k_s=16.0,
+        u=5.0, T=350.0, side='A', allow_extrap=False)
+    assert reasons == []

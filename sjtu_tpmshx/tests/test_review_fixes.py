@@ -75,11 +75,8 @@ def test_frozen_B_h_vB_zero_makes_solid_B_source_vanish():
 # ── 3. Combo gray-out ────────────────────────────────────────────────────
 
 
-def test_fluid_combo_gray_out_disables_unsupported_entries():
-    """Fluid A combo disables indices 1 (Water) and 2 (sCO₂); Fluid B combo
-    disables index 2 (sCO₂) only. Skipped if Qt is unavailable in the test
-    environment (CI machines without PySide6).
-    """
+def test_fluid_combo_enables_all_supported_entries():
+    """Both sides expose all three supported fluids."""
     pytest.importorskip("PySide6.QtWidgets")
     # Probing only the Qt enable-flag logic — does not require a running
     # QApplication, but constructing a QComboBox does. Wrap in a try so a
@@ -101,35 +98,16 @@ def test_fluid_combo_gray_out_disables_unsupported_entries():
     fluids = ["Air", "Water", "sCO₂"]
     combo_A = QComboBox()
     combo_A.addItems(fluids)
-    # Mirror ui_builders.py logic
-    for idx in (1, 2):
-        it = combo_A.model().item(idx)
-        if it is not None:
-            it.setEnabled(False)
-
     combo_B = QComboBox()
     combo_B.addItems(fluids)
-    it = combo_B.model().item(2)
-    if it is not None:
-        it.setEnabled(False)
 
     from PySide6.QtCore import Qt
     flag_enabled = Qt.ItemFlag.ItemIsEnabled
 
-    assert not bool(combo_A.model().item(1).flags() & flag_enabled), \
-        "Fluid A 'Water' should be disabled in combo"
-    assert not bool(combo_A.model().item(2).flags() & flag_enabled), \
-        "Fluid A 'sCO₂' should be disabled in combo"
-    assert bool(combo_A.model().item(0).flags() & flag_enabled), \
-        "Fluid A 'Air' must remain enabled"
-
-    assert bool(combo_B.model().item(0).flags() & flag_enabled), \
-        "Fluid B 'Air' must remain enabled"
-    assert bool(combo_B.model().item(1).flags() & flag_enabled), \
-        "Fluid B 'Water' must remain enabled (incompressible SIMPLE B wired)"
-    assert not bool(combo_B.model().item(2).flags() & flag_enabled), \
-        "Fluid B 'sCO₂' should be disabled in combo"
-    print("test_fluid_combo_gray_out_disables_unsupported_entries PASS")
+    for combo in (combo_A, combo_B):
+        assert all(bool(combo.model().item(i).flags() & flag_enabled)
+                   for i in range(len(fluids)))
+    print("test_fluid_combo_enables_all_supported_entries PASS")
 
 
 def test_nu_roughness_factor_locked_at_1p28():
@@ -176,6 +154,6 @@ def test_nu_roughness_factor_locked_at_1p28():
 if __name__ == '__main__':
     test_domain_firewall_blocks_meter_typed_as_mm()
     test_frozen_B_h_vB_zero_makes_solid_B_source_vanish()
-    test_fluid_combo_gray_out_disables_unsupported_entries()
+    test_fluid_combo_enables_all_supported_entries()
     test_nu_roughness_factor_locked_at_1p28()
     print("\nAll review-fix tests PASS")

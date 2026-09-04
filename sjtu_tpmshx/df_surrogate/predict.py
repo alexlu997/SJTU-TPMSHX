@@ -11,10 +11,16 @@ Interface
     predict_dP_compressible(tpms_type, L_mm, t_mm, eps_f, G, T, P_in, mu, L)
                                                  -> dP [Pa]
 
-Backends (selectable per call via ``method=`` or globally via env
-``TPMSHX_DF_METHOD``):
+The default is ``cfd_full_core_3cell_fixed_v2``: a water+sCO2 CFD table whose
+K and cF depend only on topology, L, and t. Values between CFD nodes are
+bilinearly interpolated. Production pipelines pin this backend regardless of
+environment state.
 
-    "gamma_df" (default since 2026-06-12)
+Research backends are selectable for direct calls via ``method=`` or globally
+via ``TPMSHX_DF_METHOD``:
+
+    "gamma_df"      Legacy experimental-roughness backend; the production
+                     default from 2026-06-12 until V2.
                      GammaDF — multi-fidelity smooth-CFD-surface x
                      experimental roughness factor.  Trusted-anchor LOO
                      2.5%/2.6%; D7 blind 454.2 vs ~454.  Gate-point cF
@@ -27,7 +33,8 @@ Backends (selectable per call via ``method=`` or globally via env
                      pre-2026-06-12 production default (Shanghai 3D Nz=3
                      dP 7.19% / Q 3.22%, but D7-class extrapolation
                      falsified: 745 vs ~454, end-to-end 67.4%).
-                     Restore globally with TPMSHX_DF_METHOD=rbf.
+                     Select for direct research calls with
+                     TPMSHX_DF_METHOD=rbf.
                      See surrogate_v3.py.
 
 Usage
@@ -114,7 +121,7 @@ def _overrides_enabled() -> bool:
 
 
 # ==================================================================
-# sCO2 effective-cF calibration (D-7-6, 2026-06-27)
+# Legacy/research sCO2 effective-cF calibration (D-7-6, 2026-06-27)
 # ==================================================================
 # The air/water-anchored geometric cF (backends gamma_df / rbf) UNDER-predicts
 # the MEASURED sCO2 Forchheimer dP. Forensic on the D-7-6 specimen (Diamond
@@ -128,18 +135,21 @@ def _overrides_enabled() -> bool:
 # effective-cF multiplier (single geometry Diamond 7/0.6, rough SLM part;
 # forensic inlet-property ratio 3.13, field-calibrated 3.39 against
 # validate_sco2_d76_2d.py, Δp RMSRE ~6 %). Retired by user decision: sCO2 cF
-# now comes from the 2026-07 SMOOTH-WALL unit-cell CFD campaign via
+# was later sourced from the 2026-07 SMOOTH-WALL unit-cell CFD campaign via
 # ``sco2_cf_scale`` below (both topologies, 27 geometries, Re-dependent).
 # ⚠ Consequence: solver sCO2 Δp is a SMOOTH-WALL estimate — the D-7-6
 # experiment says the real printed part runs ~3.4× higher on that geometry.
 # Re-anchor (γ-style) when sCO2 experiment data lands (ledger SCO2-CFD).
+# V2 production does not call this helper: it uses geometry-only K/cF from
+# the fixed water+sCO2 CFD table, with no Re- or fluid-dependent multiplier.
 
 
 def sco2_cf_scale(tpms: str, L_mm: float, t_mm: float, eps_f: float,
                   rho_in: float, mu_in: float, u_in: float) -> float:
-    """Per-run sCO2 cf_scale: rough-corrected sCO2 cF(Re_in) / production base.
+    """Legacy research cf_scale: rough-corrected sCO2 cF(Re_in) / base.
 
-    Drop-in replacement for the retired constant SCO2_CF_SCALE in the
+    Not used by the V2 production pipelines. Drop-in replacement for the
+    retired constant SCO2_CF_SCALE in the
     ``cf_scale`` hook: callers keep multiplying their production base cF
     (predict_K_cF, same ``eps_f`` argument) by this ratio, which lands the
     effective cF on the sCO2 smooth-wall CFD value
@@ -190,8 +200,8 @@ def _apply_override(tpms: str, L_mm: float, t_mm: float,
 
 from .backend import available_methods, get_backend  # noqa: E402
 
-_DF_DEFAULT = "gamma_df"     # default switched rbf -> gamma_df 2026-06-12
 SCO2_DF_METHOD = "cfd_full_core_3cell_fixed_v2"
+_DF_DEFAULT = SCO2_DF_METHOD
 
 
 def _resolve_method(method: str | None = None) -> str:
@@ -223,8 +233,8 @@ def predict_K_cF(tpms_type: str, L_mm: float, t_mm: float,
                  ) -> tuple[float, float]:
     """Return (K [m^2], c_F [1/m]) for this geometry.
 
-    method: None (env TPMSHX_DF_METHOD, default "gamma_df") | "rbf"
-    | "gamma_df".
+    method: None (env TPMSHX_DF_METHOD, default fixed CFD) | "rbf"
+    | "gamma_df" | "cfd_full_core_3cell_fixed_v2".
     c_F passes through the end-to-end calibrated override layer (see
     _OVERRIDES above) regardless of backend; outside the override
     regions this is the pure backend value.
@@ -329,7 +339,7 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
     # FIX (2026-06-24 audit): the residual corrector g() is fit against the RBF
     # baseline (residual_correction._build builds SurrogateV3 method='rbf' with
     # g=(actual-pred_rbf)/pred_rbf). Multiplying it onto a non-rbf baseline (the
-    # production default flipped rbf->gamma_df on 2026-06-12) is a backend
+    # then-production default flipped rbf->gamma_df on 2026-06-12) is a backend
     # mismatch that corrupts rather than corrects. Only apply when the ACTIVE
     # backend is actually rbf; gamma_df already bakes the closure into K/cF.
     if _resolve_method(method) != 'rbf':

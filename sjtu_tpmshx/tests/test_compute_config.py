@@ -130,7 +130,7 @@ def test_json_roundtrip_canonical():
         fluid_B=FluidConfig(type='water', u_mps=0.15, T_in_K=305.0,
                             P_in_Pa=1.5e5),
         geometry=GeometryConfig(tpms='Diamond', L_cell_mm=8.0,
-                                t_wall_mm=0.55, k_s_W_mK=18.0,
+                                t_wall_mm=0.5, k_s_W_mK=18.0,
                                 L_dom_m=0.20, H_dom_m=0.05, Lz_m=0.05),
         solver=SolverConfig(Nx=40, Ny=80, Nz=10, T_s_init_K=350.0),
     )

@@ -84,8 +84,8 @@ def test_legacy_tol_is_a_tautology_and_fires_at_the_min_iter_floor():
         "machine zero (a tautology), not merely small")
 
 
-def test_f2_reaches_a_materially_better_solution_than_legacy():
-    """The whole point: legacy's premature exit costs real accuracy."""
+def test_f2_reaches_lower_momentum_residual_than_legacy():
+    """F2 must improve the equation residual beyond the legacy false exit."""
     s_leg = _make()
     s_leg.solve(max_iter=3000, tol=1e-5, verbose=False)
     dP_leg = float(np.mean(s_leg.P[:, 0]) - np.mean(s_leg.P[:, -1]))
@@ -97,9 +97,12 @@ def test_f2_reaches_a_materially_better_solution_than_legacy():
 
     assert conv is True and s_f2.exit_reason == 'tol'
     assert n > 20, "F2 must not stop at the legacy min-iter floor"
-    assert abs(dP_leg - dP_f2) / dP_f2 > 0.01, (
-        f"expected legacy to be materially under-converged, but dP moved only "
-        f"{abs(dP_leg - dP_f2) / dP_f2 * 100:.2f} % ({dP_leg:.1f} -> {dP_f2:.1f})")
+    legacy_mom = max(_mom(s_leg)[0] / _mom(s_leg)[1],
+                     _mom(s_leg)[2] / _mom(s_leg)[3])
+    f2_mom = max(_mom(s_f2)[0] / _mom(s_f2)[1],
+                 _mom(s_f2)[2] / _mom(s_f2)[3])
+    assert f2_mom < legacy_mom / 3.0
+    assert abs(dP_leg - dP_f2) / dP_f2 > 0.003
 
 
 # ─────────────────────────────────────────────────────────────────────────

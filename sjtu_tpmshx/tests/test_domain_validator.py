@@ -256,6 +256,32 @@ def test_validate_pipe_config_bad_dir():
     assert any(w.code == 'pipe_bad_dir' for w in warns)
 
 
+def test_validate_pipe_config_rejects_z_direction_in_2d():
+    cfg = dict(dir=4, in_ctr=0.040, in_w=0.020,
+               out_ctr=0.040, out_w=0.020)
+    warns = validate_pipe_config(cfg, L_dom=0.08, H_dom=0.04)
+    assert any(w.code == 'pipe_bad_dir' for w in warns)
+
+
+def test_validate_pipe_config_z_flow_checks_y_cross_axis():
+    cfg = dict(dir=4, in_ctr=0.040, in_w=0.020,
+               out_ctr=0.040, out_w=0.020,
+               in_z_ctr=0.045, in_z_w=0.010,
+               out_z_ctr=0.020, out_z_w=0.010)
+    warns = validate_pipe_config(
+        cfg, L_dom=0.08, H_dom=0.04, Lz_dom=0.02, is_3d=True)
+    assert any(w.code == 'pipe_in_z_out_of_domain' for w in warns)
+
+
+def test_validate_pipe_config_rejects_incomplete_cross2_pair():
+    cfg = dict(dir=0, in_ctr=0.020, in_w=0.010,
+               out_ctr=0.020, out_w=0.010,
+               in_z_ctr=0.010, in_z_w=None)
+    warns = validate_pipe_config(
+        cfg, L_dom=0.08, H_dom=0.04, Lz_dom=0.02, is_3d=True)
+    assert any(w.code == 'pipe_in_z_incomplete' for w in warns)
+
+
 # ---------------------------------------------------------------- unit parser
 
 

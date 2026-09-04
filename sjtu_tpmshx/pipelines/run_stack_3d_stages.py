@@ -24,14 +24,11 @@ from sjtu_tpmshx.solvers.tpms_calc import (
 )
 from sjtu_tpmshx.solvers import fluid_props
 from sjtu_tpmshx.solvers import sco2_props
-from sjtu_tpmshx.solvers.asym_split import (
-    _asym_split_A, _per_side_eps_override, _eps_sides_for_run,
-)
+from sjtu_tpmshx.solvers.asym_split import _per_side_eps_override, _eps_sides_for_run
 from sjtu_tpmshx.df_surrogate.predict import (
     SCO2_DF_METHOD,
     predict_K_cF,
 )
-from sjtu_tpmshx.df_surrogate.kappa_asym import kappa_KcF
 from sjtu_tpmshx.solvers.envelope import (check_compressible_envelope, gate_solution,
                                mach_field_max, ChokedFlowError,
                                PRESSURE_FLOOR_PA)
@@ -39,7 +36,7 @@ from sjtu_tpmshx.solvers.envelope import (check_compressible_envelope, gate_solu
 from sjtu_tpmshx.pipelines.flux_3d import (
     _face_flux_weights, _mass_weighted_T_out, _mass_weighted_h_out,
     _sco2_hv_local_field, _simple_mass_flow,
-    _apply_roughness_KcF, _apply_roughness_h_v,
+    _apply_roughness_h_v,
 )
 from sjtu_tpmshx.pipelines.grid_3d import (
     _resolve_axis_map, _build_zone_fields_3d, _build_grid_3d,
@@ -729,12 +726,9 @@ def _build_3d_problem(cfg):
 
     # Fluid A properties at inlet — via the registry (parity with side B, B1 1.1).
     # air: rho=air_density(T,P), cp/mu/k ignore P (value-identical to the old
-    # air_* calls → golden-safe). sco2: real-gas (T,P). water-A stays blocked
-    # (needs validation; 703 never uses water as Fluid A).
+    # air_* calls → golden-safe). water: incompressible registry path.
+    # sco2: real-gas properties at (T,P).
     fluid_type_A = cfg.get('fluid_type_A', 'air')
-    if fluid_type_A == 'water':
-        raise NotImplementedError(
-            "Water Fluid A not yet implemented (needs incompressible SIMPLE A path)")
     _mA = fluid_props.get(fluid_type_A)
     rho_A = float(_mA.rho(T_inA, P_inA))
     mu_A = float(_mA.mu(T_inA, P_inA))
@@ -754,7 +748,7 @@ def _build_3d_problem(cfg):
         from sjtu_tpmshx.df_surrogate.predict import predict_K_cF_vec
         K_field_3d, cF_field_3d = predict_K_cF_vec(
             tpms_type, L_mm_field, t_field_3d, eps_field_3d / 2.0,
-            method=(SCO2_DF_METHOD if fluid_type_A == 'sco2' else None))
+            method=SCO2_DF_METHOD)
         # Real → solver coord permutation (inverse equals same tuple for 2-swaps),
         # then mean over solver Nx axis (cross1) → (N_stream, N_cross2) for K_arr.
         K_sol = K_field_3d.transpose(solver_to_real_perm)
@@ -770,25 +764,14 @@ def _build_3d_problem(cfg):
     else:
         K0, cF0 = predict_K_cF(
             tpms_type, Lcell, t_wall, 0.5 * eps,
-            method=(SCO2_DF_METHOD if fluid_type_A == 'sco2' else None))
-        # Per-side asymmetric D-F κ correction (offset-isosurface δ). κ=1 when
-        # δ=0 / disabled / no-CFD-table → K_pred_B==K_pred==K0 (bit-identical).
-        # κ multiplies the symmetric baseline output; backend (gamma_df/rbf)
-        # and predict_K_cF signature are untouched.
-        _split_A = _asym_split_A(cfg, tpms_type, Lcell, t_wall)
-        _eps_sym = 0.5 * eps
-        _kKA, _kcFA = kappa_KcF(tpms_type, eps * _split_A, _eps_sym)
-        _kKB, _kcFB = kappa_KcF(tpms_type, eps * (1.0 - _split_A), _eps_sym)
-        K_pred, cF_pred = K0 * _kKA, cF0 * _kcFA
-        K_pred_B, cF_pred_B = K0 * _kKB, cF0 * _kcFB
+            method=SCO2_DF_METHOD)
+        # V2 fixed CFD closure depends on TPMS/L/t only. Both channels of the
+        # same core use the same K/cF; porosity, fluid and Reynolds number do
+        # not alter these coefficients.
+        K_pred = K_pred_B = K0
+        cF_pred = cF_pred_B = cF0
         K_A_arr = np.full((N_stream, N_cross2), K_pred)
         cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
-
-    # 2026-05-13 — apply UI roughness correction (norris_1a default) to K_A,
-    # cF_A. Air side only; water skipped (the per-topology water fit
-    # (`nu_water_topo`) embeds AM roughness).
-    K_A_arr, cF_A_arr = _apply_roughness_KcF(
-        K_A_arr, cF_A_arr, fluid_type_A, rho_A, mu_A, u_A, D_h)
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream).
     solver_fluid_type_A = fluid_props.flow_model(fluid_type_A)
@@ -849,8 +832,7 @@ def _build_3d_problem(cfg):
     # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
     # A.solve() deferred — build B first then run both in parallel threads.
 
-    # (Fluid A type already resolved + validated near the A-property block;
-    # sCO2-A is now supported, water-A still blocked there.)
+    # Fluid A type was resolved through the same registry path as side B.
 
     # ── Fluid B: cross-flow SIMPLE — BUILD ONLY (solve in parallel with A) ──
     fB = cfg.get('fluid_B_cfg')
@@ -873,12 +855,6 @@ def _build_3d_problem(cfg):
         perm_B = axis_map_B['solver_to_real_perm']
         K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred_B)
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred_B)
-        # 2026-05-13 — apply UI roughness correction to K_B / cF_B. Skip for
-        # water (the per-topology water fit (`nu_water_topo`) embeds AM
-        # roughness; double-counting would over-predict friction).
-        K_B_arr, cF_B_arr = _apply_roughness_KcF(
-            K_B_arr, cF_B_arr, fluid_type_B,
-            rho_B, mu_B, u_B, D_h)
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
@@ -1450,17 +1426,22 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
                                    eps_side_override=_eps_ov_A)
     # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
     #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
-    # sCO2: true enthalpy duty ṁ·Δh (cp varies strongly with T,P → cp·ΔT is
-    # wrong); air/water keep cp·ΔT (constant cp ⇒ value-identical, golden-safe).
-    if fluid_type_A == 'sco2':
-        # D2 (audit 2026-06-28): mass-weighted mean OUTLET enthalpy ⟨h(T)⟩,
-        # NOT h(⟨T⟩_out) — h(T) is strongly nonlinear across the pseudocritical
-        # spike (Jensen). Inlet is a uniform Dirichlet T so h(T_inA) is exact.
+    # A pair containing sCO2 is solved in true enthalpy for BOTH streams, so
+    # report the same boundary-face quantity for both fluids. Air/water-only
+    # keeps the established cp·ΔT result bit-identical.
+    _true_h_pair = 'sco2' in (fluid_type_A, fluid_type_B)
+    if _true_h_pair:
+        from sjtu_tpmshx.solvers.ltne_enthalpy_3d import _h_scalar, _prop_field
+        _P_A_real = (sA.P_ref_abs + sA.P).transpose(solver_to_real_perm)
+        if is_reverse:
+            _P_A_real = np.flip(_P_A_real, axis=stream_real_axis)
+        _P_A_out = _real_outlet_slice(_P_A_real, fA['dir'])
         h_A_out = _mass_weighted_h_out(
-            T_A_out_face, P_inA, sco2_props.sco2_enthalpy_field, sA, fA['dir'],
+            T_A_out_face, _P_A_out,
+            lambda T, P: _prop_field('H', T, P, fluid_type_A), sA, fA['dir'],
             eps_f_per_side, eps_side_override=_eps_ov_A)
         Q_enthalpy_A = abs(m_dot_A_simple * (
-            sco2_props.sco2_enthalpy(float(T_inA), P_inA) - h_A_out))
+            _h_scalar(float(T_inA), P_inA, fluid_type_A) - h_A_out))
     else:
         Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
 
@@ -1487,28 +1468,26 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
         m_dot_B_phys_out = float(np.sum(_face_flux_weights(
             sB, fB['dir'], face='real_outlet', eps_mode='physical',
             chi_face=chi_B_out_face)))
-        if fluid_type_B == 'sco2':
-            # D2: mass-weighted mean outlet enthalpy ⟨h(T)⟩ (with χ_B ghost
-            # suppression), not h(⟨T⟩_out). Inlet uniform Dirichlet → exact.
+        if _true_h_pair:
+            _P_B_real_h = (sB.P_ref_abs + sB.P).transpose(
+                sB_info['axis_map']['solver_to_real_perm'])
+            if sB_info['axis_map']['is_reverse']:
+                _P_B_real_h = np.flip(
+                    _P_B_real_h, axis=sB_info['axis_map']['stream_real_axis'])
+            _P_B_out = _real_outlet_slice(_P_B_real_h, fB['dir'])
             h_B_out = _mass_weighted_h_out(
-                T_B_out_face, P_inB, sco2_props.sco2_enthalpy_field, sB, fB['dir'],
+                T_B_out_face, _P_B_out,
+                lambda T, P: _prop_field('H', T, P, fluid_type_B), sB, fB['dir'],
                 eps_f_per_side, chi_face=chi_B_out_face,
                 eps_side_override=_eps_ov_B)
             Q_enthalpy_B = abs(m_dot_B_simple * (
-                sco2_props.sco2_enthalpy(float(T_inB), P_inB) - h_B_out))
+                _h_scalar(float(T_inB), P_inB, fluid_type_B) - h_B_out))
         else:
             Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
 
-    # #5 guard (2026-06-28 audit): the 3D conservative LTNE kernel conserves the
-    # ε·ρcp·u·A energy mass-flux, which is inconsistent with true enthalpy ṁ·Δh
-    # for a STRONGLY VARYING-cp fluid (sCO2). The reverse-dir density-frame fix
-    # above removed the dominant ~2× ṁ_B under-read (75 %→41 % on the 703
-    # recuperator), but a residual enthalpy-vs-(cp·T) gap remains (the kernel
-    # transports cp·T, not ∫cp dT) → the cold-side duty still under-reads. Flag
-    # it so the 3D coupled-Q / cold-outlet are not trusted for sCO2 (full fix =
-    # enthalpy-form LTNE kernel; use the 2D double-live solve for the coupled
-    # duty). Air/water (near-constant cp) are unaffected. The imbalance is also
-    # surfaced as the `Q_AB_imbalance_rel` result field for downstream callers.
+    # The boundary duties use the same true-enthalpy and face-mass-flow
+    # convention as the sCO2 energy kernel. A large difference now means the
+    # coupled solve itself did not close; surface it as a validity warning.
     Q_AB_imbalance_rel = float('nan')
     if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
             and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
@@ -1519,11 +1498,9 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
             _w5.warn(
                 f"[sCO2 3D energy] A/B enthalpy duties differ by "
                 f"{Q_AB_imbalance_rel*100:.0f}% (Q_A={Q_enthalpy_A/1e6:.2f} MW, "
-                f"Q_B={Q_enthalpy_B/1e6:.2f} MW): the conservative LTNE kernel "
-                "transports ρcp·u·A·T, not true enthalpy, for varying-cp sCO2. "
-                "The 3D coupled Q / cold-outlet are NOT trustworthy — use the 2D "
-                "double-live solve for the coupled duty. dP + hot-side duty are "
-                "still reliable.", stacklevel=2)
+                f"Q_B={Q_enthalpy_B/1e6:.2f} MW). The face-mass-flow true-"
+                "enthalpy balance did not close; treat Q and outlet temperatures "
+                "as unconverged.", stacklevel=2)
 
     # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
     # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
@@ -2601,11 +2578,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # eps_f_arr (= ε_A, correct for diffusion); only the convective
         # epsilon arg must be FULL ε.
         _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
-        # sCO2 V1 gate: paired counterflow-x always uses true enthalpy.
-        # Air/water and mixed-fluid cases stay on the existing ρcp·u·T path.
-        _enth_gate = (fluid_type_A == fluid_type_B == 'sco2'
-                      and sB is not None
-                      and fA['dir'] in (0, 1) and fB['dir'] in (0, 1))
+        # Any pair containing sCO2 uses true enthalpy. The face-flux kernel
+        # supports every real axis and arbitrary inlet/outlet patches.
+        _enth_gate = (sB is not None
+                      and 'sco2' in (fluid_type_A, fluid_type_B))
         # When the enthalpy solve will overwrite the result below, run the legacy
         # ρcp·u·T solve for only a couple of sweeps (a cheap warm-start) rather
         # than to full convergence — its Ta/Tb/Ts are discarded.
@@ -2658,12 +2634,15 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
         # for sCO2 (cp spikes near the pseudocritical line) is NOT the true
         # enthalpy ṁ·h → the 703 recuperator ~41% A/B imbalance / wrong cold
-        # outlet. For a paired sCO2 counterflow-x case, replace the result with
-        # the enthalpy-form solve (true ṁ·h transport). The strict gate keeps
-        # air/water and every other config bit-identical.
+        # outlet. For any pair containing sCO2, replace the result with the
+        # enthalpy-form solve (true face-by-face ṁ·h transport). Air/water-only
+        # cases stay bit-identical on the established temperature kernel.
         # (Plan: vault reports/method/3d/2026-06-28-3d-ltne-enthalpy-*.)
         if _enth_gate:
-            from sjtu_tpmshx.solvers.ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
+            from sjtu_tpmshx.solvers.ltne_enthalpy_3d import (
+                face_mass_fluxes, solve_ltne_enthalpy_3d_pipeline,
+            )
+            from sjtu_tpmshx.solvers.ltne_energy_3d import _project_faces_div_free
             _epsps = 0.5 * float(eps)
             # N4 (2026-06-28): under δ≠0 the per-side ṁ must weight by the actual
             # channel void (ε·split), matching the duty-extraction path and the
@@ -2671,15 +2650,18 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             # symmetric 0.5·ε (every 703/production config; bit-identical).
             _ov_A_e, _ov_B_e = _per_side_eps_override(
                 cfg, tpms_type, Lcell, t_wall, eps)
-            _mdA = (1.0 if fA['dir'] == 0 else -1.0) * abs(
+            _mdA = (1.0 if fA['dir'] % 2 == 0 else -1.0) * abs(
                 _simple_mass_flow(sA, fA['dir'], eps_f_per_side=_epsps,
                                   eps_side_override=_ov_A_e))
-            _mdB = (1.0 if fB['dir'] == 0 else -1.0) * abs(
+            _mdB = (1.0 if fB['dir'] % 2 == 0 else -1.0) * abs(
                 _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps,
                                   eps_side_override=_ov_B_e))
             _dPA = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
             _P_A_local = np.ascontiguousarray(
                 ((P_inA - _dPA) + sA.P).transpose(solver_to_real_perm))
+            if axis_map['is_reverse']:
+                _P_A_local = np.ascontiguousarray(np.flip(
+                    _P_A_local, axis=axis_map['stream_real_axis']))
             _dPB = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
             _P_B_local = np.ascontiguousarray(
                 ((P_inB - _dPB) + sB.P).transpose(
@@ -2687,6 +2669,29 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             if axis_map_B['is_reverse']:
                 _P_B_local = np.ascontiguousarray(np.flip(
                     _P_B_local, axis=axis_map_B['stream_real_axis']))
+
+            def _rho_real(solver, amap):
+                field = solver.rho_field.transpose(amap['solver_to_real_perm'])
+                if amap['is_reverse']:
+                    field = np.flip(field, axis=amap['stream_real_axis'])
+                return np.ascontiguousarray(field, dtype=np.float64)
+
+            _rho_A_real = _rho_real(sA, axis_map)
+            _rho_B_real = _rho_real(sB, axis_map_B)
+            _faces_A = [ufA.copy(), vfA.copy(), wfA.copy()]
+            _faces_B = [ufB.copy(), vfB.copy(), wfB.copy()]
+            _balance_stream_outflow(
+                _faces_A, axis_map, eps_fA_arr * _rho_A_real, dx, dy, dz)
+            _balance_stream_outflow(
+                _faces_B, axis_map_B, eps_fB_arr * _rho_B_real, dx, dy, dz)
+            _faces_A = _project_faces_div_free(
+                *_faces_A, eps_fA_arr, _rho_A_real, dx, dy, dz)
+            _faces_B = _project_faces_div_free(
+                *_faces_B, eps_fB_arr, _rho_B_real, dx, dy, dz)
+            _mass_faces_A = face_mass_fluxes(
+                *_faces_A, _rho_A_real, eps_fA_arr, dx, dy, dz)
+            _mass_faces_B = face_mass_fluxes(
+                *_faces_B, _rho_B_real, eps_fB_arr, dx, dy, dz)
             Ta, Tb, Ts, _ltne_info_d = solve_ltne_enthalpy_3d_pipeline(
                 Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                 h_vA_field, h_vB_field, _mdA, _mdB,
@@ -2694,6 +2699,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                 fluid_A=fluid_type_A, fluid_B=fluid_type_B,
                 pressure_A_field=_P_A_local,
                 pressure_B_field=_P_B_local,
+                mass_flux_A=_mass_faces_A,
+                mass_flux_B=_mass_faces_B,
                 eps_A_field=(eps_fA_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
                 eps_B_field=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0 else None),
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
@@ -2744,7 +2751,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         if _mA.compressible:
             rho_new = P_abs / (R_AIR * Ta_sA)            # ideal gas
             mu_new_A = air_viscosity(Ta_sA)
-        elif os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower() in ('1', 'true', 'yes'):
+        elif (fluid_type_A == 'sco2'
+              and os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower()
+              in ('1', 'true', 'yes')):
             # #4 Phase-B (opt-in, EXPERIMENTAL): sco2 ρ/μ at the LOCAL absolute-P
             # field (ρ tracks local P, not frozen inlet P). ⚠ PROPERTY SIDE ONLY —
             # the full compressible continuity (∂ρ/∂P in the pressure correction,
@@ -2753,10 +2762,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             rho_new = sco2_props.sco2_prop("D", Ta_sA, P_abs)
             mu_new_A = sco2_props.sco2_prop("V", Ta_sA, P_abs)
         else:
-            # sco2 Phase A (default): ρ=ρ(T,P_in), μ=μ(T,P_in) per cell (frozen P;
-            # ρ still tracks T — captures the near-critical ρ swing). CoolProp.
-            rho_new = sco2_props.sco2_density_field(Ta_sA, P_inA)
-            mu_new_A = sco2_props.sco2_viscosity_field(Ta_sA, P_inA)
+            # Incompressible registry path. Water ignores P; sCO2 Phase A
+            # evaluates ρ(T,P_in) and μ(T,P_in) with pressure frozen.
+            rho_new = _mA.rho(Ta_sA, P_inA)
+            mu_new_A = _mA.mu(Ta_sA, P_inA)
         if outer > 0:
             # Damped-Picard property update — the outer coupling's relaxation.
             # `_and_A` (opt-in, cfg['outer_anderson'], default OFF) replaces the
@@ -2814,11 +2823,14 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                        warn_list=_env_warnings,
                                        context=_shoot_ctx)
         else:
-            # sCO2-A reseed: the fixed CFD D-F coefficients use a constant cF.
-            mu_avg = float(sco2_props.sco2_viscosity(T_avg, P_inA))
+            # Incompressible reseed: D-F coefficients stay constant while the
+            # registry supplies the fluid viscosity at the mean temperature.
+            mu_avg = float(_mA.mu(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
-            _sco2_compress = (os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '')
-                              .lower() in ('1', 'true', 'yes'))
+            _sco2_compress = (
+                fluid_type_A == 'sco2'
+                and os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower()
+                in ('1', 'true', 'yes'))
             if _sco2_compress:
                 # #4 (2026-06-28): the opt-in compressible sCO2 path is now
                 # ENVELOPE-GUARDED (repo hard invariant: a compressible path must
@@ -2879,8 +2891,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
             _cpA_fld = air_cp(Ta)
         else:
-            K_ffA[:] = eps_fA_arr * sco2_props.sco2_conductivity_field(Ta, P_inA)
-            _cpA_fld = sco2_props.sco2_cp_field(Ta, P_inA)
+            K_ffA[:] = eps_fA_arr * _mA.k(Ta, P_inA)
+            _cpA_fld = _mA.cp(Ta, P_inA)
         if disp_C_A > 0.0:
             K_ffA[:] += K_disp_A
         if _var_rhocp and sA is not None:
@@ -2891,7 +2903,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * _cpA_fld
         else:
             _rhoA_fld = (air_density(Ta, P_inA) if _mA.compressible
-                         else sco2_props.sco2_density_field(Ta, P_inA))
+                         else _mA.rho(Ta, P_inA))
             rho_cp_fA[:] = _rhoA_fld * _cpA_fld
         # h_v rebuilt at top of next outer iter using LOCAL Re (#B fix).
 

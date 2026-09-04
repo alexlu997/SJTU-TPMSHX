@@ -161,10 +161,9 @@ def _porous_src_df(umag, K, cF, mu, rho):
     """Linearised porous resistance coefficient [kg/(m3 s)] for ConstDF-v1.
 
     Darcy-Forchheimer closure: Sp * u = (mu/K) * u + rho * c_F * |u| * u.
-    K and c_F are geometry-level constants from the DF surrogate
-    (df_surrogate/predict.py:predict_K_cF), default backend "gamma_df"
-    (switched rbf → gamma_df 2026-06-12; RBF is opt-in via env
-    TPMSHX_DF_METHOD=rbf). Caller provides K, cF per-cell (2026-07-10
+    K and c_F are geometry-level constants supplied by the caller. Production
+    pipelines pin the fixed water+sCO2 CFD backend; direct research calls may
+    select gamma_df or rbf. Caller provides K, cF per-cell (2026-07-10
     lateral-K: kernels now consume 2D (Nx, Ny) fields; a laterally-uniform
     field reproduces the historical per-row behaviour bit-identically).
     """

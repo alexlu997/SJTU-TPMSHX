@@ -14,11 +14,9 @@ and the cp/k property fields) lives in the Python driver and is refreshed once
 per outer (Picard) iteration. This is the separation the production port uses —
 the njit kernel never calls CoolProp.
 
-Scope of THIS module: counterflow along x (dir 0/1), uniform porosity, first-
-order upwind. It validates the enthalpy formulation + the njit implementation in
-3D. Cross-flow, offset porosity, SOU, staggered-face fluxes and red-black
-parallelisation are integration-stage work (Phase 2.3+), folded into the
-production kernel ltne_energy_3d.py with an ``enthalpy_mode`` route.
+The production path consumes signed SIMPLE mass flow on every staggered face,
+so mixed fluids, all six directions, offset porosity and local inlet/outlet
+patches share the same first-order conservative formulation.
 """
 from __future__ import annotations
 
@@ -58,210 +56,190 @@ def _h_scalar(T, P, fluid):
     return float(_PropsSI("H", "T", float(T), "P", float(P), _CP_NAME.get(fluid, fluid)))
 
 
+def face_mass_fluxes(uf, vf, wf, rho, eps_side, dx, dy, dz):
+    """Convert real-coordinate staggered velocities to signed face mass flow."""
+    rho_eps = (np.asarray(rho, dtype=np.float64)
+               * np.asarray(eps_side, dtype=np.float64))
+    Nx, Ny, Nz = rho_eps.shape
+    dx = np.asarray(dx, dtype=np.float64)
+    dy = np.asarray(dy, dtype=np.float64)
+    dz = np.asarray(dz, dtype=np.float64)
+    cx = np.empty((Nx + 1, Ny, Nz), dtype=np.float64)
+    cy = np.empty((Nx, Ny + 1, Nz), dtype=np.float64)
+    cz = np.empty((Nx, Ny, Nz + 1), dtype=np.float64)
+    cx[1:-1] = 0.5 * (rho_eps[:-1] + rho_eps[1:])
+    cx[0] = rho_eps[0]; cx[-1] = rho_eps[-1]
+    cy[:, 1:-1] = 0.5 * (rho_eps[:, :-1] + rho_eps[:, 1:])
+    cy[:, 0] = rho_eps[:, 0]; cy[:, -1] = rho_eps[:, -1]
+    cz[:, :, 1:-1] = 0.5 * (rho_eps[:, :, :-1] + rho_eps[:, :, 1:])
+    cz[:, :, 0] = rho_eps[:, :, 0]; cz[:, :, -1] = rho_eps[:, :, -1]
+    Fx = cx * np.asarray(uf, dtype=np.float64) * dy[None, :, None] * dz[None, None, :]
+    Fy = cy * np.asarray(vf, dtype=np.float64) * dx[:, None, None] * dz[None, None, :]
+    Fz = cz * np.asarray(wf, dtype=np.float64) * dx[:, None, None] * dy[None, :, None]
+    return tuple(np.ascontiguousarray(f) for f in (Fx, Fy, Fz))
+
+
+def _uniform_face_mass_flux(shape, m_dot, direction):
+    """Compatibility flux field for standalone uniform-flow kernel tests."""
+    Nx, Ny, Nz = shape
+    Fx = np.zeros((Nx + 1, Ny, Nz), dtype=np.float64)
+    Fy = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
+    Fz = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
+    fluxes = (Fx, Fy, Fz)
+    axis = int(direction) // 2
+    sign = 1.0 if int(direction) % 2 == 0 else -1.0
+    cross_cells = shape[(axis + 1) % 3] * shape[(axis + 2) % 3]
+    fluxes[axis][...] = sign * abs(float(m_dot)) / cross_cells
+    return fluxes
+
+
+def _boundary_enthalpy_duty(h, h_in, mass_flux):
+    """Heat lost by a stream from its six boundary-face enthalpy flows."""
+    Fx, Fy, Fz = mass_flux
+    net_out = 0.0
+    for outward, adjacent in (
+        (-Fx[0], h[0]), (Fx[-1], h[-1]),
+        (-Fy[:, 0], h[:, 0]), (Fy[:, -1], h[:, -1]),
+        (-Fz[:, :, 0], h[:, :, 0]), (Fz[:, :, -1], h[:, :, -1]),
+    ):
+        net_out += float(np.sum(np.where(outward > 0.0, outward * adjacent,
+                                         outward * h_in)))
+    return -net_out
+
+
 @njit(cache=True, fastmath=True)
-def _gs_enthalpy_sweeps_3d(hA, hB, Ts,
-                           dhA, dhB, cpA, cpB,
+def _harmonic(a, b):
+    return 0.0 if a + b <= 0.0 else 2.0 * a * b / (a + b)
+
+
+@njit(cache=True, fastmath=True)
+def _fluid_enthalpy_sweep(h, T_star, Ts, cp, h_star, dh, hv, Fx, Fy, Fz,
+                          h_in, dx, dy, dz, omega, h_lo, h_hi):
+    """One conservative FVM sweep using signed SIMPLE face mass flows."""
+    Nx, Ny, Nz = h.shape
+    for i in range(Nx):
+        for j in range(Ny):
+            for k in range(Nz):
+                dxi = dx[i]; dyj = dy[j]; dzk = dz[k]
+                Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                vol = dxi * dyj * dzk
+                dW = (_harmonic(dh[i, j, k], dh[i - 1, j, k]) * Ax
+                      / (0.5 * (dx[i - 1] + dxi))) if i > 0 else 0.0
+                dE = (_harmonic(dh[i, j, k], dh[i + 1, j, k]) * Ax
+                      / (0.5 * (dx[i + 1] + dxi))) if i + 1 < Nx else 0.0
+                dS = (_harmonic(dh[i, j, k], dh[i, j - 1, k]) * Ay
+                      / (0.5 * (dy[j - 1] + dyj))) if j > 0 else 0.0
+                dN = (_harmonic(dh[i, j, k], dh[i, j + 1, k]) * Ay
+                      / (0.5 * (dy[j + 1] + dyj))) if j + 1 < Ny else 0.0
+                dB = (_harmonic(dh[i, j, k], dh[i, j, k - 1]) * Az
+                      / (0.5 * (dz[k - 1] + dzk))) if k > 0 else 0.0
+                dT = (_harmonic(dh[i, j, k], dh[i, j, k + 1]) * Az
+                      / (0.5 * (dz[k + 1] + dzk))) if k + 1 < Nz else 0.0
+
+                fw = Fx[i, j, k]; fe = Fx[i + 1, j, k]
+                fs = Fy[i, j, k]; fn = Fy[i, j + 1, k]
+                fb = Fz[i, j, k]; ft = Fz[i, j, k + 1]
+                aW = dW + max(fw, 0.0)
+                aE = dE + max(-fe, 0.0)
+                aS = dS + max(fs, 0.0)
+                aN = dN + max(-fn, 0.0)
+                aB = dB + max(fb, 0.0)
+                aT = dT + max(-ft, 0.0)
+                cpi = max(cp[i, j, k], 1e-30)
+                exchange = hv[i, j, k] * vol
+                aP = (dW + dE + dS + dN + dB + dT + exchange / cpi
+                      + max(-fw, 0.0) + max(fe, 0.0)
+                      + max(-fs, 0.0) + max(fn, 0.0)
+                      + max(-fb, 0.0) + max(ft, 0.0))
+                rhs = exchange * (
+                    Ts[i, j, k] - T_star[i, j, k]
+                    + h_star[i, j, k] / cpi)
+                if i > 0:
+                    rhs += aW * h[i - 1, j, k]
+                elif fw > 0.0:
+                    rhs += fw * h_in
+                if i + 1 < Nx:
+                    rhs += aE * h[i + 1, j, k]
+                elif fe < 0.0:
+                    rhs += -fe * h_in
+                if j > 0:
+                    rhs += aS * h[i, j - 1, k]
+                elif fs > 0.0:
+                    rhs += fs * h_in
+                if j + 1 < Ny:
+                    rhs += aN * h[i, j + 1, k]
+                elif fn < 0.0:
+                    rhs += -fn * h_in
+                if k > 0:
+                    rhs += aB * h[i, j, k - 1]
+                elif fb > 0.0:
+                    rhs += fb * h_in
+                if k + 1 < Nz:
+                    rhs += aT * h[i, j, k + 1]
+                elif ft < 0.0:
+                    rhs += -ft * h_in
+                if aP > 1e-30:
+                    update = (1.0 - omega) * h[i, j, k] + omega * rhs / aP
+                    h[i, j, k] = min(max(update, h_lo), h_hi)
+
+
+@njit(cache=True, fastmath=True)
+def _solid_temperature_sweep(Ts, hA, hB, cpA, cpB, TA_star, TB_star,
+                             hA_star, hB_star, hvA, hvB, Kss,
+                             dx, dy, dz, omega):
+    Nx, Ny, Nz = Ts.shape
+    for i in range(Nx):
+        for j in range(Ny):
+            for k in range(Nz):
+                dxi = dx[i]; dyj = dy[j]; dzk = dz[k]
+                Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                vol = dxi * dyj * dzk
+                dW = (_harmonic(Kss[i, j, k], Kss[i - 1, j, k]) * Ax
+                      / (0.5 * (dx[i - 1] + dxi))) if i > 0 else 0.0
+                dE = (_harmonic(Kss[i, j, k], Kss[i + 1, j, k]) * Ax
+                      / (0.5 * (dx[i + 1] + dxi))) if i + 1 < Nx else 0.0
+                dS = (_harmonic(Kss[i, j, k], Kss[i, j - 1, k]) * Ay
+                      / (0.5 * (dy[j - 1] + dyj))) if j > 0 else 0.0
+                dN = (_harmonic(Kss[i, j, k], Kss[i, j + 1, k]) * Ay
+                      / (0.5 * (dy[j + 1] + dyj))) if j + 1 < Ny else 0.0
+                dB = (_harmonic(Kss[i, j, k], Kss[i, j, k - 1]) * Az
+                      / (0.5 * (dz[k - 1] + dzk))) if k > 0 else 0.0
+                dT = (_harmonic(Kss[i, j, k], Kss[i, j, k + 1]) * Az
+                      / (0.5 * (dz[k + 1] + dzk))) if k + 1 < Nz else 0.0
+                ta = TA_star[i, j, k] + (
+                    hA[i, j, k] - hA_star[i, j, k]) / max(cpA[i, j, k], 1e-30)
+                tb = TB_star[i, j, k] + (
+                    hB[i, j, k] - hB_star[i, j, k]) / max(cpB[i, j, k], 1e-30)
+                eA = hvA[i, j, k] * vol
+                eB = hvB[i, j, k] * vol
+                aP = dW + dE + dS + dN + dB + dT + eA + eB
+                rhs = eA * ta + eB * tb
+                if i > 0: rhs += dW * Ts[i - 1, j, k]
+                if i + 1 < Nx: rhs += dE * Ts[i + 1, j, k]
+                if j > 0: rhs += dS * Ts[i, j - 1, k]
+                if j + 1 < Ny: rhs += dN * Ts[i, j + 1, k]
+                if k > 0: rhs += dB * Ts[i, j, k - 1]
+                if k + 1 < Nz: rhs += dT * Ts[i, j, k + 1]
+                if aP > 1e-30:
+                    Ts[i, j, k] = (1.0 - omega) * Ts[i, j, k] + omega * rhs / aP
+
+
+@njit(cache=True, fastmath=True)
+def _gs_enthalpy_sweeps_3d(hA, hB, Ts, dhA, dhB, cpA, cpB,
                            TA_star, TB_star, hA_star, hB_star,
-                           epsA, epsB, FmA_col, FmB_col,
-                           hvA_fld, hvB_fld, Kss, dx, dy, dz,
-                           h_in_A, h_in_B, dir_A, dir_B,
+                           FxA, FyA, FzA, FxB, FyB, FzB,
+                           hvA, hvB, Kss, dx, dy, dz, h_in_A, h_in_B,
                            n_sweep, omega, h_lo_A, h_hi_A, h_lo_B, h_hi_B):
-    """In-place Gauss-Seidel sweeps for the enthalpy-form LTNE system.
-
-    hA/hB: fluid enthalpy fields (primary unknowns). Ts: solid temperature.
-    dhA/dhB: h-space diffusivity (eps·k/cp) fields. cpA/cpB, TA_star/TB_star,
-    hA_star/hB_star: frozen-per-outer linearisation data. FmA/FmB: signed
-    per-column x mass flux [kg/s]. Counterflow in x (dir 0=+x, 1=−x).
-    """
-    Nx, Ny, Nz = hA.shape
-    Vc = dx * dy * dz
-    Ax = dy * dz
-    Ay = dx * dz
-    Az = dx * dy
-
-    inA_i = 0 if dir_A == 0 else Nx - 1
-    outA_i = Nx - 1 if dir_A == 0 else 0
-    inB_i = 0 if dir_B == 0 else Nx - 1
-    outB_i = Nx - 1 if dir_B == 0 else 0
-
     for _ in range(n_sweep):
-        # ── Fluid A (enthalpy) ──
-        for i in range(Nx):
-            for j in range(Ny):
-                for k in range(Nz):
-                    cpi = cpA[i, j, k] if cpA[i, j, k] > 1e-30 else 1e-30
-                    FmA = FmA_col[j, k]
-                    hvA = hvA_fld[i, j, k]
-                    # x diffusion faces (h-space)
-                    dW = 0.5 * (dhA[i, j, k] + (dhA[i - 1, j, k] if i > 0 else dhA[i, j, k]))
-                    dE = 0.5 * (dhA[i, j, k] + (dhA[i + 1, j, k] if i < Nx - 1 else dhA[i, j, k]))
-                    DxW = dW * Ax / dx
-                    DxE = dE * Ax / dx
-                    # y/z diffusion faces
-                    dS = 0.5 * (dhA[i, j, k] + (dhA[i, j - 1, k] if j > 0 else dhA[i, j, k]))
-                    dN = 0.5 * (dhA[i, j, k] + (dhA[i, j + 1, k] if j < Ny - 1 else dhA[i, j, k]))
-                    dB = 0.5 * (dhA[i, j, k] + (dhA[i, j, k - 1] if k > 0 else dhA[i, j, k]))
-                    dT = 0.5 * (dhA[i, j, k] + (dhA[i, j, k + 1] if k < Nz - 1 else dhA[i, j, k]))
-                    DyS = dS * Ay / dy if j > 0 else 0.0
-                    DyN = dN * Ay / dy if j < Ny - 1 else 0.0
-                    DzB = dB * Az / dz if k > 0 else 0.0
-                    DzT = dT * Az / dz if k < Nz - 1 else 0.0
-                    # convection (x only), signed mass flux constant in i
-                    aW = DxW + (FmA if FmA > 0.0 else 0.0)
-                    aE = DxE + (-FmA if FmA < 0.0 else 0.0)
-                    aN = DyN; aS = DyS; aT = DzT; aB = DzB
-                    hp_imp = hvA * Vc / cpi
-                    aP = aE + aW + aN + aS + aT + aB + hp_imp
-                    S = hvA * Vc * (Ts[i, j, k] - TA_star[i, j, k] + hA_star[i, j, k] / cpi)
-                    # inlet Dirichlet (extra half-cell diffusion conductance)
-                    if i == inA_i:
-                        D_bc = 2.0 * dhA[i, j, k] * Ax / dx
-                        a_in = D_bc + (abs(FmA))
-                        S += a_in * h_in_A
-                        # N3 (2026-06-28): the inlet x-face is Dirichlet, not an
-                        # interior face — replace its interior diffusion estimate
-                        # (DxW/DxE) with the half-cell BC conductance D_bc.
-                        # Leaving the interior estimate in aP left it unpaired
-                        # (no neighbour, no source) → a spurious enthalpy sink
-                        # ∝ absolute h (CoolProp-reference-dependent).
-                        if dir_A == 0:
-                            aP += D_bc - DxW
-                            aW = 0.0
-                        else:
-                            aP += D_bc - DxE
-                            aE = 0.0
-                    if i == outA_i:
-                        # N3: zero-gradient outlet — no diffusive flux through the
-                        # outlet face; drop its interior conductance from aP too.
-                        if dir_A == 0:
-                            aP -= DxE
-                            aE = 0.0
-                        else:
-                            aP -= DxW
-                            aW = 0.0
-                    nb = 0.0
-                    if i > 0:
-                        nb += aW * hA[i - 1, j, k]
-                    if i < Nx - 1:
-                        nb += aE * hA[i + 1, j, k]
-                    if j > 0:
-                        nb += aS * hA[i, j - 1, k]
-                    if j < Ny - 1:
-                        nb += aN * hA[i, j + 1, k]
-                    if k > 0:
-                        nb += aB * hA[i, j, k - 1]
-                    if k < Nz - 1:
-                        nb += aT * hA[i, j, k + 1]
-                    new = (nb + S) / (aP if aP > 1e-30 else 1e-30)
-                    upd = (1.0 - omega) * hA[i, j, k] + omega * new
-                    if upd < h_lo_A:
-                        upd = h_lo_A
-                    elif upd > h_hi_A:
-                        upd = h_hi_A
-                    hA[i, j, k] = upd
-
-        # ── Fluid B (enthalpy) ──
-        for i in range(Nx):
-            for j in range(Ny):
-                for k in range(Nz):
-                    cpi = cpB[i, j, k] if cpB[i, j, k] > 1e-30 else 1e-30
-                    FmB = FmB_col[j, k]
-                    hvB = hvB_fld[i, j, k]
-                    dW = 0.5 * (dhB[i, j, k] + (dhB[i - 1, j, k] if i > 0 else dhB[i, j, k]))
-                    dE = 0.5 * (dhB[i, j, k] + (dhB[i + 1, j, k] if i < Nx - 1 else dhB[i, j, k]))
-                    DxW = dW * Ax / dx
-                    DxE = dE * Ax / dx
-                    dS = 0.5 * (dhB[i, j, k] + (dhB[i, j - 1, k] if j > 0 else dhB[i, j, k]))
-                    dN = 0.5 * (dhB[i, j, k] + (dhB[i, j + 1, k] if j < Ny - 1 else dhB[i, j, k]))
-                    dBf = 0.5 * (dhB[i, j, k] + (dhB[i, j, k - 1] if k > 0 else dhB[i, j, k]))
-                    dTf = 0.5 * (dhB[i, j, k] + (dhB[i, j, k + 1] if k < Nz - 1 else dhB[i, j, k]))
-                    DyS = dS * Ay / dy if j > 0 else 0.0
-                    DyN = dN * Ay / dy if j < Ny - 1 else 0.0
-                    DzB = dBf * Az / dz if k > 0 else 0.0
-                    DzT = dTf * Az / dz if k < Nz - 1 else 0.0
-                    aW = DxW + (FmB if FmB > 0.0 else 0.0)
-                    aE = DxE + (-FmB if FmB < 0.0 else 0.0)
-                    aN = DyN; aS = DyS; aT = DzT; aB = DzB
-                    hp_imp = hvB * Vc / cpi
-                    aP = aE + aW + aN + aS + aT + aB + hp_imp
-                    S = hvB * Vc * (Ts[i, j, k] - TB_star[i, j, k] + hB_star[i, j, k] / cpi)
-                    if i == inB_i:
-                        D_bc = 2.0 * dhB[i, j, k] * Ax / dx
-                        a_in = D_bc + (abs(FmB))
-                        S += a_in * h_in_B
-                        # N3 (2026-06-28): mirror fluid A — drop the interior
-                        # diffusion estimate at the Dirichlet inlet x-face.
-                        if dir_B == 0:
-                            aP += D_bc - DxW
-                            aW = 0.0
-                        else:
-                            aP += D_bc - DxE
-                            aE = 0.0
-                    if i == outB_i:
-                        # N3: zero-gradient outlet — drop the outlet-face
-                        # interior conductance from aP.
-                        if dir_B == 0:
-                            aP -= DxE
-                            aE = 0.0
-                        else:
-                            aP -= DxW
-                            aW = 0.0
-                    nb = 0.0
-                    if i > 0:
-                        nb += aW * hB[i - 1, j, k]
-                    if i < Nx - 1:
-                        nb += aE * hB[i + 1, j, k]
-                    if j > 0:
-                        nb += aS * hB[i, j - 1, k]
-                    if j < Ny - 1:
-                        nb += aN * hB[i, j + 1, k]
-                    if k > 0:
-                        nb += aB * hB[i, j, k - 1]
-                    if k < Nz - 1:
-                        nb += aT * hB[i, j, k + 1]
-                    new = (nb + S) / (aP if aP > 1e-30 else 1e-30)
-                    upd = (1.0 - omega) * hB[i, j, k] + omega * new
-                    if upd < h_lo_B:
-                        upd = h_lo_B
-                    elif upd > h_hi_B:
-                        upd = h_hi_B
-                    hB[i, j, k] = upd
-
-        # ── Solid (T_s) — diffusion + LTNE source, adiabatic ends ──
-        for i in range(Nx):
-            for j in range(Ny):
-                for k in range(Nz):
-                    # linearised fluid temperatures from current h (no CoolProp)
-                    TAl = TA_star[i, j, k] + (hA[i, j, k] - hA_star[i, j, k]) / (
-                        cpA[i, j, k] if cpA[i, j, k] > 1e-30 else 1e-30)
-                    TBl = TB_star[i, j, k] + (hB[i, j, k] - hB_star[i, j, k]) / (
-                        cpB[i, j, k] if cpB[i, j, k] > 1e-30 else 1e-30)
-                    hvA = hvA_fld[i, j, k]
-                    hvB = hvB_fld[i, j, k]
-                    DxW = Kss[i, j, k] * Ax / dx if i > 0 else 0.0
-                    DxE = Kss[i, j, k] * Ax / dx if i < Nx - 1 else 0.0
-                    DyS = Kss[i, j, k] * Ay / dy if j > 0 else 0.0
-                    DyN = Kss[i, j, k] * Ay / dy if j < Ny - 1 else 0.0
-                    DzB = Kss[i, j, k] * Az / dz if k > 0 else 0.0
-                    DzT = Kss[i, j, k] * Az / dz if k < Nz - 1 else 0.0
-                    aP = (DxW + DxE + DyS + DyN + DzB + DzT
-                          + (hvA + hvB) * Vc)
-                    nb = 0.0
-                    if i > 0:
-                        nb += DxW * Ts[i - 1, j, k]
-                    if i < Nx - 1:
-                        nb += DxE * Ts[i + 1, j, k]
-                    if j > 0:
-                        nb += DyS * Ts[i, j - 1, k]
-                    if j < Ny - 1:
-                        nb += DyN * Ts[i, j + 1, k]
-                    if k > 0:
-                        nb += DzB * Ts[i, j, k - 1]
-                    if k < Nz - 1:
-                        nb += DzT * Ts[i, j, k + 1]
-                    S = (hvA * TAl + hvB * TBl) * Vc
-                    new = (nb + S) / (aP if aP > 1e-30 else 1e-30)
-                    Ts[i, j, k] = (1.0 - omega) * Ts[i, j, k] + omega * new
+        _fluid_enthalpy_sweep(
+            hA, TA_star, Ts, cpA, hA_star, dhA, hvA, FxA, FyA, FzA,
+            h_in_A, dx, dy, dz, omega, h_lo_A, h_hi_A)
+        _fluid_enthalpy_sweep(
+            hB, TB_star, Ts, cpB, hB_star, dhB, hvB, FxB, FyB, FzB,
+            h_in_B, dx, dy, dz, omega, h_lo_B, h_hi_B)
+        _solid_temperature_sweep(
+            Ts, hA, hB, cpA, cpB, TA_star, TB_star, hA_star, hB_star,
+            hvA, hvB, Kss, dx, dy, dz, omega)
 
 
 _FL_TLO = {'sco2': 230.0, 'water': 274.0, 'air': 200.0}
@@ -282,7 +260,9 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     The 703 recuperator runs sco2/sco2, hot ≈8 MPa / cold ≈18.5 MPa."""
     P_A = float(P)
     P_B = float(P_B) if P_B is not None else P_A
-    dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
+    dx = np.full(Nx, Lx / Nx, dtype=np.float64)
+    dy = np.full(Ny, Ly / Ny, dtype=np.float64)
+    dz = np.full(Nz, Lz / Nz, dtype=np.float64)
     shape = (Nx, Ny, Nz)
     # per-side single-channel void fraction. Default symmetric ε_A=ε_B=ε/2; an
     # offset-isosurface (δ≠0) design passes per-side fields (already split).
@@ -290,9 +270,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
             if eps_A_field is not None else np.full(shape, 0.5 * eps))
     epsB = (np.ascontiguousarray(eps_B_field, dtype=np.float64)
             if eps_B_field is not None else np.full(shape, 0.5 * eps))
-    # per-column signed x mass flux (total split over the Ny·Nz cross-section)
-    FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
-    FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
+    flux_A = _uniform_face_mass_flux(shape, m_dot_A, dir_A)
+    flux_B = _uniform_face_mass_flux(shape, m_dot_B, dir_B)
     hvA_fld = np.full(shape, float(h_vA))
     hvB_fld = np.full(shape, float(h_vB))
     Kss = (1.0 - epsA - epsB) * float(k_s)
@@ -326,8 +305,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
         _gs_enthalpy_sweeps_3d(
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
-            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, Kss,
-            dx, dy, dz, h_in_A, h_in_B, int(dir_A), int(dir_B),
+            *flux_A, *flux_B, hvA_fld, hvB_fld, Kss,
+            dx, dy, dz, h_in_A, h_in_B,
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
         n_done = outer + 1
@@ -348,21 +327,25 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                                     fluid_A='sco2', fluid_B='sco2',
                                     eps_A_field=None, eps_B_field=None,
                                     pressure_A_field=None, pressure_B_field=None,
+                                    mass_flux_A=None, mass_flux_B=None,
                                     Ta_init=None, Tb_init=None, Ts_init=None,
                                     n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
-    """Pipeline-facing enthalpy-form LTNE energy solve (sCO2, SIMPLE-coupled).
+    """Pipeline-facing true-enthalpy LTNE solve using SIMPLE face mass flow.
 
     Drives the njit enthalpy kernel from the production pipeline's fielded data
-    (h_v fields, full porosity field, per-side ṁ from the SIMPLE mass flow, per-
+    (h_v fields, full porosity field, per-side SIMPLE face mass flow, per-
     side pressure, warm-start T fields). Returns ``(Ta, Tb, Ts, info)`` matching
     the ``solve_full_domain_3d(..., return_info=True)`` contract so it can drop
     into the stages_3d energy-solve call site behind an ``enthalpy_mode`` gate.
 
-    Scope: counterflow along x (dir 0/1), uniform grid — the 703 recuperator
-    envelope. The caller must gate on these (air/water and other directions stay
-    on the conservative ρcp·u·T kernel)."""
+    ``mass_flux_A/B`` are signed real-coordinate ``(Fx,Fy,Fz)`` arrays. Their
+    boundary faces encode arbitrary inlet/outlet patches; zero faces are walls.
+    Scalar ``m_dot`` remains only as a compatibility fallback for standalone
+    uniform-flow tests."""
     shape = (Nx, Ny, Nz)
-    dxs = float(np.mean(dx)); dys = float(np.mean(dy)); dzs = float(np.mean(dz))
+    dx = np.ascontiguousarray(dx, dtype=np.float64)
+    dy = np.ascontiguousarray(dy, dtype=np.float64)
+    dz = np.ascontiguousarray(dz, dtype=np.float64)
     # symmetric ε/2 by default; offset-isosurface (δ≠0) passes per-side fields.
     epsA = (np.ascontiguousarray(eps_A_field, dtype=np.float64)
             if eps_A_field is not None
@@ -378,8 +361,19 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                  else np.ascontiguousarray(pressure_B_field, dtype=np.float64))
     if P_A_field.shape != shape or P_B_field.shape != shape:
         raise ValueError("local pressure fields must match the 3D LTNE grid")
-    FmA_col = np.full((Ny, Nz), float(m_dot_A) / (Ny * Nz))
-    FmB_col = np.full((Ny, Nz), float(m_dot_B) / (Ny * Nz))
+    flux_A = (_uniform_face_mass_flux(shape, m_dot_A, dir_A)
+              if mass_flux_A is None else
+              tuple(np.ascontiguousarray(f, dtype=np.float64)
+                    for f in mass_flux_A))
+    flux_B = (_uniform_face_mass_flux(shape, m_dot_B, dir_B)
+              if mass_flux_B is None else
+              tuple(np.ascontiguousarray(f, dtype=np.float64)
+                    for f in mass_flux_B))
+    expected_shapes = ((Nx + 1, Ny, Nz), (Nx, Ny + 1, Nz),
+                       (Nx, Ny, Nz + 1))
+    if tuple(f.shape for f in flux_A) != expected_shapes \
+            or tuple(f.shape for f in flux_B) != expected_shapes:
+        raise ValueError("face mass-flow arrays do not match the LTNE grid")
 
     h_in_A = _h_scalar(T_inA, P_A, fluid_A)
     h_in_B = _h_scalar(T_inB, P_B, fluid_B)
@@ -414,18 +408,16 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
 
         _gs_enthalpy_sweeps_3d(
             hA, hB, Ts, dhA, dhB, cpA, cpB, T_A, T_B, hA_star, hB_star,
-            epsA, epsB, FmA_col, FmB_col, hvA_fld, hvB_fld, Kss,
-            dxs, dys, dzs, h_in_A, h_in_B, int(dir_A), int(dir_B),
+            *flux_A, *flux_B, hvA_fld, hvB_fld, Kss,
+            dx, dy, dz, h_in_A, h_in_B,
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
         n_done = outer + 1
         denom = max(abs(h_in_A - h_in_B), 1.0)
         resid = max(np.max(np.abs(hA - hA_star)),
                     np.max(np.abs(hB - hB_star))) / denom
-        out_A = -1 if dir_A == 0 else 0
-        out_B = -1 if dir_B == 0 else 0
-        q_A = abs(float(m_dot_A)) * (h_in_A - float(np.mean(hA[out_A])))
-        q_B = abs(float(m_dot_B)) * (h_in_B - float(np.mean(hB[out_B])))
+        q_A = _boundary_enthalpy_duty(hA, h_in_A, flux_A)
+        q_B = _boundary_enthalpy_duty(hB, h_in_B, flux_B)
         imbalance = abs(q_A + q_B) / max(abs(q_A), abs(q_B), 1e-30)
         if resid < tol and imbalance < 0.05:
             break

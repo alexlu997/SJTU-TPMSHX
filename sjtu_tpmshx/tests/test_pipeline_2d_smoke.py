@@ -19,6 +19,7 @@ import pytest
 
 from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig,
+    ExtrapPolicy,
     FluidConfig,
     GeometryConfig,
     SolverConfig,
@@ -32,8 +33,7 @@ from sjtu_tpmshx.controllers.compute_pipeline import (
 
 
 def _shanghai_like_cfg() -> ComputeConfig:
-    """Build a Shanghai-like ComputeConfig that stays inside the
-    ConstDF-v1 + Nu surrogate domains (Re>=400, t in [0.3, 0.5] mm)."""
+    """Build a Shanghai-like ComputeConfig inside the CFD and Nu domains."""
     return ComputeConfig(
         fluid_A=FluidConfig(type='air', u_mps=10.0, T_in_K=600.0,
                             P_in_Pa=101325.0),
@@ -148,3 +148,34 @@ def test_pipeline_for_2d_dispatch():
     assert isinstance(pipe, Pipeline2D)
     result = pipe.run()
     assert result.Q_W > 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    'fluid_A,u_A,P_A,fluid_B,P_B',
+    [('sco2', 0.3, 12e6, 'water', 2e6),
+     ('air', 3.0, 2e5, 'sco2', 12e6)],
+    ids=['sco2-water', 'air-sco2'],
+)
+def test_pipeline2d_mixed_sco2_custom_ports(fluid_A, u_A, P_A, fluid_B, P_B):
+    cfg = ComputeConfig(
+        fluid_A=FluidConfig(type=fluid_A, u_mps=u_A, T_in_K=500.0,
+                            P_in_Pa=P_A),
+        fluid_B=FluidConfig(type=fluid_B, u_mps=0.2, T_in_K=300.0,
+                            P_in_Pa=P_B),
+        geometry=GeometryConfig(tpms='Gyroid', L_cell_mm=7.0,
+                                t_wall_mm=0.6, k_s_W_mK=16.0,
+                                L_dom_m=0.06, H_dom_m=0.03),
+        solver=SolverConfig(Nx=8, Ny=6, Nz=1, max_outer_ltne=3,
+                            max_iter_simple=500),
+        bc_A=PartialBCConfig(dir=0, in_ctr=0.015, in_w=0.015,
+                             out_ctr=0.015, out_w=0.015),
+        bc_B=PartialBCConfig(dir=3, in_ctr=0.03, in_w=0.03,
+                             out_ctr=0.03, out_w=0.03),
+        extrap=ExtrapPolicy(allow=True),
+    )
+    result = Pipeline2D(cfg).run()
+    assert result.Q_W > 0
+    assert result.T_out_A_K < cfg.fluid_A.T_in_K
+    assert result.T_out_B_K > cfg.fluid_B.T_in_K
+    assert result.residuals['enthalpy_imbalance_rel'] < 0.05
