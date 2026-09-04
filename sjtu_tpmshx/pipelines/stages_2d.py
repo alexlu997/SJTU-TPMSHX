@@ -412,7 +412,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
                     T_field_real=None, fluid_type='ideal_gas',
                     p_shoot_prev=None, df_method=None,
-                    rho_inlet_ref=None):
+                    rho_inlet_ref=None, fluid_name='air'):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -508,11 +508,26 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         # the solver itself will build (`simple_solver.py:409-412`), so the seed
         # can never drift from the drag it is seeding for.
         L_stream = float(L if is_x else H)
+        _df_mode = getattr(cfg.get('compute_cfg'), 'df_mode', 'cfd_smooth')
+        _df_exp = None
+        if _df_mode == 'experimental':
+            from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
+            from sjtu_tpmshx.df_surrogate.experimental_correction import apply_correction
+            _Kb, _cFb = _pred_KcF(
+                tpms_type, float(Lcell), float(t_wall), 0.5 * float(eps),
+                method=df_method)
+            _df_exp = apply_correction(
+                tpms_type, fluid_name, float(Lcell), float(t_wall), _Kb, _cFb,
+                u_mps=abs(float(u_f)))
         if fluid_type == 'ideal_gas':
             from sjtu_tpmshx.df_surrogate.predict import predict_K_cF as _pred_KcF
             from sjtu_tpmshx.solvers.envelope import predict_outlet_p_sq
-            _K0, _cF0 = _pred_KcF(tpms_type, float(Lcell), float(t_wall),
-                                  0.5 * float(eps), method=df_method)
+            if _df_exp is None:
+                _K0, _cF0 = _pred_KcF(
+                    tpms_type, float(Lcell), float(t_wall),
+                    0.5 * float(eps), method=df_method)
+            else:
+                _K0, _cF0 = _df_exp[0], _df_exp[1]
             _rho_in = float(P_in_abs) / (287.05 * float(T_in_f))
             _G = _rho_in * abs(float(u_f))                   # mass flux ρ·u
             _mu_in = float(np.mean(mu_f)) if np.ndim(mu_f) else float(mu_f)
@@ -610,6 +625,16 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             elif za.get('grid_cells'):
                 override_simple_K_cF(s, tpms_type, k_s, Ny_sim,
                                      za['grid_cells'], None, None, fluid)
+        # Apply the reviewed correction once, after the CFD base is assembled
+        # and before pressure re-seeding and SIMPLE.
+        if _df_exp is not None:
+            _K_applied, _cF_applied, _df_meta = _df_exp
+            s._K_arr[:] = _K_applied
+            s._cF_arr[:] = _cF_applied
+            s._df_metadata = _df_meta
+        else:
+            from sjtu_tpmshx.df_surrogate.experimental_correction import cfd_metadata
+            s._df_metadata = cfd_metadata(s._K_arr, s._cF_arr)
         # ── Re-seed P_ref_abs from the solver's ACTUAL drag (2026-07-13) ────
         # The seed above used the uniform-geometry (K0, cF0); the zone_config /
         # zone_arrays paths then swap in per-row graded K/cF (constructor or
@@ -1002,6 +1027,7 @@ def _finalize_cfg(raw: dict[str, Any],
             # can see WHICH gate failed (convergence truth-table).
             'convergence_detail': raw.get('convergence_detail'),
         },
+        metadata={'darcy_forchheimer': raw.get('df_metadata')},
     )
 
 

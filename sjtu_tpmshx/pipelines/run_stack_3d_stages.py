@@ -729,6 +729,7 @@ def _build_3d_problem(cfg):
     # air_* calls → golden-safe). water: incompressible registry path.
     # sco2: real-gas properties at (T,P).
     fluid_type_A = cfg.get('fluid_type_A', 'air')
+    fluid_type_B = cfg.get('fluid_type_B', 'air')
     _mA = fluid_props.get(fluid_type_A)
     rho_A = float(_mA.rho(T_inA, P_inA))
     mu_A = float(_mA.mu(T_inA, P_inA))
@@ -739,6 +740,11 @@ def _build_3d_problem(cfg):
     # is the solver streamwise axis = N_stream in real coords.
     # If zones enabled: per-cell K/cF via 2D grid zones broadcast over z.
     zone_cells = cfg.get('zone_grid_cells')
+    _df_mode = cfg.get('df_mode', 'cfd_smooth')
+    if _df_mode == 'experimental' and zone_cells:
+        raise ValueError(
+            "experimental calibration currently requires uniform L/t; zoned "
+            "geometry remains available in CFD smooth-wall mode")
     L_mm_field = None      # (Nx, Ny, Nz) for vis; None → uniform Lcell later
     t_field_3d = None      # per-cell wall thickness
     eps_field_3d = None    # per-cell porosity if zoned
@@ -772,6 +778,17 @@ def _build_3d_problem(cfg):
         cF_pred = cF_pred_B = cF0
         K_A_arr = np.full((N_stream, N_cross2), K_pred)
         cF_A_arr = np.full((N_stream, N_cross2), cF_pred)
+
+    from sjtu_tpmshx.df_surrogate.experimental_correction import (
+        apply_correction, cfd_metadata)
+    if _df_mode == 'experimental':
+        K_A_arr, cF_A_arr, _df_meta_A = apply_correction(
+            tpms_type, fluid_type_A, Lcell, t_wall, K_A_arr, cF_A_arr,
+            u_mps=abs(float(u_A)))
+        K_pred = float(np.asarray(K_A_arr).mean())
+        cF_pred = float(np.asarray(cF_A_arr).mean())
+    else:
+        _df_meta_A = cfd_metadata(K_A_arr, cF_A_arr)
 
     # P_ref_abs 1D closed-form seed (uses streamwise length L_stream).
     solver_fluid_type_A = fluid_props.flow_model(fluid_type_A)
@@ -807,6 +824,7 @@ def _build_3d_problem(cfg):
         P_ref_abs=P_ref_A, fluid_type=solver_fluid_type_A,
         dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
     )
+    sA._df_metadata = _df_meta_A
     # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
     _apply_accel_flags(sA, cfg)
     sA.inlet_frac = in_mask_2d
@@ -836,7 +854,6 @@ def _build_3d_problem(cfg):
 
     # ── Fluid B: cross-flow SIMPLE — BUILD ONLY (solve in parallel with A) ──
     fB = cfg.get('fluid_B_cfg')
-    fluid_type_B = cfg.get('fluid_type_B', 'air')
     # B1 1.1: property primitives + flow model for side B via the registry
     # (frozen-B / stiffness semantics keep using is_water_B).
     _mB = fluid_props.get(fluid_type_B)
@@ -855,6 +872,14 @@ def _build_3d_problem(cfg):
         perm_B = axis_map_B['solver_to_real_perm']
         K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred_B)
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred_B)
+        if _df_mode == 'experimental':
+            K_B_arr, cF_B_arr, _df_meta_B = apply_correction(
+                tpms_type, fluid_type_B, Lcell, t_wall, K_B_arr, cF_B_arr,
+                u_mps=abs(float(u_B)))
+            K_pred_B = float(np.asarray(K_B_arr).mean())
+            cF_pred_B = float(np.asarray(cF_B_arr).mean())
+        else:
+            _df_meta_B = cfd_metadata(K_B_arr, cF_B_arr)
         G_B = rho_B * u_B
         C_B = mu_B * G_B / max(K_pred_B, 1e-16) + cF_pred_B * G_B * G_B
         solver_fluid_type_B = fluid_props.flow_model(fluid_type_B)
@@ -884,6 +909,7 @@ def _build_3d_problem(cfg):
             P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
             dx_arr=_sdxB, dy_arr=_sdyB, dz_arr=_sdzB,
         )
+        sB._df_metadata = _df_meta_B
         # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
         _apply_accel_flags(sB, cfg)
         sB.inlet_frac = in_mask_B
@@ -1881,6 +1907,11 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         _needs_full_validate=(_compact_diag and not all(
             d['converged'] for d in _ltne_info)),
     )
+    _result['df_metadata'] = {
+        'mode': prob.cfg.get('df_mode', 'cfd_smooth'),
+        'A': getattr(sA, '_df_metadata', None),
+        'B': getattr(sB, '_df_metadata', None) if sB is not None else None,
+    }
 
     # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
     # Catches dynamic choking the 1D pre-seed missed: a supersonic |v| or a

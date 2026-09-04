@@ -113,6 +113,17 @@ def build_page_fluids(window):
     lay = QVBoxLayout(w)
     lay.setSpacing(12); lay.setContentsMargins(8, 4, 6, 6)
 
+    g_method, _ = section(window, lay, "Darcy–Forchheimer 求解方法",
+                          _T_NEUTRAL, _F_NEUTRAL)
+    window.combo_df_mode = QComboBox()
+    window.combo_df_mode.addItem("CFD 光滑壁面（默认）", "cfd_smooth")
+    window.combo_df_mode.addItem("实验标定", "experimental")
+    window.combo_df_mode.setStyleSheet(_COMBO)
+    window.combo_df_mode.setToolTip(
+        "实验标定使用与具体实验 campaign、边界和压降定义绑定的有效修正；"
+        "数据集选择不代表已证实的工质本征效应。")
+    add_row(window, g_method, 0, "方法", right_align_combo(window.combo_df_mode))
+
     # Pack Fluid A and Fluid B side-by-side when the panel is wide enough
     # (≥ 520 px), stacked vertically when narrower — ResponsiveRow flips the
     # box direction on resize (ui-layout-fixes: the old hard QHBoxLayout

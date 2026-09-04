@@ -479,10 +479,14 @@ def config_from_window(window, *, strict: bool = False,
     flags = _read_feature_flags(window)
     extrap = _read_extrap_policy(window)
 
+    _df_combo = getattr(window, 'combo_df_mode', None)
+    df_mode = (_df_combo.currentData() if _df_combo is not None else None)
+
     return ComputeConfig(fluid_A=fluid_A, fluid_B=fluid_B,
                geometry=geom, solver=solver,
                bc_A=bc_A, bc_B=bc_B,
-               zones=zones, flags=flags, extrap=extrap)
+               zones=zones, flags=flags, extrap=extrap,
+               df_mode=df_mode or 'cfd_smooth')
 
 
 __all__ = ['config_from_window', 'FieldSpec', 'CONFIG_FIELDS']

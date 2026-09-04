@@ -248,6 +248,7 @@ class SessionPresetsMixin:
     )
     _SESSION_COMBOS = (
         'combo_shape', 'combo_dim', 'combo_tpms',
+        'combo_df_mode',
         'combo_fluidA', 'combo_fluidB',
         'combo_dirA', 'combo_dirB',
     )
@@ -558,4 +559,3 @@ class SessionPresetsMixin:
         # state so the user's first manual edit undoes to what they see,
         # not to the construction-time defaults.
         self._resync_undo_baseline()
-

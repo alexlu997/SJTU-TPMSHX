@@ -1018,6 +1018,7 @@ def _run_solvers(window, cfg, fields):
                           'Fluid A', P_inA_val),
                       dict(T_field_real=_Ta_for_simpA,
                            fluid_type=_ftA, df_method=_dfA,
+                           fluid_name=_pA['name'],
                            rho_inlet_ref=(
                                float(_pA['rho'](T_inA, P_inA_val))
                                if _pA['name'] == 'sco2' else None),
@@ -1029,6 +1030,7 @@ def _run_solvers(window, cfg, fields):
                           'Fluid B', P_inB_val),
                       dict(T_field_real=_Tb_for_simpB,
                            fluid_type=_ftB, df_method=_dfB,
+                           fluid_name=_pB['name'],
                            rho_inlet_ref=(
                                float(_pB['rho'](T_inB, P_inB_val))
                                if _pB['name'] == 'sco2' else None),
@@ -1553,5 +1555,10 @@ def _run_solvers(window, cfg, fields):
         'envelope_valid': _env_valid,
         'envelope_reasons': _env_reasons,
         'p_clip_hits': _clip_hits_2d,
+        'df_metadata': {
+            'mode': getattr(cfg.get('compute_cfg'), 'df_mode', 'cfd_smooth'),
+            'A': getattr(simpA, '_df_metadata', None),
+            'B': getattr(simpB, '_df_metadata', None),
+        },
     }
     return result

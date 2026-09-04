@@ -217,6 +217,7 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         zone_grid_cells=zone_grid_cells,
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
+        df_mode=compute_cfg.df_mode,
         extrap_reasons=extrap_reasons,
         compute_cfg=compute_cfg,
     )
@@ -410,4 +411,5 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
         },
+        metadata={'darcy_forchheimer': raw.get('df_metadata')},
     )

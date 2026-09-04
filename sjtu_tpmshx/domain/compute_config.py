@@ -120,6 +120,7 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 
 FluidType = Literal['air', 'water', 'sco2']
+DFMode = Literal['cfd_smooth', 'experimental']
 TPMSType = Literal['Diamond', 'Gyroid']
 RoughMode = Literal['baseline', 'norris_1a', 'bhatti_shah_1b']
 ZoneAxis = Literal['x', 'y', 'grid']
@@ -408,6 +409,10 @@ class ComputeConfig:
     # 'warn' -> run but flag envelope_valid=False (useful for batch sweeps that
     # must not abort on one choked operating point); 'off' -> legacy silent.
     envelope_mode: str = 'raise'
+    # Darcy-Forchheimer method exposed to users. The default is the unchanged
+    # V2 water+sCO2 CFD table; experiment mode applies a reviewed effective
+    # correction selected by matching dataset/campaign boundaries.
+    df_mode: DFMode = 'cfd_smooth'
 
     # ── derived ──────────────────────────────────────────────────────
 
@@ -454,6 +459,11 @@ class ComputeConfig:
         Returns self so call sites can chain.
         """
         import math
+
+        if self.df_mode not in ('cfd_smooth', 'experimental'):
+            raise ValueError(
+                f"ComputeConfig.df_mode={self.df_mode!r} — must be "
+                "'cfd_smooth' or 'experimental'")
 
         def _bad(name, v):
             raise ValueError(
@@ -624,6 +634,36 @@ class ComputeConfig:
                 raise ValueError("sCO2 V2 does not support zones")
             if self.geometry.delta_levelset != 0.0:
                 raise ValueError("sCO2 V2 requires delta_levelset=0")
+        if self.df_mode == 'experimental':
+            from sjtu_tpmshx.df_surrogate.experimental_correction import (
+                correction_scale)
+            if self.zones.enabled:
+                raise ValueError(
+                    "experimental calibration currently requires uniform L/t; "
+                    "zoned geometry remains available in CFD smooth-wall mode")
+            for side, fl in (('A', self.fluid_A),
+                             ('B', self.fluid_B)):
+                try:
+                    _, _, _, scope = correction_scale(
+                        self.geometry.tpms, fl.type,
+                        self.geometry.L_cell_mm, self.geometry.t_wall_mm,
+                        fl.u_mps)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"experimental calibration unavailable for active side "
+                        f"{side}: {exc}") from exc
+                if scope != 'HX-effective':
+                    continue
+                if (self.geometry.delta_levelset != 0.0
+                        or not math.isclose(ge.L_dom_m, 0.182)
+                        or not math.isclose(ge.H_dom_m, 0.042)
+                        or (self.is_3d and (ge.Lz_m is None
+                                            or not math.isclose(
+                                                ge.Lz_m, 0.042)))):
+                    raise ValueError(
+                        f"experimental calibration side {side} is HX-effective "
+                        "and requires delta=0 with the matching 0.182 x 0.042"
+                        " x 0.042 m campaign domain")
         return self
 
     @classmethod
@@ -676,6 +716,7 @@ class ComputeConfig:
                 flags=FeatureFlags(**fl_d) if fl_d else FeatureFlags(),
                 extrap=ExtrapPolicy(**ex_d) if ex_d else ExtrapPolicy(),
                 envelope_mode=data.get('envelope_mode', 'raise'),
+                df_mode=data.get('df_mode', 'cfd_smooth'),
             ).validate()
 
         # ── legacy shanghai_baseline.json layout ────────────────
@@ -696,7 +737,7 @@ class ComputeConfig:
 
 
 __all__ = [
-    'FluidType', 'TPMSType', 'RoughMode', 'ZoneAxis',
+    'FluidType', 'DFMode', 'TPMSType', 'RoughMode', 'ZoneAxis',
     'FluidConfig', 'GeometryConfig', 'SolverConfig', 'OptimizerConfig',
     'PartialBCConfig', 'ZoneInputConfig',
     'ExtrapPolicy', 'FeatureFlags',
