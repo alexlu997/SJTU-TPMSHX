@@ -32,13 +32,19 @@
 | Metric | Value | Where |
 |:------:|:-----:|:------|
 | **Air-side Q** RMSRE | **1.73 %** | ε-NTU lumped dual-Nu, Shanghai 16-case |
-| **3D pressure drop** RMSRE | **≈ 10 %** | full SIMPLE 3D, gamma_df default, grid-converged (per-case Richardson, A2 criteria) |
-| **3D heat duty Q** RMSRE | **≈ 3 %** | full SIMPLE 3D, gamma_df default, grid-converged |
+| **Legacy 3D pressure drop** RMSRE | **≈ 10 %** | historical gamma_df air/water baseline, grid-converged |
+| **Legacy 3D heat duty Q** RMSRE | **≈ 3 %** | historical gamma_df air/water baseline, grid-converged |
+| **sCO2 V2 2D/3D Q parity** | **0.85 %** | fixed-CFD D-F + true enthalpy gate |
 | **MMS** observed order `p_obs` | **≥ 2.07** | code verification, SOU 2nd-order (gate ≥ 1.5) |
 
 </div>
 
 > [!NOTE]
+> The Shanghai 3D headline values below belong to the historical `gamma_df`
+> air/water baseline. V2 deliberately replaces production K/cF with the
+> water+sCO2 CFD table; experimental calibration of that new baseline remains
+> future work, so the old percentages must not be attributed to V2.
+>
 > The **grid-converged** 3D Δp RMSRE vs the Shanghai cases is **≈ 10 %** (4-grid all-axis
 > refinement 16×8×4 → 128×64×32, per-case Richardson on the finest triplet, median p ≈ 1.6,
 > under the A2 normalized-residual convergence criteria, 2026-07-06) — a **geometry / closure
@@ -122,12 +128,12 @@
 | Layer | Capability |
 |-------|------------|
 | **Geometry** | Diamond + Gyroid TPMS sheet HX, parameterised by cell size `a` and wall thickness `t` |
-| **Closures** | Darcy–Forchheimer surrogate (`gamma_df` default: `c_F` = smooth-CFD × experimental roughness γ, `K` = CFD-refit per-geometry surface) · dual Nusselt power-laws fit **per-topology** (Diamond/Gyroid) to CFD — **air** ×1.28 SLM-roughness, **water** direct · solid-conduction tortuosity **χ_s(type, ε)** from unit-cell periodic homogenization (≈0.59–0.83; thin-sheet limit ⅔) |
-| **2D solver** | SIMPLE (Patankar), ideal-gas air, Brinkman–Forchheimer porous core |
+| **Closures** | Production Darcy–Forchheimer `K(L,t)` and `c_F(L,t)` from the fixed water+sCO2 CFD grid with bilinear interpolation; independent of fluid and Re · per-fluid Nusselt correlations · solid tortuosity **χ_s(type, ε)** |
+| **2D solver** | SIMPLE (Patankar), air/water/sCO2 ordered pairs, custom ±x/±y ports, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
-| **sCO2 V1** | 2D/3D full-face `+x/-x` dual-sCO2 counterflow · direct CoolProp at 280–700 K / 8–16 MPa · fixed three-cell CFD Darcy–Forchheimer coefficients · smooth-wall CFD Nu · true-enthalpy conservation |
+| **Three-fluid V2** | All nine ordered air/water/sCO2 pairs · custom 2D/3D ports on every ± axis · any pair containing sCO2 uses direct CoolProp and conservative face-mass-flow true-enthalpy transport |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
-| **Validation** | Shanghai 16-case — Q air RMSRE **1.73 %** (lumped) · 3D Δp **≈10 %** / Q **≈3 %** (gamma_df, grid-converged) · 2D Δp **8.62 %** / Q **2.49 %** (production pipeline, water solved, F2 convergence) |
+| **Validation** | Current sCO2 V2 gate: selected CFD Δp error **8.41 %**, 2D/3D Q difference **0.85 %**, mass residual ≈10⁻¹⁶; Shanghai percentages above are legacy gamma_df results |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
@@ -139,7 +145,7 @@
 
 <img src="assets/gammadf-error.png" width="92%" alt="gamma_df Forchheimer cF interpolation error — cF vs cell size L for Diamond and Gyroid, model curves at t=0.3/0.4/0.5mm with rough-experiment anchors at L6/L8 and leave-one-out blind predictions; LOO RMSRE 2.5% Diamond, 2.6% Gyroid.">
 
-<sub>**Darcy–Forchheimer** roughness closure (`gamma_df`): `cF = cF_smooth(CFD) × γ(L,t)`, the roughness factor **γ interpolated from the trusted L6/L8 SLM-rough experimental anchors** (+ Gyroid L7 Shanghai gate). **Leave-one-out** interpolation error: **Diamond 2.5 %** (max 2.9 %) · **Gyroid 2.6 %** (max 4.0 %). `K` is a **CFD-refit per-geometry surface** (raw water CFD, 2-stage extraction, log-space TPS — replaced the old `D_h²` trend 2026-06-30; improves low-Re water-side Δp, c_F unchanged).</sub>
+<sub>**Legacy/research `gamma_df` backend** (not the V2 production default): `cF = cF_smooth(CFD) × γ(L,t)`, with γ interpolated from L6/L8 SLM experiment anchors. It remains callable explicitly for comparison and future experimental calibration.</sub>
 
 <br><br>
 
@@ -185,9 +191,9 @@ C:\Python312\python.exe -m venv .venv
 The Windows Server BO stack is optional: install
 `requirements-lock-server.txt` only when running optimization or retraining.
 
-GPU PyTorch is **optional** — only needed to re-train the Darcy–Forchheimer surrogate
-(the historical `rbf` backend; superseded by `gamma_df` as default 2026-06-12).
-The runtime path reads a CSV-based log-space TPS surface (`gamma_df`, no joblib/torch at runtime).
+GPU PyTorch is **optional** and only needed for research-backend retraining.
+The production runtime reads the packaged fixed-CFD CSV; `gamma_df` and `rbf`
+remain explicit research backends.
 
 ---
 
@@ -265,8 +271,10 @@ the loaders resolve them relative to the repository.
 The sCO2 experiment loader expects `data/raw_data/sCO2-Experient.xlsx`
 (the historical project spelling).
 
-Run the sCO2 V1 CFD, conservation, pressure-drop, and 2D/3D parity gate with
+Run the fixed-CFD, conservation, pressure-drop, and 2D/3D parity gate with
 `python -m sjtu_tpmshx.validation.cases.validate_sco2_v1`.
+The module name is retained for compatibility although the production closure
+is now shared by all three fluids.
 
 Run the full-core experimental-Q smoke with
 `python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q`. The validation
