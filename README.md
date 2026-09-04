@@ -42,8 +42,9 @@
 > [!NOTE]
 > The Shanghai 3D headline values below belong to the historical `gamma_df`
 > air/water baseline. V2 deliberately replaces production K/cF with the
-> water+sCO2 CFD table; experimental calibration of that new baseline remains
-> future work, so the old percentages must not be attributed to V2.
+> water+sCO2 CFD table. V3 adds an optional, applicability-gated experimental
+> effective correction on that same base; the old percentages must not be
+> attributed to the default CFD mode.
 >
 > The **grid-converged** 3D Δp RMSRE vs the Shanghai cases is **≈ 10 %** (4-grid all-axis
 > refinement 16×8×4 → 128×64×32, per-case Richardson on the finest triplet, median p ≈ 1.6,
@@ -132,6 +133,7 @@
 | **2D solver** | SIMPLE (Patankar), air/water/sCO2 ordered pairs, custom ±x/±y ports, Brinkman–Forchheimer porous core |
 | **3D solver** | full SIMPLE 3D **+** 3D pressure-correction Poisson solve (PPE; optional Helmholtz/MAC divergence-free LTNE projection) · **mass-flux inlet** (ideal-gas) by default |
 | **Three-fluid V2** | All nine ordered air/water/sCO2 pairs · custom 2D/3D ports on every ± axis · any pair containing sCO2 uses direct CoolProp and conservative face-mass-flow true-enthalpy transport |
+| **D-F V3 modes** | `CFD 光滑壁面（默认）`: unchanged geometry-only K0/cF0 · `实验标定`: fixed reviewed effective correction, only when every side matches its campaign/geometry/boundary domain; no Re dependence or silent fallback |
 | **Lumped** | ε-NTU dual-Nu cross-flow — `validate_shanghai_lumped_dual_nu.py` |
 | **Validation** | Current sCO2 V2 gate: selected CFD Δp error **8.41 %**, 2D/3D Q difference **0.85 %**, mass residual ≈10⁻¹⁶; Shanghai percentages above are legacy gamma_df results |
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
@@ -145,7 +147,36 @@
 
 <img src="assets/gammadf-error.png" width="92%" alt="gamma_df Forchheimer cF interpolation error — cF vs cell size L for Diamond and Gyroid, model curves at t=0.3/0.4/0.5mm with rough-experiment anchors at L6/L8 and leave-one-out blind predictions; LOO RMSRE 2.5% Diamond, 2.6% Gyroid.">
 
-<sub>**Legacy/research `gamma_df` backend** (not the V2 production default): `cF = cF_smooth(CFD) × γ(L,t)`, with γ interpolated from L6/L8 SLM experiment anchors. It remains callable explicitly for comparison and future experimental calibration.</sub>
+<sub>**Legacy/research `gamma_df` backend** is not either production UI mode. V3 experiment calibration is rebuilt on the current fixed-CFD K0/cF0 base and uses dataset/campaign applicability gates.</sub>
+
+The experiment selector is a data-routing key, not a claim that K/cF differences
+are intrinsic to air, water, or sCO2. The available campaigns use different rigs,
+boundaries, pressure taps, manifolds, flow-area definitions, instruments, and
+reduction paths; their individual contributions are not separated. Air is limited
+to the core-specimen L=6..8 mm, t=0.3..0.5 mm domain. sCO2 is HX-effective only
+for uniform symmetric D/G-7-6 and its measured inlet-velocity windows:
+0.5905..2.5731 m/s (Diamond) or 0.6209..2.5022 m/s (Gyroid). The fitted D-F parameters
+act as the porous-region closure and may be used with valid custom inlet/outlet
+centres, widths, and any solver-supported flow direction; the calibration
+measurements themselves used full faces with x-direction flow.
+The water+air D/G-7-6 specimen has two complete, separate TPMS fluid networks
+and delta=0; both sides therefore use the topology-derived single-side area (Diamond
+5.94e-4 m², Gyroid 6.50e-4 m²), not `(28/34)*A_air`, the full 42×42 mm face,
+or that face divided by two. In the reviewed operating window `u_water>=0.10
+m/s`, the fixed-K0 water corrections are sF=4.8928 (Diamond, RMSRE 6.84%) and
+4.1989 (Gyroid, 0.93%); they are bounded above by the measured 0.2541/0.2232
+m/s limits. Matching HX-air uses separate sF=1.8024/2.0120 corrections over
+the measured inlet-velocity windows 7.6566..22.7599 / 7.5231..24.5414 m/s.
+The lower-flow water points remain in the report as outside the production
+applicability window, not as bad data. Raw records remain intact; water
+`G_7_6/工况1` is excluded as negative dP, and `D_7_6/工况10` plus `工况11`
+are both excluded as ambiguous duplicate rows. Custom-port runs use the same
+calibrated porous D-F parameters; their boundary layout was not independently
+validated by this full-face campaign. Each side selects its correction independently,
+so all nine ordered air/water/sCO2 pairs are available when both sides satisfy their
+own geometry, domain, and velocity applicability rules. Combining corrections from
+different campaigns enables a model calculation; it is not joint experimental
+validation of that fluid pair.
 
 <br><br>
 

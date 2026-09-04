@@ -71,5 +71,9 @@ class ComputeResult:
     # Keys: iter_outer, iter_simple_A, iter_simple_B, wall_time_s
     diagnostics: Dict[str, Any] = field(default_factory=dict)
 
+    # Reproducibility metadata. V3 records the CFD base and any applied
+    # experiment-effective correction here without mixing it into coefficients.
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
 
 __all__ = ['ComputeResult']

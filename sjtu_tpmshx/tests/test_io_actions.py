@@ -49,6 +49,12 @@ def test_save_load_config_roundtrip(tmp_path, monkeypatch, win):
 
     win.le_Lcell.setText('6.5')
     win.le_t.setText('0.45')
+    assert win.combo_df_mode.count() == 2
+    assert win.combo_df_mode.currentData() == 'cfd_smooth'
+    assert win.combo_df_mode.model().item(1).isEnabled()
+    win.combo_fluidB.setCurrentText('Air')
+    assert win.combo_df_mode.model().item(1).isEnabled()
+    win.combo_df_mode.setCurrentIndex(1)
     monkeypatch.setattr(QFileDialog, 'getSaveFileName',
                         staticmethod(lambda *a, **k: (cfg_path, 'json')))
     win.save_config()
@@ -56,15 +62,18 @@ def test_save_load_config_roundtrip(tmp_path, monkeypatch, win):
     data = json.loads(Path(cfg_path).read_text(encoding='utf-8'))
     assert data['L_cell'] == '6.5'
     assert data['t'] == '0.45'
+    assert data['df_mode'] == 'experimental'
 
     # Perturb, then load back — fields must restore.
     win.le_Lcell.setText('9.9')
     win.le_t.setText('0.9')
+    win.combo_df_mode.setCurrentIndex(0)
     monkeypatch.setattr(QFileDialog, 'getOpenFileName',
                         staticmethod(lambda *a, **k: (cfg_path, 'json')))
     win.load_config()
     assert win.le_Lcell.text() == '6.5'
     assert win.le_t.text() == '0.45'
+    assert win.combo_df_mode.currentData() == 'experimental'
 
 
 def test_load_config_cancel_is_noop(monkeypatch, win):

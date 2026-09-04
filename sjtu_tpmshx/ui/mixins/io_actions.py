@@ -159,6 +159,7 @@ class IOActionsMixin:
             "Ny":        self.le_Ny.text(),
             # TPMS
             "tpms_type": self.combo_tpms.currentText(),
+            "df_mode": self.combo_df_mode.currentData(),
             "L_cell":    self.le_Lcell.text(),
             "t":         self.le_t.text(),
             "k_s":       self.le_ks.text(),
@@ -238,6 +239,9 @@ class IOActionsMixin:
         if "tpms_type" in cfg:
             idx = self.combo_tpms.findText(cfg["tpms_type"])
             if idx >= 0: self.combo_tpms.setCurrentIndex(idx)
+        if "df_mode" in cfg and hasattr(self, 'combo_df_mode'):
+            idx = self.combo_df_mode.findData(cfg["df_mode"])
+            if idx >= 0: self.combo_df_mode.setCurrentIndex(idx)
         if "dir_A" in cfg:
             self.combo_dirA.setCurrentIndex(int(cfg["dir_A"]))
         if "dir_B" in cfg:

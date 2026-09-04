@@ -52,11 +52,21 @@ explicit numerical-model change with directly relevant validation.
    those values again.
 3. **Mass-flux inlet.** Compressible air uses the mass-flux inlet in both 2D
    and 3D. Solver velocities are interstitial, not superficial.
-4. **Darcy-Forchheimer ownership.** Production uses one water+sCO2 CFD table
-   for both sides and every fluid. K and cF depend only on TPMS topology, L,
-   and t; values inside the 4–8 mm by 0.3–0.6 mm grid are bilinearly
-   interpolated. They must not depend on Re or fluid type. `gamma_df` and
-   `rbf` remain explicit research modes.
+4. **Darcy-Forchheimer ownership.** `df_surrogate.predict_K_cF()` remains the
+   pure geometry baseline: one water+sCO2 CFD table for both sides and every
+   fluid. Base K0 and cF0 depend only on topology, L, and t, are bilinearly
+   interpolated inside 4–8 mm by 0.3–0.6 mm, and never depend on Re or fluid.
+   The UI exposes exactly two production methods. **CFD smooth-wall** is the
+   default and is V2-compatible. **Experiment calibration** applies one fixed,
+   reviewed effective correction per side after pipeline assembly and before
+   pressure seeding/SIMPLE; K/cF stay fixed for the solve. The selector routes
+   to a dataset whose campaign, boundary, pressure-drop definition, and
+   geometry match the run. It is not evidence of fluid-intrinsic D-F physics.
+   Differences may absorb pressure-tap location, contractions/expansions,
+   manifolds/distribution regions, whole-HX losses, flow-area/channel-count
+   definitions, instrument zero, and data reduction; these contributions are
+   not separately modelled. Without a same-rig comparison they must not be
+   attributed to fluid. `gamma_df` and `rbf` remain research modes.
 5. **Nusselt ownership.** Air, water, and sCO2 coefficient tables live only in
    `solvers/nu_correlations.py`.
 6. **Compressible envelope.** `solvers/envelope.py` rejects operating points
@@ -76,6 +86,34 @@ explicit numerical-model change with directly relevant validation.
     not reconstruct a full-face x-flow from a scalar mass rate.
 11. **Current V2 limit.** sCO2 zones and offset level sets remain rejected;
     air/water-only runs retain their existing temperature-form kernels.
+12. **Experiment-correction applicability.** Air uses only the core-specimen
+    L=6..8 mm, t=0.3..0.5 mm interpolation domain; t=0.6 is not extrapolated.
+    sCO2 uses only D/G-7-6 hot-side `ok_dp` evidence, keeps K=K0, and is
+    HX-effective: uniform symmetric core, no zones, delta, other L/t, or
+    independent cold-side fit. Its measured inlet-velocity windows are
+    0.5905..2.5731 m/s (Diamond) and 0.6209..2.5022 m/s (Gyroid). The fitted
+    D-F parameters are a porous-region
+    closure and may be used with valid custom port centres, widths, and every
+    solver-supported flow direction; only the full-face x-direction calibration
+    boundary has direct experimental evidence. The
+    water+air D/G-7-6 experiment consists of two complete, disconnected TPMS
+    networks with
+    full-face inlets and delta=0. Water and air therefore use the same
+    topology-derived single-side flow area (D 5.94e-4 / G 6.50e-4 m²), with no
+    28/34 channel-count scale or geometric-face shortcut. After excluding
+    G/water case 1 (`dp_nonphysical`) and D/water cases 10/11
+    (`duplicate_row`), the production water fit uses the declared high-flow
+    window `u>=0.10 m/s`; lower-flow valid records remain reported as outside
+    scope. Fixed-K0 water RMSRE is 6.84% D / 0.93% G with sF 4.8928 / 4.1989.
+    The measured upper bounds are 0.2541 / 0.2232 m/s. Matching HX-air uses its
+    own sF 1.8024 / 2.0120 and measured velocity windows. `ComputeConfig`
+    selects each side independently, allowing all nine ordered air/water/sCO2
+    pairs and every valid 2D/3D flow direction. A mixed pair may therefore combine
+    corrections from different campaigns; that is a model composition, not joint
+    experimental validation of the pair. Each HX-effective side still requires its
+    own velocity window, the matching 0.182 x 0.042 x 0.042 m domain, and delta=0.
+    Custom inlet/outlet positions and sizes remain supported. Every active side
+    must match its own applicability rules; there is no silent fallback.
 
 ## Extension points
 
