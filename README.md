@@ -154,7 +154,8 @@ are intrinsic to air, water, or sCO2. The available campaigns use different rigs
 boundaries, pressure taps, manifolds, flow-area definitions, instruments, and
 reduction paths; their individual contributions are not separated. Air is limited
 to the core-specimen L=6..8 mm, t=0.3..0.5 mm domain. sCO2 is HX-effective only
-for uniform symmetric D/G-7-6. The fitted D-F parameters
+for uniform symmetric D/G-7-6 and its measured inlet-velocity windows:
+0.5905..2.5731 m/s (Diamond) or 0.6209..2.5022 m/s (Gyroid). The fitted D-F parameters
 act as the porous-region closure and may be used with valid custom inlet/outlet
 centres, widths, and any solver-supported flow direction; the calibration
 measurements themselves used full faces with x-direction flow.

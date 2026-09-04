@@ -71,6 +71,8 @@ def fit_air() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]]
 
 
 def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]]:
+    from CoolProp.CoolProp import PropsSI
+
     rows: list[dict[str, object]] = []
     shared: list[tuple[str, str, float, float, float]] = []
     for tp in ("Diamond", "Gyroid"):
@@ -79,14 +81,24 @@ def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]
             raw = load_exp(tp)
         A = float(raw.attrs["A_flow_m2"])
         length = float(raw.attrs["L_ch_m"])
-        g = raw[(raw.side == "hot") & raw.ok_dp]
+        hot = raw[raw.side == "hot"]
+        g = hot[hot.ok_dp]
         K0, cF0 = FullCore3CellFixedDFV2(tp).predict(7.0, 0.6)
         u = g.mdot.to_numpy(float) / (g.rho.to_numpy(float) * A)
+        rho_in = PropsSI(
+            "D", "T", g.Tin_C.to_numpy(float) + 273.15,
+            "P", g.Pin_MPa.to_numpy(float) * 1e6, "CO2")
+        u_in = g.mdot.to_numpy(float) / (np.asarray(rho_in) * A)
+        u_lo, u_hi = hx_velocity_bounds("sco2", tp)
+        if not (np.isclose(u_in.min(), u_lo, rtol=0.0, atol=1e-12)
+                and np.isclose(u_in.max(), u_hi, rtol=0.0, atol=1e-12)):
+            raise RuntimeError(f"{tp}: reviewed sCO2 velocity window drifted")
         darcy = g.mu.to_numpy(float) * u / K0 * length
         forch = g.rho.to_numpy(float) * cF0 * u * u * length
         measured = g.dP_MPa.to_numpy(float) * 1e6
         sf, rmsre, bias, _ = _fit_sf(darcy, forch, measured)
-        _, packaged, _, _ = correction_scale(tp, "sco2", 7.0, 0.6)
+        _, packaged, _, _ = correction_scale(
+            tp, "sco2", 7.0, 0.6, float(np.median(u_in)))
         shared.extend(("sco2", tp, d, f, y)
                       for d, f, y in zip(darcy, forch, measured))
         rows.append(dict(
@@ -95,8 +107,18 @@ def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]
             rmsre=rmsre, bias=bias,
             darcy_fraction_median=float(np.median(darcy / measured)),
             identifiability="K unidentifiable; fixed at CFD K0",
-            source="sCO2-Experient.xlsx", filter="hot side & ok_dp",
-            status="approved", scope="HX-effective"))
+            source="sCO2-Experient.xlsx",
+            filter=("hot side & ok_dp; require "
+                    f"{u_lo:.6g}<=u_in<={u_hi:.6g} m/s"),
+            status="approved", scope="HX-effective",
+            n_total=len(hot), n_excluded=int((~hot.ok_dp).sum()),
+            n_outside_scope=0,
+            excluded_cases=";".join(
+                hot.loc[~hot.ok_dp, "case"].astype(str)),
+            outside_scope_cases="",
+            A_flow_m2=A, L_flow_m=length,
+            u_min_mps=u_lo, u_max_mps=u_hi,
+            campaign="sco2-hx-hot-ok-dp"))
     return pd.DataFrame(rows), shared
 
 

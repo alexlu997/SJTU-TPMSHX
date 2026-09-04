@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 
 from sjtu_tpmshx.df_surrogate.experimental_correction import (
-    apply_correction, correction_scale)
+    apply_correction, correction_scale, hx_velocity_bounds)
 from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
 from sjtu_tpmshx.domain.compute_config import (
     ComputeConfig, FluidConfig, GeometryConfig, PartialBCConfig, SolverConfig)
@@ -87,6 +87,24 @@ def test_water_hx_velocity_window_is_explicit():
         _water_air_cfg(air_u=23.0).validate()
 
 
+@pytest.mark.parametrize(
+    "topology,lower,upper",
+    [
+        ("Diamond", 0.5904924511524777, 2.57313161248901),
+        ("Gyroid", 0.6209347169447897, 2.5022467486185533),
+    ],
+)
+def test_sco2_hx_velocity_window_is_explicit(topology, lower, upper):
+    assert hx_velocity_bounds("sco2", topology) == pytest.approx(
+        (lower, upper))
+    correction_scale(topology, "sco2", 7.0, 0.6,
+                     0.5 * (lower + upper))
+    with pytest.raises(ValueError, match="sco2 HX.*requires"):
+        correction_scale(topology, "sco2", 7.0, 0.6, lower - 0.01)
+    with pytest.raises(ValueError, match="sco2 HX.*requires"):
+        correction_scale(topology, "sco2", 7.0, 0.6, upper + 0.01)
+
+
 def test_water_hx_requires_matching_domain_but_allows_local_ports():
     cfg = _water_air_cfg()
     cfg.geometry.L_dom_m = 0.18
@@ -104,7 +122,7 @@ def test_water_hx_requires_matching_domain_but_allows_local_ports():
 _HX_FLUID = {
     "air": dict(u_mps=20.0, T_in_K=400.0, P_in_Pa=200_000.0),
     "water": dict(u_mps=0.15, T_in_K=300.0, P_in_Pa=2_000_000.0),
-    "sco2": dict(u_mps=0.3, T_in_K=500.0, P_in_Pa=12_000_000.0),
+    "sco2": dict(u_mps=1.0, T_in_K=500.0, P_in_Pa=12_000_000.0),
 }
 
 
@@ -133,8 +151,10 @@ def test_experimental_hx_accepts_all_ordered_fluid_pairs(fluid_A, fluid_B):
 def _sco2_cfg(*, dir_B=1, local_port=False):
     width = 0.02 if local_port else 0.0
     return ComputeConfig(
-        fluid_A=FluidConfig(type="sco2", T_in_K=500.0, P_in_Pa=12e6),
-        fluid_B=FluidConfig(type="sco2", T_in_K=300.0, P_in_Pa=12e6),
+        fluid_A=FluidConfig(type="sco2", u_mps=1.0,
+                            T_in_K=500.0, P_in_Pa=12e6),
+        fluid_B=FluidConfig(type="sco2", u_mps=1.0,
+                            T_in_K=300.0, P_in_Pa=12e6),
         geometry=GeometryConfig(tpms="Diamond", L_cell_mm=7.0,
                                 t_wall_mm=0.6, L_dom_m=0.182,
                                 H_dom_m=0.042, Lz_m=0.042),
@@ -240,9 +260,15 @@ def test_water_air_2d_and_3d_use_separate_hx_coefficients_once():
 
 
 _RAW = Path(__file__).resolve().parents[2] / "data" / "raw_data"
+_AIR_HX_BOOKS = (
+    _RAW / "20260609-水直空气侧-D_7_6.xlsx",
+    _RAW / "20260407-上海电气天然气加热器实验工况 -调换进出口-G_7_6.xlsx",
+)
 
 
-@pytest.mark.skipif(not (_RAW / "试验记录表_整理版.xlsx").exists(),
+@pytest.mark.skipif(not all(path.exists() for path in (
+                        _RAW / "试验记录表_整理版.xlsx",
+                        _RAW / "sCO2-Experient.xlsx")),
                     reason="private calibration data unavailable")
 def test_reviewed_experiment_pressure_error_gates():
     from sjtu_tpmshx.validation.df_refit.fit_experimental_effective import (
@@ -293,7 +319,8 @@ def test_water_hx_quality_flags_and_frozen_candidates():
         "Diamond": 7, "Gyroid": 4}
 
 
-@pytest.mark.skipif(not (_RAW / "7-6-Water-dp.xlsx").exists(),
+@pytest.mark.skipif(not all(path.exists() for path in (
+                        _RAW / "7-6-Water-dp.xlsx", *_AIR_HX_BOOKS)),
                     reason="private water+air HX data unavailable")
 def test_matching_hx_air_and_water_pair_use_separate_frozen_scales():
     from sjtu_tpmshx.validation.df_refit.fit_experimental_effective import (

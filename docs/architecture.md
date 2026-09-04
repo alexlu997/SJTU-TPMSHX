@@ -90,7 +90,9 @@ explicit numerical-model change with directly relevant validation.
     L=6..8 mm, t=0.3..0.5 mm interpolation domain; t=0.6 is not extrapolated.
     sCO2 uses only D/G-7-6 hot-side `ok_dp` evidence, keeps K=K0, and is
     HX-effective: uniform symmetric core, no zones, delta, other L/t, or
-    independent cold-side fit. The fitted D-F parameters are a porous-region
+    independent cold-side fit. Its measured inlet-velocity windows are
+    0.5905..2.5731 m/s (Diamond) and 0.6209..2.5022 m/s (Gyroid). The fitted
+    D-F parameters are a porous-region
     closure and may be used with valid custom port centres, widths, and every
     solver-supported flow direction; only the full-face x-direction calibration
     boundary has direct experimental evidence. The

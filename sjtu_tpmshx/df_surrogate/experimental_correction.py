@@ -31,24 +31,24 @@ _AIR_SF = {
 _AIR_L = np.array([6.0, 8.0])
 _AIR_T = np.array([0.3, 0.4, 0.5])
 
-# Fixed-K0 relative fits against sCO2-Experient.xlsx, hot side and ok_dp only.
-_SCO2_SF = {"Diamond": 6.313005350332494,
-            "Gyroid": 7.608907691857889}
-
-# Fixed-K0 fits for the matched water+air D/G-7-6 HX campaign.  Water uses
-# the reviewed high-flow window; the air window is the matching campaign's
-# valid inlet-velocity span.  These are system-effective, not fluid constants.
+# Fixed-K0 HX-effective fits.  Water and air share the D/G-7-6 water+air
+# campaign; sCO2 uses the hot-side ok_dp rows from sCO2-Experient.xlsx.
+# Bounds are the matching campaigns' measured inlet-velocity spans.
 _HX_SF = {
     ("water", "Diamond"): 4.892779870412083,
     ("water", "Gyroid"): 4.198913430360186,
     ("air", "Diamond"): 1.8024228153853061,
     ("air", "Gyroid"): 2.0119682018983225,
+    ("sco2", "Diamond"): 6.313005350332494,
+    ("sco2", "Gyroid"): 7.608907691857889,
 }
 _HX_U_BOUNDS = {
     ("water", "Diamond"): (0.10, 0.25405479940574704),
     ("water", "Gyroid"): (0.10, 0.2232167044622796),
     ("air", "Diamond"): (7.656604926203154, 22.759887982116293),
     ("air", "Gyroid"): (7.5230599026715375, 24.54137550823153),
+    ("sco2", "Diamond"): (0.5904924511524777, 2.57313161248901),
+    ("sco2", "Gyroid"): (0.6209347169447897, 2.5022467486185533),
 }
 
 
@@ -81,7 +81,7 @@ def _is_hx_76(L_mm: Any, t_mm: Any) -> bool:
 
 
 def hx_velocity_bounds(fluid: str, tpms: str) -> tuple[float, float]:
-    """Return the reviewed inlet-velocity window for the water+air HX fit."""
+    """Return the reviewed inlet-velocity window for one HX-effective fit."""
     return _HX_U_BOUNDS[(fluid, tpms)]
 
 
@@ -102,30 +102,22 @@ def _hx_scale(tpms: str, fluid: str, L_mm: Any, t_mm: Any,
             f"{hi:.6g} m/s for {tpms}; got {_summary(u)}")
     shape = np.broadcast(np.asarray(L_mm), np.asarray(t_mm), u).shape
     sf = np.full(shape, _HX_SF[(fluid, tpms)])
-    return np.ones_like(sf), sf, "water-air-hx-7-6", "HX-effective"
+    campaign = ("sco2-hx-hot-ok-dp" if fluid == "sco2"
+                else "water-air-hx-7-6")
+    return np.ones_like(sf), sf, campaign, "HX-effective"
 
 
 def correction_scale(tpms: str, fluid: str, L_mm: Any,
                      t_mm: Any, u_mps: Any | None = None
                      ) -> tuple[Any, Any, str, str]:
     """Return ``(sK, sF, campaign, scope)`` for one matched dataset."""
-    if fluid == "water":
+    if fluid in ("water", "sco2"):
         return _hx_scale(tpms, fluid, L_mm, t_mm, u_mps)
     if fluid == "air":
         if _is_hx_76(L_mm, t_mm):
             return _hx_scale(tpms, fluid, L_mm, t_mm, u_mps)
         sf = _air_scale(tpms, L_mm, t_mm)
         return np.ones_like(sf), sf, "air-specimen-friction", "core-calibrated"
-    if fluid == "sco2":
-        L = np.asarray(L_mm, dtype=float)
-        t = np.asarray(t_mm, dtype=float)
-        if np.any(~np.isclose(L, 7.0, rtol=0.0, atol=1e-12)) or np.any(
-                ~np.isclose(t, 0.6, rtol=0.0, atol=1e-12)):
-            raise ValueError(
-                "sCO2 experiment calibration is HX-effective and valid only "
-                "for the matching D/G-7-6 geometry (L=7 mm, t=0.6 mm)")
-        sf = np.full(np.broadcast(L, t).shape, _SCO2_SF[tpms])
-        return np.ones_like(sf), sf, "sco2-hx-hot-ok-dp", "HX-effective"
     raise ValueError(f"no approved experiment calibration for fluid {fluid!r}")
 
 
@@ -148,7 +140,7 @@ def apply_correction(tpms: str, fluid: str, L_mm: Any, t_mm: Any,
         "scale_K": _summary(sK), "scale_F": _summary(sF),
         "campaign": campaign, "scope": scope,
     }
-    if campaign == "water-air-hx-7-6":
+    if scope == "HX-effective":
         lo, hi = hx_velocity_bounds(fluid, tpms)
         metadata.update(inlet_u_mps=_summary(u_mps),
                         velocity_window_mps={"min": lo, "max": hi})
