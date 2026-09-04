@@ -100,7 +100,9 @@ def _nu_cfd(topo, Re, Pr, Dh_mm):
 
 
 def _f_cfd(topo, Re, Dh_m, eps_f):
-    K = predict_K_cF(topo, L_MM, T_MM, eps_f)[0]
+    # This legacy refit defines the frozen gamma_f constants relative to the
+    # historical gamma_df base, not the current production default.
+    K = predict_K_cF(topo, L_MM, T_MM, eps_f, method="gamma_df")[0]
     cF = np.array([predict_cF_sco2(topo, L_MM, T_MM, r)
                    for r in np.atleast_1d(Re)])
     return 2.0 * Dh_m ** 2 / (K * np.asarray(Re)) + 2.0 * Dh_m * cF

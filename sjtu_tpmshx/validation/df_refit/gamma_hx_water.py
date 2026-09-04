@@ -17,8 +17,11 @@
     分化归台架。**这是本轮要买的信息。**
 
 口径（与 `gamma_hx_air` 逐项对齐，常量直接 import 复用，不复制）：
-  - A_flow / L_flow / dev 节点读法全部继承气侧工具（双流对称芯两侧同几何，
-    逆流同流程长度 0.182 m——sCO2 工作簿对高/低温两侧用同一 流道长度 值）。
+  - 该工作簿是 water+air 换热实验。两种流体分别流过完整且互不连通的
+    TPMS 网络，入口覆盖各自完整端面；对称双流道、delta=0，因此两侧使用
+    同一个由单侧孔隙率得到的 A_flow（D 5.94e-4 / G 6.50e-4 m²）。通道数
+    只是歧管信息，不以 28/34 缩放面积，也不使用 42×42 mm 全端面或除以 2。
+  - L_flow=0.182 m，与匹配 air-side HX campaign 一致。
   - u = ṁ/(ρ·A_flow) 为**间隙**流速（全仓约定），ρ、μ 取进出口均温。
   - 不可压 Forchheimer：Δp_pred = L·(μ·u/K_dev + γ_spec·cF_dev·ρ·u²)。
   - 几何 7/0.6 是 dev 表网格节点——K/cF 直取，零插值。
@@ -231,45 +234,6 @@ def main() -> int:
                   f"自身最低流量端——气侧的仪表地板案已按 iter 75 的筛剔除，"
                   f"剩下的最低点 γ_HX={ab.gamma_hx.min():.2f}；本行不作裁决用")
 
-    # ---- 反解：水侧流通面积要多大才能与气侧 γ_HX 对齐 ----
-    # 若水/气差是"对称芯两侧同 A_flow"这个继承假设错了造成的（表内
-    # 样机流量/单个流量 ≈ 34 气 / 28 水，见 gamma_hx_air docstring），
-    # 则存在一个 A_w 使两侧读数一致。给出它并与通道数比对表。
-    print("\n反解：使水侧 γ_HX 中位 == 气侧 γ_HX 中位所需的水侧 A_flow")
-    print("  （对称芯假设给 A_water = A_air；若反解值显著偏离，"
-          "则口径假设是首要嫌疑）")
-    for topo in ("Diamond", "Gyroid"):
-        w = df[(df.topo == topo) & (~df.excluded)].copy()
-        target = med_a[topo]
-        K_dev, cF_dev = _dev_node(topo)
-        g_spec = float(w.g_spec.iloc[0])
-
-        def _med_gamma(scale: float, w=w, K=K_dev, c=cF_dev, gs=g_spec) -> float:
-            u = w.mdot.to_numpy(float) / (w.rho.to_numpy(float)
-                                          * A_FLOW[topo] * scale)
-            dpdl = (w.mu.to_numpy(float) * u / K
-                    + gs * c * w.rho.to_numpy(float) * u * u)
-            return float(np.median(w.dp_meas.to_numpy(float)
-                                   / (dpdl * L_FLOW)))
-
-        lo_s, hi_s = 0.05, 1.0          # γ 随 scale 单调递增 -> 二分
-        for _ in range(60):
-            mid = 0.5 * (lo_s + hi_s)
-            if _med_gamma(mid) < target:
-                lo_s = mid
-            else:
-                hi_s = mid
-        s = 0.5 * (lo_s + hi_s)
-        s_nom = 28.0 / 34.0        # 面积 ∝ 通道数 的朴素标称假设
-        print(f"  {topo}: A_water = {A_FLOW[topo] * s:.3e} m^2 "
-              f"= {s:.3f} × A_air（对称芯假设 1.000）"
-              f"；等效通道数比 气/水 = {1 / s:.2f}"
-              f"（表内标称 34/28 = {34 / 28:.2f}）")
-        print(f"           若取 A_water = (28/34)·A_air = {s_nom:.3f}×："
-              f"γ_HX 水侧中位 {_med_gamma(s_nom):.2f}"
-              f"（气侧 {target:.2f}，仍差 ×"
-              f"{_med_gamma(s_nom) / target:.2f}）")
-
     print("\n判读要点：")
     print("  1. 水侧两拓扑同工作簿同批次 -> G/D 比是**纯拓扑**读数；气侧 G/D"
           " 含台架/批次混杂\n     （D 20260609 vs G 20260407）。两比一致 ->"
@@ -277,9 +241,8 @@ def main() -> int:
     print("  2. Re 窗重叠 -> 水/气差**不能**用 Darcy/Forchheimer 配比不同来"
           "解释；\n     Darcy 份额中位的差别只反映两批工况点在 Re 轴上的分布"
           "位置，不是窗不重叠。")
-    print("  3. 若上面反解出的 A_water/A_air 与标称通道数比同量级，"
-          "则\n     **水侧不共享气侧 A_flow** 是比 'γ_HX 依赖流体' 更省的解释，"
-          "\n     须向数据方核实水侧流通面积后再谈跨流体一致性。")
+    print("  3. A_water=A_air 是已确认的双网络完整端面口径；水侧与气侧的"
+          " effective 差异保留为 campaign/system 读数，不归因于流体本征物理。")
     print(f"\n已写出 {out}")
     return 0
 
