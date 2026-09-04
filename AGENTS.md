@@ -30,6 +30,10 @@ before changing solver, pipeline, closure, or data-loading code.
 - Do not create, upgrade, or reinstall an environment or dependency unless the
   user explicitly requests it. If the configured interpreter or a dependency is
   missing, report the problem instead of changing the environment.
+- Before unattended work, run
+  `python -m sjtu_tpmshx.runs.tools.check_locked_environment` against the
+  applicable lock, then `python -m pip check`. Stop on failure; do not repair the
+  environment automatically. The checker intentionally ignores the pip version.
 - A requested dependency addition or removal must update `pyproject.toml` and
   the appropriate lock file in the same change. Do not mutate the shared venv
   as part of a code change; report that an explicit rebuild and prewarm are

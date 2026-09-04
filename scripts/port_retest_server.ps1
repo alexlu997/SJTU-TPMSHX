@@ -151,13 +151,15 @@ if (-not (Test-Path $KeyXlsx)) {
 Write-Host "标定数据就位: $KeyXlsx"
 
 # ── 3. 预置环境验证（只读，不安装） ──
+Set-Location $Repo
+& $Py -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock-server.txt
+if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment differs from requirements-lock-server.txt" }
 & $Py -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment failed pip check" }
 & $Py -c "import torch, botorch, gpytorch"
 if ($LASTEXITCODE -ne 0) { throw "Pre-provisioned environment is missing server BO dependencies" }
 
 # ── 4. 四臂并行 ──
-Set-Location $Repo
 $env:PYTHONHASHSEED = "0"
 $env:PYTHONPATH     = $Repo
 

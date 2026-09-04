@@ -40,6 +40,11 @@ $env:QT_QPA_PLATFORM = "offscreen"
 
 Set-Location $repo
 
+& $py -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt
+if ($LASTEXITCODE -ne 0) { throw "Shared environment differs from requirements-lock.txt" }
+& $py -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Shared environment failed pip check" }
+
 Write-Host "=== FAST TIER (-m 'not heavy') — dev feedback, NOT the gate ===" -ForegroundColor Yellow
 & $py -u -m pytest sjtu_tpmshx/tests/ -q -n 32 --dist worksteal -m "not heavy"
 

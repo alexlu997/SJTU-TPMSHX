@@ -208,6 +208,7 @@ cd SJTU-TPMSHX
 python3.13 -m venv "$HOME/.venvs/sjtu-tpmshx-py313"
 PYTHON="$HOME/.venvs/sjtu-tpmshx-py313/bin/python"
 "$PYTHON" -m pip install -r requirements-lock.txt
+"$PYTHON" -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt
 "$PYTHON" -m pip check
 printf '%s\n' "$PYTHON" > .venv-path
 ```
@@ -222,6 +223,7 @@ $venv = Join-Path $env:USERPROFILE ".venvs\sjtu-tpmshx-py312"
 py -3.12 -m venv $venv
 $python = Join-Path $venv "Scripts\python.exe"
 & $python -m pip install -r requirements-lock.txt
+& $python -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt
 & $python -m pip check
 Set-Content -Path .venv-path -Value $python
 ```
@@ -246,10 +248,14 @@ PYTHON="$(<.venv-path)"
 for CI or a conventional editable package installation; do not install it into
 the shared worktree venv. In a dependency-only venv the `tpmshx-run` console
 script is absent, so use `python -m sjtu_tpmshx.cli` from the repository root.
+`pip` itself is intentionally not pinned because it is the installer, not a
+runtime dependency; the exact-lock check always ignores it.
 When a lock file changes, intentionally rebuild the affected shared venv at its
-fixed path, then rerun `pip check` and both smoke commands below. Do not use
-ad-hoc incremental `pip install` commands. Stop every project Python process
-using that venv before replacing it because all worktrees observe the change.
+fixed path, then rerun the exact-lock check, `pip check`, and both smoke commands
+below. A mismatch stops unattended entry points instead of changing the
+environment. Do not use ad-hoc incremental `pip install` commands. Stop every
+project Python process using that venv before replacing it because all
+worktrees observe the change.
 
 After creating or intentionally rebuilding the shared venv, prewarm its native
 libraries while someone is present. This is also the acceptance smoke for
@@ -272,7 +278,13 @@ should use `"$PYTHON" ...`, and PowerShell commands should use `& $python ...`.
 The Windows Server BO stack is optional: provision the fixed
 `$PORT_WORKDIR\venv` from `requirements-lock-server.txt` while someone is
 present, then run `scripts/port_retest_server.ps1`. The server launch scripts
-only validate that environment; they never create it or install packages.
+require an exact lock match and never create it or install packages.
+
+`asym_pyfluent_runner.py` is a separate orchestration skeleton for a licensed
+ANSYS Fluent workstation. `ansys-fluent-core` is intentionally absent from the
+shared and BO locks: installing PyFluent does not install Fluent or its license.
+Provision it separately only when that workflow is used, matching the Fluent
+machine's supported Python/API versions.
 
 GPU PyTorch is **optional** and only needed for research-backend retraining.
 The production runtime reads the packaged fixed-CFD CSV; `gamma_df` and `rbf`

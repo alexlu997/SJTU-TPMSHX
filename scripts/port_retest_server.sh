@@ -46,6 +46,9 @@ else
 fi
 
 # 2. 预置环境验证（只读，不安装）
+cd "$REPO"
+"$PY" -m sjtu_tpmshx.runs.tools.check_locked_environment \
+    requirements-lock-server.txt
 "$PY" -m pip check
 "$PY" -c 'import torch, botorch, gpytorch'
 
@@ -62,7 +65,6 @@ fi
 # 内层线程 —— 它看到的是整机核数, 不知道有 4 个臂在跑 —— 并用显式的
 # inner_max_num_threads 覆盖掉这里的 export, 导致四臂合计 ~4x 超订.
 # TPMSHX_BO_CORE_BUDGET 是给它的显式每臂核预算; 不设时它退回整机核数(旧行为).
-cd "$REPO"
 NCORE=$(nproc)
 PER_ARM=$(( NCORE / 4 )); [ "$PER_ARM" -lt 1 ] && PER_ARM=1
 THREADS=$PER_ARM; [ "$THREADS" -gt 8 ] && THREADS=8

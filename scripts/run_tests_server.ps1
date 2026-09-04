@@ -53,6 +53,11 @@ $env:QT_QPA_PLATFORM = "offscreen"
 
 Set-Location $repo
 
+& $py -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt
+if ($LASTEXITCODE -ne 0) { throw "Shared environment differs from requirements-lock.txt" }
+& $py -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Shared environment failed pip check" }
+
 Write-Host "=== Full suite (-n 64 worksteal) ===" -ForegroundColor Cyan
 & $py -u -m pytest sjtu_tpmshx/tests/ -q -n 64 --dist worksteal --durations=15
 
