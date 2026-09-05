@@ -8,7 +8,7 @@ from __future__ import annotations
 
 # P2.1 lint (F821): QInputDialog was used at _save_current_as_preset but
 # never imported — the "Save Preset" action raised NameError on first use.
-from PySide6.QtWidgets import QInputDialog, QMessageBox
+from PySide6.QtWidgets import QInputDialog, QMessageBox, QTableWidgetItem
 
 
 class SessionPresetsMixin:
@@ -70,6 +70,7 @@ class SessionPresetsMixin:
         # 2D-mode result flags + cached fields.
         self._has_results_2d = False
         self.T_fA = self.T_fB = self.T_s = None
+        self._compute_results = None
         # 3D-mode result flags + cached fields.
         self._has_results_3d = False
         # U1 (2026-06-28): 3D View tab readiness (PyVista panel populated) is a
@@ -123,6 +124,7 @@ class SessionPresetsMixin:
         miss that the visible result is stale, then quote a number from
         the old compute as if it were the new design's.
         """
+        self._validate_preset(preset)
         self._invalidate_results_for_preset_load()
         unit = preset.get('temp_unit', 'K')
         if unit in ('K', 'C'):
@@ -130,8 +132,7 @@ class SessionPresetsMixin:
             if hasattr(self, '_sync_temp_unit_labels'):
                 self._sync_temp_unit_labels()
         allowed_edits = set(self._SESSION_LINE_EDITS)
-        allowed_combos = set(self._SESSION_COMBOS)
-        allowed_checks = set(self._SESSION_CHECKS)
+        allowed_checks = set(self._PRESET_CHECKS)
         for name, txt in (preset.get('line_edits') or {}).items():
             if name not in allowed_edits:
                 continue
@@ -139,9 +140,13 @@ class SessionPresetsMixin:
             if w is not None:
                 try: w.setText(str(txt))
                 except Exception: pass
-        for name, idx in (preset.get('combos') or {}).items():
-            if name not in allowed_combos:
+        # Shape rebuilds polygon edge options: restore in canonical order,
+        # independent of JSON object key order.
+        combos = preset.get('combos') or {}
+        for name in self._PRESET_COMBOS:
+            if name not in combos:
                 continue
+            idx = combos[name]
             c = getattr(self, name, None)
             if c is not None:
                 try:
@@ -157,6 +162,9 @@ class SessionPresetsMixin:
                             c.setCurrentIndex(int(idx))
                             c.blockSignals(False)
                         else:
+                            if (name == 'combo_shape' and int(idx) > 0
+                                    and c.currentIndex() == int(idx)):
+                                self._update_edge_combos()
                             c.setCurrentIndex(int(idx))
                 except Exception: pass
         for name, val in (preset.get('checks') or {}).items():
@@ -166,6 +174,118 @@ class SessionPresetsMixin:
             if b is not None:
                 try: b.setChecked(bool(val))
                 except Exception: pass
+
+        zones = preset.get('zone_inputs')
+        if zones is not None:
+            self._grid_nx = zones['grid_nx']
+            table = self.zone_table
+            rows = zones['rows']
+            table.setRowCount(len(rows))
+            for r, row in enumerate(rows):
+                for c, value in enumerate(row):
+                    table.setItem(r, c, QTableWidgetItem(value))
+            self._zone_grid = None  # derived by config_from_window, never persisted
+            from sjtu_tpmshx.ui.zone_table import zone_resize
+            zone_resize(self)
+            self._pareto_x_decision = zones['pareto_x_decision']
+            self._pareto_y_trans_inlet = zones['pareto_y_trans_inlet']
+            self._pareto_y_trans_outlet = zones['pareto_y_trans_outlet']
+        self._user_edited_grid = True
+        self._resync_undo_baseline()
+        if hasattr(self, '_refresh_status_bar'):
+            self._refresh_status_bar()
+
+    def _validate_preset(self, preset, *, complete=False):
+        """Check the payload before touching widgets; old partial presets stay valid."""
+        import math
+
+        if not isinstance(preset, dict):
+            raise ValueError('Preset must be a JSON object.')
+        if complete and set(preset) != {'name', 'temp_unit', 'line_edits',
+                                       'combos', 'checks', 'zone_inputs'}:
+            raise ValueError('Incomplete or unsupported preset fields.')
+        if preset.get('temp_unit', 'K') not in ('K', 'C'):
+            raise ValueError('Unsupported temperature unit.')
+        combos = preset.get('combos', {})
+        if not isinstance(combos, dict):
+            raise ValueError('Invalid combos.')
+        shape = combos.get('combo_shape', self.combo_shape.currentIndex())
+        for section, allowed in (('line_edits', self._SESSION_LINE_EDITS),
+                                 ('combos', self._PRESET_COMBOS),
+                                 ('checks', self._PRESET_CHECKS)):
+            values = preset.get(section, {})
+            if not isinstance(values, dict):
+                raise ValueError(f'Invalid {section}.')
+            required = {n for n in allowed if getattr(self, n, None) is not None}
+            if section == 'combos' and shape == 0:
+                required -= set(self._POLYGON_COMBOS)
+            if complete and set(values) != required:
+                raise ValueError(f'Incomplete or unsupported {section}: '
+                                 f'{sorted(set(values) ^ required)}')
+            for name, value in values.items():
+                if name not in allowed:
+                    continue  # retain the shared preset allow-list boundary
+                if section == 'line_edits' and type(value) not in (str, int, float):
+                    raise ValueError(f'Invalid text field: {name}')
+                if (section == 'line_edits' and name != 'le_mesh_density'
+                        and str(value).strip()):
+                    try:
+                        number = float(value)
+                        if not math.isfinite(number):
+                            raise ValueError()
+                        if name in ('le_Nx', 'le_Ny', 'le_Nz'):
+                            int(str(value))
+                    except (TypeError, ValueError):
+                        raise ValueError(f'Invalid numeric field: {name}') from None
+                if section == 'combos':
+                    widget = getattr(self, name, None)
+                    count = ((6 if shape == 1 else 8) if name in self._POLYGON_COMBOS
+                             and shape in (1, 2) else widget.count() if widget else 0)
+                    if type(value) is not int or (widget is not None and
+                                                not 0 <= value < count):
+                        raise ValueError(f'Unsupported selection: {name}')
+                if section == 'checks' and type(value) is not bool:
+                    raise ValueError(f'Invalid checkbox: {name}')
+        if any(n in combos for n in self._POLYGON_COMBOS):
+            edits = preset.get('line_edits', {})
+            if any(not str(edits.get(n, getattr(self, n).text())).strip()
+                   for n in ('le_L', 'le_H')):
+                raise ValueError('Polygon edge options require domain dimensions.')
+        zones = preset.get('zone_inputs')
+        if complete and ('temp_unit' not in preset or zones is None):
+            raise ValueError('Incomplete configuration: missing unit or zone inputs.')
+        if zones is None:
+            return
+        keys = {'rows', 'grid_nx', 'pareto_x_decision',
+                'pareto_y_trans_inlet', 'pareto_y_trans_outlet'}
+        if not isinstance(zones, dict) or set(zones) != keys:
+            raise ValueError('Incomplete or unsupported zone inputs.')
+        axis = preset.get('combos', {}).get('combo_zone_axis')
+        if axis not in (0, 1, 2):
+            raise ValueError('Zone inputs require an explicit axis.')
+        rows, nx = zones['rows'], zones['grid_nx']
+        if type(nx) is not int or nx < 1 or not isinstance(rows, list):
+            raise ValueError('Invalid zone grid size.')
+        if axis == 2 and len(rows) % nx:
+            raise ValueError('Zone rows do not match grid size.')
+        if any(not isinstance(row, list) or len(row) != (6 if axis == 2 else 4)
+               or any(not isinstance(v, str) for v in row) for row in rows):
+            raise ValueError('Invalid zone table.')
+        if preset.get('checks', {}).get('chk_zones'):
+            try:
+                if not rows or any(not math.isfinite(float(v))
+                                   for row in rows for v in row):
+                    raise ValueError()
+            except ValueError:
+                raise ValueError('Enabled zones require complete numeric rows.') from None
+        decision = zones['pareto_x_decision']
+        numbers = [zones['pareto_y_trans_inlet'], zones['pareto_y_trans_outlet']]
+        if decision is not None:
+            if not isinstance(decision, list) or len(decision) != 36:
+                raise ValueError('Pareto decision must contain 36 values.')
+            numbers += decision
+        if any(type(v) not in (int, float) or not math.isfinite(v) for v in numbers):
+            raise ValueError('Invalid Pareto input.')
 
     def _capture_current_preset(self, name):
         """Build a preset payload from the current field state."""
@@ -177,16 +297,31 @@ class SessionPresetsMixin:
             if w is not None:
                 try: payload['line_edits'][n] = w.text()
                 except Exception: pass
-        for n in self._SESSION_COMBOS:
+        for n in self._PRESET_COMBOS:
+            if n in self._POLYGON_COMBOS and self.combo_shape.currentIndex() == 0:
+                continue
             c = getattr(self, n, None)
             if c is not None:
                 try: payload['combos'][n] = int(c.currentIndex())
                 except Exception: pass
-        for n in self._SESSION_CHECKS:
+        for n in self._PRESET_CHECKS:
             b = getattr(self, n, None)
             if b is not None:
                 try: payload['checks'][n] = bool(b.isChecked())
                 except Exception: pass
+        if hasattr(self, 'zone_table'):
+            table = self.zone_table
+            decision = getattr(self, '_pareto_x_decision', None)
+            payload['zone_inputs'] = {
+                'rows': [[table.item(r, c).text() if table.item(r, c) else ''
+                          for c in range(table.columnCount())]
+                         for r in range(table.rowCount())],
+                'grid_nx': self._grid_nx,
+                'pareto_x_decision': (list(map(float, decision))
+                                      if decision is not None else None),
+                'pareto_y_trans_inlet': getattr(self, '_pareto_y_trans_inlet', 0.2),
+                'pareto_y_trans_outlet': getattr(self, '_pareto_y_trans_outlet', 0.2),
+            }
         return payload
 
     def _load_named_preset(self, name):
@@ -253,6 +388,11 @@ class SessionPresetsMixin:
         'combo_dirA', 'combo_dirB',
     )
     _SESSION_CHECKS = ('chk_zones', 'chk_wall_refine_3d', 'chk_var_rhocp')
+    # Explicit loads restore inputs; startup sessions retain their reset policy.
+    _POLYGON_COMBOS = ('combo_edge_inA', 'combo_edge_outA',
+                       'combo_edge_inB', 'combo_edge_outB')
+    _PRESET_COMBOS = _SESSION_COMBOS + ('combo_zone_axis',) + _POLYGON_COMBOS
+    _PRESET_CHECKS = _SESSION_CHECKS + ('chk_allow_extrap',)
 
     _WORKSPACES = ('A', 'B', 'C')
 
