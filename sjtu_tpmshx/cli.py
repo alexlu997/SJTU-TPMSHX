@@ -71,7 +71,7 @@ def main(argv=None) -> int:
               f"outer_converged = {summary['outer_converged']}")
         for w in warnings_list:
             print(f"warning: {w}")
-        for reason in summary['extrap_reasons']:
+        for reason in result.extrap_reasons:
             print(f"extrap_reason: {reason}")
     return 0 if ok else 2
 
