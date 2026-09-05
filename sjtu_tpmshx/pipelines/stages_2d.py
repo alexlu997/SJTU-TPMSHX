@@ -561,6 +561,8 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
+        if d in (1, 3):
+            s.dy_arr = s.dy_arr[::-1].copy()
         # Same-axis ports can change coordinates without changing cell count.
         # Rebuild the tapered profiles and flux scale on the shared grid.
         s._refresh_ports(pipe_lo, pipe_hi, out_lo, out_hi)

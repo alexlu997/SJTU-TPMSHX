@@ -119,7 +119,7 @@ def _expected_profile(widths, lo, hi):
     return profile
 
 
-@pytest.mark.parametrize('directions', [(0, 1), (2, 3)])
+@pytest.mark.parametrize('directions', [(0, 1), (2, 3), (1, 3), (3, 1)])
 def test_simple_profiles_follow_final_shared_coordinates(monkeypatch, directions):
     # Real constructor and pipeline wiring; stop precisely before iteration.
     class BeforeIteration(Exception):
@@ -135,15 +135,29 @@ def test_simple_profiles_follow_final_shared_coordinates(monkeypatch, directions
     cfg = _case(directions)
     pipe = Pipeline2D(cfg)
     fields = pipe.build_fields()
+    x = np.cumsum(fields['energy_dx']) - fields['energy_dx'] / 2
+    y = np.cumsum(fields['energy_dy']) - fields['energy_dy'] / 2
+    rho = 1000. + 10. * x[:, None] + y[None, :]
+    mu = .001 + .0001 * x[:, None] + .0002 * y[None, :]
+    temperature = 300. + 100. * x[:, None] + 200. * y[None, :]
     for side in ('A', 'B'):
         bc = getattr(cfg, f'bc_{side}')
         with pytest.raises(BeforeIteration):
-            fields['_run_simple'](pipe._parsed[f'cfg{side}'], 1000.0, 0.001,
+            fields['_run_simple'](pipe._parsed[f'cfg{side}'], rho, mu,
                                   300.0, 0.2, side, fluid_type='incompressible',
-                                  fluid_name='water')
+                                  fluid_name='water', T_field_real=temperature)
         solver = captured[-1]
         widths = fields['energy_dy' if bc.dir in (0, 1) else 'energy_dx']
         np.testing.assert_array_equal(solver.dx_arr, widths)
+        stream = fields['energy_dx' if bc.dir in (0, 1) else 'energy_dy']
+        if directions in ((1, 3), (3, 1)):
+            assert not np.array_equal(stream, stream[::-1])
+        negative = bc.dir in (1, 3)
+        np.testing.assert_array_equal(solver.dy_arr, stream[::-1] if negative else stream)
+        for physical, actual in ((rho, solver.rho_field), (mu, solver.mu_field),
+                                 (temperature, solver.T_field)):
+            expected = physical.T if bc.dir in (0, 1) else physical
+            np.testing.assert_array_equal(actual, expected[:, ::-1] if negative else expected)
         assert len(solver.inlet_frac) == len(widths) == 40
         lo, hi, out_lo, out_hi = _edges(bc)
         inlet = _expected_profile(widths, lo, hi)
@@ -178,8 +192,30 @@ def test_refreshed_taper_sets_first_massflux_target():
     assert solver._massflux_target == pytest.approx(0.2 * 1000.0 * scale, rel=1e-12)
 
 
+@pytest.mark.parametrize('direction', [1, 3])
+def test_negative_pressure_and_staggered_faces_return_to_physical_cells(direction):
+    from types import SimpleNamespace
+    from sjtu_tpmshx.pipelines.solve_2d import (
+        _simple_scalar_to_real_2d, _simple_staggered_to_real_2d,
+    )
+
+    pressure = np.arange(12., dtype=float).reshape(4, 3)
+    ux = np.arange(15., dtype=float).reshape(5, 3) + 1.
+    uy = np.arange(16., dtype=float).reshape(4, 4) + 20.
+    if direction == 1:
+        solver = SimpleNamespace(P=pressure[::-1, :].T,
+                                 u=uy[::-1, :].T, v=-ux[::-1, :].T)
+    else:
+        solver = SimpleNamespace(P=pressure[:, ::-1],
+                                 u=ux[:, ::-1], v=-uy[:, ::-1])
+    np.testing.assert_array_equal(_simple_scalar_to_real_2d(solver.P, direction), pressure)
+    actual_x, actual_y = _simple_staggered_to_real_2d(solver, direction)
+    np.testing.assert_array_equal(actual_x, ux)
+    np.testing.assert_array_equal(actual_y, uy)
+
+
 @pytest.mark.slow
-@pytest.mark.parametrize('directions', [(2, 0), (0, 1)])
+@pytest.mark.parametrize('directions', [(2, 0), (0, 1), (3, 0)])
 def test_custom_port_numerical_regression(directions):
     cfg = _case(directions)
     # Same in-domain air/geometry point as the existing Pipeline2D smoke.
