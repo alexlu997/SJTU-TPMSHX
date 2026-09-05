@@ -56,7 +56,8 @@ class RunResultsMixin:
         pre-C4 ``pipelines.stages_2d._store_results(window, cfg, raw)``
         which conflated UI writes with result assembly. Since B2 2.1b/c
         (2026-06-13) this is the ONLY ComputeResult→window copy: the GUI
-        worker drives Pipeline2D/3D and the legacy
+        worker returns Pipeline2D/3D's result, the GUI finished slot calls
+        this adapter, and the legacy
         ``run_calculation_inner`` / ``run_calculation_3d_inner`` paths
         are deleted.
         """

@@ -26,11 +26,24 @@ connections) resolves on the live window through the MRO.
 from __future__ import annotations
 
 import time as _time
+from functools import partial
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from sjtu_tpmshx.ui.fmt import duration as _fmt_dur
 from sjtu_tpmshx.ui.ui_constants import VV_VELOCITY_LIMIT_MS, TOAST_MS_MED, TOAST_MS_SHORT
+
+
+def _run_pipeline(cfg, cancel_token, progress_cb, *, pipeline_cls, ui_hooks):
+    """Worker owns the pipeline; only callbacks and plain data cross threads."""
+    from sjtu_tpmshx.controllers.compute_pipeline import CancelledError
+    from sjtu_tpmshx.controllers.compute_orchestrator import ComputeOrchestrator
+
+    try:
+        return pipeline_cls(cfg, progress_cb=progress_cb,
+                            cancel_token=cancel_token, ui_hooks=ui_hooks).run()
+    except CancelledError as exc:
+        raise ComputeOrchestrator.CancelledError() from exc
 
 
 class RunControllerMixin:
@@ -43,6 +56,8 @@ class RunControllerMixin:
         lifecycle delegated to ComputeOrchestrator. Re-entrancy guard, cancel,
         result distribution, error handling all flow through orch signals.
         """
+        if getattr(self, '_close_pending', False):
+            return
         # Re-entrancy guard — orchestrator rejects start() while running, but
         # we surface it as a user-visible modal here for parity with the prior
         # UX (memory: 2026-05-05 audit user pain point).
@@ -97,39 +112,21 @@ class RunControllerMixin:
             QMessageBox.warning(self, "Invalid Input", str(e))
             return
 
-        def _2d_worker(cfg, cancel_token, progress_cb):
-            self._cancel_token = cancel_token
-            from sjtu_tpmshx.controllers.compute_pipeline import (Pipeline2D,
-                                                      CancelledError)
-            pipe = Pipeline2D(
-                compute_cfg,
-                # solver-internal progress writes land on the window attr
-                # the ticker polls (same convention the legacy path used)
-                progress_cb=lambda p: setattr(self, '_compute_progress',
-                                              int(p)),
-                cancel_token=cancel_token,
-                ui_hooks={
-                    'live_residuals': getattr(self, '_live_residuals', None),
-                    'iter_label_cb': lambda s: setattr(self,
-                                                       '_iter_label_now', s),
-                })
-            try:
-                result = pipe.run()
-            except CancelledError:
-                # Translate to the orchestrator's own cancel exception so
-                # it emits `cancelled` (a foreign exception type would be
-                # routed to the error dialog instead).
-                raise self.compute.CancelledError()
-            self.write_result(result)
-            return {}
+        live_residuals = {'A': [], 'B': []}
+        from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
+        worker = partial(_run_pipeline, pipeline_cls=Pipeline2D, ui_hooks={
+            'live_residuals': live_residuals,
+            'iter_label_cb': self.compute.iteration.emit,
+        })
 
         self._compute_error = None
-        if not self.compute.start('2d', _2d_worker, cfg={}):
+        if not self.compute.start('2d', worker, cfg=compute_cfg):
             # Should be unreachable due to is_running() guard above; defensive.
             QMessageBox.information(
                 self, "Compute Busy",
                 "Compute orchestrator rejected start — already running.")
             return
+        self._live_residuals = live_residuals
         # Lifecycle now driven entirely by orchestrator signals; the legacy
         # threading.Thread + QTimer poll block is gone (~100 lines deleted).
         return
@@ -238,10 +235,12 @@ class RunControllerMixin:
 
     def _run_calculation_3d(self):
         """Threaded 3D solve → auto-switch to 3D View tab on success."""
+        if getattr(self, '_close_pending', False):
+            return
         # Re-entrancy guard — same rationale as 2D run_calculation. Without
         # this a fast re-Compute spawned two QTimer instances + two threads,
         # both alive, racing to call _finalize_plots_3d().
-        if getattr(self, '_compute_running', False):
+        if self.compute.is_running() or getattr(self, '_compute_running', False):
             QMessageBox.information(
                 self, "Compute Busy",
                 "A 3D computation is already running.\n\n"
@@ -270,10 +269,6 @@ class RunControllerMixin:
             return
 
         self._compute_t0 = _time.time()
-        self._begin_compute_ui(
-            status=f"Computing 3D ({_cell_label} = "
-                   f"{est_cells_r:,} cells, compressible dual-fluid SIMPLE; "
-                   f"typical ~2-10 min)…")
 
         # ComputeOrchestrator path (Plan #4 P1.3 — A.3, 2026-05-06).
         # Replaces the legacy threading.Thread + 600 s poll _check closure.
@@ -282,30 +277,21 @@ class RunControllerMixin:
         # cooperative cancel to the worker, which exits at next checkpoint.
         from PySide6.QtCore import QTimer
 
-        def _3d_worker(cfg, cancel_token, progress_cb):
-            self._cancel_token = cancel_token
-            from sjtu_tpmshx.controllers.compute_pipeline import (Pipeline3D,
-                                                      CancelledError)
-            pipe = Pipeline3D(
-                compute_cfg,
-                progress_cb=lambda p: setattr(self, '_compute_progress',
-                                              int(p)),
-                cancel_token=cancel_token,
-                ui_hooks={'iter_cb': lambda k, n: setattr(
-                    self, '_iter_label_now', f"outer {k}/{n}")})
-            try:
-                result = pipe.run()
-            except CancelledError:
-                raise self.compute.CancelledError()
-            self.write_result(result)
-            return {}
+        emit_iteration = self.compute.iteration.emit
+        from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
+        worker = partial(_run_pipeline, pipeline_cls=Pipeline3D, ui_hooks={
+            'iter_cb': lambda k, n: emit_iteration(f"outer {k}/{n}"),
+        })
 
         self._compute_error = None
-        if not self.compute.start('3d', _3d_worker, cfg={'est_cells': est_cells_r}):
+        if not self.compute.start('3d', worker, cfg=compute_cfg):
             QMessageBox.information(
                 self, "Compute Busy",
                 "3D compute orchestrator rejected start — already running.")
             return
+        self.statusBar().showMessage(
+            f"Computing 3D ({_cell_label} = {est_cells_r:,} cells, "
+            "compressible dual-fluid SIMPLE)…")
 
         # Status updater on a separate QTimer (orchestrator handles the
         # thread; this is a UI-only ticker that reports elapsed wall-clock +
@@ -354,75 +340,46 @@ class RunControllerMixin:
 
     def _on_orch_started(self, mode):
         """Compute kicked off. Lock UI + start progress widgets."""
-        self._begin_compute_ui()
         # Backwards-compat: tests / external code still read _compute_running.
         # We mirror it from the orchestrator's authoritative flag.
         self._compute_running = True
+        self._begin_compute_ui()
         # Fresh per-run log buffer for the D9 solve-log viewer.
         self._last_solve_log = ""
-        # Start a small UI-only progress poll (orchestrator handles thread
-        # lifecycle; this just renders self._compute_progress on the bar).
-        # Live residuals already drained separately via _drain_live_residuals.
-        from PySide6.QtCore import QTimer
         self._compute_progress = 10
-        if getattr(self, '_compute_poll_timer', None) is not None:
-            try:
-                self._compute_poll_timer.stop()
-            except Exception:
-                pass
-        timer = QTimer(self)
-        self._compute_poll_timer = timer
-
-        def _tick_progress():
-            if not self.compute.is_running():
-                timer.stop()
-                return
-            self.progress.setValue(min(90, self._compute_progress))
-        timer.timeout.connect(_tick_progress)
-        timer.start(200)
 
     def _on_orch_progress(self, percent):
-        """Worker emitted explicit progress (rare for current solver). Render."""
-        self.progress.setValue(min(100, max(0, int(percent))))
+        """Receive pipeline progress on the GUI thread."""
+        self._compute_progress = min(100, max(0, int(percent)))
+        self.progress.setValue(self._compute_progress)
 
-    def _on_orch_finished(self, _result_dict):
-        """Compute succeeded. Render plots + push to recent runs ring.
+    def _on_orch_iteration(self, label):
+        self._iter_label_now = label
 
-        Mode-aware: 2D path calls _finalize_plots (matplotlib canvases).
-        3D path calls finalize_plots_3d (PyVista panel) + sets _has_results_3d.
-        Polygon path runs on main thread (does not pass through orch).
-        """
-        self._compute_running = False
+    def _on_orch_finished(self, result):
+        """Publish once on the GUI thread; unlock only after rendering."""
+        if getattr(self, '_close_pending', False):
+            return
         self._last_solve_log = self.compute.last_log()
-        # Stop the progress timer if still running.
-        t = getattr(self, '_compute_poll_timer', None)
-        if t is not None:
-            try:
-                t.stop()
-            except Exception:
-                pass
-        # Stop any 3D wall-clock budget watchdog that may still be alive.
-        wd = getattr(self, '_compute_3d_watchdog', None)
-        if wd is not None:
-            try:
-                wd.stop()
-            except Exception:
-                pass
-
-        # Flip the Compute button back to "▶ Compute" BEFORE running the
-        # plot finalisation — otherwise heavy 3D PyVista rendering or 2D
-        # matplotlib draw blocks the main thread for 1-2 s and the user
-        # sees stale "Cancel (Computing…)" label even after the solver
-        # has finished. The button repaint only flushes when the event
-        # loop ticks, so we let it tick first via processEvents().
-        # (UI report 2026-05-07 issues #2 + #3.)
-        self._end_compute_ui(success=True)
+        for name in ('_compute_3d_watchdog', '_btn_ticker_timer'):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
+        self.btn_compute.setEnabled(False)
+        self.btn_compute.setText("正在显示结果…")
+        success = False
         try:
-            from PySide6.QtWidgets import QApplication
-            QApplication.processEvents()
-        except Exception:
-            pass
+            self.write_result(result)
+            success = self._render_compute_result()
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Result publication failed: {exc}", 12000)
+        finally:
+            self._end_compute_ui(success=success)
 
+    def _render_compute_result(self):
+        """Render the published result and report presentation success."""
         mode = self.compute.current_mode()
         if mode == '3d':
             from sjtu_tpmshx.ui.plot_3d_results import finalize_plots_3d
@@ -433,7 +390,7 @@ class RunControllerMixin:
             # line ``self._has_results_3d = False`` destroyed the freshly-
             # computed result *before* finalize ran, so finalize saw
             # ``_result_3d is None`` and every 3D run rendered nothing. The
-            # worker always writes a fresh result before this slot fires, so
+            # GUI slot writes a fresh result before rendering, so
             # there is no "stale True from a prior run" to guard against here;
             # the H5 invariant (no stale flag after a finalize *crash*) is now
             # enforced in the except branch below. (The H5 unit test passed
@@ -459,8 +416,7 @@ class RunControllerMixin:
                 _finalize_ok = True
             except Exception as _fe3d:
                 # If finalise crashes, walk the button text back to a
-                # benign state — _end_compute_ui already restored it but
-                # the flag must reflect failure for downstream gating.
+                # benign state after this handler returns.
                 # Surface the traceback (the 3D path used to swallow it,
                 # leaving "status bar says done / canvas blank" with no
                 # console clue — matches the 2D path's diagnostics now).
@@ -471,15 +427,14 @@ class RunControllerMixin:
                 # U1 (2026-06-28): gate the tab off via the dedicated readiness
                 # flag — do NOT null _has_results_3d, whose bridge setter would
                 # DESTROY the valid solver result. The ComputeResult was written
-                # by the worker before finalize and stays exportable even though
+                # by the GUI slot before finalize and stays exportable even though
                 # the PyVista panel never populated.
                 self._3d_view_ready = False
-                self._end_compute_ui(success=False)
                 self.statusBar().showMessage(
                     f"3D visualisation failed: {_fe3d!r} — solver finished, "
                     f"render crashed; check console.", 12000)
             if not _finalize_ok:
-                return
+                return False
             self._has_results = True
             # Only mark the 3D View tab as ready if the PyVistaQt panel
             # actually populated; otherwise the tab stays disabled and the user
@@ -546,9 +501,9 @@ class RunControllerMixin:
                         "visualisation unavailable; check console.", 10000)
             except Exception:
                 pass
-            return
+            return True
 
-        # 2D mode (default) — _end_compute_ui already called above.
+        # 2D mode (default).
         # 2026-05-09 — wrap finalize_plots so a panel crash (e.g. NaN
         # contourf, water-side LTNE divergence) does NOT block 2D results
         # from unlocking. The user still benefits from valid velocity /
@@ -572,18 +527,15 @@ class RunControllerMixin:
         self._switch_tab('temp')
         if _finalize_ok:
             self.statusBar().showMessage("Done.", TOAST_MS_MED)
+        return _finalize_ok
 
     def _on_orch_error(self, message, log_text):
         """Compute raised. Show error + drop stale results (mode-aware)."""
+        if getattr(self, '_close_pending', False):
+            return
         self._compute_running = False
         self._compute_error = message
         self._last_solve_log = log_text
-        t = getattr(self, '_compute_poll_timer', None)
-        if t is not None:
-            try:
-                t.stop()
-            except Exception:
-                pass
         wd = getattr(self, '_compute_3d_watchdog', None)
         if wd is not None:
             try:
@@ -629,14 +581,10 @@ class RunControllerMixin:
 
     def _on_orch_cancelled(self, log_text):
         """Worker observed cancel_token. Treat as soft completion (mode-aware)."""
+        if getattr(self, '_close_pending', False):
+            return
         self._compute_running = False
         self._last_solve_log = log_text
-        t = getattr(self, '_compute_poll_timer', None)
-        if t is not None:
-            try:
-                t.stop()
-            except Exception:
-                pass
         wd = getattr(self, '_compute_3d_watchdog', None)
         if wd is not None:
             try:
@@ -687,14 +635,7 @@ class RunControllerMixin:
         # interrupt point — JIT'd inner sweeps can't be killed mid-run).
         self._compute_cancel = False
         if hasattr(self, 'btn_compute'):
-            # Idempotent re-save guard: _begin_compute_ui is called twice per
-            # run — once directly from run_calculation/_run_calculation_3d, then
-            # again from _on_orch_started (the orchestrator's `started` signal,
-            # which fires BEFORE _compute_running is set). Never save a
-            # "Cancel…" string as the "original" text, else _end_compute_ui
-            # restores the button to "Cancel · 0.0s" instead of "▶ Compute"
-            # (button stuck frozen after the run). The real Compute label never
-            # starts with "Cancel", so this is order-independent.
+            # Preserve the Compute label if UI setup is repeated.
             _cur_btn_text = self.btn_compute.text()
             if not _cur_btn_text.startswith("取消"):
                 self._btn_compute_text_saved = _cur_btn_text
@@ -726,28 +667,16 @@ class RunControllerMixin:
         if hasattr(self, '_empty_state_label'):
             self._empty_state_label.setVisible(False)
         self.statusBar().showMessage(status)
-        QApplication.processEvents()
 
     def _end_compute_ui(self, success):
         """Restore Compute button and either fade out progress (success) or
         hide immediately (failure). On success also refreshes the headline
         result summary bar from the detail-value labels.
 
-        Idempotent on re-entrancy: also clears the compute-running flag and
-        stops/clears the polling timer + thread refs so a second click on
-        Compute starts cleanly without orphan timers polling stale closures.
+        Called after terminal publication; stops the UI tickers and restores
+        the Compute action. The orchestrator stays busy until its slots return.
         """
-        # Tear down compute lifecycle state FIRST so a fast re-click doesn't
-        # see _compute_running == True and bail out.
         self._compute_running = False
-        old_timer = getattr(self, '_compute_poll_timer', None)
-        if old_timer is not None:
-            try:
-                old_timer.stop()
-            except Exception:
-                pass
-        self._compute_poll_timer = None
-        self._compute_thread = None
         # Stop the elapsed/iter button-text ticker (paired with
         # _begin_btn_ticker). Idempotent — silently no-ops when absent.
         bt = getattr(self, '_btn_ticker_timer', None)

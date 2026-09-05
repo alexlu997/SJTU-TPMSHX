@@ -1,22 +1,14 @@
-"""Test for ``Main_Menu._on_orch_finished`` 3D branch — audit C5 H5 fix.
+"""3D publication keeps valid solver data when rendering fails.
 
-The pre-fix code only reset ``_has_results_3d`` *after* a successful
-``finalize_plots_3d`` call.  If the embedded PyVistaQt panel crashed
-the function returned early without resetting, leaving a stale
-``True`` from a prior 3D run.  The next 2D compute could then route
-the user to a blank canvas via tab auto-switch.
-
-Fix: init ``_has_results_3d = False`` at the *top* of the 3D branch,
-flip ``True`` only after ``finalize_plots_3d`` returns truthy.
-
-This test mocks finalize_plots_3d to raise, verifies
-``_has_results_3d`` ends ``False`` even though the prior state was
-``True``.
+The view-readiness flag must be separate from the ResultCache presence
+bridge: clearing _has_results_3d would destroy the exportable ComputeResult.
 """
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from sjtu_tpmshx.ui.mixins.run_controller import RunControllerMixin
+from sjtu_tpmshx.ui.mixins.run_results import RunResultsMixin
 
 
 # ── ultra-lite Main_Menu stub ───────────────────────────────────────
@@ -40,12 +32,13 @@ class _StatusBarStub:
         pass
 
 
-class _DummyWindow:
+class _DummyWindow(RunControllerMixin, RunResultsMixin):
     """Lite ``Main_Menu`` stand-in carrying just the attrs the 3D branch
     of ``_on_orch_finished`` touches."""
 
     def __init__(self):
         self.compute = _ComputeStub()
+        self.btn_compute = MagicMock()
         # Stale prior 3D state we want to see reset.
         self._has_results_3d = True
         self._has_results = False
@@ -58,11 +51,11 @@ class _DummyWindow:
         self._drawn_tabs = set()
         self._compute_running = True
         self._last_solve_log = ''
-        self._compute_poll_timer = None
         self._compute_3d_watchdog = None
 
     def _end_compute_ui(self, *, success):
         self._end_compute_ui_success = success
+        self._compute_running = False
 
     def _push_recent_run(self):
         pass
@@ -119,12 +112,9 @@ def _run_finished(win, finalize_behavior):
     else:
         patch_fin = patch('sjtu_tpmshx.ui.plot_3d_results.finalize_plots_3d',
                           return_value=finalize_behavior)
-    with patch_fin, patch('PySide6.QtWidgets.QApplication') as qapp_mock:
-        qapp_mock.processEvents = MagicMock()
-        try:
-            main.Main_Menu._on_orch_finished(win, {})
-        except Exception:
-            pass
+    with patch_fin:
+        main.Main_Menu._on_orch_finished(win, win._result_3d)
+    assert not win._compute_running
 
 
 def test_3d_finalize_crash_gates_tab_off_but_keeps_result():

@@ -113,8 +113,9 @@ def build_page_fluids(window):
     lay = QVBoxLayout(w)
     lay.setSpacing(12); lay.setContentsMargins(8, 4, 6, 6)
 
-    g_method, _ = section(window, lay, "Darcy–Forchheimer 求解方法",
-                          _T_NEUTRAL, _F_NEUTRAL)
+    g_method, method_section = section(window, lay, "Darcy–Forchheimer 求解方法",
+                                       _T_NEUTRAL, _F_NEUTRAL)
+    window._ia_sections['df_method'] = method_section
     window.combo_df_mode = QComboBox()
     window.combo_df_mode.addItem("CFD 光滑壁面（默认）", "cfd_smooth")
     window.combo_df_mode.addItem("实验标定", "experimental")
