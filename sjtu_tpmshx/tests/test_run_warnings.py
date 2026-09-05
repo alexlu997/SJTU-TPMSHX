@@ -47,7 +47,6 @@ def test_real_nu_standalone_then_repeated_runs(fluid, standalone_registries):
         assert not emitted
         assert list(records) == [('nu', fluid, 'Gyroid', 'lo'),
                                  ('nu', fluid, 'Gyroid', 'hi')]
-        assert all(extrap for _, extrap in records.values())
         if previous is not None:
             assert records == previous
         previous = records
@@ -66,9 +65,9 @@ def test_later_opposite_nu_and_property_bounds(standalone_registries):
         tpms_props.water_density(380)
         tpms_props.water_density(381)
     assert len(records) == 6
-    assert records[('property', 'air_cp', 'lo')][0].startswith('air_cp: T=[200.0')
-    assert records[('property', 'air_cp', 'hi')][1]
-    assert not records[('water_phase',)][1]
+    assert records[('property', 'air_cp', 'lo')].startswith('air_cp: T=[200.0')
+    assert '1100.0' in records[('property', 'air_cp', 'hi')]
+    assert 'two-phase' in records[('water_phase',)]
     assert all(not s for s in standalone_registries)
     # A run must not consume the next standalone call's first warning.
     with pytest.warns(UserWarning, match='Nu extrap'):
@@ -153,7 +152,7 @@ def test_choke_is_general_warning_and_keeps_return_contract(monkeypatch):
         assert predict.predict_dP_compressible(*args) == 101325
         assert np.isnan(predict.predict_dP_compressible(*args, strict=True))
     assert len(records) == 1
-    assert not next(iter(records.values()))[1]
+    assert next(iter(records.values())).startswith('[D-F choke]')
     assert not predict._CHOKE_WARNED
     with pytest.warns(UserWarning, match='D-F choke'):
         predict.predict_dP_compressible(*args)
@@ -179,7 +178,8 @@ def test_pipeline_exception_restores_scope_and_next_run(monkeypatch, error):
 
     monkeypatch.setattr(pipe, 'build_fields', build)
     result = pipe.run()
-    assert len(result.warnings) == len(result.extrap_reasons) == 1
+    assert len(result.warnings) == 1
+    assert result.extrap_reasons == []
 
 
 def test_parallel_worker_scopes_merge_in_side_order():

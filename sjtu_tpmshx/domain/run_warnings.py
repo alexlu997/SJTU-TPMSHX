@@ -21,15 +21,15 @@ def warning_scope(records):
         _current.reset(token)
 
 
-def record_warning(key, message, *, extrap=False):
+def record_warning(key, message):
     """True means this run owns the warning, including an already-seen key."""
     cached = _cache_records.get()
     if cached is not None:
-        cached.setdefault(key, (message, extrap))
+        cached.setdefault(key, message)
     records = _current.get()
     if records is None:
         return False
-    records.setdefault(key, (message, extrap))
+    records.setdefault(key, message)
     return True
 
 

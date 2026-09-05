@@ -11,11 +11,12 @@ from sjtu_tpmshx.solvers import nu_correlations as nu
 from sjtu_tpmshx.solvers.tpms_calc import compute
 from sjtu_tpmshx.tests.test_pipeline_2d_smoke import _shanghai_like_cfg
 from sjtu_tpmshx.tests.test_pipeline_3d_e2e import _small_air_cfg
+from sjtu_tpmshx.tests.test_worker_result_handoff import win as win
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize('dimension', ['2d', '3d'])
-def test_real_pipeline_warning_ownership_and_numerical_transparency(monkeypatch, dimension):
+def test_real_pipeline_warning_ownership_and_numerical_transparency(monkeypatch, dimension, win):
     cfg = _shanghai_like_cfg() if dimension == '2d' else _small_air_cfg()
     if dimension == '3d':
         # Fixed positive control: inlet Re=230 < 400, with original tolerances.
@@ -45,8 +46,11 @@ def test_real_pipeline_warning_ownership_and_numerical_transparency(monkeypatch,
     assert result.diagnostics['convergence_detail']['outer_iters'] > 1
     assert len(rounds) > 2  # actual first and later energy-coupling Nu calls
     assert any('[Nu extrap]' in message for message in result.warnings)
-    assert all(message in result.extrap_reasons for message in result.warnings
-               if '[Nu extrap]' in message)
+    assert result.extrap_reasons == []  # both cases remain inside the D-F grid
+    win.write_result(result)
+    assert win._has_extrap is False
+    assert win._extrap_reasons == []
+    assert win._diag_summary['warnings'] == result.warnings
     assert len(result.warnings) == len(set(result.warnings))
 
     repeated = pipe.run()

@@ -91,7 +91,7 @@ def _warn_extrap(tpms_type, Re_min, Re_max):
             f"[Nu extrap] {tpms_type}: Re=[{Re_min:.0f},{Re_max:.0f}] "
             f"outside fit window [{lo:.0f},{hi:.0f}]. "
             "Suppressing further warnings for this (tpms, side).")
-        if record_warning(('nu', 'air', tpms_type, side), message, extrap=True):
+        if record_warning(('nu', 'air', tpms_type, side), message):
             continue
         if (tpms_type, side) not in _EXTRAP_WARNED:
             _EXTRAP_WARNED.add((tpms_type, side))
@@ -179,7 +179,7 @@ def _warn_water_nu(Re_min, Re_max, tpms_type):
             continue
         message = (f"[water Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
                    f"water-CFD fit window [{lo:.0f},{hi:.0f}].")
-        if record_warning(('nu', 'water', tpms_type, side), message, extrap=True):
+        if record_warning(('nu', 'water', tpms_type, side), message):
             continue
         if side not in _WATER_NU_WARNED:
             _WATER_NU_WARNED.add(side)
@@ -267,7 +267,7 @@ def _warn_sco2_nu(Re_min, Re_max, tpms_type):
             continue
         message = (f"[sCO2 Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
                    f"sCO2-CFD fit window [{lo:.0f},{hi:.0f}].")
-        if record_warning(('nu', 'sco2', tpms_type, side), message, extrap=True):
+        if record_warning(('nu', 'sco2', tpms_type, side), message):
             continue
         if side not in _SCO2_NU_WARNED:
             _SCO2_NU_WARNED.add(side)

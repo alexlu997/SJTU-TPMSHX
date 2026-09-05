@@ -33,8 +33,8 @@ def test_singular_pp_records_nonfinite_fact_without_changing_solution():
         _solve_pp_sparse_fast(correction, u, v, d_u, d_v, outlet,
                               1, 2, dx, dy, rho, sparsity)
     assert np.isnan(correction).all()
-    assert list(records.values()) == [(
-        'pressure-Poisson solve returned non-finite corrections', False)]
+    assert list(records.values()) == [
+        'pressure-Poisson solve returned non-finite corrections']
 
 # Old (reference) implementation — will be removed from simple_solver.py in
 # Task 5 but lives here as a gold standard during migration.

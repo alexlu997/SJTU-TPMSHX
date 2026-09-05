@@ -84,8 +84,7 @@ def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
         handled = False
         for side, oob in (('lo', T_min < lo), ('hi', T_max > hi)):
             if oob:
-                handled = record_warning(('property', name, side), message,
-                                         extrap=True)
+                handled = record_warning(('property', name, side), message)
         if handled:
             return
         key = (name, round(T_min, 1), round(T_max, 1))

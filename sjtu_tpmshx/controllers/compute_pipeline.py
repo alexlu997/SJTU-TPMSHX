@@ -123,11 +123,9 @@ class ComputePipeline(ABC):
             result = self.finalize(raw, fields)
             self._check_cancel()
             self.progress_cb(100)
-            for message, extrap in records.values():
+            for message in records.values():
                 if message not in result.warnings:
                     result.warnings.append(message)
-                if extrap and message not in result.extrap_reasons:
-                    result.extrap_reasons.append(message)
             return result
 
     # ── subclass hooks ──────────────────────────────────────────────
