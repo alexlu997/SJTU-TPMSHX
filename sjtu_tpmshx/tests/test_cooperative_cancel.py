@@ -57,6 +57,10 @@ def test_real_simple_cancel_joins_both_sides(monkeypatch, nz):
 
     def solve(self, *args, **kwargs):
         threads.append(threading.current_thread())
+        from sjtu_tpmshx.domain.run_warnings import current_warnings
+        from sjtu_tpmshx.solvers.nu_correlations import nu_water_topo
+        assert current_warnings() is not None
+        nu_water_topo('Gyroid', 1, 3)
         try:
             return original_solve(self, *args, **kwargs)
         finally:
@@ -69,6 +73,12 @@ def test_real_simple_cancel_joins_both_sides(monkeypatch, nz):
         pipe.run()
     assert worked and len(exited) == len(threads) == 2
     assert all(not thread.is_alive() for thread in threads)
+    from sjtu_tpmshx.domain.run_warnings import current_warnings, warning_scope
+    from sjtu_tpmshx.solvers.nu_correlations import nu_water_topo
+    assert current_warnings() is None
+    with warning_scope({}) as records:
+        nu_water_topo('Gyroid', 1, 3)
+    assert records
 
 
 @pytest.mark.parametrize('nz', [1, 3])

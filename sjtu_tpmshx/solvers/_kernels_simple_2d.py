@@ -854,6 +854,10 @@ def _solve_pp_sparse_fast(Pp, u, v, d_u, d_v, outlet_frac,
         shape=(N, N),
     )
     pp_flat = spsolve(A, rhs)
+    if not np.isfinite(pp_flat).all():
+        from sjtu_tpmshx.domain.run_warnings import record_warning
+        record_warning(('pressure_poisson', 'nonfinite'),
+                       'pressure-Poisson solve returned non-finite corrections')
     Pp[:, :] = pp_flat.reshape(Nx, Ny)
     return A, rhs
 

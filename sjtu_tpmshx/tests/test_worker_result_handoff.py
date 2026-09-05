@@ -66,6 +66,94 @@ def _configure(win, monkeypatch, mode):
     return cfg
 
 
+@pytest.mark.parametrize('mode', ['2d', '3d'])
+@pytest.mark.parametrize('df_extrap', [False, True])
+def test_real_source_warnings_do_not_set_df_ui_flag(win, monkeypatch, mode, df_extrap):
+    from sjtu_tpmshx.df_surrogate.surrogate_domain import check_surrogate_domain_at_point
+    from sjtu_tpmshx.solvers.nu_correlations import nu_water_topo
+    from sjtu_tpmshx.solvers.tpms_props import air_cp
+    from sjtu_tpmshx.tests.test_compute_pipeline import _RecordingPipeline
+
+    # Exercise the existing geometry reason carrier, not an out-of-domain solve.
+    df_reasons = check_surrogate_domain_at_point(
+        'Gyroid', 9 if df_extrap else 7, 0.4, 16, 5, 350, allow_extrap=True)
+    pipe = _RecordingPipeline(ComputeConfig())
+    original_build, original_finalize = pipe.build_fields, pipe.finalize
+
+    def build():
+        nu_water_topo('Gyroid', 1, 3)
+        air_cp(1100)
+        return original_build()
+
+    def finalize(*args):
+        result = original_finalize(*args)
+        result.extrap_reasons = list(df_reasons)
+        result.diagnostics['mode'] = mode
+        return result
+
+    monkeypatch.setattr(pipe, 'build_fields', build)
+    monkeypatch.setattr(pipe, 'finalize', finalize)
+    result = pipe.run()
+    assert any('[water Nu extrap]' in text for text in result.warnings)
+    assert any('air_cp:' in text for text in result.warnings)
+    assert result.extrap_reasons == df_reasons
+    win.write_result(result)
+    assert win._diag_summary['warnings'] == result.warnings
+    assert win._extrap_reasons == df_reasons
+    assert win._has_extrap is df_extrap
+
+
+def test_autofill_cache_and_draft_warnings_are_isolated_from_worker(win, monkeypatch):
+    """Use real Auto-Fill/compute/Nu; stub only numerical phases of the worker."""
+    from sjtu_tpmshx.solvers.tpms_calc import compute
+    from sjtu_tpmshx.domain.run_warnings import current_warnings
+
+    _configure(win, monkeypatch, '2d')
+    win.combo_tpms.setCurrentText('Gyroid')
+    win.le_Lcell.setText('7')
+    win.le_t.setText('0.6')
+    win.le_ks.setText('16')
+    win.le_uA.setText('0.001')
+    win.le_PinA.setText('101325')
+    # Read the GUI's existing temperature unit conversion, not a guessed unit.
+    temperature = win._temp_to_K(win.le_TinA)
+    win.auto_fill_fluid_a()  # same params warm the public compute cache first
+    assert not win._test_error_dialogs
+    ready, release = threading.Event(), threading.Event()
+
+    def build(pipe):
+        assert current_warnings() is not None
+        ready.set()
+        assert release.wait(10)
+        compute('Gyroid', 7, 0.6, 0.001, temperature, 101325, 16, 'air')
+        return {}
+
+    monkeypatch.setattr(Pipeline2D, 'build_fields', build)
+    monkeypatch.setattr(Pipeline2D, 'run_solvers', lambda *a: {})
+    monkeypatch.setattr(Pipeline2D, 'finalize',
+                        lambda *a: ComputeResult(diagnostics={'mode': '2d'}))
+    monkeypatch.setattr(win, '_render_compute_result', lambda: True)
+    try:
+        win.run_calculation()
+        _wait_for(ready.is_set)
+        assert current_warnings() is None
+        win.combo_fluidB.setCurrentIndex(1)  # water, distinct from run's air Nu
+        win.le_uB.setText('0.000001')
+        win.auto_fill_fluid_b()
+        assert not win._test_error_dialogs
+    finally:
+        release.set()
+    _wait_for(win.compute.is_idle)
+    result = win.compute.last_result()
+    assert any('[Nu extrap]' in text for text in result.warnings)
+    assert not any('[water Nu extrap]' in text for text in result.warnings)
+    assert result.extrap_reasons == []
+    # The same warmed inputs in a second worker still own their notices.
+    win.run_calculation()
+    _wait_for(win.compute.is_idle)
+    assert win.compute.last_result().warnings == result.warnings
+
+
 @pytest.mark.parametrize('dimensions', [(0,), (1, 0, 1)])
 def test_real_window_config_preserves_explicit_pipeline_mode(win, monkeypatch, dimensions):
     """A hidden Nz survives switching to 2D; it must not select Pipeline3D."""
