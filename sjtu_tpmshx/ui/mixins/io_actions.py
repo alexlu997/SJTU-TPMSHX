@@ -82,6 +82,15 @@ class IOActionsMixin:
                 # B3 C5: res_3d is the ComputeResult (raw_3d dict retired).
                 # Scalars come off the dataclass / props; arrays off fields.
                 _rf = res_3d.fields
+                diag = res_3d.diagnostics or {}
+                status = {
+                    'converged': getattr(res_3d, 'converged', None),
+                    'envelope_valid': diag.get('envelope_valid'),
+                    'outer_converged': (diag.get('convergence_detail') or {}
+                                        ).get('outer_converged'),
+                    'warnings': res_3d.warnings,
+                    'extrap_reasons': res_3d.extrap_reasons,
+                }
                 rows.append(["Q [W]", f"{res_3d.Q_W:.4f}"])
                 rows.append(["dP_A [Pa]", f"{res_3d.dP_A_Pa:.2f}"])
                 rows.append(["dP_B [Pa]", f"{res_3d.dP_B_Pa:.2f}"])
@@ -101,6 +110,9 @@ class IOActionsMixin:
                 rows.append(["Lz [m]", f"{_rf.get('Lz', 0) or 0:.6f}"])
             else:
                 res_2d = self._compute_results
+                status = {key: res_2d.get(key) for key in
+                          ('converged', 'envelope_valid', 'outer_converged',
+                           'warnings', 'extrap_reasons')}
                 rows.append(["Q [W]", f"{res_2d['Q_total']:.4f}"])
                 rows.append(["dP_A [Pa]", f"{res_2d['dP_A']:.2f}"])
                 rows.append(["dP_B [Pa]", f"{res_2d['dP_B']:.2f}"])
@@ -112,7 +124,13 @@ class IOActionsMixin:
                     rows.append(["Grid Ny", str(Ta.shape[1])])
                 rows.append(["Lx [m]", f"{res_2d.get('L', 0) or 0:.6f}"])
                 rows.append(["Ly [m]", f"{res_2d.get('H', 0) or 0:.6f}"])
-            with open(path, 'w', newline='') as f:
+            # Same UTF-8 JSON values in CSV and Unicode NPZ scalars. Missing
+            # legacy state is explicitly unknown, never assumed converged.
+            status = {key: ('unknown' if value is None else
+                            json.dumps(value, ensure_ascii=False))
+                      for key, value in status.items()}
+            rows.extend(status.items())
+            with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
                 w.writerow(["Parameter", "Value"])
                 w.writerows(rows)
@@ -122,7 +140,7 @@ class IOActionsMixin:
             npz_path = os.path.splitext(path)[0] + '_fields.npz'
             if res_3d is not None:
                 _rf = res_3d.fields
-                save_dict = {}
+                save_dict = dict(status)
                 for npz_key, src in (('Ta', 'Ta'), ('Tb', 'Tb'),
                                      ('Ts', 'Ts'), ('vmag', 'vmag_A'),
                                      ('L_mm', 'L_mm'), ('dx', 'dx'),
