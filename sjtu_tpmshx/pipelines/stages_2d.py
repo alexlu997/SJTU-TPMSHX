@@ -308,24 +308,16 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
     _x_breaks = set()
     _y_breaks = set()
-    # Fluid B (y-flow): inlet/outlet on x-axis
-    _blo = cfgB['in_ctr'] - cfgB['in_w'] / 2
-    _bhi = cfgB['in_ctr'] + cfgB['in_w'] / 2
-    if _blo > L * 0.001: _x_breaks.add(_blo)
-    if _bhi < L * 0.999: _x_breaks.add(_bhi)
-    _bolo = cfgB.get('out_ctr', cfgB['in_ctr']) - cfgB.get('out_w', cfgB['in_w']) / 2
-    _bohi = cfgB.get('out_ctr', cfgB['in_ctr']) + cfgB.get('out_w', cfgB['in_w']) / 2
-    if _bolo > L * 0.001: _x_breaks.add(_bolo)
-    if _bohi < L * 0.999: _x_breaks.add(_bohi)
-    # Fluid A (x-flow): inlet/outlet on y-axis
-    _alo = cfgA['in_ctr'] - cfgA['in_w'] / 2
-    _ahi = cfgA['in_ctr'] + cfgA['in_w'] / 2
-    if _alo > H * 0.001: _y_breaks.add(_alo)
-    if _ahi < H * 0.999: _y_breaks.add(_ahi)
-    _aolo = cfgA.get('out_ctr', cfgA['in_ctr']) - cfgA.get('out_w', cfgA['in_w']) / 2
-    _aohi = cfgA.get('out_ctr', cfgA['in_ctr']) + cfgA.get('out_w', cfgA['in_w']) / 2
-    if _aolo > H * 0.001: _y_breaks.add(_aolo)
-    if _aohi < H * 0.999: _y_breaks.add(_aohi)
+    for port in (cfgA, cfgB):
+        breaks, cross_dim = (_y_breaks, H) if port['dir'] in (0, 1) else (_x_breaks, L)
+        for end in ('in', 'out'):
+            ctr = port.get(f'{end}_ctr', port['in_ctr'])
+            width = port.get(f'{end}_w', port['in_w'])
+            lo, hi = ctr - width / 2, ctr + width / 2
+            if lo > cross_dim * 0.001:
+                breaks.add(lo)
+            if hi < cross_dim * 0.999:
+                breaks.add(hi)
 
     # Use 4-wall Brinkman-BL refined grid when inlet/outlet are full-width (no
     # break points). Otherwise, fall back to aligned uniform grid since
@@ -569,24 +561,9 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             # Override grid to match energy solver (SIMPLE x = real x)
             s.dx_arr = energy_dx.copy()
             s.dy_arr = energy_dy.copy()
-        # 2026-05-07: SIMPLESolver.__init__ silently expands the grid via
-        # `_aligned_grid` when `min(2, ...)` per-segment forces total > Nx
-        # (case: B partial inlet/outlet on x-axis with 4 break points).
-        # The override above swaps in the energy-solver's dx_arr (which
-        # is already length Nx), but `inlet_frac` / `outlet_frac` were
-        # computed from the longer aligned grid and now disagree with
-        # `s.Nx`. Rebuild them from the canonical dx_arr.
-        if len(s.dx_arr) != len(s.inlet_frac):
-            x_lo_e = np.concatenate(([0.0], np.cumsum(s.dx_arr[:-1])))
-            x_hi_e = np.cumsum(s.dx_arr)
-            s.inlet_frac = np.clip(
-                (np.minimum(x_hi_e, pipe_hi) - np.maximum(x_lo_e, pipe_lo))
-                / s.dx_arr, 0.0, 1.0)
-            s.inlet_mask = s.inlet_frac > 0.01
-            s.outlet_frac = np.clip(
-                (np.minimum(x_hi_e, out_hi) - np.maximum(x_lo_e, out_lo))
-                / s.dx_arr, 0.0, 1.0)
-            s.outlet_mask = s.outlet_frac > 0.01
+        # Same-axis ports can change coordinates without changing cell count.
+        # Rebuild the tapered profiles and flux scale on the shared grid.
+        s._refresh_ports(pipe_lo, pipe_hi, out_lo, out_hi)
         # Zoned ε push (#2 fix): if zone config gives spatial eps_arr, push to
         # SIMPLE so its continuity uses ∇·(ε·ρ·u)=0 instead of ∇·(ρ·u)=0.
         # Uniform ε leaves default (eps_field=eps everywhere) unchanged.

@@ -247,3 +247,54 @@ def test_f2_rejects_unknown_mode():
     s = _make(convergence_mode='momentum')
     with pytest.raises(ValueError, match="convergence_mode"):
         s.solve(max_iter=10, verbose=False)
+
+
+@pytest.mark.parametrize('closeout', [True, False])
+def test_max_iter_closes_outlet_with_fresh_density(monkeypatch, closeout):
+    s = _make(Nx=4, Ny=4, fluid_type='ideal_gas',
+              enforce_outlet_mass_balance=closeout)
+    s.eps_field[:] = np.linspace(.5, .8, 16).reshape(4, 4)
+    s.T_field[:] = np.linspace(300., 500., 16).reshape(4, 4)
+    update = s._update_density
+    snapshot = {}
+
+    def capture_density_update():
+        old_rho = s.rho_field.copy()
+        update()
+        snapshot['rho_changed'] = not np.array_equal(old_rho, s.rho_field)
+        snapshot['v'] = s.v[:, -1].copy()
+
+    monkeypatch.setattr(s, '_update_density', capture_density_update)
+    conv, n = s.solve(max_iter=1, verbose=False)
+    assert not conv and n == 1 and s.exit_reason == 'max_iter'
+    assert snapshot['rho_changed']
+    re = s.rho_field * s.eps_field
+    fs = .5 * (re[:, -2] + re[:, -1]) * s.v[:, -2] * s.dx_arr
+    lateral = .5 * (re[:-1, -1] + re[1:, -1]) * s.u[1:-1, -1] * s.dy_arr[-1]
+    fw = np.r_[0., lateral]
+    fe = np.r_[lateral, 0.]
+    expected = (fs + fw - fe) / (re[:, -1] * s.dx_arr)
+    assert not np.allclose(snapshot['v'], expected, rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(s.v[:, -1], expected if closeout else snapshot['v'],
+                               rtol=1e-13, atol=1e-13)
+    assert s._last_outlet_mass_scale == 1.0
+
+
+@pytest.mark.parametrize('reason,post_ok,expected', [
+    ('stall', True, False), ('tol', False, False), ('tol', True, True),
+])
+def test_f2_return_requires_pre_and_post_gates(monkeypatch, reason, post_ok, expected):
+    from sjtu_tpmshx.solvers import simple_solver as module
+
+    s = _make(Nx=4, Ny=4, convergence_mode='f2')
+    monkeypatch.setattr(module.F2Monitor, 'should_eval_momentum', lambda *a: True)
+    monkeypatch.setattr(module.F2Monitor, 'submit', lambda *a: reason)
+    # Control only the gate observations; run the real iteration and closeout.
+    residuals = iter([0., 0. if post_ok else 1.])
+    monkeypatch.setattr(s, '_momentum_residual', lambda *a: (next(residuals), {}))
+    monkeypatch.setattr(module, '_mass_res_solved_jit_2d', lambda *a: (0., 0.))
+    monkeypatch.setattr(module, '_mass_global_jit_2d', lambda *a: (1., 1., 0.))
+    conv, n = s.solve(max_iter=1, verbose=False)
+    assert conv is expected and n == 1
+    assert s.exit_reason == reason
+    assert s.f2_cert_post_rescale_ok is post_ok

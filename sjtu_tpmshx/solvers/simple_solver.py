@@ -71,6 +71,7 @@ from ._kernels_simple_2d import (  # noqa: F401
     _assemble_pp_data_jit,
     _solve_pp_sparse_fast,
     _correct_jit,
+    _close_outlet_mass,
     _mass_res_jit,
     _solve_temp_jit,
     # F2 convergence gates (ledger C6 / C7 / C9)
@@ -113,6 +114,8 @@ def _aligned_grid(N, L, breakpoints):
 
     # Segments and their lengths
     segments = [(bps[i], bps[i + 1]) for i in range(len(bps) - 1)]
+    if N < 2 * len(segments):
+        raise ValueError(f"Increase N to at least {2 * len(segments)} to align all segments")
     lengths = [s[1] - s[0] for s in segments]
     total = sum(lengths)
 
@@ -121,18 +124,15 @@ def _aligned_grid(N, L, breakpoints):
     # Adjust last segment to match total N
     diff = N - sum(n_cells)
     n_cells[-1] += diff
-    # If the last segment fell below the 2-cell minimum, borrow the deficit from
-    # the largest segment so sum(n_cells) stays == N (audit 2026-06-28: the old
-    # `n_cells[-2] -= (2 - n_cells[-1])` ran AFTER clamping n_cells[-1] to 2, so
-    # the deficit was always 0 → no-op → len(dx_arr) could != N → grid mismatch).
+    # Borrow from as many segments as needed without breaking their minimum.
     if n_cells[-1] < 2:
         deficit = 2 - n_cells[-1]
         n_cells[-1] = 2
-        big = max(range(len(n_cells) - 1), key=lambda k: n_cells[k])
-        n_cells[big] -= deficit
-        if n_cells[big] < 2:
-            # over-constrained (N too small for the segment count) → uniform
-            return np.full(N, L / N, dtype=np.float64)
+        while deficit:
+            big = max(range(len(n_cells) - 1), key=lambda k: n_cells[k])
+            borrowed = min(deficit, n_cells[big] - 2)
+            n_cells[big] -= borrowed
+            deficit -= borrowed
 
     # Build dx array: uniform within each segment
     dx_list = []
@@ -451,7 +451,35 @@ class SIMPLESolver:
         # inlet every cell shares the same density ⇒ v_inlet_field is uniform ⇒
         # bit-identical to the scalar path.
         self.v_inlet = v_inlet
-        self.v_inlet_field = np.full(Nx, float(v_inlet), dtype=np.float64)
+
+        # Fields
+        self.u  = np.zeros((Nx + 1, Ny))
+        self.v  = np.zeros((Nx, Ny + 1))
+        self.P  = np.full((Nx, Ny), P_ref)
+        self.Pp = np.zeros((Nx, Ny))
+        self.d_u = np.zeros((Nx + 1, Ny))
+        self.d_v = np.zeros((Nx, Ny + 1))
+
+        # Temperature (allocated on demand)
+        self.Tf = None
+        self.Ts = None
+
+        self._pp_sparsity = None  # lazily built on first solve() call
+        self._refresh_ports(inlet_lo, inlet_hi, outlet_lo, outlet_hi)
+        self.residuals = []
+
+        # If an explicit non-uniform T_field was passed (not the default T_in
+        # broadcast), refresh mu_field / mu_eff_field to match. For the default
+        # uniform T_in case the initial scalar-broadcast from L846-848 is
+        # already consistent with Sutherland at T_in, but calling it is cheap
+        # and guarantees mu_field is in sync with T_field at all times.
+        if self.fluid_type == 'ideal_gas':
+            self._refresh_mu_from_T()
+
+    def _refresh_ports(self, inlet_lo, inlet_hi, outlet_lo, outlet_hi):
+        """Initialize port profiles on the final grid before the first solve."""
+        Nx = self.Nx
+        self.v_inlet_field = np.full(Nx, float(self.v_inlet), dtype=np.float64)
         x_lo_edge = np.concatenate(([0.0], np.cumsum(self.dx_arr[:-1])))
         x_hi_edge = np.cumsum(self.dx_arr)
         self.inlet_frac = np.clip(
@@ -501,31 +529,8 @@ class SIMPLESolver:
         else:
             self.outlet_frac = np.ones(Nx, dtype=np.float64)
 
-        # Fields
-        self.u  = np.zeros((Nx + 1, Ny))
-        self.v  = np.zeros((Nx, Ny + 1))
-        self.P  = np.full((Nx, Ny), P_ref)
-        self.Pp = np.zeros((Nx, Ny))
-        self.d_u = np.zeros((Nx + 1, Ny))
-        self.d_v = np.zeros((Nx, Ny + 1))
-
-        # Temperature (allocated on demand)
-        self.Tf = None
-        self.Ts = None
-
-        # (v_inlet is a fixed-velocity BC; density updates do not modify it)
-
-        self._pp_sparsity = None  # lazily built on first solve() call
+        self.outlet_mask = self.outlet_frac > 0.01
         self._set_bc()
-        self.residuals = []
-
-        # If an explicit non-uniform T_field was passed (not the default T_in
-        # broadcast), refresh mu_field / mu_eff_field to match. For the default
-        # uniform T_in case the initial scalar-broadcast from L846-848 is
-        # already consistent with Sutherland at T_in, but calling it is cheap
-        # and guarantees mu_field is in sync with T_field at all times.
-        if self.fluid_type == 'ideal_gas':
-            self._refresh_mu_from_T()
 
     def _set_bc(self):
         Nx, Ny = self.Nx, self.Ny
@@ -777,8 +782,8 @@ class SIMPLESolver:
             self.final_res_mass_local = None
             self.final_res_mass_global = None
             self.outlet_backflow_frac = 0.0
-            # True iff the F2 gates STILL hold on the returned (post-outlet-
-            # rescale) field — set at the F2 exit; None until an exit happens.
+            # Legacy attribute name: gates on the returned field after local
+            # outlet closure; None until an F2 exit happens.
             self.f2_cert_post_rescale_ok = None
         # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter';
         # reset on every (re-)entry (the 2D pipeline rebuilds the solver per
@@ -857,7 +862,7 @@ class SIMPLESolver:
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
                                  self.eps_field, self.cf_aniso)
-                _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
+                _pseudo_v_jit_df(self.u, self.v, self._uhat, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
                                  self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
@@ -900,7 +905,7 @@ class SIMPLESolver:
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field,
                              self.outlet_frac,
-                             Nx, Ny, 0.0, self.rho_field, self.eps_field)
+                             Nx, Ny, dx_a, dy_a, 0.0, self.rho_field, self.eps_field)
             else:
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                                 self.inlet_frac, self.outlet_frac,
@@ -921,7 +926,7 @@ class SIMPLESolver:
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                             Nx, Ny, alpha_p, self.rho_field, self.eps_field)
+                             Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
             self._update_density()  # compressible: update rho from P
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
@@ -966,21 +971,9 @@ class SIMPLESolver:
                     _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
                     if _reason is not None:
                         self._enforce_mass_conservation(verbose=verbose)
-                        # ── Certificate sync (2026-07-13, codex review P1) ──
-                        # `_enforce_mass_conservation` rescales the outlet v
-                        # AFTER the gates were evaluated, so the stored
-                        # certificates described the PRE-rescale field. Since
-                        # the gates passed, scale-1 ≲ mass_global_tol and the
-                        # drift is tiny on a full-face outlet — but on partial
-                        # outlets the rescale sums a different cell set
-                        # (frac > 0.5 only) than the gates, so re-measure on
-                        # the field actually RETURNED. Histories are not
-                        # appended to (iteration count stays exact); only the
-                        # final_res_* certificate is refreshed. The exit
-                        # decision itself is NOT revisited — flipping it here
-                        # would make convergence depend on a post-exit
-                        # band-aid; a certificate that no longer meets the
-                        # gates is flagged and warned instead.
+                        # Re-measure the returned field after local outlet closure.
+                        # Keep the original exit decision; post-checks may only
+                        # reject convergence, never upgrade a failed pre-check.
                         _rho_eps_post = np.ascontiguousarray(
                             self.rho_field * self.eps_field, dtype=np.float64)
                         _Rml_p, _ = _mass_res_solved_jit_2d(
@@ -1004,14 +997,14 @@ class SIMPLESolver:
                         if _reason == 'tol' and not self.f2_cert_post_rescale_ok:
                             _log.warning(
                                 "  [WARN] F2 gates held BEFORE the outlet mass "
-                                "rescale but not after (mom %.2e local %.2e "
+                                "closure but not after (mom %.2e local %.2e "
                                 "global %.2e backflow %.2e) — the returned "
                                 "field's certificate exceeds the gates; "
-                                "inspect the outlet rescale scale.",
+                                "inspect the returned outlet field.",
                                 _Rmom_p, _Rml_p, _Rmg_p, _bf_p)
                         self.exit_reason = _reason
                         self.final_res = res
-                        return (_reason == 'tol'), it
+                        return (_reason == 'tol' and self.f2_cert_post_rescale_ok), it
                 # NOTE: no `velocity` exit. A static field only TRIGGERS a check
                 # (F2Monitor.should_eval_momentum); it never terminates.
                 continue
@@ -1122,68 +1115,17 @@ class SIMPLESolver:
                       'num': (nu_, nv_), 'den': (du_, dv_)}
 
     def _enforce_mass_conservation(self, verbose=True):
-        """Scale outlet velocities to enforce global MASS conservation
-        (variable density: ∫ρv dx at outlet = ∫ρv dx at inlet).
+        """Close outlet CV mass with the current density and porosity.
 
-        Why this exists (2026-05-06 fix #3 documentation):
-            For PARTIAL outlets (outlet_frac < 1 on some cells, e.g. manifold
-            geometry in Shanghai HX), the pp-equation pins P=0 only at active
-            outlet cells. Closed outlet cells are treated as walls (v=0). After
-            the pp solve, global ∫ρv at the outlet face may drift from inlet
-            mass flux by O(pp_residual). This post-hoc rescale snaps the global
-            balance to machine precision.
-
-            For FULL outlet (outlet_frac == 1 everywhere), pp-equation balances
-            mass naturally and `scale ≈ 1.000`. The rescale is a no-op.
-
-            **Diagnostic**: |scale - 1| > 1e-3 indicates pp-equation didn't
-            converge mass-wise; it warrants tightening `tol` or adding outlet
-            iterations rather than relying on the rescale.
-
-            To disable (e.g. for V&V where post-hoc band-aids are unwanted),
-            set `self.enforce_outlet_mass_balance = False` after construction.
+        The final density update may change the face fluxes. Reapply the local
+        closure without hiding interior mass defects with a global rescale.
+        Set enforce_outlet_mass_balance=False to disable this exit closeout.
         """
-        # Allow opt-out (default keeps backward-compatible behaviour)
+        self._last_outlet_mass_scale = 1.0  # No global velocity scaling.
         if not getattr(self, 'enforce_outlet_mass_balance', True):
-            self._last_outlet_mass_scale = 1.0
             return
-        Nx, Ny = self.Nx, self.Ny
-        inlet_mass = 0.0
-        outlet_mass = 0.0
-        # ε-weighted fluxes (2026-07-13 audit): the pp equation and the F2
-        # global-mass gate conserve ∫ε·ρ·v (VANS continuity, rho_eps in the
-        # kernels), so the rescale must compare the SAME quantity. Without ε
-        # a streamwise-zoned field (ε_in ≠ ε_out) satisfies
-        # ε_in·Σρv_in = ε_out·Σρv_out at convergence, the un-weighted ratio
-        # reads ε_out/ε_in ≠ 1, and this "enforcement" would UNDO the
-        # converged VANS balance on the returned field.
-        # GUARDED on genuine non-uniformity (the kernels' use_eps pattern):
-        # a constant ε cancels in the ratio MATHEMATICALLY but not bitwise
-        # (Σ ε·aᵢ ≠ ε·Σaᵢ in floats) — the guard keeps uniform-ε goldens
-        # bit-identical.
-        _ef = self.eps_field
-        _use_eps_rescale = float(_ef.max()) != float(_ef.min())
-        for i in range(Nx):
-            _wi = _ef[i, 0] if _use_eps_rescale else 1.0
-            _wo = _ef[i, Ny - 1] if _use_eps_rescale else 1.0
-            inlet_mass += _wi * self.rho_field[i, 0] * self.v[i, 0] * self.dx_arr[i]
-            if self.outlet_frac[i] > 0.5:
-                outlet_mass += (_wo * self.rho_field[i, Ny - 1]
-                                * self.v[i, Ny] * self.dx_arr[i])
-        if abs(outlet_mass) > 1e-15:
-            scale = inlet_mass / outlet_mass
-            self._last_outlet_mass_scale = float(scale)
-            # Diagnostic: warn if rescale magnitude > 0.1% — indicates loose
-            # pp-equation convergence, not a healthy "free" mass balance.
-            if verbose and abs(scale - 1.0) > 1e-3:
-                _log.warning(f"  [WARN] outlet mass rescale = {scale:.6f} "
-                             f"(|Δ| = {abs(scale-1)*100:.3f}%); "
-                             f"pp-equation residual likely loose at outlet face.")
-            for i in range(Nx):
-                if self.outlet_frac[i] > 0.5:
-                    self.v[i, Ny] *= scale
-        else:
-            self._last_outlet_mass_scale = 1.0
+        _close_outlet_mass(self.u, self.v, self.outlet_frac, self.Nx, self.Ny,
+                           self.dx_arr, self.dy_arr, self.rho_field, self.eps_field)
 
     # ──────────────── temperature solve ───────────────────────────
     def solve_temperature(self, K_ff, K_ss, h_v, rho_cp_f,

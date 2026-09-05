@@ -229,6 +229,12 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 
                     aP = aE + aW + aN + aS + hvA
                     new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                    # The solid consumes the outlet candidate before its BC copy.
+                    # Keep that candidate unrelaxed; damp only non-outlet cells.
+                    is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
+                                   (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
+                    if not is_outlet_A:
+                        new = Ta[i,j] + 0.7 * (new - Ta[i,j])
                     chg = abs(new - Ta[i,j])
                     if chg > max_chg: max_chg = chg
                     Ta[i,j] = new
@@ -465,6 +471,11 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                            + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, FyA))
                     aP = aE + aW + aN + aS + hvA
                     new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                    # Preserve the outlet candidate consumed by the solid, as in serial.
+                    is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
+                                   (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
+                    if not is_outlet_A:
+                        new = Ta[i,j] + 0.7 * (new - Ta[i,j])
                     c = abs(new - Ta[i,j])
                     if c > cell_chg: cell_chg = c
                     Ta[i,j] = new
