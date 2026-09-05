@@ -328,7 +328,8 @@ class ZoneInputConfig:
     fed into the 2D/3D solver.
 
     ``config`` is the pre-resolved ``solvers.zone_config.ZoneConfig``
-    instance (1D zone mode) or ``None`` when zones are disabled or
+    instance (1D zone mode), or its JSON-shaped dictionary for canonical
+    input, restored at the 1D pipeline boundary. It is ``None`` when zones are disabled or
     running in grid mode (``grid`` carries the cell list instead).
     The UI adapter snapshots ``config`` via
     ``window._build_zone_config()`` at the boundary so the Pipeline
@@ -339,7 +340,7 @@ class ZoneInputConfig:
     enabled: bool = False
     axis: ZoneAxis = 'y'
     grid: Optional[Dict[str, Any]] = None  # cells / tpms_type / k_s
-    config: Optional[Any] = None  # resolved ZoneConfig instance (1D)
+    config: Optional[Any] = None  # 1D ZoneConfig or its canonical JSON dictionary
     pareto_x_decision: Optional[Any] = None
     pareto_y_trans_inlet: float = 0.2
     pareto_y_trans_outlet: float = 0.2
@@ -723,16 +724,7 @@ class ComputeConfig:
             # when absent so old JSON files keep round-tripping.
             bcA_d = data.get('bc_A', {}) or {}
             bcB_d = data.get('bc_B', {}) or {}
-            zn_d = dict(data.get('zones', {}) or {})
-            if (zn_d.get('enabled') and zn_d.get('axis', 'y') in ('x', 'y')
-                    and isinstance(zn_d.get('config'), dict)):
-                from copy import deepcopy
-                from sjtu_tpmshx.solvers.zone_config import Zone, ZoneConfig
-
-                zone_data = deepcopy(zn_d['config'])
-                zone_data['zones'] = [Zone(**zone) for zone in zone_data['zones']]
-                zn_d['config'] = ZoneConfig(**zone_data)
-                zn_d['config'].validate()
+            zn_d = data.get('zones', {}) or {}
             fl_d = data.get('flags', {}) or {}
             ex_d = data.get('extrap', {}) or {}
             return cls(

@@ -15,6 +15,7 @@ def test_canonical_1d_json_restores_the_same_zone_fields(tmp_path, capsys, axis)
     from sjtu_tpmshx.pipelines.stages_2d import _parse_inputs_cfg
 
     cfg = ComputeConfig(
+        geometry=GeometryConfig(tpms='Diamond'),
         solver=SolverConfig(Nx=8, Ny=6), extrap=ExtrapPolicy(allow=True),
         zones=ZoneInputConfig(enabled=True, axis=axis, config=ZoneConfig(
             zones=[Zone('inlet', 0, 0.5, 6, 0.3), Zone('outlet', 0.5, 1, 7, 0.5)],
@@ -22,10 +23,12 @@ def test_canonical_1d_json_restores_the_same_zone_fields(tmp_path, capsys, axis)
     path = tmp_path / 'zoned.json'
     cfg.to_json(path)
     loaded = ComputeConfig.from_json(path)
-    assert isinstance(loaded.zones.config, ZoneConfig)
-    assert all(isinstance(zone, Zone) for zone in loaded.zones.config.zones)
+    assert isinstance(loaded.zones.config, dict)
     expected = _parse_inputs_cfg(cfg)['za']
-    restored = _parse_inputs_cfg(loaded)['za']
+    parsed = _parse_inputs_cfg(loaded)
+    assert isinstance(parsed['zone_config'], ZoneConfig)
+    assert all(isinstance(zone, Zone) for zone in parsed['zone_config'].zones)
+    restored = parsed['za']
     assert restored['axis'] == axis
     for key in ('zone_id', 'eps_arr', 'K_ffA_arr', 'K_ffB_arr', 'h_vA_arr', 'h_vB_arr'):
         assert restored[key] == pytest.approx(expected[key])
@@ -43,11 +46,14 @@ def test_canonical_loader_keeps_unused_1d_config_semantics(enabled, axis):
     assert loaded.zones.config == config
 
 
-def test_canonical_1d_loader_does_not_mutate_or_share_source_dict():
+def test_canonical_1d_stage_does_not_mutate_or_share_source_dict():
     from copy import deepcopy
     from dataclasses import asdict
+    from sjtu_tpmshx.pipelines.stages_2d import _parse_inputs_cfg
 
-    cfg = ComputeConfig(zones=ZoneInputConfig(enabled=True, config=ZoneConfig(
+    cfg = ComputeConfig(geometry=GeometryConfig(tpms='Diamond'),
+        solver=SolverConfig(Nx=8, Ny=6), extrap=ExtrapPolicy(allow=True),
+        zones=ZoneInputConfig(enabled=True, config=ZoneConfig(
         zones=[Zone('outlet', 0.5, 1, 7, 0.5, props_A={'saved': [1]}),
                Zone('inlet', 0, 0.5, 6, 0.3, props_A={'saved': [2]})],
         tpms_type='Diamond', k_s=16)))
@@ -55,14 +61,17 @@ def test_canonical_1d_loader_does_not_mutate_or_share_source_dict():
     original = deepcopy(source)
     loaded = ComputeConfig.from_dict(source)
     assert source == original
-    assert loaded.zones.config.zones[0].name == 'inlet'
-    loaded.zones.config.zones[0].props_A['saved'][0] = 99
+    restored = _parse_inputs_cfg(loaded)['zone_config']
+    assert source == original
+    assert restored.zones[0].name == 'inlet'
+    restored.zones[0].props_A['saved'] = [99]
     assert source == original
 
 
 @pytest.mark.parametrize('invalid', ['gap', 'missing_field'])
 def test_canonical_1d_json_does_not_swallow_invalid_zones(tmp_path, invalid):
     import json
+    from sjtu_tpmshx.pipelines.stages_2d import _parse_inputs_cfg
 
     cfg = ComputeConfig(zones=ZoneInputConfig(enabled=True,
         config=ZoneConfig.single_zone(6, 0.3, 'Diamond', 16)))
@@ -75,9 +84,10 @@ def test_canonical_1d_json_does_not_swallow_invalid_zones(tmp_path, invalid):
     else:
         del zone['L_mm']
     path.write_text(json.dumps(payload))
+    loaded = ComputeConfig.from_json(path)
     with pytest.raises(ValueError if invalid == 'gap' else TypeError,
                        match='start at 0' if invalid == 'gap' else 'L_mm'):
-        ComputeConfig.from_json(path)
+        _parse_inputs_cfg(loaded)
 
 
 def test_valid_partial_grid_coverage_is_not_redefined():

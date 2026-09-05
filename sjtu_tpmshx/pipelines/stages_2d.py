@@ -184,10 +184,17 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
                 _log.info(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
             zone_config = 'grid'
         else:
-            # The UI boundary has already resolved the 1D table.
+            # The UI supplies an object; canonical JSON retains its data shape.
             if compute_cfg.zones.config is None:
                 raise ValueError('Enabled 1D zones require a ZoneConfig')
             zone_config = compute_cfg.zones.config
+            if isinstance(zone_config, dict):
+                from copy import deepcopy
+                from sjtu_tpmshx.solvers.zone_config import Zone, ZoneConfig
+
+                zone_data = deepcopy(zone_config)
+                zone_data['zones'] = [Zone(**zone) for zone in zone_data['zones']]
+                zone_config = ZoneConfig(**zone_data)
             zone_config.compute_properties(
                 u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
                 P_in=P_in_val)
