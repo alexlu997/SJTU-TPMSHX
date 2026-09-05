@@ -251,7 +251,7 @@ def test_load_config_cancel_is_noop(monkeypatch, win):
 
 
 @pytest.mark.parametrize('damage', ['missing', 'unknown', 'combo', 'unit',
-                                    'rows', 'pareto', 'numeric', 'version'])
+                                    'rows', 'pareto', 'numeric', 'boolean', 'version'])
 def test_bad_config_does_not_partially_apply(tmp_path, monkeypatch, win, damage):
     from copy import deepcopy
     from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -274,6 +274,8 @@ def test_bad_config_does_not_partially_apply(tmp_path, monkeypatch, win, damage)
         preset['zone_inputs']['pareto_x_decision'] = {'__class__': 'bad'}
     elif damage == 'numeric':
         preset['line_edits']['le_PinA'] = 'NaN'
+    elif damage == 'boolean':
+        preset['line_edits']['le_PinA'] = True
     else:
         payload['config_format'] = 2
     path = tmp_path / 'bad.json'

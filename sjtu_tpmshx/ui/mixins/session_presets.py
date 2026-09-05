@@ -225,7 +225,7 @@ class SessionPresetsMixin:
             for name, value in values.items():
                 if name not in allowed:
                     continue  # retain the shared preset allow-list boundary
-                if section == 'line_edits' and not isinstance(value, (str, int, float)):
+                if section == 'line_edits' and type(value) not in (str, int, float):
                     raise ValueError(f'Invalid text field: {name}')
                 if (section == 'line_edits' and name != 'le_mesh_density'
                         and str(value).strip()):
