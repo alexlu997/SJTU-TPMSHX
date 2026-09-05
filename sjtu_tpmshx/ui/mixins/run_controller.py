@@ -26,6 +26,7 @@ connections) resolves on the live window through the MRO.
 from __future__ import annotations
 
 import time as _time
+from copy import deepcopy
 from functools import partial
 
 from PySide6.QtWidgets import QMessageBox
@@ -340,6 +341,17 @@ class RunControllerMixin:
 
     def _on_orch_started(self, mode):
         """Compute kicked off. Lock UI + start progress widgets."""
+        # started is emitted synchronously on the GUI thread, only after
+        # start accepts the run and before dispatch or UI event processing.
+        preset = deepcopy(self._capture_current_preset('Run inputs'))
+        axes = ('x', 'y', 'z') if mode == '3d' else ('x', 'y')
+        self._run_provenance = {
+            'preset': preset,
+            'preset_source': getattr(self, '_active_preset_name', '') or '—',
+            'mode': mode,
+            'input_grid': [preset['line_edits'].get(f'le_N{axis}', '?')
+                           for axis in axes],
+        }
         # Backwards-compat: tests / external code still read _compute_running.
         # We mirror it from the orchestrator's authoritative flag.
         self._compute_running = True
@@ -359,6 +371,9 @@ class RunControllerMixin:
     def _on_orch_finished(self, result):
         """Publish once on the GUI thread; unlock only after rendering."""
         if getattr(self, '_close_pending', False):
+            self._run_provenance = None
+            return
+        if not getattr(self, '_compute_running', False):
             return
         self._last_solve_log = self.compute.last_log()
         for name in ('_compute_3d_watchdog', '_btn_ticker_timer'):
@@ -369,6 +384,13 @@ class RunControllerMixin:
         self.btn_compute.setText("正在显示结果…")
         success = False
         try:
+            provenance = getattr(self, '_run_provenance', None)
+            if provenance is not None:
+                keys = ('dx', 'dy', 'dz') if provenance['mode'] == '3d' else ('dx_arr', 'dy_arr')
+                provenance['actual_grid'] = [
+                    len(result.fields[key]) if result.fields.get(key) is not None else '?'
+                    for key in keys]
+                result.metadata['run_provenance'] = deepcopy(provenance)
             self.write_result(result)
             success = self._render_compute_result()
         except Exception as exc:
@@ -376,7 +398,10 @@ class RunControllerMixin:
             traceback.print_exc()
             self.statusBar().showMessage(f"Result publication failed: {exc}", 12000)
         finally:
-            self._end_compute_ui(success=success)
+            try:
+                self._end_compute_ui(success=success)
+            finally:
+                self._run_provenance = None
 
     def _render_compute_result(self):
         """Render the published result and report presentation success."""
@@ -409,10 +434,6 @@ class RunControllerMixin:
                 # the returned flag so the user is no longer routed to an
                 # empty 3D tab.
                 _3d_vis_ok = bool(finalize_plots_3d(self))
-                try:
-                    self._push_recent_run()
-                except Exception:
-                    pass
                 _finalize_ok = True
             except Exception as _fe3d:
                 # If finalise crashes, walk the button text back to a
@@ -531,6 +552,7 @@ class RunControllerMixin:
 
     def _on_orch_error(self, message, log_text):
         """Compute raised. Show error + drop stale results (mode-aware)."""
+        self._run_provenance = None
         if getattr(self, '_close_pending', False):
             return
         self._compute_running = False
@@ -581,6 +603,7 @@ class RunControllerMixin:
 
     def _on_orch_cancelled(self, log_text):
         """Worker observed cancel_token. Treat as soft completion (mode-aware)."""
+        self._run_provenance = None
         if getattr(self, '_close_pending', False):
             return
         self._compute_running = False
@@ -705,6 +728,7 @@ class RunControllerMixin:
             self.progress.setValue(100)
             from PySide6.QtCore import QTimer as _QT
             _QT.singleShot(500, self.progress.hide)
+            self._push_recent_run()
             self._update_result_summary()
             # Record the elapsed wall-clock for the status bar clock.
             t0 = getattr(self, '_compute_t0', None)
