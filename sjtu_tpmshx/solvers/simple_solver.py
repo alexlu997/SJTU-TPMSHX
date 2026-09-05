@@ -41,6 +41,7 @@ Velocity convention (IMPORTANT — differs from textbook Brinkman-Forchheimer):
 import os
 
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_K_cF_vec
 from ._solve_common import LowReExit, F2Monitor
 from .tpms_calc import (air_density, air_viscosity, P_atm)
@@ -705,7 +706,7 @@ class SIMPLESolver:
               alpha_u=0.7, alpha_p=0.3,
               n_inner=2,
               coupling='simple', simpler_relax_p=1.0,
-              verbose=True, progress_cb=None):
+              verbose=True, progress_cb=None, cancel_check=None):
         """
         Run SIMPLE iterations. PP equation solved by sparse direct solver.
 
@@ -826,6 +827,8 @@ class SIMPLESolver:
                 np.repeat(self._cF_arr[None, :], Nx, axis=0))
 
         for it in range(1, max_iter + 1):
+            if cancel_check is not None and cancel_check():
+                raise CancelledError("compute cancelled by user")
             # Effective density for continuity (#2 fix): ε·ρ. Uniform ε →
             # multiplicative constant (no functional change). Zoned ε →
             # captures macroscopic ∇·(ε·ρ·u)=0 form. Momentum unchanged

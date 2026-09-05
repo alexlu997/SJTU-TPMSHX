@@ -20,6 +20,7 @@ so that coupling information propagates within a single sweep.
 """
 
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 from numba import njit, prange
 from ._kernels_2d import minmod
 
@@ -618,7 +619,7 @@ def solve_full_domain(L, H, Nx, Ny,
                       Tb_prescribed=None,
                       eps_A=None, eps_B=None,
                       q_rel_tol=None, conv_chunk=None,
-                      use_sou_B=False):
+                      use_sou_B=False, cancel_check=None):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     q_rel_tol : float or None — per-chunk Q-relative convergence threshold.
@@ -829,6 +830,8 @@ def solve_full_domain(L, H, Nx, Ny,
     _use_rb = _RB_ENERGY_2D and (Nx * Ny > _RB_ENERGY_2D_GATE)
     _gs_fn = _gs_full_chunk_rb if _use_rb else _gs_full_chunk
     while done < max_iter:
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
         n = min(chunk, max_iter - done)
         chg = _gs_fn(
             Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
@@ -842,6 +845,8 @@ def solve_full_domain(L, H, Nx, Ny,
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
 
         Q_cur = float(np.sum(h_vB_arr * (Ts - Tb) * cell_area))
         dTa_max = float(np.max(np.abs(Ta - Ta_prev)))

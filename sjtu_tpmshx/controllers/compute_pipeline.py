@@ -49,13 +49,10 @@ from typing import Any, Callable, Dict, Optional
 
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
 from sjtu_tpmshx.domain.compute_result import ComputeResult
+from sjtu_tpmshx.domain.cancellation import CancelledError
 
 
 # ── Pipeline ABC ─────────────────────────────────────────────────────
-
-
-class CancelledError(Exception):
-    """Raised by :meth:`ComputePipeline.run` when the cancel token fires."""
 
 
 ProgressFn = Callable[[int], None]
@@ -129,6 +126,7 @@ class ComputePipeline(ABC):
         self.progress_cb(90)
         self._check_cancel()
         result = self.finalize(raw, fields)
+        self._check_cancel()
         self.progress_cb(100)
         return result
 
