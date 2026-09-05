@@ -11,7 +11,7 @@ pattern. Provides:
   - solver stdout capture into a 500 KB ring (for the D9 solve-log viewer)
 
 The actual solver work runs in `worker_fn(cfg, cancel_token, progress_cb)`.
-Caller passes a callable that does the compute and returns a result dict.
+Caller passes a callable that does the compute and returns its result object.
 The orchestrator handles thread spawn / lifecycle / signal dispatch.
 
 Phase 1 of 2026-05-06 main.py refactor (audit fix #4).
@@ -28,7 +28,7 @@ import contextlib
 from collections import deque
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal, Slot
 
 
 # ---------------------------------------------------------------- public types
@@ -73,7 +73,7 @@ class _ComputeRunnable(QRunnable):
     """
 
     def __init__(self, orchestrator: 'ComputeOrchestrator',
-                 worker_fn: Callable, cfg: dict,
+                 worker_fn: Callable, cfg: object,
                  cancel_token: CancelToken):
         super().__init__()
         self.setAutoDelete(True)
@@ -125,16 +125,16 @@ class _ComputeRunnable(QRunnable):
             elapsed = time.time() - t0
             # Cap log at 500 KB to bound memory.
             log_text = log_buf.getvalue()[:500_000]
-            orch._on_worker_finished(result, log_text, elapsed)
+            orch._worker_finished.emit(result, log_text, elapsed)
         except _CancelledError:
             elapsed = time.time() - t0
             log_text = log_buf.getvalue()[:500_000]
-            orch._on_worker_cancelled(log_text, elapsed)
+            orch._worker_cancelled.emit(log_text, elapsed)
         except Exception as e:
             log_text = log_buf.getvalue()[:500_000]
             tb = traceback.format_exc()
             log_text = log_text + "\n" + tb
-            orch._on_worker_error(str(e), log_text)
+            orch._worker_error.emit(str(e), log_text)
 
 
 class _CancelledError(Exception):
@@ -157,9 +157,10 @@ class ComputeOrchestrator(QObject):
         Emitted right before worker dispatch. mode in {'2d', '3d', 'poly'}.
     progress(int percent)
         Emitted as the worker reports progress. 0..100. Solver controls cadence.
-    finished(dict result)
+    finished(object result)
         Worker returned cleanly. result is whatever the worker_fn returned
-        (caller-defined). Emitted on the GUI thread (Qt auto-marshals).
+        (caller-defined, including ComputeResult). Published on the owning
+        thread; is_running stays True until terminal signal handlers return.
     error(str message, str log)
         Worker raised an exception. message = str(exc); log = captured stdout.
     cancelled(str log)
@@ -181,9 +182,13 @@ class ComputeOrchestrator(QObject):
     # Qt signals (always declared at class level)
     started = Signal(str)
     progress = Signal(int)
-    finished = Signal(dict)
+    iteration = Signal(str)
+    finished = Signal(object)
     error = Signal(str, str)
     cancelled = Signal(str)
+    _worker_finished = Signal(object, str, float)
+    _worker_error = Signal(str, str)
+    _worker_cancelled = Signal(str, float)
 
     CancelledError = _CancelledError
 
@@ -194,11 +199,17 @@ class ComputeOrchestrator(QObject):
         # Solver runs are heavy; only one at a time. UI keeps responsiveness
         # via Qt event loop, not via additional pool slots.
         self._pool.setMaxThreadCount(max_threads)
+        self._worker_finished.connect(self._on_worker_finished,
+                                      Qt.ConnectionType.QueuedConnection)
+        self._worker_error.connect(self._on_worker_error,
+                                   Qt.ConnectionType.QueuedConnection)
+        self._worker_cancelled.connect(self._on_worker_cancelled,
+                                       Qt.ConnectionType.QueuedConnection)
         self._cancel_token: Optional[CancelToken] = None
         self._mode: Optional[str] = None
         self._is_running = False
         # Latest run snapshot — populated when worker finishes / errors.
-        self._last_result: Optional[dict] = None
+        self._last_result: object = None
         self._last_error: Optional[str] = None
         self._last_log: str = ""
         self._last_elapsed: float = 0.0
@@ -217,7 +228,7 @@ class ComputeOrchestrator(QObject):
     def current_mode(self) -> Optional[str]:
         return self._mode
 
-    def last_result(self) -> Optional[dict]:
+    def last_result(self) -> object:
         return self._last_result
 
     def last_error(self) -> Optional[str]:
@@ -240,12 +251,12 @@ class ComputeOrchestrator(QObject):
 
     # ---- control -----------------------------------------------------------
 
-    def start(self, mode: str, worker_fn: Callable, cfg: dict) -> bool:
+    def start(self, mode: str, worker_fn: Callable, cfg: object) -> bool:
         """Start a compute. Returns True if dispatched, False if rejected.
 
         worker_fn signature:
-            worker_fn(cfg: dict, cancel_token: CancelToken,
-                      progress_cb: Callable[[int], None]) -> dict
+            worker_fn(cfg, cancel_token: CancelToken,
+                      progress_cb: Callable[[int], None]) -> object
         Worker should poll cancel_token at epoch boundaries and raise
         ComputeOrchestrator.CancelledError when set, OR simply return early
         with whatever partial state is reasonable.
@@ -280,30 +291,42 @@ class ComputeOrchestrator(QObject):
         if self._cancel_token is not None:
             self._cancel_token.cancel()
 
-    # ---- worker callbacks (thread-safe via Qt signal auto-marshal) ---------
-    #
-    # These are called from the QRunnable thread. Emitting Qt signals from a
-    # worker thread is safe — Qt marshals slot calls to the receiver's owning
-    # thread (typically the GUI thread). State writes here happen-before the
-    # signal emit, so slot handlers see consistent state.
+    def is_idle(self) -> bool:
+        """Publication is complete and every runnable has actually returned.
 
-    def _on_worker_finished(self, result: dict, log: str, elapsed: float):
+        A terminal signal can arrive just before QRunnable.run() returns.
+        Window teardown must wait for both without blocking the event loop.
+        """
+        return not self._is_running and self._pool.waitForDone(0)
+
+    # ---- terminal publication (queued onto the owning thread) -------------
+
+    @Slot(object, str, float)
+    def _on_worker_finished(self, result: object, log: str, elapsed: float):
         self._last_result = result
         self._last_log = log
         self._last_elapsed = elapsed
         if self._mode is not None:
             self._eta_history[self._mode].append(elapsed)
-        self._is_running = False
-        self.finished.emit(result if result is not None else {})
+        try:
+            self.finished.emit(result)
+        finally:
+            self._is_running = False
 
+    @Slot(str, str)
     def _on_worker_error(self, message: str, log: str):
         self._last_error = message
         self._last_log = log
-        self._is_running = False
-        self.error.emit(message, log)
+        try:
+            self.error.emit(message, log)
+        finally:
+            self._is_running = False
 
+    @Slot(str, float)
     def _on_worker_cancelled(self, log: str, elapsed: float):
         self._last_log = log
         self._last_elapsed = elapsed
-        self._is_running = False
-        self.cancelled.emit(log)
+        try:
+            self.cancelled.emit(log)
+        finally:
+            self._is_running = False

@@ -161,10 +161,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         # fallbacks elsewhere can't accidentally surface a stale value if a
         # future refactor removes the getattr safety nets.
         self._compute_running = False
-        self._compute_poll_timer = None
-        self._compute_thread = None
         self._compute_btn_handler = None
-        self._cancel_token = None  # set by ComputeOrchestrator on each start
 
         # Controllers — Phase 1+2+3 of 2026-05-06 main.py refactor (#4).
         # See vault/reports/refactor/2026-05-06-main-py-refactor-plan-CN.md.
@@ -192,6 +189,8 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
                              tag='compute.started', sender=self.compute)
         self.signals.connect(self.compute.progress, self._on_orch_progress,
                              tag='compute.progress', sender=self.compute)
+        self.signals.connect(self.compute.iteration, self._on_orch_iteration,
+                             tag='compute.iteration', sender=self.compute)
         self.signals.connect(self.compute.finished, self._on_orch_finished,
                              tag='compute.finished', sender=self.compute)
         self.signals.connect(self.compute.error, self._on_orch_error,
@@ -920,6 +919,23 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
            2026-05-06 #4 — belt-and-braces against bound-method slots
            that close over ``self`` and outlive C++ widget destruction).
         """
+        # Keep the window and its child orchestrator/pool alive until both
+        # terminal publication and QRunnable.run() have returned. A JIT sweep
+        # may exceed any fixed timeout; cancellation stays cooperative.
+        if not self.compute.is_idle():
+            event.ignore()
+            self._close_pending = True
+            self.compute.cancel()
+            self.setEnabled(False)
+            self.statusBar().showMessage("正在关闭 — 等待计算安全结束…")
+            if not hasattr(self, '_close_retry_timer'):
+                from PySide6.QtCore import QTimer
+                self._close_retry_timer = QTimer(self)
+                self._close_retry_timer.timeout.connect(self.close)
+                self._close_retry_timer.start(100)
+            return
+        if hasattr(self, '_close_retry_timer'):
+            self._close_retry_timer.stop()
         # 1. Persist session first — `_save_session` failure used to be a
         #    silent pass; now surface to statusBar so users know.
         try:
@@ -930,27 +946,6 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
                     f"Warning: session save failed — {_e_save}", 6000)
             except Exception:
                 pass
-        # 2. Cooperative compute cancel — flips the worker's cancel
-        #    token so its next epoch-boundary check breaks out cleanly.
-        #    Non-blocking: the solver may still complete (e.g. inner JIT
-        #    loops can't be interrupted), but the signals it emits after
-        #    we disconnect below land on dropped connections and never
-        #    reach this (about-to-be-destroyed) window. Added 2026-05-20
-        #    UI sweep to close the window-teardown-vs-worker race.
-        try:
-            if getattr(self, 'compute', None) is not None:
-                self.compute.cancel()
-                # robustness-hardening (2026-07-03): give the worker a
-                # short bounded window to reach its cancel checkpoint and
-                # exit — an unjoined worker can still emit signals on the
-                # half-destroyed orchestrator QObject (teardown crash).
-                # 3 s covers an epoch boundary; a truly wedged JIT loop
-                # gets abandoned exactly as before (daemon semantics).
-                _pool = getattr(self.compute, '_pool', None)
-                if _pool is not None:
-                    _pool.waitForDone(3000)
-        except Exception:
-            pass
         # 2b. Neutralise any floating/detached canvas windows BEFORE Qt
         #     tears them down. Each was given a closeEvent override that
         #     calls _reattach_* → self.statusBar(); firing that during

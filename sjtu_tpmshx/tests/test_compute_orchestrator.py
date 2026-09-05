@@ -14,6 +14,7 @@ Phase 1 of 2026-05-06 main.py refactor (audit fix #4).
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 import pytest
@@ -154,6 +155,42 @@ def test_second_start_while_running_returns_false():
     ok3 = orch.start('2d', slow_worker, {})
     assert ok3, "start after completion must succeed"
     assert _wait_for(lambda: not orch.is_running(), timeout_s=2.0)
+
+
+@pytest.mark.parametrize('outcome', ['finished', 'error', 'cancelled'])
+def test_terminal_state_is_queued_and_locked_through_publication(outcome):
+    from sjtu_tpmshx.domain.compute_result import ComputeResult
+
+    app = _make_app()
+    orch = ComputeOrchestrator()
+    gui_thread = threading.get_ident()
+    result = ComputeResult(Q_W=12.5, metadata={'payload': 'complete'})
+    seen = []
+
+    def worker(cfg, cancel, progress_cb):
+        if outcome == 'error':
+            raise ValueError('failed')
+        if outcome == 'cancelled':
+            raise orch.CancelledError()
+        return result
+
+    def terminal(*args):
+        app.processEvents()
+        seen.append((threading.get_ident(), orch.is_running(),
+                     orch.start('3d', worker, {})))
+
+    getattr(orch, outcome).connect(terminal)
+    assert orch.start('2d', worker, {})
+    assert orch._pool.waitForDone(3000)
+    # Worker exit alone must not write state or unlock a pending publication.
+    assert orch.is_running() and not orch.is_idle()
+    assert orch.last_result() is None and orch.last_error() is None
+    assert not seen
+    assert _wait_for(orch.is_idle)
+    assert seen == [(gui_thread, True, False)]
+    assert orch.current_mode() == '2d'
+    if outcome == 'finished':
+        assert orch.last_result() is result
 
 
 # ----------------------------------------------------------- ETA history
