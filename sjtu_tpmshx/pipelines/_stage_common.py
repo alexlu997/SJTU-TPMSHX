@@ -13,6 +13,7 @@ belongs in this module.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from sjtu_tpmshx.domain.run_warnings import record_warning
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -41,7 +42,7 @@ def validate_domain_dims(pairs: Iterable[tuple[str, float]]) -> None:
 
 def surrogate_extrap_reasons(compute_cfg: ComputeConfig,
                              allow_extrap: bool) -> list[str]:
-    """Both-side surrogate training-domain check → list of extrap reasons.
+    """Validate both sides; return D-F geometry reasons and record Nu warnings.
 
     ImportError (surrogate_domain unavailable) → skip, return []. A
     ValueError from the check is a real domain violation and must propagate,
@@ -56,10 +57,13 @@ def surrogate_extrap_reasons(compute_cfg: ComputeConfig,
     geo = compute_cfg.geometry
     reasons = []
     for side, fl in (('A', compute_cfg.fluid_A), ('B', compute_cfg.fluid_B)):
+        nu_reasons = []
         reasons += check_surrogate_domain_at_point(
             geo.tpms, geo.L_cell_mm, geo.t_wall_mm, geo.k_s_W_mK,
             fl.u_mps, fl.T_in_K, fl.P_in_Pa, side=side,
-            allow_extrap=allow_extrap, fluid=fl.type) or []
+            allow_extrap=allow_extrap, fluid=fl.type, nu_reasons=nu_reasons) or []
+        for reason in nu_reasons:
+            record_warning(('nu_preflight', side), reason)
     return reasons
 
 

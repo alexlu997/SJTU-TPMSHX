@@ -11,7 +11,7 @@ Host contract — the live window MUST provide (all remain on ``Main_Menu``):
               _apply_user_preset(dict) -> None
     widgets : btn_recent (QToolButton), statusBar()
               _r_Q / _r_dP_A / _r_dP_B / _r_ToutA / _r_ToutB (result QLabels)
-              le_Nx / le_Ny / le_Nz / combo_dim (provenance grid read)
+    run     : _run_provenance (accepted inputs and returned grid)
     state   : _SESSION_LINE_EDITS / _SESSION_COMBOS / _SESSION_CHECKS (lists)
               _active_preset_name (str, optional)
               _MAX_RECENT_RUNS (int, optional — defaults to 5)
@@ -26,6 +26,7 @@ import collections
 import datetime
 import json
 import zlib
+from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -56,9 +57,12 @@ class RunHistoryMixin:
 
     # ── recent-runs ring buffer ──────────────────────────────────────────
     def _push_recent_run(self):
-        """Record the current field snapshot + headline numbers in a bounded
+        """Record the accepted run's input snapshot + headline numbers in a bounded
         ring buffer feeding the "Recent ▾" header menu, and append a slim row
         to the persistent JSONL timeline."""
+        provenance = getattr(self, '_run_provenance', None)
+        if provenance is None:
+            return
         if not hasattr(self, "_recent_runs"):
             maxlen = getattr(self, "_MAX_RECENT_RUNS", 5)
             self._recent_runs = collections.deque(maxlen=maxlen)
@@ -71,7 +75,8 @@ class RunHistoryMixin:
                 return "—"
 
         now = datetime.datetime.now()
-        snap = self._capture_current_preset(f"Recent @ {now.strftime('%H:%M:%S')}")
+        snap = deepcopy(provenance['preset'])
+        snap['name'] = f"Recent @ {now.strftime('%H:%M:%S')}"
         entry = {
             "ts": now.isoformat(timespec="seconds"),
             "label": now.strftime("%H:%M:%S"),
@@ -81,6 +86,10 @@ class RunHistoryMixin:
             "ToutA": _txt("_r_ToutA"),
             "ToutB": _txt("_r_ToutB"),
             "preset": snap,
+            "preset_source": provenance['preset_source'],
+            "mode": provenance['mode'],
+            "input_grid": list(provenance['input_grid']),
+            "actual_grid": list(provenance['actual_grid']),
         }
         self._recent_runs.appendleft(entry)
 
@@ -290,23 +299,23 @@ class RunHistoryMixin:
 
     # ── provenance & export ──────────────────────────────────────────────
     def _stamp_result_provenance(self, elapsed):
-        """Tooltip every result label with 'computed @ HH:MM:SS · 8.4s · grid
-        30×20×5 · commit 720ba8c' so a glance explains the number."""
+        """Describe the run's inputs and returned grid, never the editable draft."""
+        provenance = getattr(self, '_run_provenance', None)
+        if provenance is None:
+            return
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         commit = _git_commit_hash()
-        try:
-            nx = self.le_Nx.text(); ny = self.le_Ny.text()
-            nz = self.le_Nz.text() if self.combo_dim.currentIndex() == 1 else None
-            grid = f"{nx}×{ny}" + (f"×{nz}" if nz else "")
-        except Exception:
-            grid = "?"
+        grid = '×'.join(map(str, provenance['input_grid']))
+        actual_grid = '×'.join(map(str, provenance['actual_grid']))
         if elapsed < 60:
             dur = f"{elapsed:.1f}s"
         else:
             dur = f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
         from sjtu_tpmshx.ui.fmt import preset_display as _pd
-        preset = _pd(getattr(self, "_active_preset_name", "—") or "—")
-        tip = (f"Computed @ {ts}  ·  {dur}  ·  grid {grid}  ·  preset: {preset}"
+        preset = _pd(provenance['preset_source'])
+        tip = (f"Computed @ {ts}  ·  {dur}  ·  {provenance['mode'].upper()}"
+               f"  ·  input grid {grid} (before refinement)"
+               f"  ·  actual result grid {actual_grid}  ·  preset: {preset}"
                + (f"  ·  commit: {commit}" if commit else ""))
         for attr in ("_r_Q", "_r_dP_A", "_r_dP_B", "_r_ToutA", "_r_ToutB"):
             lbl = getattr(self, attr, None)

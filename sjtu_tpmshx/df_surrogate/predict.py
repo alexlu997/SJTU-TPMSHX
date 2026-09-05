@@ -55,6 +55,7 @@ from pathlib import Path
 import numpy as np
 
 from sjtu_tpmshx.logutil import get_logger
+from sjtu_tpmshx.domain.run_warnings import record_warning
 
 _log = get_logger(__name__)
 
@@ -69,9 +70,7 @@ _CHOKE_WARNED: set = set()
 
 
 def reset_choke_warn_registry() -> None:
-    """Re-arm the one-shot choke-rescue registry. Called at the start of
-    each pipeline run so a later run's choke rescue is not silently masked
-    by an earlier run's warning (blind-spot audit W3, 2026-07-07)."""
+    """Re-arm the standalone choke registry; pipeline runs own their records."""
     _CHOKE_WARNED.clear()
 
 
@@ -322,14 +321,15 @@ def predict_dP_compressible(tpms_type: str, L_mm: float, t_mm: float,
         # silent. Warn once so a choked operating point isn't mistaken for a
         # genuine dP ≈ P_in result.
         _choke_key = (tpms_type, round(float(L_mm), 2), round(float(t_mm), 2))
-        if _choke_key not in _CHOKE_WARNED:
+        message = (
+            f"[D-F choke] 1D compressible dP infeasible "
+            f"(P_out^2={P_out_sq:.3e} <= 0, predicted dP >= P_in): the flow "
+            "is choked at these conditions; returning P_in as the dP "
+            "rescue. Reduce velocity/length or raise inlet pressure.")
+        if (not record_warning(('df_choke', *_choke_key), message)
+                and _choke_key not in _CHOKE_WARNED):
             _CHOKE_WARNED.add(_choke_key)
-            warnings.warn(
-                f"[D-F choke] 1D compressible dP infeasible "
-                f"(P_out^2={P_out_sq:.3e} <= 0, predicted dP >= P_in): the flow "
-                "is choked at these conditions; returning P_in as the dP "
-                "rescue. Reduce velocity/length or raise inlet pressure.",
-                stacklevel=2)
+            warnings.warn(message, stacklevel=2)
         return float('nan') if strict else P_in
     dP_baseline = P_in - sqrt(P_out_sq)
 

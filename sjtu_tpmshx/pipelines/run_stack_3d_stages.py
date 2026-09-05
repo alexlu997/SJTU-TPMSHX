@@ -254,25 +254,32 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
     After both threads finish, real failures take precedence over cancellation.
     """
     import threading
+    from sjtu_tpmshx.domain.run_warnings import (
+        current_warnings, merge_warnings, warning_scope,
+    )
     if tol is None:
         tol = _simple_tol_default()
 
     err = [None, None]
+    parent_warnings = current_warnings()
+    side_warnings = [{} if parent_warnings is not None else None for _ in range(2)]
     res = [None, None]   # (converged, iters) per fluid for the B1 profiler
     _prof = _prof_3d_enabled()
     _t0 = _time.perf_counter() if _prof else None
 
     def _solve_A():
         try:
-            res[0] = sA.solve(max_iter=max_iter, tol=tol, verbose=False,
-                              cancel_check=cancel_check)
+            with warning_scope(side_warnings[0]):
+                res[0] = sA.solve(max_iter=max_iter, tol=tol, verbose=False,
+                                  cancel_check=cancel_check)
         except Exception as e:
             err[0] = e
 
     def _solve_B():
         try:
-            res[1] = sB.solve(max_iter=max_iter, tol=tol, verbose=False,
-                              cancel_check=cancel_check)
+            with warning_scope(side_warnings[1]):
+                res[1] = sB.solve(max_iter=max_iter, tol=tol, verbose=False,
+                                  cancel_check=cancel_check)
         except Exception as e:
             err[1] = e
 
@@ -280,6 +287,7 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
     tB = threading.Thread(target=_solve_B, daemon=True)
     tA.start(); tB.start()
     tA.join();  tB.join()
+    merge_warnings(parent_warnings, side_warnings)
 
     if _prof:
         _dt = _time.perf_counter() - _t0

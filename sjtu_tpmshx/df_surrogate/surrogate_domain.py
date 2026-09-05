@@ -25,7 +25,8 @@ def check_surrogate_domain_at_point(tpms_type: str,
                                     P: float = 101325.0,
                                     side: str = 'A',
                                     allow_extrap: bool = False,
-                                    fluid: str = 'air') -> List[str]:
+                                    fluid: str = 'air', *,
+                                    nu_reasons: list[str] | None = None) -> List[str]:
     """Point-form surrogate-domain check for the Compute path.
 
     Computes Re with the selected fluid and checks only that fluid's Nu fit
@@ -42,6 +43,9 @@ def check_surrogate_domain_at_point(tpms_type: str,
     allow_extrap : bool — when True (or env TPMSHX_ALLOW_EXTRAP=1), out-of-window
         inputs warn instead of raising; this function returns the reason strings
         so callers can surface them on results / plots.
+    nu_reasons : optional output list — receive Nu reasons separately, leaving
+        only D-F geometry reasons in the return value. All checks and rejection
+        rules still apply; omitted preserves the standalone combined result.
 
     Returns
     -------
@@ -69,24 +73,29 @@ def check_surrogate_domain_at_point(tpms_type: str,
     D_h = _geom(tpms_type, L_mm, t_mm, k_s)['D_h']
     Re = rho * u * D_h / mu
 
-    reasons: list[str] = []
+    nu_at_point: list[str] = []
     re_range = {'air': NU_RE_FIT_RANGE, 'water': WATER_NU_RE_RANGE,
                 'sco2': SCO2_NU_RE_RANGE}[model.name]
     if not re_range[0] <= Re <= re_range[1]:
-        reasons.append(
+        nu_at_point.append(
             f"Fluid {side}: Re = {Re:.0f} outside {model.name} Nu window "
             f"[{re_range[0]:.0f}, {re_range[1]:.0f}] "
             f"(u={u} m/s, T={T} K, P={P:.0f} Pa, L={L_mm}mm, t={t_mm}mm)."
         )
+    geometry_reasons: list[str] = []
     if not _SURROGATE_L_MM[0] <= float(L_mm) <= _SURROGATE_L_MM[-1]:
-        reasons.append("V2 L_cell must be inside the 4..8 mm CFD grid.")
+        geometry_reasons.append("V2 L_cell must be inside the 4..8 mm CFD grid.")
     if not _SURROGATE_T_MM[0] <= float(t_mm) <= _SURROGATE_T_MM[-1]:
-        reasons.append("V2 wall thickness must be inside the 0.3..0.6 mm CFD grid.")
+        geometry_reasons.append("V2 wall thickness must be inside the 0.3..0.6 mm CFD grid.")
 
+    reasons = nu_at_point + geometry_reasons
     if reasons:
         if allow_extrap:
             for r in reasons:
                 _w.warn("[surrogate extrap] " + r, stacklevel=2)
         else:
             raise ValueError(" | ".join(reasons))
+    if nu_reasons is not None:
+        nu_reasons.extend(nu_at_point)
+        return geometry_reasons
     return reasons
