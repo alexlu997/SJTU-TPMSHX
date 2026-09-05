@@ -10,8 +10,31 @@ Run with:
 """
 
 import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
+
+
+def test_singular_pp_records_nonfinite_fact_without_changing_solution():
+    from scipy.sparse.linalg import MatrixRankWarning
+    from sjtu_tpmshx.domain.run_warnings import warning_scope
+    from sjtu_tpmshx.solvers.simple_solver import (
+        _solve_pp_sparse_fast, _build_pp_sparsity_pattern,
+    )
+
+    # Two connected cells with no pressure reference: [[1, -1], [-1, 1]].
+    u, v, d_u, d_v, rho, outlet, dx, dy = _make_test_grid(1, 2, seed=7)
+    for array in (d_u, d_v, rho, dx, dy):
+        array.fill(1)
+    outlet.fill(0)
+    sparsity = _build_pp_sparsity_pattern(1, 2, outlet)
+    correction = np.zeros((1, 2))
+    with warning_scope({}) as records, pytest.warns(MatrixRankWarning):
+        _solve_pp_sparse_fast(correction, u, v, d_u, d_v, outlet,
+                              1, 2, dx, dy, rho, sparsity)
+    assert np.isnan(correction).all()
+    assert list(records.values()) == [
+        'pressure-Poisson solve returned non-finite corrections']
 
 # Old (reference) implementation — will be removed from simple_solver.py in
 # Task 5 but lives here as a gold standard during migration.
