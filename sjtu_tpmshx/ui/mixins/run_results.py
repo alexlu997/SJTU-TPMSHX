@@ -102,7 +102,8 @@ class RunResultsMixin:
             return
 
         # Export must select this newly published 2D run, not a prior 3D run.
-        self._result_3d = None
+        if getattr(self, '_result_3d', None) is not None:
+            self._result_3d = None
         f = result.fields
         self._compute_results = {
             'converged': result.converged,
