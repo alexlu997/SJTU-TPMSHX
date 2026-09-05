@@ -10,6 +10,7 @@ deliberately imports no Qt, so headless tests can pass plain stub objects.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -339,9 +340,8 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
     Pipeline2D / Pipeline3D layer never touches the Qt zone-table
     widget.
 
-    The pre-resolution is wrapped in ``try/except`` so test stubs that
-    set ``chk_zones=True`` but skip the full ``zone_table`` widget
-    still produce a usable ``ZoneInputConfig`` (with ``config=None``).
+    Invalid enabled zones propagate through the existing input-error channel.
+    Mutable grid and Pareto inputs belong to this snapshot after capture.
     """
     chk = getattr(window, 'chk_zones', None)
     enabled = bool(chk is not None and getattr(chk, 'isChecked', lambda: False)())
@@ -355,18 +355,13 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
             axis = 'y'
 
     # Pre-resolve ZoneConfig (1D zone mode needs the zone-table rows).
-    # Grid mode populates ``window._zone_grid`` as a side effect of the
-    # same call.  Skip silently when the call cannot fire — tests pass
-    # plain ``object()`` stubs without a real zone_table widget.
+    # Grid mode populates ``window._zone_grid`` as a side effect.
     resolved_config = None
     if enabled:
-        try:
-            from sjtu_tpmshx.ui.zone_table import build_zone_config as _bzc
-            resolved_config = _bzc(window)
-        except Exception:
-            resolved_config = None
+        from sjtu_tpmshx.ui.zone_table import build_zone_config as _bzc
+        resolved_config = _bzc(window)
     grid = getattr(window, '_zone_grid', None)
-    return ZoneInputConfig(
+    return deepcopy(ZoneInputConfig(
         enabled=enabled,
         axis=axis,
         grid=grid if isinstance(grid, dict) else None,
@@ -376,7 +371,7 @@ def _read_zone_input(window) -> 'ZoneInputConfig':
             getattr(window, '_pareto_y_trans_inlet', 0.2)),
         pareto_y_trans_outlet=float(
             getattr(window, '_pareto_y_trans_outlet', 0.2)),
-    )
+    )).validate()
 
 
 def _read_feature_flags(window) -> 'FeatureFlags':
@@ -413,20 +408,16 @@ def config_from_window(window, *, strict: bool = False,
     ``window.combo_*`` exactly once; missing optional widgets fall back
     to the dataclass defaults. ``strict=True`` raises ``ValueError``
     listing every blank / non-numeric required widget; ``force_3d``
-    overrides the 3D-validation set (None = auto from le_Nz).
+    selects the effective dimension (None = combo_dim, or le_Nz for
+    headless callers). Hidden widget values are never changed.
     """
+    is_3d = force_3d
+    if is_3d is None:
+        combo_dim = getattr(window, 'combo_dim', None)
+        is_3d = (combo_dim.currentIndex() == 1 if combo_dim is not None
+                 else _qt_int(getattr(window, 'le_Nz', None), 1) >= 2)
     if strict:
-        is_3d_for_check = force_3d
-        if is_3d_for_check is None:
-            try:
-                _nz_widget = getattr(window, 'le_Nz', None)
-                is_3d_for_check = (
-                    _nz_widget is not None and
-                    int(_qt_text(_nz_widget).strip() or '1') >= 2
-                )
-            except ValueError:
-                is_3d_for_check = False
-        _validate_required_widgets(window, is_3d=bool(is_3d_for_check))
+        _validate_required_widgets(window, is_3d=is_3d)
     # ── table-driven scalar reads (B2 2.4: CONFIG_FIELDS single source;
     # ── special rows keep their bespoke semantics explicit below) ──
     # geometry — tpms combo parse + Lz None-when-absent are special:
@@ -457,6 +448,11 @@ def config_from_window(window, *, strict: bool = False,
         # them yet (audit deferred to a later phase)
         **_read_section_fields(window, 'solver'),
     )
+    if not is_3d and (force_3d is not None or
+                      getattr(window, 'combo_dim', None) is not None):
+        solver.Nz = 1
+    elif is_3d and solver.Nz < 2:
+        raise ValueError('Grid Nz must be >= 2 for 3D compute')
 
     # fluids — type combos special; fluid_B.u_mps defaults to A's value:
     fluid_A = FluidConfig(

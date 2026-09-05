@@ -344,6 +344,28 @@ class ZoneInputConfig:
     pareto_y_trans_inlet: float = 0.2
     pareto_y_trans_outlet: float = 0.2
 
+    def validate(self) -> 'ZoneInputConfig':
+        """Reject invalid rectangles; partial coverage keeps its existing meaning."""
+        import math
+
+        if not self.enabled or self.axis != 'grid':
+            return self
+        if not isinstance(self.grid, dict) or not self.grid.get('cells'):
+            raise ValueError('Enabled grid zones require non-empty grid cells')
+        for index, cell in enumerate(self.grid['cells'], 1):
+            for axis in ('x', 'y'):
+                try:
+                    start, end = cell[f'{axis}0'], cell[f'{axis}1']
+                    valid = (math.isfinite(start) and math.isfinite(end)
+                             and 0 <= start < end <= 1)
+                except (KeyError, TypeError):
+                    valid = False
+                if not valid:
+                    raise ValueError(
+                        f'Zone grid cell {index}: {axis} coordinates must be '
+                        'finite and satisfy 0 <= start < end <= 1')
+        return self
+
 
 @dataclass
 class ExtrapPolicy:
@@ -460,6 +482,7 @@ class ComputeConfig:
         """
         import math
 
+        self.zones.validate()
         if self.df_mode not in ('cfd_smooth', 'experimental'):
             raise ValueError(
                 f"ComputeConfig.df_mode={self.df_mode!r} — must be "
