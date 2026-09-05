@@ -34,13 +34,13 @@ from sjtu_tpmshx.ui.fmt import duration as _fmt_dur
 from sjtu_tpmshx.ui.ui_constants import VV_VELOCITY_LIMIT_MS, TOAST_MS_MED, TOAST_MS_SHORT
 
 
-def _run_pipeline(cfg, cancel_token, progress_cb, *, ui_hooks):
+def _run_pipeline(cfg, cancel_token, progress_cb, *, pipeline_cls, ui_hooks):
     """Worker owns the pipeline; only callbacks and plain data cross threads."""
-    from sjtu_tpmshx.controllers.compute_pipeline import pipeline_for, CancelledError
+    from sjtu_tpmshx.controllers.compute_pipeline import CancelledError
     from sjtu_tpmshx.controllers.compute_orchestrator import ComputeOrchestrator
 
     try:
-        return pipeline_for(cfg, progress_cb=progress_cb,
+        return pipeline_cls(cfg, progress_cb=progress_cb,
                             cancel_token=cancel_token, ui_hooks=ui_hooks).run()
     except CancelledError as exc:
         raise ComputeOrchestrator.CancelledError() from exc
@@ -113,7 +113,8 @@ class RunControllerMixin:
             return
 
         live_residuals = {'A': [], 'B': []}
-        worker = partial(_run_pipeline, ui_hooks={
+        from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
+        worker = partial(_run_pipeline, pipeline_cls=Pipeline2D, ui_hooks={
             'live_residuals': live_residuals,
             'iter_label_cb': self.compute.iteration.emit,
         })
@@ -277,7 +278,8 @@ class RunControllerMixin:
         from PySide6.QtCore import QTimer
 
         emit_iteration = self.compute.iteration.emit
-        worker = partial(_run_pipeline, ui_hooks={
+        from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
+        worker = partial(_run_pipeline, pipeline_cls=Pipeline3D, ui_hooks={
             'iter_cb': lambda k, n: emit_iteration(f"outer {k}/{n}"),
         })
 

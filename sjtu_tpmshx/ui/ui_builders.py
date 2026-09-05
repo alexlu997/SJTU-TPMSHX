@@ -401,7 +401,7 @@ def build_param_tabs(window):
         ("几何与结构", True,
          ['domain_geometry', 'tpms_structure', 'tpms_computed']),
         ("流体", True,
-         ['fluids_row', 'preview_btn']),
+         ['df_method', 'fluids_row', 'preview_btn']),
         ("网格与求解器", False,
          ['grid_rect', 'mesh_poly', 'material']),
         ("边界细节与高级", False,

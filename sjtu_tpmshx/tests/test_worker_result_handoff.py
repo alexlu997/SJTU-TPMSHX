@@ -37,7 +37,6 @@ def win(tmp_path, monkeypatch):
                         lambda self, parent=None: original_init(
                             self, base_dir=tmp_path, parent=parent))
     monkeypatch.setenv('SJTU_TPMSHX_DISABLE_3D_PANEL', '1')
-    monkeypatch.setattr(Main_Menu, '_maybe_show_onboarding', lambda self: None)
     window = Main_Menu()
     window._K_ffA = window._K_ffB = 1e-8
     monkeypatch.setattr(window, '_validate_inputs_preflight', lambda: True)
@@ -65,6 +64,35 @@ def _configure(win, monkeypatch, mode):
     monkeypatch.setattr('sjtu_tpmshx.ui.window_config.config_from_window',
                         lambda *args, **kwargs: cfg)
     return cfg
+
+
+@pytest.mark.parametrize('dimensions', [(0,), (1, 0)])
+def test_real_window_config_preserves_explicit_pipeline_mode(win, monkeypatch, dimensions):
+    """A hidden Nz survives switching to 2D; it must not select Pipeline3D."""
+    win.combo_shape.setCurrentIndex(0)
+    win.le_Nz.setText('5')
+    win.auto_fill_fluid_a()
+    win.auto_fill_fluid_b()
+    assert isValid(win.combo_df_mode)
+    assert win.isAncestorOf(win.combo_df_mode)
+    calls = []
+
+    def run(pipe):
+        mode = '3d' if isinstance(pipe, Pipeline3D) else '2d'
+        calls.append((mode, pipe.cfg.solver.Nz))
+        return ComputeResult(Q_W=123, diagnostics={'mode': mode})
+
+    monkeypatch.setattr(Pipeline2D, 'run', run)
+    monkeypatch.setattr(Pipeline3D, 'run', run)
+    monkeypatch.setattr(win, '_render_compute_result', lambda: True)
+    for dim in dimensions:
+        win.combo_dim.setCurrentIndex(dim)
+        win.run_calculation()
+        _wait_for(win.compute.is_idle)
+        mode = '3d' if dim else '2d'
+        assert win.compute.current_mode() == mode
+        assert win.compute.last_result().diagnostics['mode'] == mode
+    assert calls == [('3d' if dim else '2d', 5) for dim in dimensions]
 
 
 @pytest.mark.parametrize('mode', ['2d', '3d'])
