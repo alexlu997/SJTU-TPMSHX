@@ -39,3 +39,197 @@ def test_explicit_reference_keeps_variable_density_inlet_mass_flux():
     solver.solve(max_iter=1, tol=0.0, verbose=False)
 
     assert np.allclose(solver.rho_field[:, 0] * solver.v[:, 0], 62.5)
+
+
+# Synthetic full selections: no workbook or production pipeline is run.
+def _q_results(diamond=0.20, gyroid=0.05):
+    import pandas as pd
+
+    rows = [dict(dimension=dim, topology=topo, case=case,
+                 Q_ref_W=100.0, Q_solver_W=100.0 * (1.0 + error),
+                 Q_error_rel=0.0, numerical_ok=True, df_mode="cfd_smooth")
+            for dim in ("2d", "3d")
+            for topo, error in (("Diamond", diamond), ("Gyroid", gyroid))
+            for case in (1, 2)]
+    result = pd.DataFrame(rows)
+    result.attrs["expected_cases"] = {"Diamond": [1, 2], "Gyroid": [1, 2]}
+    return result
+
+
+@pytest.mark.parametrize("diamond,gyroid,passed", [
+    (0.20, 0.05, True), (0.20 - 1e-8, 0.05 - 1e-8, True),
+    (0.20 + 1e-8, 0.0, False), (0.0, 0.05 + 1e-8, False),
+    (-0.20, -0.05, True), (-0.20 - 1e-8, 0.0, False),
+])
+def test_q_limits_use_actual_q_per_group(diamond, gyroid, passed):
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(diamond, gyroid)
+    # Deliberately inconsistent error column must never manufacture a pass.
+    assert runner._accept_q(result, result.attrs["expected_cases"],
+                            ["2d", "3d"]) is passed
+
+
+@pytest.mark.parametrize("failure", [
+    "empty", "missing_group", "missing_case", "duplicate", "unexpected",
+    "nan", "inf", "zero_ref", "negative_ref", "numerical", "null_numerical",
+    "empty_expected", "one_bad_dimension",
+])
+def test_q_acceptance_rejects_incomplete_or_invalid_results(failure):
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(0.0, 0.0)
+    expected = result.attrs["expected_cases"]
+    if failure == "empty":
+        result = pd.DataFrame()
+    elif failure == "missing_group":
+        result = result.iloc[2:]
+    elif failure == "missing_case":
+        result = result.iloc[1:]
+    elif failure == "duplicate":
+        result.loc[1, "case"] = 1
+    elif failure == "unexpected":
+        result.loc[1, "case"] = 99
+    elif failure in ("nan", "inf"):
+        result.loc[0, "Q_solver_W"] = float(failure)
+    elif failure in ("zero_ref", "negative_ref"):
+        result.loc[0, "Q_ref_W"] = 0.0 if failure == "zero_ref" else -100.0
+    elif failure == "numerical":
+        result.loc[0, "numerical_ok"] = False
+    elif failure == "null_numerical":
+        result["numerical_ok"] = result["numerical_ok"].astype("boolean")
+        result.loc[0, "numerical_ok"] = pd.NA
+    elif failure == "empty_expected":
+        expected = {"Diamond": [], "Gyroid": [1, 2]}
+    else:
+        result.loc[4:5, "Q_solver_W"] = 130.0  # 3D Diamond alone exceeds 20%.
+    assert not runner._accept_q(result, expected, ["2d", "3d"])
+
+
+def test_fixed_selection_and_run_manifest(monkeypatch):
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    df = pd.DataFrame([
+        dict(case=case, side=side, ok_done=True, ok_hb=True,
+             ok_dp=False, ok_dT=False, Tin_C=100.0, Tout_C=110.0,
+             Pin_MPa=9.0, Pout_MPa=8.0, mdot=0.05)
+        for case in range(1, 6) for side in ("hot", "cold")])
+    df.loc[df.case == 3, "ok_hb"] = False
+    df.loc[(df.case == 4) & (df.side == "cold"), "Pin_MPa"] = 17.0
+    df.loc[df.case == 5, "ok_done"] = False
+    assert runner._valid_case_numbers(df) == [1, 2]
+    monkeypatch.setattr(runner, "load_exp", lambda topology: df)
+    monkeypatch.setattr(runner, "_print_geometry", lambda *args: None)
+    monkeypatch.setattr(runner, "_print_summary", lambda *args: None)
+    calls = []
+
+    def fake_case(topology, case, dimension, frame):
+        calls.append((topology, case, dimension))
+        return dict(topology=topology, case=case, dimension=dimension,
+                    flow_err_hot_rel=0., flow_err_cold_rel=0., Q_solver_W=100.,
+                    Q_hot_exp_W=100., Q_cold_exp_W=100., Q_error_rel=0.,
+                    enthalpy_imbalance_rel=0., numerical_ok=False, df_mode="cfd_smooth")
+
+    monkeypatch.setattr(runner, "_run_case", fake_case)
+    result = runner.run(["Diamond", "Gyroid"], ["2d", "3d"],
+                        case=None, all_valid=True)
+    assert len(calls) == len(result) == 8  # Failed cases remain in the result.
+    assert result.attrs["expected_cases"] == {"Diamond": [1, 2], "Gyroid": [1, 2]}
+    assert result.attrs["ranges"]["Diamond"]["Pin_MPa"] == [9., 9.]
+
+
+@pytest.mark.parametrize("args", [
+    ["--accept-q"], ["--accept-q", "--case", "1", "--topology", "Diamond"],
+    ["--accept-q", "--all-valid", "--case", "1", "--topology", "Diamond"],
+])
+def test_q_cli_requires_full_selection_before_loading(monkeypatch, args):
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    monkeypatch.setattr("sys.argv", ["validate_sco2_exp_q", *args])
+    monkeypatch.setattr(runner, "load_exp", lambda *args: pytest.fail("loaded data"))
+    with pytest.raises(SystemExit) as exc:
+        runner.main()
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("accept,over_limit,exit_code", [
+    (False, True, 0), (True, True, 1), (True, False, 0),
+])
+def test_q_cli_verdict_and_legacy_csv(monkeypatch, tmp_path, capsys,
+                                     accept, over_limit, exit_code):
+    import json
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(0.21 if over_limit else 0.20, 0.05).iloc[:2].copy()
+    result.attrs["expected_cases"] = {"Diamond": [1, 2]}
+    output = tmp_path / "q.csv"
+    args = ["runner", "--topology", "Diamond", "--dimension", "2d",
+            "--csv", str(output)]
+    if accept:
+        args += ["--all-valid", "--accept-q"]
+    monkeypatch.setattr("sys.argv", args)
+
+    def fake_run(topologies, dimensions, *, case, all_valid):
+        assert topologies == ["Diamond"] and dimensions == ["2d"]
+        assert case is None and all_valid is accept
+        return result
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    assert runner.main() == exit_code
+    assert len(pd.read_csv(output)) == 2  # No comment-header format change.
+    metadata = json.loads(output.with_suffix(".csv.meta.json").read_text(
+        encoding="utf-8"))
+    assert metadata["expected_cases"] == {"Diamond": [1, 2]}
+    assert metadata["dimensions"] == ["2d"]
+    assert metadata["df_modes"] == ["cfd_smooth"]
+    assert metadata["actual_data_revision"] == "unverified"
+    assert metadata["exit_ok"] is (exit_code == 0)
+    assert bool(metadata["commit"])
+    if accept:
+        assert "not G1/G2 or full-core energy acceptance" in capsys.readouterr().out
+
+
+def test_q_cli_metadata_on_strict_cp1252_stdout(monkeypatch):
+    import io
+    import json
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    monkeypatch.setattr("sys.argv", ["runner", "--all-valid", "--accept-q"])
+    monkeypatch.setattr(runner, "run", lambda *args, **kwargs: _q_results())
+    with io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict") as stream:
+        monkeypatch.setattr("sys.stdout", stream)
+        assert runner.main() == 0
+        stream.flush()
+        output = stream.buffer.getvalue().decode("cp1252")
+    metadata = json.loads(output.splitlines()[0].removeprefix("RUN "))
+    assert metadata["sheets"] == ["实验数据处理-Diamond", "实验数据处理-Gyroid"]
+
+
+def test_zero_reference_still_fails_diagnostic_case(monkeypatch):
+    from types import SimpleNamespace
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    row = pd.Series(dict(Tin_C=100., Tout_C=100., Pin_MPa=9., mdot=0.05,
+                         Q_kW=0., dP_MPa=0.01))
+    frame = pd.DataFrame()
+    frame.attrs.update(A_flow_m2=0.001, A_heat_m2=1.)
+    monkeypatch.setattr(runner, "_case_rows", lambda *args: (row, row))
+    monkeypatch.setattr(runner, "_solver_geometry", lambda *args: dict(
+        void_area_m2=0.001, heat_area_m2=1.))
+    monkeypatch.setattr(runner.fluid_props, "get", lambda *args: SimpleNamespace(
+        rho=lambda *args: 100.))
+    result = SimpleNamespace(
+        Q_W=100., converged=True, T_out_A_K=373.15, T_out_B_K=373.15,
+        diagnostics=dict(mass_flow_A_kg_s_per_m=0.05 / runner.CORE_DEPTH_M,
+                         mass_flow_B_kg_s_per_m=0.05 / runner.CORE_DEPTH_M),
+        residuals=dict(mass_imbalance_rel_A=0., mass_imbalance_rel_B=0.,
+                       enthalpy_imbalance_rel=0.),
+        metadata={"darcy_forchheimer": {"mode": "cfd_smooth"}})
+    monkeypatch.setattr(runner, "Pipeline2D", lambda *args: SimpleNamespace(
+        run=lambda: result))
+    with pytest.raises(ZeroDivisionError):
+        runner._run_case("Diamond", 1, "2d", frame)
