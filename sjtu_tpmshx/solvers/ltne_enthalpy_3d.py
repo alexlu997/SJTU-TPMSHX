@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 from numba import njit
+from sjtu_tpmshx.domain.cancellation import CancelledError
 
 
 _T_LO, _T_HI = 240.0, 420.0
@@ -329,7 +330,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                                     pressure_A_field=None, pressure_B_field=None,
                                     mass_flux_A=None, mass_flux_B=None,
                                     Ta_init=None, Tb_init=None, Ts_init=None,
-                                    n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5):
+                                    n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5,
+                                    cancel_check=None):
     """Pipeline-facing true-enthalpy LTNE solve using SIMPLE face mass flow.
 
     Drives the njit enthalpy kernel from the production pipeline's fielded data
@@ -396,6 +398,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     n_done = 0
     resid = 0.0
     for outer in range(n_outer):
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
         T_A = _T_of_h_field(hA, P_A_field, fluid_A)
         T_B = _T_of_h_field(hB, P_B_field, fluid_B)
         cpA = _prop_field("C", T_A, P_A_field, fluid_A)
@@ -413,6 +417,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
             int(n_sweep), float(omega), h_lo_A, h_hi_A, h_lo_B, h_hi_B)
 
         n_done = outer + 1
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
         denom = max(abs(h_in_A - h_in_B), 1.0)
         resid = max(np.max(np.abs(hA - hA_star)),
                     np.max(np.abs(hB - hB_star))) / denom

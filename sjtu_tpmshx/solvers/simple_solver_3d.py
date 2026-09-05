@@ -79,6 +79,7 @@ from __future__ import annotations
 import os
 from time import perf_counter as _perf_counter
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 from scipy import sparse
 
 try:
@@ -786,10 +787,8 @@ class SIMPLESolver3D:
 
         cancel_check : optional callable -> bool. Polled every 25 outer SIMPLE
             iterations (cheap; the JIT sweeps inside one iteration are not
-            interruptible). When it returns True the loop breaks early and
-            returns the current iterate so the caller can abort responsively
-            (UI report point 4, 2026-05-22 — water Re~33 needs thousands of
-            iterations, so an outer-loop-only cancel left the user waiting).
+            interruptible). True raises CancelledError; a cancelled solve
+            never returns a partial iterate as a completed result.
 
         `tol` IS NOT THE CONVERGENCE CRITERION — read this before touching it
         ----------------------------------------------------------------------
@@ -1029,8 +1028,8 @@ class SIMPLESolver3D:
             # Cooperative cancel (point 4): poll every 25 iters — cheap, and
             # fine enough that a water solve aborts in well under a second.
             if cancel_check is not None and (it % 25 == 0) and cancel_check():
-                self._cancelled = True
-                break
+                self.exit_reason = 'cancelled'
+                raise CancelledError("compute cancelled by user")
             # Effective density for continuity: ε·ρ. Uniform ε → multiplicative
             # constant (no functional change). Zoned ε → captures macroscopic
             # ∇·(ε·ρ·u)=0 form; without this the ∇ε contribution is dropped.
@@ -1253,8 +1252,7 @@ class SIMPLESolver3D:
                 self.exit_reason = _reason
                 return (_reason == 'velocity'), it
 
-        self.exit_reason = ('cancelled' if getattr(self, '_cancelled', False)
-                            else 'max_iter')
+        self.exit_reason = 'max_iter'
         return False, max_iter
 
     # ── ledger C7 — momentum residual, balanced normalisation ─────────

@@ -24,6 +24,7 @@ Phase 1 additions (2026-04-20):
 """
 
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 
 from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain as _solve_full_2d
 
@@ -367,7 +368,7 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
                     eps_A=None, eps_B=None,
                     chi_B_field=None,
                     mms_S_A_field=None, mms_S_B_field=None,
-                    mms_S_s_field=None):
+                    mms_S_s_field=None, cancel_check=None):
     """Nz == 1 shortcut: squeeze z axis and call 2D solver for bitwise equivalence.
     alpha_T is accepted but ignored (2D uses Q-chunk convergence).
     q_rel_tol / conv_chunk passed through to the 2D solver (None = legacy).
@@ -440,7 +441,7 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         inlet_mask_B=_sq_mask(inlet_mask_B, dir_B),
         Tb_prescribed=_sq3(Tb_prescribed),
         eps_A=_sq3(eps_A), eps_B=_sq3(eps_B),
-        q_rel_tol=q_rel_tol, conv_chunk=conv_chunk)
+        q_rel_tol=q_rel_tol, conv_chunk=conv_chunk, cancel_check=cancel_check)
 
     if return_info:
         Ta2, Tb2, Ts2, _info2 = _d2
@@ -542,7 +543,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             eps_A=eps_A, eps_B=eps_B,
             chi_B_field=chi_B_field,
             mms_S_A_field=mms_S_A_field, mms_S_B_field=mms_S_B_field,
-            mms_S_s_field=mms_S_s_field)
+            mms_S_s_field=mms_S_s_field, cancel_check=cancel_check)
 
     if not (0.0 < alpha_T <= 1.0):
         raise ValueError(f"alpha_T must be in (0, 1], got {alpha_T}")
@@ -774,6 +775,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             ufB, vfB, wfB, eps_fB_arr, rho_cp_fB_arr, dx_arr, dy_arr, dz_arr)
 
     while done < max_iter:
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
         n = min(chunk, max_iter - done)
         if use_stag:
             _use_rb = _RB_ENERGY and (Nx * Ny * Nz > _RB_ENERGY_GATE)
@@ -809,7 +812,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         # Cooperative cancel (point 4): bail between GS chunks so a long LTNE
         # solve aborts promptly instead of waiting out all max_iter sweeps.
         if cancel_check is not None and cancel_check():
-            break
+            raise CancelledError("compute cancelled by user")
 
         # Convergence: AND of (relative ΔQ_B) and (max |ΔT*|). Q-only
         # could flag converged while Ta/Ts drifted — especially when Tb

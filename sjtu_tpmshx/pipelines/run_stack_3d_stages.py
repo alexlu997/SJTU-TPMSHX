@@ -14,6 +14,7 @@ import os
 import time as _time
 from dataclasses import dataclass
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
@@ -248,10 +249,9 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
     (own matrix, ml_cache, arrays) — no shared mutable state.
 
     `cancel_check` (optional callable -> bool) is forwarded to both solves so
-    each thread breaks its SIMPLE loop early on cancel; after the join the
-    caller raises if cancellation was requested (point 4).
+    each thread exits its SIMPLE loop on cancel.
 
-    Raises the first worker's exception (if any) after both threads finish.
+    After both threads finish, real failures take precedence over cancellation.
     """
     import threading
     if tol is None:
@@ -288,14 +288,15 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
         _prof_res_trace("initial SIMPLE_A", sA)
         _prof_res_trace("initial SIMPLE_B", sB)
 
-    if err[0] is not None:
-        raise err[0]
-    if err[1] is not None:
-        raise err[1]
-    # Both threads may have broken early on cancel; surface it as the same
-    # InterruptedError the outer loop uses so the worker treats it as a cancel.
+    for exc in err:
+        if exc is not None and not isinstance(exc, CancelledError):
+            raise exc
+    for exc in err:
+        if exc is not None:
+            raise exc
+    # Also catch a request arriving after the last solver checkpoint.
     if cancel_check is not None and cancel_check():
-        raise InterruptedError("compute cancelled by user")
+        raise CancelledError("compute cancelled by user")
     return res    # [(converged_A, iters_A), (converged_B, iters_B)|None]
 
 
@@ -2378,7 +2379,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # — a JIT'd SIMPLE inner sweep cannot be interrupted. The UI sets the
         # flag via the Cancel button or the wall-clock timeout.
         if _cancel_check is not None and _cancel_check():
-            raise InterruptedError("compute cancelled by user")
+            raise CancelledError("compute cancelled by user")
         if _iter_cb is not None:
             _iter_cb(outer + 1, _max_outer)
         if _progress_cb is not None:
@@ -2738,7 +2739,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                 n_sweep=int(cfg.get('ltne_enthalpy_nsweep', 25)),
                 omega=float(cfg.get('ltne_enthalpy_omega', 0.6)),
                 n_outer=int(cfg.get('ltne_enthalpy_outer', 1500)),
-                tol=float(cfg.get('ltne_enthalpy_tol', 1e-3)))
+                tol=float(cfg.get('ltne_enthalpy_tol', 1e-3)),
+                cancel_check=_cancel_check)
 
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')
@@ -2746,7 +2748,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _eps_A_strict_cellmax = _ltne_info_d.get('eps_A_strict_cellmax')
         _eps_B_strict_cellmax = _ltne_info_d.get('eps_B_strict_cellmax')
         if _cancel_check is not None and _cancel_check():
-            raise InterruptedError("compute cancelled by user")
+            raise CancelledError("compute cancelled by user")
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))

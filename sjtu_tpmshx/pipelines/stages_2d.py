@@ -412,7 +412,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
     def _run_simple(cfg_fluid, rho_f, mu_f, T_in_f, u_f, label, P_in_abs=101325.0,
                     T_field_real=None, fluid_type='ideal_gas',
                     p_shoot_prev=None, df_method=None,
-                    rho_inlet_ref=None, fluid_name='air'):
+                    rho_inlet_ref=None, fluid_name='air', cancel_check=None):
         """Build + solve SIMPLE for one fluid.
 
         T_field_real : optional 2D array (Nx, Ny) of cell-centered T. When
@@ -739,7 +739,7 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
         s.mass_global_tol = float(_f2_knob('mass_global_tol', 1e-6))
 
         conv, n_it = s.solve(max_iter=_max_it, tol=_tol, verbose=False,
-                               progress_cb=_progress_cb)
+                               progress_cb=_progress_cb, cancel_check=cancel_check)
         if not conv:
             # Under f2 the legacy `residuals[-1]` is the C9 tautology (~1e-15
             # on a full-face outlet) — quoting it makes a FAILED solve look
@@ -808,10 +808,7 @@ def _run_solvers_cfg(cfg: dict[str, Any], fields: dict[str, Any], *,
     enclosing :class:`ComputePipeline.run` adds its own 20 / 90 / 100
     ticks around the three phases.
 
-    ``cancel_token`` is currently passive — ``_run_solvers`` does not
-    poll for cancellation inside its inner loops. The Pipeline ABC
-    checks the token between phases, so worst case the user waits one
-    full solver pass.  C5+ may push cancel polling inward.
+    ``cancel_token`` is polled at solver iteration/chunk boundaries.
 
     ``ui_hooks`` (B2 2.1a): optional dict; ``'iter_label_cb'`` receives
     the shim-captured ``_iter_label_now`` strings ("iter k/N").
@@ -820,7 +817,9 @@ def _run_solvers_cfg(cfg: dict[str, Any], fields: dict[str, Any], *,
     _hooks = ui_hooks or {}
     shim = _PipelineWindowShim(compute_cfg, progress_cb=progress_cb,
                                iter_label_cb=_hooks.get('iter_label_cb'))
-    result = _run_solvers(shim, cfg, fields)
+    cancel_check = (None if cancel_token is None else
+                    lambda: bool(getattr(cancel_token, 'cancelled', False)))
+    result = _run_solvers(shim, cfg, fields, cancel_check=cancel_check)
     # Forward shim-captured state into the result dict so Pipeline2D's
     # finalize step can promote it into ComputeResult slots.
     result['_shim_zone_axis_dir'] = shim._zone_axis_dir
