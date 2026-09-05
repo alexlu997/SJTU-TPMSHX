@@ -325,6 +325,32 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
 
 # ── SIMPLE Step 2: y-momentum with D-F closure ───────────────────
 @njit(cache=True)
+def _close_outlet_mass(u, v, outlet_frac, Nx, Ny, dx_arr, dy_arr,
+                       rho_field, eps_field):
+    """Close each pressure-outlet CV: Fn = Fs + Fw - Fe.
+
+    Use the PPE's face-averaged rho*eps, divided by the outlet CV's eps.
+    Epsilon ratios keep uniform-epsilon momentum independent of its value.
+    """
+    j = Ny - 1
+    for i in range(Nx):
+        if outlet_frac[i] > 0.5:
+            rho_c = rho_field[i, j]
+            eps_c = eps_field[i, j]
+            rho_s = (0.5 * (rho_field[i, j - 1] * (eps_field[i, j - 1] / eps_c)
+                            + rho_c) if j > 0 else rho_c)
+            rho_w = (0.5 * (rho_field[i - 1, j] * (eps_field[i - 1, j] / eps_c)
+                            + rho_c) if i > 0 else rho_c)
+            rho_e = (0.5 * (rho_c + rho_field[i + 1, j]
+                            * (eps_field[i + 1, j] / eps_c))
+                     if i < Nx - 1 else rho_c)
+            lateral = (rho_e * u[i + 1, j] - rho_w * u[i, j]) * dy_arr[j] / dx_arr[i]
+            v[i, Ny] = (rho_s * v[i, j] - lateral) / rho_c
+        else:
+            v[i, Ny] = 0.0
+
+
+@njit(cache=True)
 def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                     K_arr, cF_arr, mu_field, eps_field,
@@ -442,22 +468,7 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
     for i in range(Nx):
         v[i, 0] = v_inlet_field[i] * inlet_frac[i]
-        if outlet_frac[i] > 0.5:
-            if Ny >= 2:
-                # M2: extrapolate conserving ε·ρ·v (VANS mass flux), mirroring
-                # the 3D outlet convention. The ε ratio multiplies AFTER the
-                # legacy ρ chain so uniform ε (ratio = 1.0 exactly) reproduces
-                # the pre-M2 float sequence bit-identically.
-                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
-                rho_outer_face = rho_field[i, Ny-1]
-                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
-                eps_outer_face = eps_field[i, Ny-1]
-                v[i, Ny] = (v[i, Ny - 1] * rho_inner_face / rho_outer_face
-                            * (eps_inner_face / eps_outer_face))
-            else:
-                v[i, Ny] = v[i, Ny - 1]
-        else:
-            v[i, Ny] = 0.0
+    _close_outlet_mass(u, v, outlet_frac, Nx, Ny, dx_arr, dy_arr, rho_field, eps_field)
 
 
 # ── SIMPLER steps 1-2: pseudo-velocities (opt-in coupling='simpler') ──
@@ -570,12 +581,13 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
 
 
 @njit(cache=True)
-def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
+def _pseudo_v_jit_df(u, v, uhat, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                      K_arr, cF_arr, mu_field, eps_field, cf_aniso):
     """SIMPLER pseudo-velocity v̂. Writes vhat interior + fills d_v = dx/aP0.
     M2 (2026-07-09): VANS ε-ratio factors mirror _sweep_v_jit_df
-    (coefficient-parity contract)."""
+    (coefficient-parity contract). Outlet closure uses the paired uhat,
+    while momentum coefficients still use the frozen physical u/v."""
     for i in range(Nx):
         for j in range(1, Ny):
             jc = min(j, Ny - 1)
@@ -664,21 +676,7 @@ def _pseudo_v_jit_df(u, v, vhat, d_v, inlet_frac, v_inlet_field, outlet_frac,
 
     for i in range(Nx):
         vhat[i, 0] = v_inlet_field[i] * inlet_frac[i]
-        if outlet_frac[i] > 0.5:
-            if Ny >= 2:
-                # M2: ε·ρ·v-conserving extrapolation — mirrors _sweep_v_jit_df
-                # (ε ratio multiplies AFTER the legacy ρ chain for uniform-ε
-                # bit-identity).
-                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
-                rho_outer_face = rho_field[i, Ny-1]
-                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
-                eps_outer_face = eps_field[i, Ny-1]
-                vhat[i, Ny] = (vhat[i, Ny - 1] * rho_inner_face / rho_outer_face
-                               * (eps_inner_face / eps_outer_face))
-            else:
-                vhat[i, Ny] = vhat[i, Ny - 1]
-        else:
-            vhat[i, Ny] = 0.0
+    _close_outlet_mass(uhat, vhat, outlet_frac, Nx, Ny, dx_arr, dy_arr, rho_field, eps_field)
 
 
 # ── SIMPLE Steps 3-4: pressure correction (sparse direct solver) ──
@@ -724,12 +722,10 @@ def _build_pp_sparsity_pattern(Nx, Ny, outlet_frac):
             # effect. For partial-outlet / zoned configurations, the taper
             # logic in __init__ (L1255-1264) keeps outlet_frac of open cells
             # ≥ 0.706 (d=1 of the 4-cell exp decay), so transition cells in
-            # (0.01, 0.5] should not normally appear — but if a straddling
-            # cell does land in that band, it is pinned here while the v-face
-            # sweep treats it as a wall (L567-577). The mismatch is benign
-            # only because _correct_jit L781-787 unconditionally re-writes
-            # v[i, Ny] via the mass-conservation outflow rule, effectively
-            # promoting such a cell to outlet semantics. Audit: 2026-04-19.
+            # (0.01, 0.5] should not normally appear on an aligned grid.
+            # Retain the reference threshold; velocity closure still treats
+            # fractions <= 0.5 as walls. Straddling-cell threshold semantics
+            # are separate from closing mass on the active outlet cells.
             if j == Ny - 1 and outlet_frac[i] > 0.01:
                 cell_kind[k] = 1
                 indices_list.append(k)
@@ -862,7 +858,7 @@ def _solve_pp_sparse_fast(Pp, u, v, d_u, d_v, outlet_frac,
 # ── SIMPLE Step 5: correction ─────────────────────────────────────
 @njit(cache=True)
 def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
-                 Nx, Ny, alpha_p, rho_field, eps_field):
+                 Nx, Ny, dx_arr, dy_arr, alpha_p, rho_field, eps_field):
     # Pressure correction (skip only outlet cells at j=Ny-1)
     for i in range(Nx):
         for j in range(Ny):
@@ -882,25 +878,7 @@ def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
         u[0, j] = 0.0; u[Nx, j] = 0.0
     for i in range(Nx):
         v[i, 0] = v_inlet_field[i] * inlet_frac[i]
-        # Variable density outflow: ρ·v conserved across last face.
-        # Wall cells (outlet_frac ≤ 0.5) must pin v=0 — matches _sweep_v_jit_df
-        # end-of-sweep BC. Without this gate, zoned / partial-outlet configs
-        # drive spurious through-wall flow that the pp-equation sees as mass
-        # imbalance. Benign for full-outlet Shanghai (outlet_frac ≡ 1).
-        if outlet_frac[i] > 0.5:
-            if Ny >= 2:
-                # M2: ε·ρ·v-conserving — mirrors the sweep/pseudo outlet BC
-                # (ε ratio after the legacy ρ chain; uniform ε bit-identical).
-                rho_inner_face = 0.5 * (rho_field[i, Ny-2] + rho_field[i, Ny-1])
-                rho_outer_face = rho_field[i, Ny-1]
-                eps_inner_face = 0.5 * (eps_field[i, Ny-2] + eps_field[i, Ny-1])
-                eps_outer_face = eps_field[i, Ny-1]
-                v[i, Ny] = (v[i, Ny - 1] * rho_inner_face / rho_outer_face
-                            * (eps_inner_face / eps_outer_face))
-            else:
-                v[i, Ny] = v[i, Ny - 1]
-        else:
-            v[i, Ny] = 0.0
+    _close_outlet_mass(u, v, outlet_frac, Nx, Ny, dx_arr, dy_arr, rho_field, eps_field)
 
 
 # ── SIMPLE Step 6: convergence ────────────────────────────────────

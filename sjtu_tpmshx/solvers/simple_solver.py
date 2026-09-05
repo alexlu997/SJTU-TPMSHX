@@ -451,7 +451,35 @@ class SIMPLESolver:
         # inlet every cell shares the same density ⇒ v_inlet_field is uniform ⇒
         # bit-identical to the scalar path.
         self.v_inlet = v_inlet
-        self.v_inlet_field = np.full(Nx, float(v_inlet), dtype=np.float64)
+
+        # Fields
+        self.u  = np.zeros((Nx + 1, Ny))
+        self.v  = np.zeros((Nx, Ny + 1))
+        self.P  = np.full((Nx, Ny), P_ref)
+        self.Pp = np.zeros((Nx, Ny))
+        self.d_u = np.zeros((Nx + 1, Ny))
+        self.d_v = np.zeros((Nx, Ny + 1))
+
+        # Temperature (allocated on demand)
+        self.Tf = None
+        self.Ts = None
+
+        self._pp_sparsity = None  # lazily built on first solve() call
+        self._refresh_ports(inlet_lo, inlet_hi, outlet_lo, outlet_hi)
+        self.residuals = []
+
+        # If an explicit non-uniform T_field was passed (not the default T_in
+        # broadcast), refresh mu_field / mu_eff_field to match. For the default
+        # uniform T_in case the initial scalar-broadcast from L846-848 is
+        # already consistent with Sutherland at T_in, but calling it is cheap
+        # and guarantees mu_field is in sync with T_field at all times.
+        if self.fluid_type == 'ideal_gas':
+            self._refresh_mu_from_T()
+
+    def _refresh_ports(self, inlet_lo, inlet_hi, outlet_lo, outlet_hi):
+        """Initialize port profiles on the final grid before the first solve."""
+        Nx = self.Nx
+        self.v_inlet_field = np.full(Nx, float(self.v_inlet), dtype=np.float64)
         x_lo_edge = np.concatenate(([0.0], np.cumsum(self.dx_arr[:-1])))
         x_hi_edge = np.cumsum(self.dx_arr)
         self.inlet_frac = np.clip(
@@ -501,31 +529,8 @@ class SIMPLESolver:
         else:
             self.outlet_frac = np.ones(Nx, dtype=np.float64)
 
-        # Fields
-        self.u  = np.zeros((Nx + 1, Ny))
-        self.v  = np.zeros((Nx, Ny + 1))
-        self.P  = np.full((Nx, Ny), P_ref)
-        self.Pp = np.zeros((Nx, Ny))
-        self.d_u = np.zeros((Nx + 1, Ny))
-        self.d_v = np.zeros((Nx, Ny + 1))
-
-        # Temperature (allocated on demand)
-        self.Tf = None
-        self.Ts = None
-
-        # (v_inlet is a fixed-velocity BC; density updates do not modify it)
-
-        self._pp_sparsity = None  # lazily built on first solve() call
+        self.outlet_mask = self.outlet_frac > 0.01
         self._set_bc()
-        self.residuals = []
-
-        # If an explicit non-uniform T_field was passed (not the default T_in
-        # broadcast), refresh mu_field / mu_eff_field to match. For the default
-        # uniform T_in case the initial scalar-broadcast from L846-848 is
-        # already consistent with Sutherland at T_in, but calling it is cheap
-        # and guarantees mu_field is in sync with T_field at all times.
-        if self.fluid_type == 'ideal_gas':
-            self._refresh_mu_from_T()
 
     def _set_bc(self):
         Nx, Ny = self.Nx, self.Ny
@@ -857,7 +862,7 @@ class SIMPLESolver:
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
                                  self.eps_field, self.cf_aniso)
-                _pseudo_v_jit_df(self.u, self.v, self._vhat, self.d_v,
+                _pseudo_v_jit_df(self.u, self.v, self._uhat, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
                                  self.outlet_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
@@ -900,7 +905,7 @@ class SIMPLESolver:
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field,
                              self.outlet_frac,
-                             Nx, Ny, 0.0, self.rho_field, self.eps_field)
+                             Nx, Ny, dx_a, dy_a, 0.0, self.rho_field, self.eps_field)
             else:
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
                                 self.inlet_frac, self.outlet_frac,
@@ -921,7 +926,7 @@ class SIMPLESolver:
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
-                             Nx, Ny, alpha_p, self.rho_field, self.eps_field)
+                             Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
             self._update_density()  # compressible: update rho from P
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
