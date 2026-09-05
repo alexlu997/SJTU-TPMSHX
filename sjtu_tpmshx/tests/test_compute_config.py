@@ -433,7 +433,10 @@ def test_c4_config_from_window_reads_zone_state():
     window = _StubWindow()
     window.chk_zones = _StubCheckBox(checked=True)
     window.combo_zone_axis = _StubComboBox('grid', index=2)
-    window._zone_grid = {'cells': [], 'tpms_type': 'Diamond', 'k_s': 16.0}
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+    window.zone_table = QTableWidget(1, 6)
+    for col, value in enumerate(('0', '100', '0', '100', '6', '0.3')):
+        window.zone_table.setItem(0, col, QTableWidgetItem(value))
     window._pareto_x_decision = [0.1, 0.2, 0.3]
     window._pareto_y_trans_inlet = 0.15
     window._pareto_y_trans_outlet = 0.18
@@ -444,6 +447,30 @@ def test_c4_config_from_window_reads_zone_state():
     assert cfg.zones.grid['tpms_type'] == 'Diamond'
     assert cfg.zones.pareto_x_decision == [0.1, 0.2, 0.3]
     assert cfg.zones.pareto_y_trans_inlet == pytest.approx(0.15)
+    window._zone_grid['cells'][0]['L'] = 8
+    window._pareto_x_decision[0] = 9
+    assert cfg.zones.grid['cells'][0]['L'] == 6
+    assert cfg.zones.pareto_x_decision == [0.1, 0.2, 0.3]
+
+
+@pytest.mark.parametrize('nz', ['1', '5'])
+def test_headless_dimension_and_explicit_override(nz):
+    window = _StubWindow(Nz=nz)
+    assert config_from_window(window).is_3d == (nz == '5')
+    assert not config_from_window(window, force_3d=False).is_3d
+    assert window.le_Nz.text() == nz
+    if nz == '1':
+        with pytest.raises(ValueError, match='Nz'):
+            config_from_window(window, force_3d=True)
+    else:
+        assert config_from_window(window, force_3d=True).is_3d
+
+
+def test_headless_invalid_nz_is_not_silently_repaired():
+    cfg = config_from_window(_StubWindow(Nz='0'))
+    assert cfg.solver.Nz == 0
+    with pytest.raises(ValueError, match='Nz'):
+        cfg.validate()
 
 
 def test_c4_config_from_window_zone_defaults_when_widgets_absent():

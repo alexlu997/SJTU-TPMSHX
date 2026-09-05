@@ -66,7 +66,7 @@ def _configure(win, monkeypatch, mode):
     return cfg
 
 
-@pytest.mark.parametrize('dimensions', [(0,), (1, 0)])
+@pytest.mark.parametrize('dimensions', [(0,), (1, 0, 1)])
 def test_real_window_config_preserves_explicit_pipeline_mode(win, monkeypatch, dimensions):
     """A hidden Nz survives switching to 2D; it must not select Pipeline3D."""
     win.combo_shape.setCurrentIndex(0)
@@ -92,7 +92,110 @@ def test_real_window_config_preserves_explicit_pipeline_mode(win, monkeypatch, d
         mode = '3d' if dim else '2d'
         assert win.compute.current_mode() == mode
         assert win.compute.last_result().diagnostics['mode'] == mode
-    assert calls == [('3d' if dim else '2d', 5) for dim in dimensions]
+    assert calls == [('3d' if dim else '2d', 5 if dim else 1) for dim in dimensions]
+    assert win.le_Nz.text() == '5'
+
+
+def test_default_window_dimension_and_port_validation(win):
+    from sjtu_tpmshx.ui.window_config import config_from_window
+
+    # Startup applies the Shanghai 3D preset; select 2D with those defaults.
+    win.combo_dim.setCurrentIndex(0)
+    assert int(win.le_Nz.text()) >= 2
+    cfg = config_from_window(win, strict=True)
+    assert not cfg.is_3d
+    cfg.bc_A.dir = 4
+    with pytest.raises(ValueError, match='bc_A'):
+        cfg.validate()
+    win.combo_dim.setCurrentIndex(1)
+    cfg = config_from_window(win, strict=True)
+    assert cfg.is_3d
+    cfg.bc_A.dir = 4
+    cfg.bc_A.in_w = cfg.bc_A.out_w = 0
+    cfg.validate()
+
+
+@pytest.mark.parametrize('axis', [0, 2])
+def test_real_window_zone_snapshot_is_independent(win, axis):
+    from sjtu_tpmshx.ui.window_config import config_from_window
+
+    win.combo_dim.setCurrentIndex(0)
+    win.chk_zones.setChecked(True)
+    win.combo_zone_axis.setCurrentIndex(axis)
+    win._pareto_x_decision = np.array([0.1, 0.2, 0.3])
+    cfg = config_from_window(win)
+    win._pareto_x_decision[:] = 9
+    win.zone_table.item(0, win.zone_table.columnCount() - 2).setText('8')
+    assert cfg.zones.pareto_x_decision == pytest.approx([0.1, 0.2, 0.3])
+    if axis == 2:
+        win._zone_grid['cells'][0]['L'] = 8
+        assert cfg.zones.grid['cells'][0]['L'] == 6
+    else:
+        cfg.zones.config.compute_properties(5, 3, 400, 300)
+        assert cfg.zones.config.zones[0].L_mm == 6
+        fresh = config_from_window(win)
+        assert fresh.zones.config.zones[0].L_mm == 8
+        assert not fresh.zones.config.zones[0].props_A
+
+
+@pytest.mark.parametrize('axis,invalid', [
+    (axis, invalid) for axis in (0, 2) for invalid in ('missing', 'empty', 'text')
+] + [(0, 'gap')])
+def test_real_window_rejects_invalid_zone_input(win, monkeypatch, axis, invalid):
+    win.chk_zones.setChecked(True)
+    win.combo_zone_axis.setCurrentIndex(axis)
+    if invalid == 'missing':
+        win.zone_table.takeItem(0, 0)
+    elif invalid == 'empty':
+        win.zone_table.setRowCount(0)
+    else:
+        win.zone_table.item(0, 0).setText('bad' if invalid == 'text' else '10')
+    warnings, starts = [], []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args))
+    win.compute.started.connect(starts.append)
+    win.run_calculation()
+    assert warnings and warnings[0][1] == 'Invalid Input'
+    assert not starts and win.compute.is_idle()
+
+
+@pytest.mark.parametrize('dim', [0, 1])
+def test_real_zoned_pipeline_error_never_publishes(win, monkeypatch, dim):
+    win.combo_dim.setCurrentIndex(dim)
+    win.chk_zones.setChecked(True)
+    win.combo_zone_axis.setCurrentIndex(0)
+    win.chk_allow_extrap.setChecked(True)
+    # 2D water zones and 3D 1D zones are existing unsupported paths.
+    win.combo_fluidB.setCurrentText('Water')
+    published, errors, writes = [], [], []
+    win.compute.finished.connect(published.append)
+    win.compute.error.connect(lambda *args: errors.append(args))
+    monkeypatch.setattr(win, 'write_result', writes.append)
+    pipeline = Pipeline3D if dim else Pipeline2D
+    monkeypatch.setattr(pipeline, 'run_solvers', lambda *args: {})
+    monkeypatch.setattr(pipeline, 'finalize', lambda *args: ComputeResult(Q_W=1))
+    win.run_calculation()
+    _wait_for(win.compute.is_idle)
+    assert errors and not published and not writes
+    assert win.compute.last_result() is None
+
+
+@pytest.mark.parametrize('column,value', [(2, '100'), (3, '0'), (0, '-10'),
+                                         (1, '110'), (2, 'nan'), (3, 'inf')])
+def test_real_window_rejects_invalid_grid_rectangle(win, monkeypatch, column, value):
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    win.chk_zones.setChecked(True)
+    win.combo_zone_axis.setCurrentIndex(2)
+    win.zone_table.setRowCount(1)
+    for col, text in enumerate(('0', '100', '0', '100', '6', '0.3')):
+        win.zone_table.setItem(0, col, QTableWidgetItem(text))
+    win.zone_table.item(0, column).setText(value)
+    warnings, starts = [], []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args))
+    win.compute.started.connect(starts.append)
+    win.run_calculation()
+    assert warnings and 'cell 1' in warnings[0][2]
+    assert not starts and win.compute.is_idle()
 
 
 @pytest.mark.parametrize('mode', ['2d', '3d'])
