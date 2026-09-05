@@ -5,7 +5,79 @@ import pytest
 
 from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D, Pipeline3D
 from sjtu_tpmshx.domain.compute_config import ComputeConfig, ExtrapPolicy, GeometryConfig, SolverConfig, ZoneInputConfig
-from sjtu_tpmshx.solvers.zone_config import ZoneConfig
+from sjtu_tpmshx.solvers.zone_config import Zone, ZoneConfig
+
+
+@pytest.mark.parametrize('axis', ['x', 'y'])
+def test_canonical_1d_json_restores_the_same_zone_fields(tmp_path, capsys, axis):
+    import json
+    from sjtu_tpmshx.cli import main
+    from sjtu_tpmshx.pipelines.stages_2d import _parse_inputs_cfg
+
+    cfg = ComputeConfig(
+        solver=SolverConfig(Nx=8, Ny=6), extrap=ExtrapPolicy(allow=True),
+        zones=ZoneInputConfig(enabled=True, axis=axis, config=ZoneConfig(
+            zones=[Zone('inlet', 0, 0.5, 6, 0.3), Zone('outlet', 0.5, 1, 7, 0.5)],
+            tpms_type='Diamond', k_s=16)))
+    path = tmp_path / 'zoned.json'
+    cfg.to_json(path)
+    loaded = ComputeConfig.from_json(path)
+    assert isinstance(loaded.zones.config, ZoneConfig)
+    assert all(isinstance(zone, Zone) for zone in loaded.zones.config.zones)
+    expected = _parse_inputs_cfg(cfg)['za']
+    restored = _parse_inputs_cfg(loaded)['za']
+    assert restored['axis'] == axis
+    for key in ('zone_id', 'eps_arr', 'K_ffA_arr', 'K_ffB_arr', 'h_vA_arr', 'h_vB_arr'):
+        assert restored[key] == pytest.approx(expected[key])
+    capsys.readouterr()
+    assert main([str(path), '--dry-run', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['pipeline'] == 'Pipeline2D'
+
+
+@pytest.mark.parametrize('enabled,axis', [(False, 'y'), (True, 'grid')])
+def test_canonical_loader_keeps_unused_1d_config_semantics(enabled, axis):
+    config = {'zones': [{'draft': True}]}
+    loaded = ComputeConfig.from_dict({'solver': {'Nz': 1}, 'zones': {
+        'enabled': enabled, 'axis': axis, 'config': config,
+        'grid': {'cells': [dict(x0=0, x1=1, y0=0, y1=1, L=6, t=0.3)]}}})
+    assert loaded.zones.config == config
+
+
+def test_canonical_1d_loader_does_not_mutate_or_share_source_dict():
+    from copy import deepcopy
+    from dataclasses import asdict
+
+    cfg = ComputeConfig(zones=ZoneInputConfig(enabled=True, config=ZoneConfig(
+        zones=[Zone('outlet', 0.5, 1, 7, 0.5, props_A={'saved': [1]}),
+               Zone('inlet', 0, 0.5, 6, 0.3, props_A={'saved': [2]})],
+        tpms_type='Diamond', k_s=16)))
+    source = asdict(cfg)
+    original = deepcopy(source)
+    loaded = ComputeConfig.from_dict(source)
+    assert source == original
+    assert loaded.zones.config.zones[0].name == 'inlet'
+    loaded.zones.config.zones[0].props_A['saved'][0] = 99
+    assert source == original
+
+
+@pytest.mark.parametrize('invalid', ['gap', 'missing_field'])
+def test_canonical_1d_json_does_not_swallow_invalid_zones(tmp_path, invalid):
+    import json
+
+    cfg = ComputeConfig(zones=ZoneInputConfig(enabled=True,
+        config=ZoneConfig.single_zone(6, 0.3, 'Diamond', 16)))
+    path = tmp_path / 'invalid-zone.json'
+    cfg.to_json(path)
+    payload = json.loads(path.read_text())
+    zone = payload['zones']['config']['zones'][0]
+    if invalid == 'gap':
+        zone['y_frac_start'] = 0.1
+    else:
+        del zone['L_mm']
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError if invalid == 'gap' else TypeError,
+                       match='start at 0' if invalid == 'gap' else 'L_mm'):
+        ComputeConfig.from_json(path)
 
 
 def test_valid_partial_grid_coverage_is_not_redefined():

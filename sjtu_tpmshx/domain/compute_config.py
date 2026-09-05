@@ -723,7 +723,16 @@ class ComputeConfig:
             # when absent so old JSON files keep round-tripping.
             bcA_d = data.get('bc_A', {}) or {}
             bcB_d = data.get('bc_B', {}) or {}
-            zn_d = data.get('zones', {}) or {}
+            zn_d = dict(data.get('zones', {}) or {})
+            if (zn_d.get('enabled') and zn_d.get('axis', 'y') in ('x', 'y')
+                    and isinstance(zn_d.get('config'), dict)):
+                from copy import deepcopy
+                from sjtu_tpmshx.solvers.zone_config import Zone, ZoneConfig
+
+                zone_data = deepcopy(zn_d['config'])
+                zone_data['zones'] = [Zone(**zone) for zone in zone_data['zones']]
+                zn_d['config'] = ZoneConfig(**zone_data)
+                zn_d['config'].validate()
             fl_d = data.get('flags', {}) or {}
             ex_d = data.get('extrap', {}) or {}
             return cls(
