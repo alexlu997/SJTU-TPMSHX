@@ -2,6 +2,7 @@
 stages_2d.py (openspec split-pipelines, 2026-07-03); behavior bit-identical.
 """
 import numpy as np
+from sjtu_tpmshx.domain.cancellation import CancelledError
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
 from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
@@ -380,7 +381,7 @@ def _compute_Q_richardson(
         energy_dx, energy_dy, _x_breaks, _y_breaks,
         T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
         _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list, split_A=0.5,
-        hv_ratio_A=1.0, hv_ratio_B=1.0):
+        hv_ratio_A=1.0, hv_ratio_B=1.0, cancel_check=None):
     """Heat duty Q via Richardson extrapolation on the enthalpy balance.
 
     Re-solves the coupled energy field on a 2x-refined grid, applies
@@ -480,7 +481,7 @@ def _compute_Q_richardson(
         ucA2, vcA2, ucB2, vcB2,
         dir_A, dir_B, tol=0.5, max_iter=5000,
         dx_arr=energy_dx2, dy_arr=energy_dy2,
-        eps_A=epsA2_use, eps_B=epsB2_use)
+        eps_A=epsA2_use, eps_B=epsB2_use, cancel_check=cancel_check)
     _area2 = energy_dx2[:, None] * energy_dy2[None, :]
     if za is not None and 'h_vB_arr' in za:
         Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
@@ -694,7 +695,7 @@ def _compute_Q_richardson(
             richardson_warn)
 
 
-def _run_solvers(window, cfg, fields):
+def _run_solvers(window, cfg, fields, *, cancel_check=None):
     """Phase 3: run SIMPLE + coupling loop + pressure + Richardson Q."""
     L = cfg['L']; H = cfg['H']
     N_x = cfg['N_x']; N_y = cfg['N_y']
@@ -962,6 +963,8 @@ def _run_solvers(window, cfg, fields):
         nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
         nonlocal drho_A, drho_B, dT_A, dT_B
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
         # Live iteration label for the UI button ticker (replaces the
         # dropped ETA text). 2026-05-14.
@@ -998,7 +1001,7 @@ def _run_solvers(window, cfg, fields):
 
             def _solve_side(idx, args, kwargs):
                 try:
-                    _res[idx] = _run_simple(*args, **kwargs)
+                    _res[idx] = _run_simple(*args, **kwargs, cancel_check=cancel_check)
                 except BaseException as e:   # incl. InterruptedError
                     _err[idx] = e
 
@@ -1038,9 +1041,16 @@ def _run_solvers(window, cfg, fields):
                 daemon=True)
             _tA.start(); _tB.start()
             _tA.join(); _tB.join()
+            # Both workers have exited. A real failure takes precedence over
+            # a concurrent user cancellation on the other side.
+            for _e in _err:
+                if _e is not None and not isinstance(_e, CancelledError):
+                    raise _e
             for _e in _err:
                 if _e is not None:
                     raise _e
+            if cancel_check is not None and cancel_check():
+                raise CancelledError("compute cancelled by user")
             ucA, vcA, simpA = _res[0]
             ucB, vcB, simpB = _res[1]
         # Collect EVERY round's warnings (dedup by message). The old
@@ -1206,7 +1216,7 @@ def _run_solvers(window, cfg, fields):
                 h_vA_local, h_vB_local, _Kss_src, eps_A_ent, eps_B_ent,
                 energy_dx, energy_dy, fluid_A=_pA['name'], fluid_B=_pB['name'],
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
-                max_iter=_e_max_iter, tol=_e_tol)
+                max_iter=_e_max_iter, tol=_e_tol, cancel_check=cancel_check)
         else:
             Ta, Tb, Ts, e_info = solve_full_domain(
                 L, H, N_x, N_y, T_inA, T_inB,
@@ -1220,7 +1230,7 @@ def _run_solvers(window, cfg, fields):
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 dx_arr=energy_dx, dy_arr=energy_dy,
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
-                eps_A=_epsA_use, eps_B=_epsB_use)
+                eps_A=_epsA_use, eps_B=_epsB_use, cancel_check=cancel_check)
 
         # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side
         # stiffness (rho·cp 4100× + h_v 2-3× vs air). Replace nan with the
@@ -1315,6 +1325,8 @@ def _run_solvers(window, cfg, fields):
 
     _last_coup, coupling_converged = run_outer_coupling(
         max_iter=_MAX_COUPLING, step=_step_2d, post=_post_2d)
+    if cancel_check is not None and cancel_check():
+        raise CancelledError("compute cancelled by user")
 
     if not coupling_converged:
         warnings_list.append(
@@ -1410,7 +1422,8 @@ def _run_solvers(window, cfg, fields):
             T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
             _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
             split_A=_split_A_2d,
-            hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d)
+            hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d,
+            cancel_check=cancel_check)
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
     # via inlet/outlet-weighted SIMPLE pressure averages). Previously this block

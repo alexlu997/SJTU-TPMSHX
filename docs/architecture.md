@@ -27,6 +27,23 @@ UI -> controllers -> pipelines -> solvers / df_surrogate
 The GUI entry point is `python -m sjtu_tpmshx.main`; the installed headless
 entry point is `tpmshx-run`.
 
+### Cooperative cancellation
+
+Pipelines and solvers share `domain.cancellation.CancelledError`, an
+`InterruptedError` subclass re-exported by `controllers.compute_pipeline`.
+Only explicit cancellation checkpoints raise it; unrelated exceptions remain
+errors even when a cancellation request is pending. Both SIMPLE workers are
+joined before propagation, with real failures taking precedence over cancellation.
+The GUI adapter maps this exception to the orchestrator's cancelled terminal state.
+
+2D polls each SIMPLE iteration and at the existing LTNE chunk boundaries,
+including the Richardson refined solve. 3D retains its 25-iteration SIMPLE
+polling interval and LTNE chunk boundaries. The shared true-enthalpy driver
+polls each property/sweep iteration. A native linear solve, JIT compilation,
+LTNE chunk (2D defaults to 500 sweeps), or enthalpy property/sweep iteration
+must finish before its next checkpoint; there is no forced thread termination
+or fixed wall-time cancellation guarantee. Cancelled runs do not publish results.
+
 ### UI structure
 
 - `ui/builders_canvas.py` assembles the visible geometry, result, and
