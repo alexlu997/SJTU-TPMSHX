@@ -384,6 +384,36 @@ measured mass flow at `1e-6` relative tolerance. Experimental Q is the midpoint
 of the hot- and cold-side `mdot * abs(h_in - h_out)` values; it is a validation
 reference only and does not refit Nu or the fixed CFD D-F coefficients.
 
+The default smoke and `--case` runs check numerical diagnostics only. Explicit
+experimental-Q acceptance requires `--accept-q --all-valid`:
+
+```bash
+python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q --all-valid --accept-q --dimension both --csv .cache/sco2-exp-q.csv
+```
+
+This applies only to the D/G-7-6 sCO2 whole-exchanger experiment in the
+`实验数据处理-Diamond` and `实验数据处理-Gyroid` workbook sheets. The fixed
+selection retains cases with both sides passing `ok_done`, `ok_hb`, inlet/outlet
+temperature 280–700 K and inlet/outlet pressure 8–16 MPa; it adds no `ok_dp` or
+`ok_dT` exclusion. Each selected dimension/topology must contain every planned
+case exactly once, with finite positive Q values and all existing numerical
+checks passing. Singleton, empty, missing, duplicate or failed results cannot pass.
+Errors are recomputed as `e = Qsolver/Qref - 1`; `sqrt(mean(e**2))` must be
+≤20% for Diamond and ≤5% for Gyroid, separately for each dimension. Bias
+`mean(e)`, median/P90 absolute error and the existing diagnostics remain reports,
+with no new bias threshold. An acceptance failure returns exit code 1.
+
+`--topology` and `--dimension` explicitly narrow the reported verdict; a pass for
+one selected scope does not establish the complete experiment requirement,
+G1/G2, or full-core energy acceptance. No Nu/D-F refit is performed, and this is
+not a claim of blind validation independent of all historical data. The runner
+prints the selected case numbers and operating ranges. `--csv` preserves the
+plain CSV format and adds a `.csv.meta.json` sidecar with code revision/dirty
+state, recorded data pin (actual data revision remains unverified), selection,
+Q/metric definitions and actual resolved D-F modes. Keep private numerical
+outputs under ignored `.cache/`; final model acceptance still requires runs on
+the actual delivery version and separately verified data and energy evidence.
+
 For reproducible runs, use the `SJTU-TPMSHX-data` commit recorded in
 `data-revision.txt`. On Windows Server, `scripts/port_retest_server.ps1`
 checks out that revision and copies its `raw_data/` directory automatically.

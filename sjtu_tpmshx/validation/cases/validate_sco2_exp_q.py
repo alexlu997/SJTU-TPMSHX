@@ -14,8 +14,10 @@ drop is printed only as a diagnostic; V1 uses smooth-wall CFD D-F coefficients.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pandas as pd
@@ -31,6 +33,7 @@ from sjtu_tpmshx.domain.compute_config import (
 from sjtu_tpmshx.solvers import fluid_props
 from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry
 from sjtu_tpmshx.validation.sco2_exp.load_sco2_exp import load_exp
+from sjtu_tpmshx.validation.harness._provenance import _git_sha, _iso_now
 
 
 CELL_M = 7.0e-3
@@ -42,6 +45,8 @@ CORE_DEPTH_M = CORE_WIDTH_M
 GROSS_FACE_M2 = CORE_WIDTH_M * CORE_DEPTH_M
 FLOW_REL_TOL = 1.0e-6
 SMOKE_CASES = {"Diamond": 8, "Gyroid": 41}
+Q_RMSRE_LIMITS = {"Diamond": 0.20, "Gyroid": 0.05}
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _solver_geometry(topology: str) -> dict[str, float]:
@@ -165,6 +170,7 @@ def _run_case(topology: str, case: int, dimension: str,
         "topology": topology,
         "case": case,
         "dimension": dimension,
+        "df_mode": result.metadata["darcy_forchheimer"]["mode"],
         "mdot_hot_exp_kg_s": mdot_hot,
         "mdot_hot_solver_kg_s": mdot_hot_actual,
         "flow_err_hot_rel": flow_err_hot,
@@ -183,7 +189,7 @@ def _run_case(topology: str, case: int, dimension: str,
         "Q_cold_exp_W": q_cold,
         "Q_ref_W": q_ref,
         "Q_solver_W": q_solver,
-        "Q_error_rel": q_solver / q_ref - 1.0,
+        "Q_error_rel": q_solver / q_ref - 1.0 if q_ref > 0.0 else float("nan"),
         "Q_in_exp_band": min(q_hot, q_cold) <= q_solver <= max(q_hot, q_cold),
         "T_hot_out_exp_K": t_hot_out_exp,
         "T_hot_out_solver_K": float(result.T_out_A_K),
@@ -218,9 +224,12 @@ def _print_geometry(topology: str, df: pd.DataFrame) -> None:
 
 
 def _print_summary(results: pd.DataFrame) -> None:
+    if results.empty:
+        print("SUMMARY: no cases")
+        return
     for (dimension, topology), group in results.groupby(
             ["dimension", "topology"], sort=False):
-        err = group["Q_error_rel"].to_numpy(float)
+        err = _q_errors(group)
         outlet_errors = np.concatenate([
             group["T_hot_out_solver_K"].to_numpy(float)
             - group["T_hot_out_exp_K"].to_numpy(float),
@@ -238,14 +247,69 @@ def _print_summary(results: pd.DataFrame) -> None:
         )
 
 
+def _q_errors(group: pd.DataFrame) -> np.ndarray:
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return (group["Q_solver_W"].to_numpy(float)
+                / group["Q_ref_W"].to_numpy(float) - 1.0)
+
+
+def _accept_q(results: pd.DataFrame, expected_cases: dict[str, list[int]],
+              dimensions: list[str]) -> bool:
+    """Check every preselected case, without filtering unsuccessful results."""
+    expected = [(dim, topo, case) for dim in dimensions
+                for topo, cases in expected_cases.items() for case in cases]
+    actual = ([] if results.empty else list(results[
+        ["dimension", "topology", "case"]].itertuples(index=False, name=None)))
+    complete = bool(expected) and sorted(actual) == sorted(expected)
+    accepted = complete
+    for dimension in dimensions:
+        for topology, cases in expected_cases.items():
+            group = (results if results.empty else results[
+                (results["dimension"] == dimension)
+                & (results["topology"] == topology)])
+            group_complete = (len(cases) > 1 and not group.empty
+                              and sorted(group["case"].tolist()) == sorted(cases))
+            valid = group_complete
+            rmsre = float("nan")
+            if not group.empty:
+                values = group[["Q_solver_W", "Q_ref_W"]].to_numpy(float)
+                err = _q_errors(group)
+                rmsre = float(np.sqrt(np.mean(err**2)))
+                valid = bool(valid and np.isfinite(values).all()
+                             and (values > 0.0).all()
+                             and np.isfinite(err).all()
+                             and group["numerical_ok"].eq(True).fillna(False).all())
+            limit = Q_RMSRE_LIMITS[topology]
+            # Only absorb floating-point roundoff at the inclusive boundary.
+            passed = valid and (rmsre <= limit or math.isclose(
+                rmsre, limit, rel_tol=1e-14, abs_tol=0.0))
+            accepted = accepted and passed
+            print(f"Q ACCEPT {dimension} {topology}: "
+                  f"{'PASS' if passed else 'FAIL'}, n={len(group)}/{len(cases)}, "
+                  f"complete={group_complete}, RMSRE={rmsre:.6%}, limit={limit:.0%}")
+    print("Q verdict covers only the selected experiment/topology/dimension; "
+          "it is not G1/G2 or full-core energy acceptance.")
+    return bool(accepted)
+
+
 def run(topologies: list[str], dimensions: list[str], *, case: int | None,
         all_valid: bool) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
+    expected_cases: dict[str, list[int]] = {}
+    ranges = {}
     for topology in topologies:
         df = load_exp(topology)
         _print_geometry(topology, df)
         cases = (_valid_case_numbers(df) if all_valid else
                  [case if case is not None else SMOKE_CASES[topology]])
+        expected_cases[topology] = cases
+        selected = df[df["case"].isin(cases)]
+        ranges[topology] = {
+            column: [float(selected[column].min()), float(selected[column].max())]
+            for column in ("Tin_C", "Tout_C", "Pin_MPa", "Pout_MPa", "mdot")
+        } if cases else {}
+        print(f"SELECTION {topology}: dimensions={dimensions}, cases={cases}, "
+              f"ranges={ranges[topology]}")
         for case_no in cases:
             for dimension in dimensions:
                 row = _run_case(topology, int(case_no), dimension, df)
@@ -259,9 +323,10 @@ def run(topologies: list[str], dimensions: list[str], *, case: int | None,
                     f"{max(row['Q_hot_exp_W'], row['Q_cold_exp_W']):.1f}] W "
                     f"({row['Q_error_rel']:+.1%}), "
                     f"enthalpy={row['enthalpy_imbalance_rel']:.2%}, "
-                    f"ok={row['numerical_ok']}"
+                    f"ok={row['numerical_ok']}, df_mode={row['df_mode']}"
                 )
     result = pd.DataFrame(rows)
+    result.attrs.update(expected_cases=expected_cases, ranges=ranges)
     _print_summary(result)
     return result
 
@@ -273,23 +338,57 @@ def main() -> int:
     parser.add_argument("--dimension", choices=("2d", "3d", "both"),
                         default="both")
     parser.add_argument("--all-valid", action="store_true")
+    parser.add_argument("--accept-q", action="store_true",
+                        help="require --all-valid and per-group Q RMSRE limits")
     parser.add_argument("--csv", type=Path)
     args = parser.parse_args()
     if args.all_valid and args.case is not None:
         parser.error("--all-valid and --case are mutually exclusive")
     if args.case is not None and args.topology is None:
         parser.error("--case requires --topology")
+    if args.accept_q and not args.all_valid:
+        parser.error("--accept-q requires --all-valid")
 
     topologies = [args.topology] if args.topology else ["Diamond", "Gyroid"]
     dimensions = (["2d", "3d"] if args.dimension == "both"
                   else [args.dimension])
+    pin_path = REPO_ROOT / "data-revision.txt"
+    metadata = {
+        "script": str(Path(__file__).relative_to(REPO_ROOT)),
+        "commit": _git_sha(short=False), "date": _iso_now(),
+        "tracked_code_dirty": bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPO_ROOT, text=True).strip()),
+        "dataset": "data/raw_data/sCO2-Experient.xlsx",
+        "sheets": [f"实验数据处理-{topo}" for topo in topologies],
+        "recorded_data_pin": (pin_path.read_text(encoding="utf-8").strip()
+                              if pin_path.exists() else None),
+        "actual_data_revision": "unverified",
+        "topologies": topologies, "dimensions": dimensions,
+        "selection": ("all-valid: ok_done & ok_hb, both sides Tin/Tout 280..700 K "
+                      "and Pin/Pout 8..16 MPa; no ok_dp/ok_dT exclusion"
+                      if args.all_valid else "case/smoke diagnostic"),
+        "Q_definition": "Qref=0.5*(abs(Qhot)+abs(Qcold)); 2D Q and mdot * 0.042 m",
+        "metrics": "e=Qsolver/Qref-1; RMSRE=sqrt(mean(e^2)); bias=mean(e)",
+        "model": "production sCO2 Nu and D-F; no refit in this run; not a blind validation claim",
+        "accept_q": args.accept_q,
+    }
+    print("RUN " + json.dumps(metadata, ensure_ascii=False))
     result = run(topologies, dimensions, case=args.case,
                  all_valid=args.all_valid)
+    accepted = (_accept_q(result, result.attrs["expected_cases"], dimensions)
+                if args.accept_q else
+                not result.empty and bool(result["numerical_ok"].eq(True).all()))
+    metadata.update(result.attrs)
+    metadata.update(df_modes=[] if result.empty else list(result["df_mode"].unique()),
+                    exit_ok=accepted)
     if args.csv is not None:
         args.csv.parent.mkdir(parents=True, exist_ok=True)
         result.to_csv(args.csv, index=False, encoding="utf-8-sig")
+        args.csv.with_suffix(args.csv.suffix + ".meta.json").write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"Saved: {args.csv.resolve()}")
-    return int(not bool(result["numerical_ok"].all()))
+    return int(not accepted)
 
 
 if __name__ == "__main__":
