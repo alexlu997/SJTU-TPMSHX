@@ -61,8 +61,7 @@ def _check_zoned_fluid_support(compute_cfg: ComputeConfig) -> None:
     (they call tpms_calc.compute / air_* with no fluid_type), so a water side
     would silently get air Nu/k — h_v ~280x and K_ff ~25x off (audit:
     zoned-water-side-uses-air-properties). Raise until per-fluid zoned props
-    are implemented; the caller's broad except turns this into a clear warning
-    and a safe fall-back to the uniform (correctly per-fluid) path. The 3D
+    are implemented; the error propagates without solving another problem. The 3D
     zoned path threads fluid_type_B and is unaffected.
     """
     if not getattr(compute_cfg.zones, 'enabled', False):
@@ -151,64 +150,59 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     zone_config = None
     za = None
     z_axis = 'y'
-    try:
-        if compute_cfg.zones.enabled:
-            _check_zoned_fluid_support(compute_cfg)
-            z_axis = compute_cfg.zones.axis
-            P_in_val = compute_cfg.fluid_A.P_in_Pa
-            if z_axis == 'grid' and compute_cfg.zones.grid is not None:
-                grid = compute_cfg.zones.grid
-                _x_dec = compute_cfg.zones.pareto_x_decision
-                if _x_dec is not None:
-                    from sjtu_tpmshx.solvers.sigmoid_field import (
-                        build_continuous_arrays, get_geometry_lut,
-                    )
-                    _lut = get_geometry_lut(tpms_type)
-                    za = build_continuous_arrays(
-                        _x_dec, Lcell, t_wall,
-                        compute_cfg.zones.pareto_y_trans_inlet,
-                        compute_cfg.zones.pareto_y_trans_outlet,
-                        N_x, N_y, L, H,
-                        tpms_type, k_s,
-                        u_A, u_B, T_inA, T_inB, _lut,
-                        P_in=P_in_val,  # FIX (2026-06-24 audit): was defaulting to P_atm
-                        allow_extrap=_allow_extrap,
-                        fluid_type=fluid_A)  # air-only builder; non-air raises
-                    _log.info(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
-                else:
-                    from sjtu_tpmshx.solvers.zone_config import ZoneConfig
-                    za = ZoneConfig.build_grid_arrays(
-                        N_x, N_y, L, H,
-                        grid['cells'],
-                        grid['tpms_type'], grid['k_s'],
-                        u_A, u_B, T_inA, T_inB, P_in_val)
-                    _log.info(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
-                zone_config = 'grid'
+    if compute_cfg.zones.enabled:
+        compute_cfg.zones.validate()
+        _check_zoned_fluid_support(compute_cfg)
+        z_axis = compute_cfg.zones.axis
+        P_in_val = compute_cfg.fluid_A.P_in_Pa
+        if z_axis == 'grid':
+            grid = compute_cfg.zones.grid
+            _x_dec = compute_cfg.zones.pareto_x_decision
+            if _x_dec is not None:
+                from sjtu_tpmshx.solvers.sigmoid_field import (
+                    build_continuous_arrays, get_geometry_lut,
+                )
+                _lut = get_geometry_lut(tpms_type)
+                za = build_continuous_arrays(
+                    _x_dec, Lcell, t_wall,
+                    compute_cfg.zones.pareto_y_trans_inlet,
+                    compute_cfg.zones.pareto_y_trans_outlet,
+                    N_x, N_y, L, H,
+                    tpms_type, k_s,
+                    u_A, u_B, T_inA, T_inB, _lut,
+                    P_in=P_in_val,  # FIX (2026-06-24 audit): was defaulting to P_atm
+                    allow_extrap=_allow_extrap,
+                    fluid_type=fluid_A)  # air-only builder; non-air raises
+                _log.info(f"[ZONE] Continuous Sigmoid field ({N_x}x{N_y})")
             else:
-                # 1D zone mode — cfg.zones.config carries the resolved
-                # ZoneConfig (pre-built at the UI boundary by
-                # _read_zone_input in domain.compute_config).
-                if compute_cfg.zones.config is None:
-                    warnings_list.append(
-                        "Zone enabled in 1D mode but no ZoneConfig "
-                        "resolved; falling back to uniform zone.")
-                else:
-                    zone_config = compute_cfg.zones.config
-                    zone_config.compute_properties(
-                        u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
-                        P_in=P_in_val)
-                    z_dim = H if z_axis == 'y' else L
-                    za = zone_config.build_structured_arrays(
-                        N_x, N_y, z_dim, axis=z_axis)
-                    _log.info(f"[ZONE] {len(zone_config.zones)} zones along "
-                              f"{z_axis}")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        warnings_list.append(
-            f"Zone config error: {e}\nFalling back to uniform zone.")
-        zone_config = None
-        za = None
+                from sjtu_tpmshx.solvers.zone_config import ZoneConfig
+                za = ZoneConfig.build_grid_arrays(
+                    N_x, N_y, L, H,
+                    grid['cells'],
+                    grid['tpms_type'], grid['k_s'],
+                    u_A, u_B, T_inA, T_inB, P_in_val)
+                _log.info(f"[ZONE] Grid {len(grid['cells'])} cells (discrete)")
+            zone_config = 'grid'
+        else:
+            # The UI supplies an object; canonical JSON retains its data shape.
+            if compute_cfg.zones.config is None:
+                raise ValueError('Enabled 1D zones require a ZoneConfig')
+            zone_config = compute_cfg.zones.config
+            if isinstance(zone_config, dict):
+                from copy import deepcopy
+                from sjtu_tpmshx.solvers.zone_config import Zone, ZoneConfig
+
+                zone_data = deepcopy(zone_config)
+                zone_data['zones'] = [Zone(**zone) for zone in zone_data['zones']]
+                zone_config = ZoneConfig(**zone_data)
+            zone_config.compute_properties(
+                u_A=u_A, u_B=u_B, T_inA=T_inA, T_inB=T_inB,
+                P_in=P_in_val)
+            z_dim = H if z_axis == 'y' else L
+            za = zone_config.build_structured_arrays(
+                N_x, N_y, z_dim, axis=z_axis)
+            _log.info(f"[ZONE] {len(zone_config.zones)} zones along "
+                      f"{z_axis}")
 
     # Smooth zone property arrays at boundaries (skip continuous mode).
     if za is not None and zone_config is not None and za.get('axis') != 'continuous':

@@ -182,10 +182,11 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # Feature flags — sourced from cfg.flags + cfg.zones.
     wall_refine = bool(compute_cfg.flags.wall_refine_3d)
     zone_grid_cells = None
-    if (compute_cfg.zones.enabled and compute_cfg.zones.grid is not None):
-        zg = compute_cfg.zones.grid
-        if isinstance(zg, dict) and zg.get('cells'):
-            zone_grid_cells = zg['cells']
+    if compute_cfg.zones.enabled:
+        compute_cfg.zones.validate()
+        if compute_cfg.zones.axis != 'grid':
+            raise NotImplementedError('3D zones support grid mode only')
+        zone_grid_cells = compute_cfg.zones.grid['cells']
 
     return dict(
         L=L, H=H, Lz=Lz, Nx=Nx, Ny=Ny, Nz=Nz,
