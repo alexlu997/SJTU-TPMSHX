@@ -50,6 +50,7 @@ from typing import Any, Callable, Dict, Optional
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
 from sjtu_tpmshx.domain.compute_result import ComputeResult
 from sjtu_tpmshx.domain.cancellation import CancelledError
+from sjtu_tpmshx.domain.run_warnings import warning_scope
 
 
 # ── Pipeline ABC ─────────────────────────────────────────────────────
@@ -110,25 +111,24 @@ class ComputePipeline(ABC):
         # callers) bypassed it, so illegal F2 tolerances / grid combos went
         # straight into the solvers. The pipeline is the chokepoint every
         # run passes through; validate here, fail loud before solving.
-        self.cfg.validate()
-        # Re-arm the one-shot closure warning registries so each run's
-        # banner reflects its own extrapolation/choke events (audit W3,
-        # 2026-07-07). Local imports keep controller import time lean.
-        from sjtu_tpmshx.solvers.nu_correlations import reset_extrap_warn_registry
-        from sjtu_tpmshx.df_surrogate.predict import reset_choke_warn_registry
-        reset_extrap_warn_registry()
-        reset_choke_warn_registry()
-        self._check_cancel()
-        fields = self.build_fields()
-        self.progress_cb(20)
-        self._check_cancel()
-        raw = self.run_solvers(fields)
-        self.progress_cb(90)
-        self._check_cancel()
-        result = self.finalize(raw, fields)
-        self._check_cancel()
-        self.progress_cb(100)
-        return result
+        with warning_scope({}) as records:
+            self.cfg.validate()
+            self._check_cancel()
+            fields = self.build_fields()
+            self.progress_cb(20)
+            self._check_cancel()
+            raw = self.run_solvers(fields)
+            self.progress_cb(90)
+            self._check_cancel()
+            result = self.finalize(raw, fields)
+            self._check_cancel()
+            self.progress_cb(100)
+            for message, extrap in records.values():
+                if message not in result.warnings:
+                    result.warnings.append(message)
+                if extrap and message not in result.extrap_reasons:
+                    result.extrap_reasons.append(message)
+            return result
 
     # ── subclass hooks ──────────────────────────────────────────────
 

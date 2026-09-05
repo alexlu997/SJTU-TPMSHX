@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from sjtu_tpmshx.domain.run_warnings import record_warning
 import numpy as np
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -67,10 +68,7 @@ _EXTRAP_WARNED: set[tuple[str, str]] = set()
 
 
 def reset_extrap_warn_registry() -> None:
-    """Re-arm the one-shot extrap registry. Called at the start of each
-    pipeline run so run #2+ in a long-lived GUI session surfaces its own
-    out-of-window warnings instead of inheriting run #1's suppression
-    (blind-spot audit W3, 2026-07-07)."""
+    """Re-arm the standalone air Nu registry; pipeline runs own their records."""
     _EXTRAP_WARNED.clear()
 
 
@@ -87,13 +85,17 @@ def _warn_extrap(tpms_type, Re_min, Re_max):
     """One-shot warning per (tpms, 'lo'|'hi') when Re leaves the fit window."""
     lo, hi = NU_RE_FIT_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
-        if oob and (tpms_type, side) not in _EXTRAP_WARNED:
+        if not oob:
+            continue
+        message = (
+            f"[Nu extrap] {tpms_type}: Re=[{Re_min:.0f},{Re_max:.0f}] "
+            f"outside fit window [{lo:.0f},{hi:.0f}]. "
+            "Suppressing further warnings for this (tpms, side).")
+        if record_warning(('nu', 'air', tpms_type, side), message, extrap=True):
+            continue
+        if (tpms_type, side) not in _EXTRAP_WARNED:
             _EXTRAP_WARNED.add((tpms_type, side))
-            warnings.warn(
-                f"[Nu extrap] {tpms_type}: Re=[{Re_min:.0f},{Re_max:.0f}] "
-                f"outside fit window [{lo:.0f},{hi:.0f}]. "
-                "Suppressing further warnings for this (tpms, side).",
-                stacklevel=3)
+            warnings.warn(message, stacklevel=3)
 
 
 # ── Public API ───────────────────────────────────────────────────────────
@@ -170,14 +172,18 @@ WATER_NU_COEFFS = {
 _WATER_NU_WARNED: set[str] = set()
 
 
-def _warn_water_nu(Re_min, Re_max):
+def _warn_water_nu(Re_min, Re_max, tpms_type):
     lo, hi = WATER_NU_RE_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
-        if oob and side not in _WATER_NU_WARNED:
+        if not oob:
+            continue
+        message = (f"[water Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
+                   f"water-CFD fit window [{lo:.0f},{hi:.0f}].")
+        if record_warning(('nu', 'water', tpms_type, side), message, extrap=True):
+            continue
+        if side not in _WATER_NU_WARNED:
             _WATER_NU_WARNED.add(side)
-            warnings.warn(
-                f"[water Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
-                f"water-CFD fit window [{lo:.0f},{hi:.0f}].", stacklevel=3)
+            warnings.warn(message, stacklevel=3)
 
 
 def nu_water_topo(tpms_type, Re, Pr_water):
@@ -188,7 +194,7 @@ def nu_water_topo(tpms_type, Re, Pr_water):
     Re_safe = np.maximum(Re, 1.0)             # original expression (unchanged)
     _Re_arr = np.asarray(Re_safe, dtype=np.float64)
     if _Re_arr.size:
-        _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()))
+        _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type)
     co = WATER_NU_COEFFS[tpms_type]
     return co['c'] * Re_safe ** co['a'] * Pr_water ** (1 / 3)
 
@@ -254,14 +260,18 @@ SCO2_NU_COEFFS = {
 _SCO2_NU_WARNED: set[str] = set()
 
 
-def _warn_sco2_nu(Re_min, Re_max):
+def _warn_sco2_nu(Re_min, Re_max, tpms_type):
     lo, hi = SCO2_NU_RE_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
-        if oob and side not in _SCO2_NU_WARNED:
+        if not oob:
+            continue
+        message = (f"[sCO2 Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
+                   f"sCO2-CFD fit window [{lo:.0f},{hi:.0f}].")
+        if record_warning(('nu', 'sco2', tpms_type, side), message, extrap=True):
+            continue
+        if side not in _SCO2_NU_WARNED:
             _SCO2_NU_WARNED.add(side)
-            warnings.warn(
-                f"[sCO2 Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
-                f"sCO2-CFD fit window [{lo:.0f},{hi:.0f}].", stacklevel=3)
+            warnings.warn(message, stacklevel=3)
 
 
 def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
@@ -285,7 +295,7 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
     Re_safe = np.maximum(Re, 1.0)
     _Re_arr = np.asarray(Re_safe, dtype=np.float64)
     if _Re_arr.size:
-        _warn_sco2_nu(float(_Re_arr.min()), float(_Re_arr.max()))
+        _warn_sco2_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type)
     co = SCO2_NU_COEFFS[tpms_type]
     return (co['c'] * Re_safe ** co['a'] * Pr_sco2 ** (1 / 3)
             * (D_h_mm / L_mm) ** co['d'])

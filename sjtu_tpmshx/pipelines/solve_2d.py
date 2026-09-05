@@ -716,7 +716,9 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
     simple_warnings = fields['simple_warnings']
 
     # ── Outer velocity-temperature coupling loop ──
-    import warnings as _warn
+    from sjtu_tpmshx.domain.run_warnings import (
+        current_warnings, merge_warnings, warning_scope,
+    )
     from sjtu_tpmshx.solvers import tpms_calc as _tc
     from sjtu_tpmshx.solvers import fluid_props
 
@@ -974,95 +976,87 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         # first outer iter so SIMPLE _update_density uses local T (not stale T_in).
         _Ta_for_simpA = Ta if _coup_it > 0 else None
         _Tb_for_simpB = Tb if _coup_it > 0 else None
-        with _warn.catch_warnings(record=True) as _caught:
-            _warn.simplefilter("always")
-            # 2026-05-09 (option B) — incompressible fluids run SIMPLE with
-            # _update_density (ideal-gas P/RT update) as a no-op; ρ stays
-            # at the inlet value over the whole field. B1 1.1: mapping via
-            # the registry's flow_model() instead of a per-site string check.
-            _ftA = fluid_props.flow_model(_pA['name'])
-            _ftB = fluid_props.flow_model(_pB['name'])
-            from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
-            # V2 uses one water+sCO2 CFD-only closure for every fluid. K and
-            # cF depend on TPMS/L/t only and stay fixed through the solve.
-            _dfA = _dfB = SCO2_DF_METHOD
-            # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
-            # on two OS threads — the 2D port of run_stack_3d's
-            # _run_two_simple_parallel. njit kernels + spsolve release the
-            # GIL, the solvers share no mutable state (separate instances,
-            # per-side live-residual lists, per-label simple_warnings keys),
-            # and the outputs are the same objects the sequential calls
-            # produced — golden 2D stays bit-identical, only wall-clock
-            # changes. Errors are re-raised after BOTH threads join so a
-            # cancel/exception on one side can't orphan the other.
-            import threading as _threading
-            _res: list = [None, None]
-            _err: list = [None, None]
+        # 2026-05-09 (option B) — incompressible fluids run SIMPLE with
+        # _update_density (ideal-gas P/RT update) as a no-op; ρ stays
+        # at the inlet value over the whole field. B1 1.1: mapping via
+        # the registry's flow_model() instead of a per-site string check.
+        _ftA = fluid_props.flow_model(_pA['name'])
+        _ftB = fluid_props.flow_model(_pB['name'])
+        from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
+        # V2 uses one water+sCO2 CFD-only closure for every fluid. K and
+        # cF depend on TPMS/L/t only and stay fixed through the solve.
+        _dfA = _dfB = SCO2_DF_METHOD
+        # perf-wave1 (2026-07-03): run the two independent SIMPLE solves
+        # on two OS threads — the 2D port of run_stack_3d's
+        # _run_two_simple_parallel. njit kernels + spsolve release the
+        # GIL, the solvers share no mutable state (separate instances,
+        # per-side live-residual lists, per-label simple_warnings keys),
+        # and the outputs are the same objects the sequential calls
+        # produced — golden 2D stays bit-identical, only wall-clock
+        # changes. Errors are re-raised after BOTH threads join so a
+        # cancel/exception on one side can't orphan the other.
+        import threading as _threading
+        _res: list = [None, None]
+        _err: list = [None, None]
+        _parent_warnings = current_warnings()
+        _side_warnings = [{} if _parent_warnings is not None else None for _ in range(2)]
 
-            def _solve_side(idx, args, kwargs):
-                try:
+        def _solve_side(idx, args, kwargs):
+            try:
+                with warning_scope(_side_warnings[idx]):
                     _res[idx] = _run_simple(*args, **kwargs, cancel_check=cancel_check)
-                except BaseException as e:   # incl. InterruptedError
-                    _err[idx] = e
+            except BaseException as e:   # incl. InterruptedError
+                _err[idx] = e
 
-            # C8 shooting: hand the PREVIOUS iteration's (P_ref_abs, solved
-            # dP — reporting convention) to _run_simple, which recreates the
-            # solver each outer iter. First iteration has no previous solve
-            # → None (the 1D closed-form seed stands). _run_simple itself
-            # gates on the knob + ideal_gas, so passing unconditionally is
-            # inert when shooting is off or the side is incompressible.
-            _psA = ((float(simpA.P_ref_abs), _pipe_dp_2d(simpA))
-                    if simpA is not None else None)
-            _psB = ((float(simpB.P_ref_abs), _pipe_dp_2d(simpB))
-                    if simpB is not None else None)
-            _tA = _threading.Thread(
-                target=_solve_side,
-                args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
-                          'Fluid A', P_inA_val),
-                      dict(T_field_real=_Ta_for_simpA,
-                           fluid_type=_ftA, df_method=_dfA,
-                           fluid_name=_pA['name'],
-                           rho_inlet_ref=(
-                               float(_pA['rho'](T_inA, P_inA_val))
-                               if _pA['name'] == 'sco2' else None),
-                           p_shoot_prev=_psA)),
-                daemon=True)
-            _tB = _threading.Thread(
-                target=_solve_side,
-                args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
-                          'Fluid B', P_inB_val),
-                      dict(T_field_real=_Tb_for_simpB,
-                           fluid_type=_ftB, df_method=_dfB,
-                           fluid_name=_pB['name'],
-                           rho_inlet_ref=(
-                               float(_pB['rho'](T_inB, P_inB_val))
-                               if _pB['name'] == 'sco2' else None),
-                           p_shoot_prev=_psB)),
-                daemon=True)
-            _tA.start(); _tB.start()
-            _tA.join(); _tB.join()
-            # Both workers have exited. A real failure takes precedence over
-            # a concurrent user cancellation on the other side.
-            for _e in _err:
-                if _e is not None and not isinstance(_e, CancelledError):
-                    raise _e
-            for _e in _err:
-                if _e is not None:
-                    raise _e
-            if cancel_check is not None and cancel_check():
-                raise CancelledError("compute cancelled by user")
-            ucA, vcA, simpA = _res[0]
-            ucB, vcB, simpB = _res[1]
-        # Collect EVERY round's warnings (dedup by message). The old
-        # `if _coup_it == 0` gate destroyed any warning first raised on a
-        # later coupling round — e.g. Re drifting out of the Nu fit window
-        # only after the properties iterated (blind-spot audit W1a,
-        # 2026-07-07); record=True also suppresses the default stderr print,
-        # so a dropped message was lost everywhere.
-        for w in _caught:
-            _msg = str(w.message)
-            if _msg not in warnings_list:
-                warnings_list.append(_msg)
+        # C8 shooting: hand the PREVIOUS iteration's (P_ref_abs, solved
+        # dP — reporting convention) to _run_simple, which recreates the
+        # solver each outer iter. First iteration has no previous solve
+        # → None (the 1D closed-form seed stands). _run_simple itself
+        # gates on the knob + ideal_gas, so passing unconditionally is
+        # inert when shooting is off or the side is incompressible.
+        _psA = ((float(simpA.P_ref_abs), _pipe_dp_2d(simpA))
+                if simpA is not None else None)
+        _psB = ((float(simpB.P_ref_abs), _pipe_dp_2d(simpB))
+                if simpB is not None else None)
+        _tA = _threading.Thread(
+            target=_solve_side,
+            args=(0, (cfgA, rho_A_field, mu_A, T_inA, u_A,
+                      'Fluid A', P_inA_val),
+                  dict(T_field_real=_Ta_for_simpA,
+                       fluid_type=_ftA, df_method=_dfA,
+                       fluid_name=_pA['name'],
+                       rho_inlet_ref=(
+                           float(_pA['rho'](T_inA, P_inA_val))
+                           if _pA['name'] == 'sco2' else None),
+                       p_shoot_prev=_psA)),
+            daemon=True)
+        _tB = _threading.Thread(
+            target=_solve_side,
+            args=(1, (cfgB, rho_B_field, mu_B, T_inB, u_B,
+                      'Fluid B', P_inB_val),
+                  dict(T_field_real=_Tb_for_simpB,
+                       fluid_type=_ftB, df_method=_dfB,
+                       fluid_name=_pB['name'],
+                       rho_inlet_ref=(
+                           float(_pB['rho'](T_inB, P_inB_val))
+                           if _pB['name'] == 'sco2' else None),
+                       p_shoot_prev=_psB)),
+            daemon=True)
+        _tA.start(); _tB.start()
+        _tA.join(); _tB.join()
+        merge_warnings(_parent_warnings, _side_warnings)
+        # Both workers have exited. A real failure takes precedence over
+        # a concurrent user cancellation on the other side.
+        for _e in _err:
+            if _e is not None and not isinstance(_e, CancelledError):
+                raise _e
+        for _e in _err:
+            if _e is not None:
+                raise _e
+        if cancel_check is not None and cancel_check():
+            raise CancelledError("compute cancelled by user")
+        ucA, vcA, simpA = _res[0]
+        ucB, vcB, simpB = _res[1]
 
         window._compute_progress = 10 + int(80 * (_coup_it + 0.3) / _MAX_COUPLING)
 
