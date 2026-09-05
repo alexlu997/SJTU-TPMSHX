@@ -16,12 +16,8 @@ from sjtu_tpmshx.domain.compute_config import (ComputeConfig, ExtrapPolicy, Feat
                                    PartialBCConfig, SolverConfig)
 
 
-@pytest.mark.slow
-def test_pipeline3d_run_end_to_end():
-    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
-    from sjtu_tpmshx.domain.compute_result import ComputeResult
-
-    cfg = ComputeConfig(
+def _small_air_cfg():
+    return ComputeConfig(
         fluid_A=FluidConfig(type='air', u_mps=10.0, T_in_K=422.0,
                             P_in_Pa=192362.0),
         fluid_B=FluidConfig(type='air', u_mps=20.0, T_in_K=322.0,
@@ -41,6 +37,14 @@ def test_pipeline3d_run_end_to_end():
         extrap=ExtrapPolicy(allow=True),
         flags=FeatureFlags(),
     )
+
+
+@pytest.mark.slow
+def test_pipeline3d_run_end_to_end():
+    from sjtu_tpmshx.controllers.compute_pipeline import Pipeline3D
+    from sjtu_tpmshx.domain.compute_result import ComputeResult
+
+    cfg = _small_air_cfg()
     assert cfg.is_3d
 
     res = Pipeline3D(cfg).run()

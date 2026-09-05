@@ -145,3 +145,34 @@ def test_between_geometry_nodes_is_supported():
         'Diamond', L_mm=5.5, t_mm=0.45, k_s=16.0,
         u=5.0, T=350.0, side='A', allow_extrap=False)
     assert reasons == []
+
+
+@pytest.mark.parametrize('L_mm,u,has_nu,has_geometry', [
+    (7, 0.1, True, False), (9, 5, False, True), (9, 0.1, True, True),
+])
+@pytest.mark.parametrize('side', ['A', 'B'])
+@pytest.mark.parametrize('policy', ['allow', 'reject', 'env'])
+def test_separate_nu_reasons_preserves_all_guards(monkeypatch, L_mm, u,
+                                                has_nu, has_geometry, side, policy):
+    if policy == 'env':
+        monkeypatch.setenv('TPMSHX_ALLOW_EXTRAP', '1')
+    else:
+        monkeypatch.delenv('TPMSHX_ALLOW_EXTRAP', raising=False)
+    args = ('Gyroid', L_mm, 0.4, 16, u, 350)
+    nu_reasons = []
+    if policy == 'reject':
+        with pytest.raises(ValueError):
+            check_surrogate_domain_at_point(*args, side=side, nu_reasons=nu_reasons)
+        assert not nu_reasons
+        return
+    with pytest.warns(UserWarning):
+        geometry = check_surrogate_domain_at_point(
+            *args, side=side, allow_extrap=policy == 'allow', nu_reasons=nu_reasons)
+    with pytest.warns(UserWarning):
+        standalone = check_surrogate_domain_at_point(
+            *args, side=side, allow_extrap=policy == 'allow')
+    assert bool(nu_reasons) is has_nu
+    assert bool(geometry) is has_geometry
+    assert nu_reasons + geometry == standalone
+    assert all(f'Fluid {side}:' in reason for reason in nu_reasons)
+    assert all('CFD grid' in reason for reason in geometry)

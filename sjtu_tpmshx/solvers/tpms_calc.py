@@ -39,6 +39,9 @@ convention on both sides, so downstream Q calculations are consistent.
 import functools
 import warnings
 import numpy as np
+from sjtu_tpmshx.domain.run_warnings import (
+    cache_warning_records, current_warnings, merge_warnings,
+)
 from .tpms_geometry import compute_geometry as _tpms_geom
 
 # arch-b-c-e batch B (2026-07-02): geometry + fluid-property correlations
@@ -217,7 +220,7 @@ def _compute_cached(tpms_type: str,
                     P_in_Pa: float,
                     k_s: float,
                     fluid_type: str = 'air',
-                    _df_env: tuple = ('', '')) -> dict:
+                    _df_env: tuple = ('', '')) -> tuple[dict, dict]:
     """
     Compute all TPMS heat-transfer and fluid properties.
 
@@ -233,7 +236,11 @@ def _compute_cached(tpms_type: str,
 
     Returns
     -------
-    dict with keys:
+    tuple[dict, dict]
+        Numerical values and source warning records. Public ``compute``
+        returns only a copy of the numerical dict; records stay internal.
+
+    Numerical dict keys:
         epsilon   – porosity [-]
         A_0       – single-side specific surface area [m⁻¹] (area seen by one
                     fluid stream per unit total volume — NOT double-sided;
@@ -252,110 +259,112 @@ def _compute_cached(tpms_type: str,
         mu        – air dynamic viscosity [Pa·s]
         k_f       – air thermal conductivity [W/(m·K)]
     """
-    # ── Geometry from numerical computation ─────────────────────
-    g = _tpms_geom(tpms_type, L_cell_mm, t_mm)
-    eps   = g['epsilon']
-    A0    = g['A_0']
-    D_h_m = g['D_h']
-    D_h_mm = D_h_m * 1000.0        # [mm]  (used in Nu correlation)
+    with cache_warning_records({}) as records:
+        # ── Geometry from numerical computation ─────────────────────
+        g = _tpms_geom(tpms_type, L_cell_mm, t_mm)
+        eps   = g['epsilon']
+        A0    = g['A_0']
+        D_h_m = g['D_h']
+        D_h_mm = D_h_m * 1000.0        # [mm]  (used in Nu correlation)
 
-    # ── Fluid properties at inlet conditions ──────────────────
-    # B1 1.1 (2026-06-12): property primitives via the fluid_props
-    # registry (water rho ignores P — incompressible; air ideal-gas).
-    # Function-level import: fluid_props imports tpms_calc at module level.
-    from sjtu_tpmshx.solvers import fluid_props as _fluids
-    _m = _fluids.get(fluid_type)
-    # Pass P to all primitives: air/water ignore it (T-only), sCO2 needs it
-    # (real-gas cp/mu/k/rho depend on both T and P). Widened 2026-06-26.
-    mu = float(_m.mu(T_in_K, P_in_Pa))
-    k_f = float(_m.k(T_in_K, P_in_Pa))
-    rho = float(_m.rho(T_in_K, P_in_Pa))
-    cp_f = float(_m.cp(T_in_K, P_in_Pa))
+        # ── Fluid properties at inlet conditions ──────────────────
+        # B1 1.1 (2026-06-12): property primitives via the fluid_props
+        # registry (water rho ignores P — incompressible; air ideal-gas).
+        # Function-level import: fluid_props imports tpms_calc at module level.
+        from sjtu_tpmshx.solvers import fluid_props as _fluids
+        _m = _fluids.get(fluid_type)
+        # Pass P to all primitives: air/water ignore it (T-only), sCO2 needs it
+        # (real-gas cp/mu/k/rho depend on both T and P). Widened 2026-06-26.
+        mu = float(_m.mu(T_in_K, P_in_Pa))
+        k_f = float(_m.k(T_in_K, P_in_Pa))
+        rho = float(_m.rho(T_in_K, P_in_Pa))
+        cp_f = float(_m.cp(T_in_K, P_in_Pa))
 
-    # ── Reynolds number ──────────────────────────────────────
-    # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
-    #
-    # Uses ACTUAL inlet density (at inlet T and inlet P), because physical
-    # Nu depends on true Re, not on a canonical atmospheric Re (previous
-    # bug was rho_ref=P_atm, which under-predicted high-Re Q by ~22%).
-    #
-    # D_h convention: Re = ρ·u·D_h / μ (single-channel interstitial u).
-    # Training Excel: m_total = Re × μ / D_h × A × 2 (×2 for two channels).
-    # Nu correlations fitted on D_h-convention Re.
-    Re = rho * u * D_h_m / mu
+        # ── Reynolds number ──────────────────────────────────────
+        # Re = rho * u * D_h / mu   (length scale = D_h, not r_h)
+        #
+        # Uses ACTUAL inlet density (at inlet T and inlet P), because physical
+        # Nu depends on true Re, not on a canonical atmospheric Re (previous
+        # bug was rho_ref=P_atm, which under-predicted high-Re Q by ~22%).
+        #
+        # D_h convention: Re = ρ·u·D_h / μ (single-channel interstitial u).
+        # Training Excel: m_total = Re × μ / D_h × A × 2 (×2 for two channels).
+        # Nu correlations fitted on D_h-convention Re.
+        Re = rho * u * D_h_m / mu
 
-    # Warn if outside correlation valid range. Single-sourced to the per-fluid
-    # fit windows in nu_correlations (was a duplicate hard-coded [600, 30000];
-    # unified 2026-06-25). Fluid-aware since 2026-06-28 (N5): water/sCO2 have
-    # their own windows, so warning them against the air window mis-flagged.
-    _nu_lo, _nu_hi = _RE_FIT_RANGE_BY_FLUID.get(fluid_type, NU_RE_FIT_RANGE)
-    if not (_nu_lo <= Re <= _nu_hi):
-        warnings.warn(
-            f"{tpms_type}: Re = {Re:.1f} is outside the validated range "
-            f"[{_nu_lo:.0f}, {_nu_hi:.0f}]. Correlation accuracy may be reduced.",
-            UserWarning, stacklevel=2
+        # Warn if outside correlation valid range. Single-sourced to the per-fluid
+        # fit windows in nu_correlations (was a duplicate hard-coded [600, 30000];
+        # unified 2026-06-25). Fluid-aware since 2026-06-28 (N5): water/sCO2 have
+        # their own windows, so warning them against the air window mis-flagged.
+        _nu_lo, _nu_hi = _RE_FIT_RANGE_BY_FLUID.get(fluid_type, NU_RE_FIT_RANGE)
+        # A run records the actual Nu source below; standalone keeps this notice.
+        if not (_nu_lo <= Re <= _nu_hi) and current_warnings() is None:
+            warnings.warn(
+                f"{tpms_type}: Re = {Re:.1f} is outside the validated range "
+                f"[{_nu_lo:.0f}, {_nu_hi:.0f}]. Correlation accuracy may be reduced.",
+                UserWarning, stacklevel=2
+            )
+
+        # ── Nusselt number and heat transfer coefficient ──────────
+        # Single-stream convention (post-refit 2026-04-26): pass ε_A (per-stream
+        # void fraction; sheet HX splits ε equally between two fluid channels).
+        eps_A = 0.5 * eps
+        # 2026-05-09 — route air through nu_from_Re() (not _nu_diamond / _nu_gyroid
+        # directly). nu_from_Re applies the ×1.28 _NU_ROUGHNESS_FACTOR
+        # (production, see memory project_nu_v3_cfd4_s8 — Shanghai Q RMSRE 2.02%
+        # only with ×1.28 applied). Direct calls to _nu_diamond / _nu_gyroid
+        # returned the smooth-wall Nu, which under-displayed Nu in the UI by 28%
+        # while the SIMPLE/LTNE runtime correctly used ×1.28 via nu_from_Re —
+        # cosmetic mismatch that confused users sanity-checking Nu vs Q.
+        # Water path routes through nu_water_topo (per-topology direct water-CFD
+        # fit, no ×1.28); the ×1.28 _NU_ROUGHNESS_FACTOR is AIR-only. Only the
+        # air branch was ever buggy on the ×1.28 display.
+        # B1 1.1: Nu via the registry's per-fluid dispatch — water forwards the
+        # caller-computed Pr to nu_water_topo; the air adapter ignores Pr and
+        # uses nu_from_Re's built-in Pr_AIR.
+        Pr_f = mu * cp_f / k_f
+        Nu = _m.nu(tpms_type, Re, eps_A, L_cell_mm, D_h_mm, Pr_f)
+
+        H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
+
+        # ── Pressure drop via fixed geometry-only CFD D-F table ─────────
+        # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
+        # convention, see df_surrogate/predict.py). Import is module-level since
+        # arch-b-c-e batch B (tpms_props leaf broke the old two-way coupling).
+        K_df, cF_df = predict_K_cF(
+            tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
+            method=_df_env[0] or None,
         )
+        dP_per_L = mu * u / K_df + rho * cF_df * u * u
 
-    # ── Nusselt number and heat transfer coefficient ──────────
-    # Single-stream convention (post-refit 2026-04-26): pass ε_A (per-stream
-    # void fraction; sheet HX splits ε equally between two fluid channels).
-    eps_A = 0.5 * eps
-    # 2026-05-09 — route air through nu_from_Re() (not _nu_diamond / _nu_gyroid
-    # directly). nu_from_Re applies the ×1.28 _NU_ROUGHNESS_FACTOR
-    # (production, see memory project_nu_v3_cfd4_s8 — Shanghai Q RMSRE 2.02%
-    # only with ×1.28 applied). Direct calls to _nu_diamond / _nu_gyroid
-    # returned the smooth-wall Nu, which under-displayed Nu in the UI by 28%
-    # while the SIMPLE/LTNE runtime correctly used ×1.28 via nu_from_Re —
-    # cosmetic mismatch that confused users sanity-checking Nu vs Q.
-    # Water path routes through nu_water_topo (per-topology direct water-CFD
-    # fit, no ×1.28); the ×1.28 _NU_ROUGHNESS_FACTOR is AIR-only. Only the
-    # air branch was ever buggy on the ×1.28 display.
-    # B1 1.1: Nu via the registry's per-fluid dispatch — water forwards the
-    # caller-computed Pr to nu_water_topo; the air adapter ignores Pr and
-    # uses nu_from_Re's built-in Pr_AIR.
-    Pr_f = mu * cp_f / k_f
-    Nu = _m.nu(tpms_type, Re, eps_A, L_cell_mm, D_h_mm, Pr_f)
+        # ── Effective thermal conductivities (volume-averaged) ────
+        # Fluid phase: molecular only by default. Optional thermal dispersion
+        # K_disp = C_DISP * ρ·cp·|u|·D_h captures tortuous-channel mixing at
+        # high Pe. Zero default preserves prior behaviour; calibrate per TPMS
+        # from experimental Nu vs Pe data and expose via compute_ext if needed.
+        K_ff = eps * k_f
+        if C_DISP > 0.0:
+            K_ff = K_ff + C_DISP * rho * cp_f * abs(u) * D_h_m
+        K_ss = chi_s_eff(tpms_type, eps) * (1.0 - eps) * k_s
 
-    H_sf = Nu * k_f / D_h_m        # face heat transfer coefficient [W/(m²·K)]
-
-    # ── Pressure drop via fixed geometry-only CFD D-F table ─────────
-    # dP/L = μu/K + ρ c_F u² (interstitial form; matches simple_solver
-    # convention, see df_surrogate/predict.py). Import is module-level since
-    # arch-b-c-e batch B (tpms_props leaf broke the old two-way coupling).
-    K_df, cF_df = predict_K_cF(
-        tpms_type, float(L_cell_mm), float(t_mm), float(eps) / 2.0,
-        method=_df_env[0] or None,
-    )
-    dP_per_L = mu * u / K_df + rho * cF_df * u * u
-
-    # ── Effective thermal conductivities (volume-averaged) ────
-    # Fluid phase: molecular only by default. Optional thermal dispersion
-    # K_disp = C_DISP * ρ·cp·|u|·D_h captures tortuous-channel mixing at
-    # high Pe. Zero default preserves prior behaviour; calibrate per TPMS
-    # from experimental Nu vs Pe data and expose via compute_ext if needed.
-    K_ff = eps * k_f
-    if C_DISP > 0.0:
-        K_ff = K_ff + C_DISP * rho * cp_f * abs(u) * D_h_m
-    K_ss = chi_s_eff(tpms_type, eps) * (1.0 - eps) * k_s
-
-    return {
-        'epsilon':   eps,
-        'epsilon_A': eps_A,
-        'epsilon_B': eps_A,     # symmetric sheet HX: ε_B = ε_A = ε/2
-        'A_0':       A0,
-        'D_h':       D_h_m,
-        'Re':        Re,
-        'Nu':        Nu,
-        'K_df':      K_df,      # permeability [m²] (fixed CFD)
-        'cF_df':     cF_df,     # Forchheimer coeff [1/m] (fixed CFD)
-        'dP_per_L':  dP_per_L,
-        'H_sf':      H_sf,
-        'K_ff':      K_ff,
-        'K_ss':      K_ss,
-        'rho':       rho,
-        'mu':        mu,
-        'k_f':       k_f,
-    }
+        return {
+            'epsilon':   eps,
+            'epsilon_A': eps_A,
+            'epsilon_B': eps_A,     # symmetric sheet HX: ε_B = ε_A = ε/2
+            'A_0':       A0,
+            'D_h':       D_h_m,
+            'Re':        Re,
+            'Nu':        Nu,
+            'K_df':      K_df,      # permeability [m²] (fixed CFD)
+            'cF_df':     cF_df,     # Forchheimer coeff [1/m] (fixed CFD)
+            'dP_per_L':  dP_per_L,
+            'H_sf':      H_sf,
+            'K_ff':      K_ff,
+            'K_ss':      K_ss,
+            'rho':       rho,
+            'mu':        mu,
+            'k_f':       k_f,
+        }, records
 
 
 # ── Quick verification ────────────────────────────────────────
@@ -383,8 +392,10 @@ def compute(tpms_type: str,
     # another explicit backend.
     _df_method = SCO2_DF_METHOD
     _df_env = (_df_method, '')
-    return dict(_compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
-                                P_in_Pa, k_s, fluid_type, _df_env))
+    result, records = _compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
+                                     P_in_Pa, k_s, fluid_type, _df_env)
+    merge_warnings(current_warnings(), [records])
+    return dict(result)
 
 
 # Back-compat: tests/sweeps clear the props cache via compute.cache_clear()

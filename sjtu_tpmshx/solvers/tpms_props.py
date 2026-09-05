@@ -10,8 +10,8 @@ imports on the solvers side). New direction, module-load level:
 
 ``tpms_calc`` re-exports every name below verbatim, so existing consumers
 (``from solvers.tpms_calc import geometry, air_viscosity, ...``) are
-unaffected. Import ONLY stdlib / numpy / ``.tpms_geometry`` here — this
-module must stay a leaf.
+unaffected. Dependencies stay limited to stdlib / numpy / ``.tpms_geometry``
+and the stdlib-only ``domain.run_warnings`` leaf.
 
 All functions moved verbatim (bit-identical); see tpms_calc.py's module
 docstring for the project-wide Re/Nu conventions.
@@ -24,6 +24,7 @@ import warnings
 import numpy as np
 
 from .tpms_geometry import compute_geometry as _tpms_geom
+from sjtu_tpmshx.domain.run_warnings import record_warning
 
 # ── Physical constants ────────────────────────────────────────
 R     = 8.314      # Universal gas constant [J/(mol·K)]
@@ -54,15 +55,17 @@ def _warn_water_two_phase(T) -> None:
         return
     T_max = float(T_arr.max())
     if T_max > _WATER_T_SAT_1ATM:
+        message = (
+            f"water properties requested at T={T_max:.1f} K > 1-atm "
+            f"saturation 373.15 K: water is likely two-phase / superheated, "
+            "single-phase liquid correlations are not physical here.")
+        if record_warning(('water_phase',), message):
+            return
         key = round(T_max, 1)
         if key in _WATER_TWO_PHASE_WARNED:
             return
         _WATER_TWO_PHASE_WARNED.add(key)
-        warnings.warn(
-            f"water properties requested at T={T_max:.1f} K > 1-atm "
-            f"saturation 373.15 K: water is likely two-phase / superheated, "
-            "single-phase liquid correlations are not physical here.",
-            stacklevel=3)
+        warnings.warn(message, stacklevel=3)
 
 
 def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
@@ -75,15 +78,20 @@ def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
     T_min = float(T_arr.min())
     T_max = float(T_arr.max())
     if T_min < lo or T_max > hi:
+        message = (
+            f"{name}: T=[{T_min:.1f}, {T_max:.1f}] K outside fitted range "
+            f"[{lo:.1f}, {hi:.1f}] K — extrapolating.")
+        handled = False
+        for side, oob in (('lo', T_min < lo), ('hi', T_max > hi)):
+            if oob:
+                handled = record_warning(('property', name, side), message)
+        if handled:
+            return
         key = (name, round(T_min, 1), round(T_max, 1))
         if key in _range_warnings_emitted:
             return
         _range_warnings_emitted.add(key)
-        warnings.warn(
-            f"{name}: T=[{T_min:.1f}, {T_max:.1f}] K outside fitted range "
-            f"[{lo:.1f}, {hi:.1f}] K — extrapolating.",
-            stacklevel=3,
-        )
+        warnings.warn(message, stacklevel=3)
 
 
 def air_viscosity(T_K: float) -> float:

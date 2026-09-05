@@ -38,7 +38,6 @@ class RunResultsMixin:
         drawn = getattr(self, '_drawn_tabs', set())
         drawn.update({'temp', 'pres', 'vel'})
         self._drawn_tabs = drawn
-        self._push_recent_run()
         return out
 
     def write_result(self, result):
@@ -179,7 +178,7 @@ class RunResultsMixin:
 
         Pro-Max upgrade: each chip compares against the previous successful
         run (stored in `_recent_runs[1]` — index 0 is the run just pushed
-        by `_finalize_plots`). Positive deltas green for Q (more heat is
+        by `_end_compute_ui`). Positive deltas green for Q (more heat is
         better), negative deltas green for ΔP (lower drop is better).
         Neutral gray when no prior run exists or values are identical.
         """
