@@ -373,7 +373,7 @@ def main() -> int:
         "model": "production sCO2 Nu and D-F; no refit in this run; not a blind validation claim",
         "accept_q": args.accept_q,
     }
-    print("RUN " + json.dumps(metadata, ensure_ascii=False))
+    print("RUN " + json.dumps(metadata))
     result = run(topologies, dimensions, case=args.case,
                  all_valid=args.all_valid)
     accepted = (_accept_q(result, result.attrs["expected_cases"], dimensions)

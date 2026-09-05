@@ -180,7 +180,8 @@ def test_q_cli_verdict_and_legacy_csv(monkeypatch, tmp_path, capsys,
     monkeypatch.setattr(runner, "run", fake_run)
     assert runner.main() == exit_code
     assert len(pd.read_csv(output)) == 2  # No comment-header format change.
-    metadata = json.loads(output.with_suffix(".csv.meta.json").read_text())
+    metadata = json.loads(output.with_suffix(".csv.meta.json").read_text(
+        encoding="utf-8"))
     assert metadata["expected_cases"] == {"Diamond": [1, 2]}
     assert metadata["dimensions"] == ["2d"]
     assert metadata["df_modes"] == ["cfd_smooth"]
@@ -189,6 +190,22 @@ def test_q_cli_verdict_and_legacy_csv(monkeypatch, tmp_path, capsys,
     assert bool(metadata["commit"])
     if accept:
         assert "not G1/G2 or full-core energy acceptance" in capsys.readouterr().out
+
+
+def test_q_cli_metadata_on_strict_cp1252_stdout(monkeypatch):
+    import io
+    import json
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    monkeypatch.setattr("sys.argv", ["runner", "--all-valid", "--accept-q"])
+    monkeypatch.setattr(runner, "run", lambda *args, **kwargs: _q_results())
+    with io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict") as stream:
+        monkeypatch.setattr("sys.stdout", stream)
+        assert runner.main() == 0
+        stream.flush()
+        output = stream.buffer.getvalue().decode("cp1252")
+    metadata = json.loads(output.splitlines()[0].removeprefix("RUN "))
+    assert metadata["sheets"] == ["实验数据处理-Diamond", "实验数据处理-Gyroid"]
 
 
 def test_zero_reference_still_fails_diagnostic_case(monkeypatch):
