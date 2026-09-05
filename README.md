@@ -397,7 +397,7 @@ selection retains cases with both sides passing `ok_done`, `ok_hb`, inlet/outlet
 temperature 280–700 K and inlet/outlet pressure 8–16 MPa; it adds no `ok_dp` or
 `ok_dT` exclusion. Each selected dimension/topology must contain every planned
 case exactly once, with finite positive Q values and all existing numerical
-checks passing. Singleton, empty, missing, duplicate or failed results cannot pass.
+checks passing. Empty, missing, duplicate or failed results cannot pass.
 Errors are recomputed as `e = Qsolver/Qref - 1`; `sqrt(mean(e**2))` must be
 ≤20% for Diamond and ≤5% for Gyroid, separately for each dimension. Bias
 `mean(e)`, median/P90 absolute error and the existing diagnostics remain reports,

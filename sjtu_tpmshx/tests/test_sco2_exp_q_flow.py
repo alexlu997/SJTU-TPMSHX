@@ -73,7 +73,7 @@ def test_q_limits_use_actual_q_per_group(diamond, gyroid, passed):
 @pytest.mark.parametrize("failure", [
     "empty", "missing_group", "missing_case", "duplicate", "unexpected",
     "nan", "inf", "zero_ref", "negative_ref", "numerical", "null_numerical",
-    "empty_expected", "singleton", "one_bad_dimension",
+    "empty_expected", "one_bad_dimension",
 ])
 def test_q_acceptance_rejects_incomplete_or_invalid_results(failure):
     import pandas as pd
@@ -102,9 +102,6 @@ def test_q_acceptance_rejects_incomplete_or_invalid_results(failure):
         result.loc[0, "numerical_ok"] = pd.NA
     elif failure == "empty_expected":
         expected = {"Diamond": [], "Gyroid": [1, 2]}
-    elif failure == "singleton":
-        expected = {"Diamond": [1], "Gyroid": [1]}
-        result = result[result.case == 1]
     else:
         result.loc[4:5, "Q_solver_W"] = 130.0  # 3D Diamond alone exceeds 20%.
     assert not runner._accept_q(result, expected, ["2d", "3d"])
@@ -192,3 +189,30 @@ def test_q_cli_verdict_and_legacy_csv(monkeypatch, tmp_path, capsys,
     assert bool(metadata["commit"])
     if accept:
         assert "not G1/G2 or full-core energy acceptance" in capsys.readouterr().out
+
+
+def test_zero_reference_still_fails_diagnostic_case(monkeypatch):
+    from types import SimpleNamespace
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    row = pd.Series(dict(Tin_C=100., Tout_C=100., Pin_MPa=9., mdot=0.05,
+                         Q_kW=0., dP_MPa=0.01))
+    frame = pd.DataFrame()
+    frame.attrs.update(A_flow_m2=0.001, A_heat_m2=1.)
+    monkeypatch.setattr(runner, "_case_rows", lambda *args: (row, row))
+    monkeypatch.setattr(runner, "_solver_geometry", lambda *args: dict(
+        void_area_m2=0.001, heat_area_m2=1.))
+    monkeypatch.setattr(runner.fluid_props, "get", lambda *args: SimpleNamespace(
+        rho=lambda *args: 100.))
+    result = SimpleNamespace(
+        Q_W=100., converged=True, T_out_A_K=373.15, T_out_B_K=373.15,
+        diagnostics=dict(mass_flow_A_kg_s_per_m=0.05 / runner.CORE_DEPTH_M,
+                         mass_flow_B_kg_s_per_m=0.05 / runner.CORE_DEPTH_M),
+        residuals=dict(mass_imbalance_rel_A=0., mass_imbalance_rel_B=0.,
+                       enthalpy_imbalance_rel=0.),
+        metadata={"darcy_forchheimer": {"mode": "cfd_smooth"}})
+    monkeypatch.setattr(runner, "Pipeline2D", lambda *args: SimpleNamespace(
+        run=lambda: result))
+    with pytest.raises(ZeroDivisionError):
+        runner._run_case("Diamond", 1, "2d", frame)

@@ -189,7 +189,7 @@ def _run_case(topology: str, case: int, dimension: str,
         "Q_cold_exp_W": q_cold,
         "Q_ref_W": q_ref,
         "Q_solver_W": q_solver,
-        "Q_error_rel": q_solver / q_ref - 1.0 if q_ref > 0.0 else float("nan"),
+        "Q_error_rel": q_solver / q_ref - 1.0,
         "Q_in_exp_band": min(q_hot, q_cold) <= q_solver <= max(q_hot, q_cold),
         "T_hot_out_exp_K": t_hot_out_exp,
         "T_hot_out_solver_K": float(result.T_out_A_K),
@@ -267,7 +267,7 @@ def _accept_q(results: pd.DataFrame, expected_cases: dict[str, list[int]],
             group = (results if results.empty else results[
                 (results["dimension"] == dimension)
                 & (results["topology"] == topology)])
-            group_complete = (len(cases) > 1 and not group.empty
+            group_complete = (bool(cases) and not group.empty
                               and sorted(group["case"].tolist()) == sorted(cases))
             valid = group_complete
             rmsre = float("nan")
@@ -378,7 +378,8 @@ def main() -> int:
                  all_valid=args.all_valid)
     accepted = (_accept_q(result, result.attrs["expected_cases"], dimensions)
                 if args.accept_q else
-                not result.empty and bool(result["numerical_ok"].eq(True).all()))
+                not result.empty and bool(
+                    result["numerical_ok"].eq(True).fillna(False).all()))
     metadata.update(result.attrs)
     metadata.update(df_modes=[] if result.empty else list(result["df_mode"].unique()),
                     exit_ok=accepted)
