@@ -144,6 +144,10 @@ class RunHistoryMixin:
 
         # — Actions —
         menu.addSeparator()
+        load_file = menu.addAction("加载配置文件…")
+        load_file.triggered.connect(self.load_config)
+        save_file = menu.addAction("保存配置文件…")
+        save_file.triggered.connect(self.save_config)
         save = menu.addAction("保存当前为预设…")
         save.triggered.connect(self._save_current_as_preset)
         if entries:
@@ -153,7 +157,11 @@ class RunHistoryMixin:
 
     def _load_user_preset(self, p):
         """Apply a user-saved preset dict + status note (header 载入 menu)."""
-        self._apply_user_preset(p)
+        try:
+            self._apply_user_preset(p)
+        except ValueError as e:
+            QMessageBox.warning(self, "Preset load failed", str(e))
+            return
         self.statusBar().showMessage(
             f"Loaded preset: {p.get('name', '?')}.", 5000)
 
