@@ -147,6 +147,8 @@ def build_zone_config(window):
         window._zone_grid = None
         return None
     from sjtu_tpmshx.solvers.zone_config import ZoneConfig, Zone
+    if window.zone_table.rowCount() == 0:
+        raise ValueError('At least one zone is required')
     tpms_type = window.combo_tpms.currentText()
     k_s = float(window.le_ks.text())
 
@@ -157,22 +159,22 @@ def build_zone_config(window):
         for r in range(window.zone_table.rowCount()):
             items = [window.zone_table.item(r, c) for c in range(4)]
             if any(it is None or not it.text().strip() for it in items):
-                continue
+                raise ValueError(f'Zone row {r + 1}: all fields are required')
             y0 = float(items[0].text()) / 100.0
             y1 = float(items[1].text()) / 100.0
             L  = float(items[2].text())
             t  = float(items[3].text())
             zones.append(Zone(f"zone_{r}", y0, y1, L, t))
-        if not zones:
-            return None
-        return ZoneConfig(zones=zones, tpms_type=tpms_type, k_s=k_s)
+        config = ZoneConfig(zones=zones, tpms_type=tpms_type, k_s=k_s)
+        config.validate()
+        return config
     else:
         # Grid mode: 6 columns [y0%, y1%, x0%, x1%, L, t]
         grid_cells = []
         for r in range(window.zone_table.rowCount()):
             items = [window.zone_table.item(r, c) for c in range(6)]
             if any(it is None or not it.text().strip() for it in items):
-                continue
+                raise ValueError(f'Zone row {r + 1}: all fields are required')
             y0 = float(items[0].text()) / 100.0
             y1 = float(items[1].text()) / 100.0
             x0 = float(items[2].text()) / 100.0

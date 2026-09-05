@@ -328,7 +328,8 @@ class ZoneInputConfig:
     fed into the 2D/3D solver.
 
     ``config`` is the pre-resolved ``solvers.zone_config.ZoneConfig``
-    instance (1D zone mode) or ``None`` when zones are disabled or
+    instance (1D zone mode), or its JSON-shaped dictionary for canonical
+    input, restored at the 1D pipeline boundary. It is ``None`` when zones are disabled or
     running in grid mode (``grid`` carries the cell list instead).
     The UI adapter snapshots ``config`` via
     ``window._build_zone_config()`` at the boundary so the Pipeline
@@ -339,10 +340,32 @@ class ZoneInputConfig:
     enabled: bool = False
     axis: ZoneAxis = 'y'
     grid: Optional[Dict[str, Any]] = None  # cells / tpms_type / k_s
-    config: Optional[Any] = None  # resolved ZoneConfig instance (1D)
+    config: Optional[Any] = None  # 1D ZoneConfig or its canonical JSON dictionary
     pareto_x_decision: Optional[Any] = None
     pareto_y_trans_inlet: float = 0.2
     pareto_y_trans_outlet: float = 0.2
+
+    def validate(self) -> 'ZoneInputConfig':
+        """Reject invalid rectangles; partial coverage keeps its existing meaning."""
+        import math
+
+        if not self.enabled or self.axis != 'grid':
+            return self
+        if not isinstance(self.grid, dict) or not self.grid.get('cells'):
+            raise ValueError('Enabled grid zones require non-empty grid cells')
+        for index, cell in enumerate(self.grid['cells'], 1):
+            for axis in ('x', 'y'):
+                try:
+                    start, end = cell[f'{axis}0'], cell[f'{axis}1']
+                    valid = (math.isfinite(start) and math.isfinite(end)
+                             and 0 <= start < end <= 1)
+                except (KeyError, TypeError):
+                    valid = False
+                if not valid:
+                    raise ValueError(
+                        f'Zone grid cell {index}: {axis} coordinates must be '
+                        'finite and satisfy 0 <= start < end <= 1')
+        return self
 
 
 @dataclass
@@ -460,6 +483,7 @@ class ComputeConfig:
         """
         import math
 
+        self.zones.validate()
         if self.df_mode not in ('cfd_smooth', 'experimental'):
             raise ValueError(
                 f"ComputeConfig.df_mode={self.df_mode!r} — must be "
