@@ -47,27 +47,32 @@ def main(argv=None) -> int:
 
     result = pipe.run()
     diag = result.diagnostics or {}
-    ok = bool(diag.get('envelope_valid', True)) and bool(
+    ok = result.converged and bool(diag.get('envelope_valid', True)) and bool(
         (diag.get('convergence_detail') or {}).get('outer_converged', True))
     warnings_list: list = list(getattr(result, 'warnings', []) or [])
     summary = {
         'Q_W': getattr(result, 'Q_W', None),
+        'converged': result.converged,
         'dP_A_Pa': getattr(result, 'dP_A_Pa', None),
         'dP_B_Pa': getattr(result, 'dP_B_Pa', None),
         'envelope_valid': diag.get('envelope_valid'),
         'outer_converged': (diag.get('convergence_detail') or {}
                             ).get('outer_converged'),
         'warnings': warnings_list,
+        'extrap_reasons': list(result.extrap_reasons),
     }
     if args.as_json:
         print(json.dumps(summary, ensure_ascii=False, default=str))
     else:
         print(f"Q = {summary['Q_W']} W")
         print(f"dP_A = {summary['dP_A_Pa']} Pa   dP_B = {summary['dP_B_Pa']} Pa")
-        print(f"envelope_valid = {summary['envelope_valid']}   "
+        print(f"converged = {summary['converged']}   "
+              f"envelope_valid = {summary['envelope_valid']}   "
               f"outer_converged = {summary['outer_converged']}")
         for w in warnings_list:
             print(f"warning: {w}")
+        for reason in summary['extrap_reasons']:
+            print(f"extrap_reason: {reason}")
     return 0 if ok else 2
 
 

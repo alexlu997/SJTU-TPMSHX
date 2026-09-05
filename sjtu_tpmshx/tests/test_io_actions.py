@@ -428,6 +428,12 @@ def test_export_results_writes_2d_values(tmp_path, monkeypatch, win):
     text = out.read_text()
     assert 'Q [W],123.5000' in text
     assert 'Grid Nx,2' in text
+    import csv
+    with out.open(encoding='utf-8', newline='') as stream:
+        rows = dict(csv.reader(stream))
+    for key in ('converged', 'envelope_valid', 'outer_converged',
+                'warnings', 'extrap_reasons'):
+        assert rows[key] == 'unknown'
 
 
 def test_export_results_writes_3d_values_and_fields(tmp_path, monkeypatch, win):
@@ -451,5 +457,79 @@ def test_export_results_writes_3d_values_and_fields(tmp_path, monkeypatch, win):
     win._export_results()
 
     assert 'Q [W],321.0000' in out.read_text()
-    with np.load(tmp_path / 'results_fields.npz') as fields:
+    with np.load(tmp_path / 'results_fields.npz', allow_pickle=False) as fields:
         assert fields['Ta'].shape == (2, 2, 2)
+        assert fields['converged'].item() == 'true'
+        assert fields['warnings'].item() == '[]'
+        assert fields['extrap_reasons'].item() == '[]'
+        assert fields['envelope_valid'].item() == 'unknown'
+        assert fields['outer_converged'].item() == 'unknown'
+
+
+@pytest.mark.parametrize('converged,envelope,outer', [
+    (True, True, True), (False, True, True), (True, False, True),
+    (True, True, False),
+])
+def test_result_status_survives_notification_and_mode_switch(
+        tmp_path, monkeypatch, win, converged, envelope, outer):
+    import csv
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from sjtu_tpmshx.domain.compute_result import ComputeResult
+    from sjtu_tpmshx.ui.plot_2d_results import finalize_plots
+
+    notices, errors = [], []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a: notices.append(a))
+    monkeypatch.setattr(QMessageBox, 'critical', lambda *a: errors.append(a))
+    # These are existing-carrier messages, not proof of Nu source collection.
+    warnings = ['经验外推, "边界"\n第二行', '另一条警告']
+    reasons = ['L 超出范围,\n请核对', 'Re 外推']
+    for index, mode in enumerate(('2d', '3d', '2d')):
+        field = np.arange(8.0).reshape((2, 4) if mode == '2d' else (2, 2, 2)) + 300
+        result = ComputeResult(
+            Q_W=123 + index, dP_A_Pa=45, dP_B_Pa=6,
+            converged=converged, warnings=warnings.copy(),
+            extrap_reasons=reasons.copy(),
+            diagnostics={'mode': mode, 'envelope_valid': envelope,
+                         'convergence_detail': {'outer_converged': outer}},
+            fields={key: field for key in
+                    ('Ta', 'Tb', 'Ts', 'ucA', 'vcA', 'ucB', 'vcB', 'P_fA',
+                     'P_fB', 'vmag_A')},
+        )
+        result.fields.update(N_x=2, N_y=4, L=0.2, H=0.1, dir_A=0, dir_B=2,
+                             dx_arr=np.full(2, 0.1), dy_arr=np.full(4, 0.025))
+        win.write_result(result)
+        expected_warnings = result.warnings.copy()
+        if mode == '2d':
+            finalize_plots(win)
+            assert win._compute_warnings is None
+            assert notices
+            assert win._diag_summary['converged'] == converged
+            assert win._compute_results['warnings'] == expected_warnings
+            # Result owns copies; a later notification/draft must not replace it.
+            result.warnings.clear()
+            result.extrap_reasons.clear()
+        win._compute_warnings = ['下一工况通知']
+        win._extrap_reasons = ['下一工况外推']
+        out = tmp_path / f'{index}.csv'
+        monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a: (str(out), ''))
+        win._export_results()
+        assert not errors
+        with out.open(encoding='utf-8', newline='') as stream:
+            rows = dict(csv.reader(stream))
+        assert rows['Q [W]'] == f'{123 + index:.4f}'
+        for key, value in (('converged', converged), ('envelope_valid', envelope),
+                           ('outer_converged', outer), ('warnings', expected_warnings),
+                           ('extrap_reasons', reasons)):
+            assert json.loads(rows[key]) == value
+        npz = tmp_path / f'{index}_fields.npz'
+        if mode == '3d':
+            with np.load(npz, allow_pickle=False) as saved:
+                for key in saved.files:
+                    assert saved[key].dtype.kind != 'O'
+                for key in ('converged', 'envelope_valid', 'outer_converged',
+                            'warnings', 'extrap_reasons'):
+                    assert saved[key].item() == rows[key]
+                np.testing.assert_array_equal(saved['vmag'], field)
+                np.testing.assert_array_equal(saved['P_kPa'], field / 1000)
+        else:
+            assert not npz.exists()

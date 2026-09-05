@@ -102,8 +102,16 @@ class RunResultsMixin:
             self._has_extrap = bool(result.extrap_reasons)
             return
 
+        # Export must select this newly published 2D run, not a prior 3D run.
+        self._result_3d = None
         f = result.fields
         self._compute_results = {
+            'converged': result.converged,
+            'warnings': list(result.warnings),
+            'extrap_reasons': list(result.extrap_reasons),
+            'envelope_valid': result.diagnostics.get('envelope_valid'),
+            'outer_converged': (result.diagnostics.get('convergence_detail') or {}
+                                ).get('outer_converged'),
             'Ta': f.get('Ta'), 'Tb': f.get('Tb'), 'Ts': f.get('Ts'),
             'ucA': f.get('ucA'), 'vcA': f.get('vcA'),
             'ucB': f.get('ucB'), 'vcB': f.get('vcB'),
