@@ -148,104 +148,92 @@ class IOActionsMixin:
             self, "Save Config", "SJTU-TPMSHX_config.json",
             "JSON Files (*.json)")
         if not path:
-            return
-        cfg = {
-            # Domain
-            "L":         self.le_L.text(),
-            "H":         self.le_H.text(),
-            # Solid
-            "rho_s":     self.le_rho_s.text(),
-            "Nx":        self.le_Nx.text(),
-            "Ny":        self.le_Ny.text(),
-            # TPMS
-            "tpms_type": self.combo_tpms.currentText(),
-            "df_mode": self.combo_df_mode.currentData(),
-            "L_cell":    self.le_Lcell.text(),
-            "t":         self.le_t.text(),
-            "k_s":       self.le_ks.text(),
-            # Solid initial temperature (optional; empty = legacy seed)
-            "T_s_init":  self.le_TsInit.text() if hasattr(self, 'le_TsInit') else "",
-            # Fluid A
-            "u_A":       self.le_uA.text(),
-            "T_inA":     self.le_TinA.text(),
-            "P_inA":     self.le_PinA.text(),
-            # Fluid B
-            "u_B":       self.le_uB.text(),
-            "T_inB":     self.le_TinB.text(),
-            "P_inB":     self.le_PinB.text(),
-            # Direction & pipe geometry
-            "dir_A": self.combo_dirA.currentIndex(),
-            "dir_B": self.combo_dirB.currentIndex(),
-            "pipeA_in_ctr":  self.le_pipeA_in_ctr.text(),
-            "pipeA_in_w":    self.le_pipeA_in_w.text(),
-            "pipeA_out_ctr": self.le_pipeA_out_ctr.text(),
-            "pipeA_out_w":   self.le_pipeA_out_w.text(),
-            #"transA": removed (full-domain solve)
-            "pipeB_in_ctr":  self.le_pipeB_in_ctr.text(),
-            "pipeB_in_w":    self.le_pipeB_in_w.text(),
-            "pipeB_out_ctr": self.le_pipeB_out_ctr.text(),
-            "pipeB_out_w":   self.le_pipeB_out_w.text(),
-            #"transB": removed (full-domain solve)
-        }
+            return False
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            from pathlib import Path
+            preset = self._capture_current_preset(Path(path).stem)
+            self._validate_preset(preset, complete=True)
+            payload = {'config_format': 1, 'preset': preset}
+            if not self.sm._atomic_write_json(Path(path), payload):
+                raise OSError(f"Cannot save configuration: {path}")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
+            return False
+        self.statusBar().showMessage(f"Saved configuration: {path}", TOAST_MS_MED)
+        return True
 
     def load_config(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Load Config", "",
-            "JSON Files (*.json)")
+            self, "Load Config", "", "JSON Files (*.json)")
         if not path:
-            return
+            return False
         try:
             with open(path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+                payload = json.load(f)
+            if not isinstance(payload, dict):
+                raise ValueError("Configuration must be a JSON object.")
+            legacy = 'config_format' not in payload
+            if legacy:
+                preset = self._legacy_config_preset(payload)
+            else:
+                if (type(payload['config_format']) is not int or
+                        payload['config_format'] != 1 or
+                        set(payload) != {'config_format', 'preset'}):
+                    raise ValueError("Unsupported configuration format.")
+                preset = payload['preset']
+                self._validate_preset(preset, complete=True)
+            self._apply_user_preset(preset)
         except Exception as e:
-            QMessageBox.critical(self, "Load Error", str(e)); return
+            QMessageBox.critical(self, "Load Error", str(e))
+            return False
+        if legacy:
+            message = ("已导入旧文件中保存的字段；这不是完整工况恢复。旧格式没有"
+                       "保存流体、温度单位、维度/Lz/Nz、第二横向端口、外推、"
+                       "flags 和分区；这些输入保持当前值，请核对后计算。")
+            QMessageBox.warning(self, "旧配置不完整", message)
+        else:
+            message = f"Loaded configuration: {path}"
+        self.statusBar().showMessage(message, TOAST_MS_MED)
+        return True
 
-        def _set(le, key):
-            if key in cfg: le.setText(str(cfg[key]))
-
-        _set(self.le_L,        "L")
-        _set(self.le_H,        "H")
-        _set(self.le_rho_s,    "rho_s")
-        _set(self.le_Nx,       "Nx")
-        _set(self.le_Ny,       "Ny")
-        _set(self.le_Lcell,    "L_cell")
-        _set(self.le_t,        "t")
-        _set(self.le_ks,       "k_s")
-        _set(self.le_uA,       "u_A")
-        _set(self.le_TinA,     "T_inA")
-        _set(self.le_PinA,     "P_inA")
-        _set(self.le_uB,       "u_B")
-        _set(self.le_TinB,     "T_inB")
-        _set(self.le_PinB,     "P_inB")
-        if hasattr(self, 'le_TsInit'):
-            _set(self.le_TsInit, "T_s_init")
-        # Pipe geometry
-        _set(self.le_pipeA_in_ctr,  "pipeA_in_ctr")
-        _set(self.le_pipeA_in_w,    "pipeA_in_w")
-        _set(self.le_pipeA_out_ctr, "pipeA_out_ctr")
-        _set(self.le_pipeA_out_w,   "pipeA_out_w")
-        # transA/B removed (full-domain solve)
-        _set(self.le_pipeB_in_ctr,  "pipeB_in_ctr")
-        _set(self.le_pipeB_in_w,    "pipeB_in_w")
-        _set(self.le_pipeB_out_ctr, "pipeB_out_ctr")
-        _set(self.le_pipeB_out_w,   "pipeB_out_w")
-        # (see above)
-
-        if "tpms_type" in cfg:
-            idx = self.combo_tpms.findText(cfg["tpms_type"])
-            if idx >= 0: self.combo_tpms.setCurrentIndex(idx)
-        if "df_mode" in cfg and hasattr(self, 'combo_df_mode'):
-            idx = self.combo_df_mode.findData(cfg["df_mode"])
-            if idx >= 0: self.combo_df_mode.setCurrentIndex(idx)
-        if "dir_A" in cfg:
-            self.combo_dirA.setCurrentIndex(int(cfg["dir_A"]))
-        if "dir_B" in cfg:
-            self.combo_dirB.setCurrentIndex(int(cfg["dir_B"]))
+    def _legacy_config_preset(self, payload):
+        """Import only fields the former flat writer actually saved."""
+        edits = {
+            'L': 'le_L', 'H': 'le_H', 'rho_s': 'le_rho_s',
+            'Nx': 'le_Nx', 'Ny': 'le_Ny', 'L_cell': 'le_Lcell',
+            't': 'le_t', 'k_s': 'le_ks',
+            'u_A': 'le_uA', 'T_inA': 'le_TinA', 'P_inA': 'le_PinA',
+            'u_B': 'le_uB', 'T_inB': 'le_TinB', 'P_inB': 'le_PinB',
+        }
+        for side in ('A', 'B'):
+            for port in ('in', 'out'):
+                for field in ('ctr', 'w'):
+                    key = f'pipe{side}_{port}_{field}'
+                    edits[key] = f'le_{key}'
+        known = set(edits) | {'tpms_type', 'df_mode', 'dir_A', 'dir_B', 'T_s_init'}
+        if not payload or set(payload) - known:
+            raise ValueError("Incomplete or unsupported configuration payload.")
+        if payload.get('T_s_init', '') != '':
+            raise ValueError("T_s_init is no longer a GUI input; cannot restore it.")
+        preset = {'temp_unit': self._temp_unit,
+                  'line_edits': {name: payload[key] for key, name in edits.items()
+                                 if key in payload},
+                  'combos': {}, 'checks': {}}
+        for key, name, by_data in (
+                ('tpms_type', 'combo_tpms', False),
+                ('df_mode', 'combo_df_mode', True)):
+            if key in payload:
+                combo = getattr(self, name)
+                idx = (combo.findData(payload[key]) if by_data else
+                       combo.findText(payload[key]))
+                if idx < 0:
+                    raise ValueError(f"Unsupported {key}: {payload[key]}")
+                preset['combos'][name] = idx
+        for side in ('A', 'B'):
+            if f'dir_{side}' in payload:
+                preset['combos'][f'combo_dir{side}'] = payload[f'dir_{side}']
+        self._validate_preset(preset)
+        return preset
 
     def _copy_figure_clipboard(self):
         """Copy the currently active canvas image to the system clipboard
