@@ -13,14 +13,21 @@ before changing solver, pipeline, closure, or data-loading code.
   demonstrated failure mode.
 - Keep raw experiment and CFD data under `data/raw_data/`; `data/` is local and
   must not be committed.
-- Do not commit or push unless the user asks.
+- Commit and push only when authorized by the user. Existing task authorization
+  remains valid unless changed by the user; do not request it again.
+- Global instruction or skill changes do not reset an active Goal/Graph,
+  audit evidence, or task authorization, or relax project physical, data,
+  environment, validation, and CI acceptance conditions. Refresh only nodes
+  affected by the actual change.
+- Pause and ask the user when physical scope or applicability is unclear.
+  Authorization for unrelated work does not resolve that pause.
 
 ## Python environment
 
 - `.venv-path` is required for local Python work. Use the absolute interpreter
   on its first line for every Python, pip, smoke, and pytest command. If the
-  file or interpreter is missing, stop and report it instead of using another
-  environment.
+  file or interpreter is missing, stop environment-dependent work and report
+  it instead of using another environment.
 - Run project modules from the current repository root so `sjtu_tpmshx` resolves
   from the current checkout or worktree.
 - For Matplotlib, Qt smoke, and pytest commands, use ignored worktree-local
@@ -29,11 +36,16 @@ before changing solver, pipeline, closure, or data-loading code.
   not `requirements.txt`, and do not install this project into it editable.
 - Do not create, upgrade, or reinstall an environment or dependency unless the
   user explicitly requests it. If the configured interpreter or a dependency is
-  missing, report the problem instead of changing the environment.
-- Before unattended work, run
+  missing, stop environment-dependent work and report the problem instead of
+  changing the environment.
+- Before unattended work that depends on the Python environment, run
   `python -m sjtu_tpmshx.runs.tools.check_locked_environment` against the
-  applicable lock, then `python -m pip check`. Stop on failure; do not repair the
-  environment automatically. The checker intentionally ignores the pip version.
+  applicable lock, then `python -m pip check`. On failure, stop work that depends
+  on that environment and report it; do not repair the environment automatically.
+  The checker intentionally ignores the pip version.
+- During an environment pause, only static work independent of that environment
+  may continue. Do not bypass either environment check; resume dependent work
+  only after both pass. Other pause conditions remain in force.
 - A requested dependency addition or removal must update `pyproject.toml` and
   the appropriate lock file in the same change. Do not mutate the shared venv
   as part of a code change; report that an explicit rebuild and prewarm are
