@@ -52,7 +52,7 @@
 
 **`_apply_massflux_inlet()`**（`sjtu_tpmshx/solvers/simple_solver.py:597`）：逐胞元 `v_inlet_field = _massflux_target / max(rho_field[:,0], 1e-9)`（`:628-630`），`self.v_inlet` 保留为横向均值供诊断（`:631`）。禁用或目标未捕获时为 no-op（`:624-626`）。该机制把速度入口的可压缩正反馈（dP↑→ρ↑→dP↑）转为负反馈，是 Shanghai Δp 网格收敛的关键（`sjtu_tpmshx/solvers/simple_solver.py:602-609`）。
 
-**其它方法**：`set_K_cF_field(K2d, cF2d)` 每胞元 D-F override，形状必须 (Nx,Ny)（`sjtu_tpmshx/solvers/simple_solver.py:684-701`）；`update_rho_field`（`:535`）；`update_T_field`（`:633`，ideal-gas 时经 Sutherland `_refresh_mu_from_T`，`:673-681`）；`solve_temperature(K_ff, K_ss, h_v, rho_cp_f, T_in, T_other=None, h_v2=0.0, ...)` 单流体冻结速度 LTNE（`:1007-1044`，注意此处传给核的是**全 ε** `self.eps`，`:1035`，与 ltne_energy 的减半路径无关）；`detect_uniform_boundary(threshold=0.045)`（`:1079`）；`get_exit_profile`（`:1135`）；`_enforce_mass_conservation`（`:958`，部分出口的事后全局质量重标，opt-out 属性 `enforce_outlet_mass_balance`，`:981`）；静态方法 `solve_outlet_transition`（`:1164`）；模块级 `solve_transition_zone`（`:1230`）。网格生成函数：`_aligned_grid`（`:82`）、`build_wall_refined_1d`（`:139`）、`build_inlet_stretched_1d`（`:172`，opt-in，未接入默认路径，`:182-185`）。
+**其它方法**：`set_K_cF_field(K2d, cF2d)` 每胞元 D-F override，形状必须 (Nx,Ny)（`sjtu_tpmshx/solvers/simple_solver.py:684-701`）；`update_rho_field`（`:535`）；`update_T_field`（`:633`，ideal-gas 时经 Sutherland `_refresh_mu_from_T`，`:673-681`）；`solve_temperature(K_ff, K_ss, h_v, rho_cp_f, T_in, T_other=None, h_v2=0.0, ...)` 单流体冻结速度 LTNE（`:1007-1044`，注意此处传给核的是**全 ε** `self.eps`，`:1035`，与 ltne_energy 的减半路径无关）；`detect_uniform_boundary(threshold=0.045)`（`:1079`）；`get_exit_profile`（`:1135`）；`_enforce_mass_conservation`（`:958`，退出时按当前 ρ/ε 和面通量执行局部出口闭合，opt-out 属性 `enforce_outlet_mass_balance`，`:981`）；静态方法 `solve_outlet_transition`（`:1164`）；模块级 `solve_transition_zone`（`:1230`）。网格生成函数：`_aligned_grid`（`:82`）、`build_wall_refined_1d`（`:139`）、`build_inlet_stretched_1d`（`:172`，opt-in，未接入默认路径，`:182-185`）。
 
 ### 动量/压力核（`sjtu_tpmshx/solvers/_kernels_simple_2d.py`）
 
@@ -106,7 +106,7 @@
 | `cf_scale` | 1.0 | `sjtu_tpmshx/solvers/simple_solver.py:275,421-422` | sCO2 用流体相关 Forchheimer 标度 |
 | `cf_aniso` | 0.0（实例属性） | `sjtu_tpmshx/solvers/simple_solver.py:440` | 斜流 Forchheimer 方向因子；0 时核跳过分支、位一致 |
 | `solve()` 缺省 | max_iter=3000, tol=1e-6, alpha_u=0.7, alpha_p=0.3, n_inner=2, coupling='simple' | `sjtu_tpmshx/solvers/simple_solver.py:703-707` | |
-| `enforce_outlet_mass_balance` | True（getattr） | `sjtu_tpmshx/solvers/simple_solver.py:981` | V&V 可关闭事后重标 |
+| `enforce_outlet_mass_balance` | True（getattr） | `sjtu_tpmshx/solvers/simple_solver.py:981` | V&V 可关闭退出时的局部出口闭合 |
 | `lowre_early_exit` / `lowre_vel_tol` / `lowre_stall_window` / `lowre_stall_ratio` | True / 1e-4 / 30 / 1e-3（getattr） | `sjtu_tpmshx/solvers/_solve_common.py:53-56` | 2D min_iter=20（`sjtu_tpmshx/solvers/simple_solver.py:741`） |
 | `_WALL_PENALTY_BASE` / `_WALL_PENALTY_EFOLD` | 1e3 / 1.5 | `sjtu_tpmshx/solvers/_kernels_simple_2d.py:155-156` | 编译期常量，2D/3D 共用 |
 | `_RB_ENERGY_2D` / `_RB_ENERGY_2D_GATE` | False / 30_000 | `sjtu_tpmshx/solvers/ltne_energy.py:604-605` | 2D 红黑并行能量核默认关 |
@@ -139,7 +139,7 @@
 - **Anderson（2D 预留）**：`AndersonSIMPLE` 与 `stack_state` 按 3D 四分量 (u,v,w,P) 设计（`sjtu_tpmshx/solvers/anderson_acceleration.py:129-138`）；2D 若接入需自行组装状态向量并遵守「每 Anderson 步后重投影」契约（`:7-14`）。
 - **env 变量**：`TPMSHX_NUM_THREADS`（运行时线程数，`sjtu_tpmshx/solvers/threads.py:43-52`）、`NUMBA_NUM_THREADS`（硬上限，须先于 Numba 初始化）、`TPMSHX_DF_METHOD=rbf`（DF surrogate 后端切换，注释提及 `sjtu_tpmshx/solvers/_kernels_simple_2d.py:166-168`，实现在 df_surrogate/predict.py，本文档未核查该实现）。
 - **`build_inlet_stretched_1d`**（`sjtu_tpmshx/solvers/simple_solver.py:172`）：opt-in 流向渐变网格，未接入默认路径但核已兼容非均匀 dx_arr（`:182-185`）。
-- **`enforce_outlet_mass_balance = False`**（`sjtu_tpmshx/solvers/simple_solver.py:977-981`）：V&V 关闭事后质量重标。
+- **`enforce_outlet_mass_balance = False`**（`sjtu_tpmshx/solvers/simple_solver.py:977-981`）：V&V 关闭退出时的局部出口闭合；迭代内原有边界闭合保持启用。
 
 ## 已知不足与 TODO
 
@@ -150,8 +150,8 @@
 3. **partial-inlet 温度 BC 是数值正则化**：部分开口胞元 T 由线性混合给出，带内邻点小偏差；注释给出了改写为严格面通量 BC 的路线（`sjtu_tpmshx/solvers/ltne_energy.py:163-171`）。
 4. **空间变 ε 的 interstitial 形式偏差**（B5）：对流与 Laplacian 算子在非均匀 ε_f 下偏离均质化 BFNS 推导，扩展 zoned-TPMS 前须复核（`sjtu_tpmshx/solvers/simple_solver.py:34-38`）。
 5. **SIMPLER 实验性**：partial-BC 配置未基准（`sjtu_tpmshx/solvers/simple_solver.py:716-718`）。
-6. **`_enforce_mass_conservation` 属事后重标，且它【在退出决定之后】才跑**（`sjtu_tpmshx/solvers/simple_solver.py:958`）。其 docstring 建议 "|scale−1| > 1e-3 → 收紧 tol 而非依赖重标"（`:973-976`），**但这条建议本身不成立**（codex 审计 2026-07-12）：调用顺序是 `:897` 先判 `res < tol` → `:900` 才调重标；LowRe 退出 `:907` → `:914` 才调；max_iter `:922` → `:926` 才调。**循环里根本不跑**，所以"收紧 tol"既不能让重标提前介入，重标也从来没帮任何一次 tol 触发过。它唯一的作用是**改写返回给调用方的出口速度**。
-7. **`final_res` 与返回的场对不上**（同上审计）：重标改了 `self.v[i, Ny]`，但 `final_res = res` 报的是**重标之前**算出的残差。低危（重标在全断面出口上 `scale≈1`），但它是个真实的状态不一致，别拿 legacy 的 `final_res` 当返回场的证书。**【2026-07-13 F2 侧已修（证书同步，codex P1）】**：F2 退出路径现于 `_enforce_mass_conservation` **之后**用同套核重算三残差 + backflow 回填 `final_res_*`（只读重算、场与迭代计数不变、golden 位同），超门时记 `f2_cert_post_rescale_ok=False` + 告警（不翻转 converged）。另：重标求和自 2026-07-13 起按 **ε·ρ·v** 口径（zoned 下原 ρ·v 口径会反向破坏刚认证的 VANS 守恒；非均匀才启用，均匀位同——C11-①）。legacy 路径的 `final_res` 不一致维持原状（legacy 本身已非证书）。
+6. **`_enforce_mass_conservation` 在退出决定之后执行局部出口闭合**：使用当前 `rho_field`、`eps_field`、网格及横向面通量，逐出口控制体满足 `Fn = Fs + Fw - Fe`；不再按全局入口/出口质量比缩放速度，内部质量缺陷仍由残差暴露。`enforce_outlet_mass_balance=False` 可关闭这一步，`_last_outlet_mass_scale` 保留为 1.0。每轮 `_correct_jit` → `_update_density` → 残差/判据的顺序不变；退出收尾不会促使之前的 tol 判据触发。
+7. **legacy `final_res` 不是返回场证书；F2 同时要求收尾前后通过**：legacy 仍保存收尾前的 `res`。F2 在局部出口闭合后用同套核重算三残差及 backflow，回填 `final_res_*`；保留历史属性名 `f2_cert_post_rescale_ok`，其当前含义为局部闭合后证书是否通过。仅当原退出原因是 `tol` **且**该证书通过时返回 `converged=True`；收尾前未通过不能被升级，收尾后超门会告警并返回 False，`exit_reason` 保留原原因。迭代历史、原判据和阈值不变。
 8. **【① 已知错，已修】2D 的 `tol` 是【纯恒等式】，求解在第 20 步就停 —— F2 已接管（台账 C9）**
    - **机制**：`_mass_res_jit`（`_kernels_simple_2d.py:909`）量的是**截面积分通量** `max_j |Σᵢ ρv·dx − Q_in|/Q_in`。pp 求解让**逐格散度精确为零** ⇒ 截面通量**逐层望远镜** ⇒ `Q_j = Q_in` 对**所有** j 成立（出口面由 ε·ρ·v 守恒外推给出，也相等）⇒ **全断面出口下残差恒等于零**（实测 **1.6e-15**）。3D 至少还有出口 pin 行的横向散度这个"真信号"（虽是伪的）；**2D 字面上零信息**。
    - **后果**：`tol` 在 `it >= 20` 这个**最小迭代数**门槛上触发，**求解器在第 20 步就停**（3D 是 92 步）。实测代价：**dP_A 欠收敛 −3.3%**（随速度非单调，峰值在 u≈5~10 m/s）。参考解硬：500 步到不动点，之后到 20000 步一分不差。

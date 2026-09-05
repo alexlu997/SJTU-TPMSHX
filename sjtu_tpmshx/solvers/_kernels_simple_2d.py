@@ -901,14 +901,12 @@ def _mass_res_jit(u, v, Nx, Ny, dx_arr, dy_arr, rho_field):
     THAT mismatch, not any 2D band-aid, is why 2D's `tol` is reachable and 3D's
     is not (ledger C6).
 
-    CORRECTION (2026-07-12, codex review). An earlier revision of this docstring
-    claimed `_enforce_mass_conservation` (`simple_solver.py:958`) "snaps exactly
-    this quantity to zero, which is why 2D's tol fires". THAT IS WRONG, and the
-    call order disproves it: the tol test runs FIRST (`simple_solver.py:897`) and
-    the rescale is invoked only on the way OUT (`:900`, `:914`, `:926`) — never
-    inside the loop. It cannot help any tol check fire. What it DOES do is change
-    the RETURNED outlet velocity while `final_res` (`:902`) still reports the
-    pre-rescale value — a real (minor) state inconsistency, logged in ledger C2.
+    Historical correction (2026-07-12): the former global outlet rescale
+    happened only AFTER the exit decision, so it could not make tol fire.
+    The current `_enforce_mass_conservation` instead closes local outlet CVs
+    with the latest density, still only on exit. It cannot trigger the pre-tol
+    check either. Legacy `final_res` remains the pre-closeout residual, not a
+    certificate of the returned field; F2 separately rechecks its certificate.
 
     Like 3D, this residual is evaluated against the PRE-`_update_density`
     rho_eps (`simple_solver.py:880-882`), so it shares 3D's staleness too.

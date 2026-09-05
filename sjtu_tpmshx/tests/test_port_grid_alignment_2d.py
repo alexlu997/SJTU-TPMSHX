@@ -31,6 +31,23 @@ def _edges(bc):
             bc.out_ctr - bc.out_w / 2, bc.out_ctr + bc.out_w / 2)
 
 
+def test_aligned_grid_borrows_from_multiple_segments():
+    edges = np.cumsum([.15, .15, .15, .15, .10, .10, .08, .07, .05])[:-1]
+    widths = _aligned_grid(20, 1.0, edges)
+    assert len(widths) == 20
+    assert np.all(widths > 0)
+    assert widths.sum() == pytest.approx(1.0, abs=1e-13)
+    grid_edges = np.r_[0.0, np.cumsum(widths)]
+    for edge in edges:
+        assert np.min(np.abs(grid_edges - edge)) < 1e-13
+
+
+def test_aligned_grid_rejects_too_few_cells_for_segments():
+    edges = np.cumsum([.15, .15, .15, .15, .10, .10, .08, .07, .05])[:-1]
+    with pytest.raises(ValueError):
+        _aligned_grid(17, 1.0, edges)
+
+
 @pytest.mark.parametrize('directions', [(0, 2), (2, 0), (1, 3), (3, 1),
                                          (0, 1), (2, 3)])
 def test_ports_align_on_physical_axis(directions):
