@@ -7,7 +7,7 @@ import pytest
 from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D
 from sjtu_tpmshx.domain.compute_config import PartialBCConfig
 from sjtu_tpmshx.pipelines import solve_2d
-from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver, _port_fractions_1d
 from sjtu_tpmshx.tests.test_port_grid_alignment_2d import _case, _expected_profile
 
 
@@ -48,7 +48,7 @@ def _arguments(monkeypatch, directions=(1, 3), full=False):
         za=None, window=SimpleNamespace(_h_vA=1., _h_vB=1., _K_ffA=1.,
                                        _K_ffB=1., _K_ss=1.),
         _pA=props, _pB=props, cfgA=pipe._parsed['cfgA'], cfgB=pipe._parsed['cfgB'],
-        u_A=1., u_B=1., warnings_list=[])
+        u_A=1., u_B=1., warnings_list=[], h_vA_coarse=1., h_vB_coarse=1.)
     return cfg, args
 
 
@@ -78,6 +78,7 @@ def test_refined_profiles_use_physical_coordinates(monkeypatch, directions, full
     monkeypatch.setattr(solve_2d, '_enthalpy_balance_2d', balance)
     solve_2d._compute_Q_richardson(**arguments)
     assert observed.get('return_info') is True
+    assert [kw['T_in'] for _, kw in balances] == [400., 300., 400., 300.]
     for side, direction, (_, duty_kwargs) in zip(('A', 'B'), directions, balances[-2:]):
         widths = observed['dy_arr' if direction in (0, 1) else 'dx_arr']
         bc = arguments[f'cfg{side}']
@@ -90,9 +91,15 @@ def test_refined_profiles_use_physical_coordinates(monkeypatch, directions, full
             np.testing.assert_allclose(expected_in, 1., atol=1e-13)
         else:
             assert not np.array_equal(widths, widths[::-1])
-        np.testing.assert_allclose(observed[f'inlet_mask_{side}'], expected_in, atol=1e-13)
-        np.testing.assert_array_equal(duty_kwargs['inlet_mask'], observed[f'inlet_mask_{side}'])
+        raw_in = _port_fractions_1d(widths, lo, hi)[0]
+        np.testing.assert_allclose(observed[f'inlet_mask_{side}'], raw_in, atol=1e-13)
+        # Formal duty still uses its existing profile; conductive area does not.
+        np.testing.assert_allclose(duty_kwargs['inlet_mask'], expected_in, atol=1e-13)
         np.testing.assert_allclose(duty_kwargs['outlet_mask'], expected_out, atol=1e-13)
+        coarse_flux = solve_2d._inlet_transport_2d(
+            arguments[f'simp{side}'], direction, .5*arguments['eps'],
+            arguments[f'rho_cp_{side}'], arguments['energy_dx'], arguments['energy_dy'])
+        assert observed[f'inlet_flux_{side}'].sum() == pytest.approx(coarse_flux.sum())
 
 
 @pytest.mark.parametrize('converged', [False, True])
@@ -113,7 +120,7 @@ def test_finite_refined_verdict_controls_extrapolation(monkeypatch, converged):
 
 
 @pytest.mark.parametrize('directions', [(0, 1), (2, 3)])
-def test_refined_initial_fields_preserve_physical_coordinates_and_frozen_inlets(monkeypatch, directions):
+def test_refined_initial_fields_preserve_all_physical_cell_coordinates(monkeypatch, directions):
     _, arguments = _arguments(monkeypatch, directions)
     x = np.cumsum(arguments['energy_dx']) - arguments['energy_dx'] / 2
     y = np.cumsum(arguments['energy_dy']) - arguments['energy_dy'] / 2
@@ -133,20 +140,66 @@ def test_refined_initial_fields_preserve_physical_coordinates_and_frozen_inlets(
     yf = np.cumsum(observed['dy_arr']) - observed['dy_arr'] / 2
     for name, base in (('Ta', 360.), ('Tb', 320.), ('Ts', 340.)):
         expected = base + 70. * xf[:, None] + 90. * yf[None, :]
-        if name != 'Ts':
-            side = 'A' if name == 'Ta' else 'B'
-            direction = arguments[f'dir_{side}']
-            assert np.any(observed[f'inlet_mask_{side}'] <= .01)
-            if direction == 0:
-                expected[0, :] = arguments[f'T_in{side}']
-            elif direction == 1:
-                expected[-1, :] = arguments[f'T_in{side}']
-            elif direction == 2:
-                expected[:, 0] = arguments[f'T_in{side}']
-            else:
-                expected[:, -1] = arguments[f'T_in{side}']
+        # No real inlet cells are frozen or overwritten by a face temperature.
         np.testing.assert_allclose(observed[f'{name}_init'], expected, rtol=0, atol=1e-12)
         np.testing.assert_array_equal(arguments[name], seeds[name])
+
+
+def test_refinement_uses_last_local_exchange_fields_without_resplitting(monkeypatch):
+    _, arguments = _arguments(monkeypatch)
+    x = np.cumsum(arguments['energy_dx']) - arguments['energy_dx']/2
+    y = np.cumsum(arguments['energy_dy']) - arguments['energy_dy']/2
+    arguments.update(h_vA_coarse=50.+70.*x[:, None]+90.*y[None, :],
+                     h_vB_coarse=80.+40.*x[:, None]+20.*y[None, :], split_A=.3)
+
+    def refined(*args, **kwargs):
+        xf = np.cumsum(kwargs['dx_arr']) - kwargs['dx_arr']/2
+        yf = np.cumsum(kwargs['dy_arr']) - kwargs['dy_arr']/2
+        np.testing.assert_allclose(args[9], 50.+70.*xf[:, None]+90.*yf[None, :],
+                                   rtol=0, atol=1e-12)
+        np.testing.assert_allclose(args[10], 80.+40.*xf[:, None]+20.*yf[None, :],
+                                   rtol=0, atol=1e-12)
+        return _finite_refined(args, kwargs, True)
+
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', refined)
+    solve_2d._compute_Q_richardson(**arguments)
+
+
+def test_cap_post_does_not_replace_last_thermal_coefficients(monkeypatch):
+    import inspect
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig
+    cfg = ComputeConfig()
+    cfg.solver.Nx = cfg.solver.Ny = 8
+    cfg.fluid_A.T_in_K = 400.
+    captured = {}
+    original = solve_2d.solve_full_domain
+    signature = inspect.signature(original)
+
+    def energy(*args, **kwargs):
+        captured.update(signature.bind(*args, **kwargs).arguments)
+        return original(*args, **kwargs)
+
+    def cap(*, step, post, **kwargs):
+        _, carry = step(0)
+        post(0, carry)
+        return 0, False
+
+    def refined(*args, **kwargs):
+        # The final post changed next-iteration rho_cp; refinement must instead
+        # consume the coefficients paired with the saved main temperature.
+        np.testing.assert_array_equal(args[7], captured['rho_cp_fA'])
+        np.testing.assert_array_equal(args[8], captured['rho_cp_fB'])
+        np.testing.assert_array_equal(kwargs['h_vA_coarse'], captured['h_vA'])
+        np.testing.assert_array_equal(kwargs['h_vB_coarse'], captured['h_vB'])
+        return 10., 10., -10., 10., False, dict(converged=True, extrapolated=True)
+
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', energy)
+    monkeypatch.setattr(solve_2d, 'run_outer_coupling', cap)
+    monkeypatch.setattr(solve_2d, '_compute_Q_richardson', refined)
+    result = Pipeline2D(cfg).run()
+    assert captured
+    assert not result.converged
+    assert result.diagnostics['convergence_detail']['outer_hit_cap']
 
 
 def test_one_invalid_refined_duty_falls_back_both_sides(monkeypatch):

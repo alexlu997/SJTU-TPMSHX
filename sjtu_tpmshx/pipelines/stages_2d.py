@@ -977,6 +977,7 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
             'richardson_info': raw.get('richardson_info'),
+            'true_h_balance': raw.get('true_h_balance'),
             'mass_flow_A_kg_s_per_m': float(
                 raw.get('mass_flow_A_kg_s_per_m', float('nan'))),
             'mass_flow_B_kg_s_per_m': float(

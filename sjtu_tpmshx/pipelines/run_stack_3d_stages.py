@@ -1520,9 +1520,8 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
         else:
             Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
 
-    # The boundary duties use the same true-enthalpy and face-mass-flow
-    # convention as the sCO2 energy kernel. A large difference now means the
-    # coupled solve itself did not close; surface it as a validity warning.
+    # Reported duties use a different pressure anchor from the last true-h
+    # kernel. Their mismatch alone cannot establish a kernel closure defect.
     Q_AB_imbalance_rel = float('nan')
     if (sB is not None and (fluid_type_A == 'sco2' or fluid_type_B == 'sco2')
             and Q_enthalpy_A > 1.0 and Q_enthalpy_B > 1.0):
@@ -1533,9 +1532,9 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
             _w5.warn(
                 f"[sCO2 3D energy] A/B enthalpy duties differ by "
                 f"{Q_AB_imbalance_rel*100:.0f}% (Q_A={Q_enthalpy_A/1e6:.2f} MW, "
-                f"Q_B={Q_enthalpy_B/1e6:.2f} MW). The face-mass-flow true-"
-                "enthalpy balance did not close; treat Q and outlet temperatures "
-                "as unconverged.", stacklevel=2)
+                f"Q_B={Q_enthalpy_B/1e6:.2f} MW). The reported duty balance "
+                "did not close; compare the last true-h ledger and pressure "
+                "sources before attributing the discrepancy to the kernel.", stacklevel=2)
 
     # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
     # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
@@ -2090,6 +2089,12 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         outer_anderson=(None if not _use_outer_and else dict(
             A=_and_A.stats(), B=(_and_B.stats() if sB is not None else None))),
     )
+
+    _result['true_h_balance'] = (dict(
+        _ltne_info[-1]['true_h_balance'], outer_converged=bool(_outer_converged),
+        post_after_last_thermal=bool(not _outer_converged),
+        state='last true-h solve, before any final post update')
+        if _ltne_info and 'true_h_balance' in _ltne_info[-1] else None)
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
@@ -2760,6 +2765,18 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))
+        if _enth_gate:
+            _ltne_info[-1]['true_h_balance'] = dict(
+                Q_A=float(_ltne_info_d['Q_A']), Q_B=float(_ltne_info_d['Q_B']),
+                units='W', outer_index=int(outer),
+                converged=bool(_ltne_info_d['converged']),
+                iterations=int(_ltne_info_d['iterations']),
+                residual=float(_ltne_info_d['residual']),
+                pressure_source='P_in - face-extrapolated dP + SIMPLE gauge',
+                P_in_A_Pa=float(P_inA), P_in_B_Pa=float(P_inB),
+                P_A_offset_Pa=float(P_inA - _dPA), P_B_offset_Pa=float(P_inB - _dPB),
+                P_A_range_Pa=[float(_P_A_local.min()), float(_P_A_local.max())],
+                P_B_range_Pa=[float(_P_B_local.min()), float(_P_B_local.max())])
         if _prof_t_ltne is not None:
             _dt = _time.perf_counter() - _prof_t_ltne
             _log.info(f"[PROF] outer {outer}: LTNE {_dt:7.2f}s  "

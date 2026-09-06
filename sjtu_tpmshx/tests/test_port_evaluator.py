@@ -80,6 +80,43 @@ def test_default_config_is_fullface_no_percell():
     assert DEFAULT_CONFIG['per_cell_K'] is False
 
 
+def test_energy_inlet_uses_same_physical_face_as_pipeline(monkeypatch):
+    from sjtu_tpmshx.optimization import evaluator
+    from sjtu_tpmshx.pipelines.solve_2d import _inlet_transport_2d
+    from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver, _port_fractions_1d
+    cfg = {**_CFG_SMALL, 'ports_A': (.015, .045, 0., .03),
+           'ports_B': (.015, .045, .03, .06)}
+    captured = []
+
+    def face_only(s, **kwargs):
+        s.v[:, 0] = np.arange(1., s.Nx + 1.) * s.inlet_frac
+        s.v[:, 1] = .1 * s.v[:, 0]  # Centre and inlet face deliberately differ.
+        captured.append(s)
+        return True, 0
+
+    class Captured(Exception):
+        pass
+
+    def energy(*args, **kwargs):
+        eps = .5 * args[13]
+        for side, s, rcp, direction in zip(('A', 'B'), captured,
+                                           (args[11], args[12]), (0, 3)):
+            expected = _inlet_transport_2d(
+                s, direction, eps, rcp, kwargs['dx_arr'], kwargs['dy_arr'])
+            np.testing.assert_allclose(kwargs[f'inlet_flux_{side}'], expected,
+                                       rtol=1e-14, atol=0)
+            port = cfg[f'ports_{side}']
+            raw = _port_fractions_1d(s.dx_arr, port[0], port[1])[0]
+            np.testing.assert_array_equal(kwargs[f'inlet_mask_{side}'], raw)
+        raise Captured
+
+    monkeypatch.setattr(SIMPLESolver, 'solve', face_only)
+    monkeypatch.setattr(evaluator, 'solve_full_domain', energy)
+    _, fc, _, _, _ = _fc_arrays(cfg, *_graded_y_ctrl(cfg))
+    with pytest.raises(Captured):
+        evaluate_design(None, cfg, fc=fc)
+
+
 def test_b_side_eps_push_is_y_flipped():
     """Orientation fix: a y-graded ε field lands FLIPPED on SIMPLE B
     (j=0 ↔ real y=H), mirroring stages_2d._to_simple_coords d==3."""
