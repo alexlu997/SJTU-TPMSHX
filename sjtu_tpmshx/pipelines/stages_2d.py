@@ -972,6 +972,7 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_enthalpy_B': raw.get('Q_enthalpy_B'),
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
+            'richardson_info': raw.get('richardson_info'),
             'mass_flow_A_kg_s_per_m': float(
                 raw.get('mass_flow_A_kg_s_per_m', float('nan'))),
             'mass_flow_B_kg_s_per_m': float(
