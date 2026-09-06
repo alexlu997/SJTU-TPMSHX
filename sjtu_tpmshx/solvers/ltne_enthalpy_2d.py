@@ -154,11 +154,15 @@ def solve_sco2_enthalpy_2d(
 
 def solve_enthalpy_2d(
     T_inA, T_inB, pressure_A, pressure_B, mass_flux_A, mass_flux_B,
-    h_vA, h_vB, k_s, eps_A, eps_B, dx, dy, *,
+    h_vA, h_vB, k_s, eps_A, eps_B, dx, dy, *, P_inA, P_inB,
     fluid_A='sco2', fluid_B='sco2', Ta_init=None, Tb_init=None, Ts_init=None,
     max_iter=5000, tol=0.5, cancel_check=None,
 ):
-    """2D-per-metre adapter for the shared face-flux true-enthalpy kernel."""
+    """2D-per-metre adapter for the shared face-flux true-enthalpy kernel.
+
+    P_inA/P_inB are inlet absolute pressures (Pa) for the inlet enthalpies;
+    pressure_A/pressure_B remain local absolute pressure fields for properties.
+    """
     from .ltne_enthalpy_3d import solve_ltne_enthalpy_3d_pipeline
 
     dx = np.asarray(dx, dtype=np.float64)
@@ -178,7 +182,7 @@ def solve_enthalpy_2d(
         shape[0], shape[1], 1, dx, dy, np.ones(1),
         cell3(eps_A) + cell3(eps_B), cell3(k_s),
         cell3(h_vA), cell3(h_vB), 0.0, 0.0,
-        T_inA, T_inB, float(np.mean(pressure_A)), float(np.mean(pressure_B)),
+        T_inA, T_inB, P_inA, P_inB,
         0, 0, fluid_A=fluid_A, fluid_B=fluid_B,
         eps_A_field=cell3(eps_A), eps_B_field=cell3(eps_B),
         pressure_A_field=cell3(pressure_A),

@@ -1231,6 +1231,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 T_inA, T_inB, P_abs_A, P_abs_B, mass_flux_A, mass_flux_B,
                 h_vA_local, h_vB_local, _Kss_src, eps_A_ent, eps_B_ent,
                 energy_dx, energy_dy, fluid_A=_pA['name'], fluid_B=_pB['name'],
+                P_inA=P_inA_val, P_inB=P_inB_val,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 max_iter=_e_max_iter, tol=_e_tol, cancel_check=cancel_check)
         else:
