@@ -1258,6 +1258,14 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 P_inA=P_inA_val, P_inB=P_inB_val,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 max_iter=_e_max_iter, tol=_e_tol, cancel_check=cancel_check)
+            e_info['true_h_balance'] = dict(
+                Q_A=float(e_info['Q_A']), Q_B=float(e_info['Q_B']), units='W/m',
+                outer_index=int(_coup_it), converged=bool(e_info['converged']),
+                iterations=int(e_info['iterations']), residual=float(e_info['residual']),
+                pressure_source='P_in + SIMPLE gauge - weighted inlet gauge',
+                P_in_A_Pa=float(P_inA_val), P_in_B_Pa=float(P_inB_val),
+                P_A_range_Pa=[float(P_abs_A.min()), float(P_abs_A.max())],
+                P_B_range_Pa=[float(P_abs_B.min()), float(P_abs_B.max())])
         else:
             last_temperature_inputs = (rho_cp_A, rho_cp_B, h_vA_local, h_vB_local)
             Ta, Tb, Ts, e_info = solve_full_domain(
@@ -1619,6 +1627,11 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         'Q_solid_richardson': Q_solid_richardson,
         'Q_richardson_warn': bool(richardson_warn),
         'richardson_info': richardson_info,
+        'true_h_balance': (dict(
+            e_info['true_h_balance'], outer_converged=bool(coupling_converged),
+            post_after_last_thermal=bool(not coupling_converged),
+            state='last true-h solve, before any final post update')
+            if _enthalpy_mode else None),
         # Compressible validity gate (robustness, 2026-06-25)
         'envelope_valid': _env_valid,
         'envelope_reasons': _env_reasons,
