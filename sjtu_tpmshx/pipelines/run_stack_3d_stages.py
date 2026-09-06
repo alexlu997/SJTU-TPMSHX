@@ -55,6 +55,14 @@ from sjtu_tpmshx.logutil import get_logger
 _log = get_logger(__name__)
 
 
+def _pressure_real_3d(solver, axis_map, offset):
+    """Map gauge pressure using the caller's existing absolute-P offset."""
+    field = (offset + solver.P).transpose(axis_map['solver_to_real_perm'])
+    if axis_map['is_reverse']:
+        field = np.flip(field, axis=axis_map['stream_real_axis'])
+    return np.ascontiguousarray(field)
+
+
 def _seed_p_ref(P_out_sq, P_in, *, mode, warn_list, context):
     """Pre-solve choke gate + the legacy 1D P_ref_abs seed.
 
@@ -739,6 +747,8 @@ def _build_3d_problem(cfg):
     # sco2: real-gas properties at (T,P).
     fluid_type_A = cfg.get('fluid_type_A', 'air')
     fluid_type_B = cfg.get('fluid_type_B', 'air')
+    fluid_props.check_water_state(fluid_type_A, T_inA, P_inA, where='3D direct inlet A')
+    fluid_props.check_water_state(fluid_type_B, T_inB, P_inB, where='3D direct inlet B')
     _mA = fluid_props.get(fluid_type_A)
     rho_A = float(_mA.rho(T_inA, P_inA))
     mu_A = float(_mA.mu(T_inA, P_inA))
@@ -1157,6 +1167,8 @@ def _build_hv_machinery(prob: _Problem3D):
     u_B_val = cfg.get('u_B', u_A)
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
+        fluid_props.check_water_state(fluid_type, T_side, P_side,
+                                      where='3D h_v property refresh')
         m = fluid_props.get(fluid_type)
         # air/water ignore P (value-identical to the old T-only calls → golden-
         # safe); sco2 is real-gas and REQUIRES P.
@@ -2383,6 +2395,14 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     # re-solves SIMPLE A/B with the updated fields for the next iter). The body
     # below is the verbatim former loop body, wrapped so the only `nonlocal`s
     # are the fields that persist across iters or are read after the loop.
+    def _check_property_water(where):
+        # The temperature path refreshes properties at frozen inlet pressure.
+        # It does not consume the separate true-h kernel pressure offset.
+        fluid_props.check_water_state(fluid_type_A, T_inA if Ta is None else Ta,
+                                      P_inA, where=f'{where} A')
+        fluid_props.check_water_state(fluid_type_B, T_inB if Tb is None else Tb,
+                                      P_inB, where=f'{where} B')
+
     def _outer_step_3d(outer):
         nonlocal Ta, Tb, Ts, chi_B, h_vA_field, h_vB_field, K_ffB
         nonlocal _ltne_mask_A, _ltne_mask_B
@@ -2398,6 +2418,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         if _progress_cb is not None:
             _progress_cb(10 + int(80 * outer / _MAX_OUTER))
         ucA, vcA, wcA = _assemble_real_velocity()
+        _enth_gate = (sB is not None
+                      and 'sco2' in (fluid_type_A, fluid_type_B))
+        if not _enth_gate:
+            _check_property_water('3D temperature warm start')
 
         # #B fix: rebuild h_v per cell using LOCAL Re (cell-center stream u).
         # Wall cells with |u_local|→0 → Nu_lam floor (4.36) → h_local much
@@ -2625,8 +2649,6 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _prof_t_ltne = _time.perf_counter() if _prof_3d_enabled() else None
         # Any pair containing sCO2 uses true enthalpy. The face-flux kernel
         # supports every real axis and arbitrary inlet/outlet patches.
-        _enth_gate = (sB is not None
-                      and 'sco2' in (fluid_type_A, fluid_type_B))
         # When the enthalpy solve will overwrite the result below, run the legacy
         # ρcp·u·T solve for only a couple of sweeps (a cheap warm-start) rather
         # than to full convergence — its Ta/Tb/Ts are discarded.
@@ -2674,6 +2696,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             cancel_check=_cancel_check,
             return_info=True)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
+        if not _enth_gate:
+            _check_property_water('3D temperature return')
 
         # ── Option B: enthalpy-conservative LTNE for variable-cp sCO2 ──
         # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
@@ -2702,18 +2726,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                 _simple_mass_flow(sB, fB['dir'], eps_f_per_side=_epsps,
                                   eps_side_override=_ov_B_e))
             _dPA = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
-            _P_A_local = np.ascontiguousarray(
-                ((P_inA - _dPA) + sA.P).transpose(solver_to_real_perm))
-            if axis_map['is_reverse']:
-                _P_A_local = np.ascontiguousarray(np.flip(
-                    _P_A_local, axis=axis_map['stream_real_axis']))
+            _P_A_local = _pressure_real_3d(sA, axis_map, P_inA - _dPA)
             _dPB = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
-            _P_B_local = np.ascontiguousarray(
-                ((P_inB - _dPB) + sB.P).transpose(
-                    axis_map_B['solver_to_real_perm']))
-            if axis_map_B['is_reverse']:
-                _P_B_local = np.ascontiguousarray(np.flip(
-                    _P_B_local, axis=axis_map_B['stream_real_axis']))
+            _P_B_local = _pressure_real_3d(sB, axis_map_B, P_inB - _dPB)
 
             def _rho_real(solver, amap):
                 field = solver.rho_field.transpose(amap['solver_to_real_perm'])
@@ -2754,6 +2769,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                 n_outer=int(cfg.get('ltne_enthalpy_outer', 1500)),
                 tol=float(cfg.get('ltne_enthalpy_tol', 1e-3)),
                 cancel_check=_cancel_check)
+            fluid_props.check_water_state(fluid_type_A, Ta, _P_A_local,
+                                          where='3D enthalpy return A')
+            fluid_props.check_water_state(fluid_type_B, Tb, _P_B_local,
+                                          where='3D enthalpy return B')
 
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')
@@ -2791,6 +2810,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         return _converged, None
 
     def _outer_post_3d(outer, _carry):
+        _check_property_water('3D property refresh')
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
         # #5 reverse-dir density-frame fix, fluid-A side (audit 2026-06-28). Same
@@ -2883,6 +2903,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         else:
             # Incompressible reseed: D-F coefficients stay constant while the
             # registry supplies the fluid viscosity at the mean temperature.
+            fluid_props.check_water_state(fluid_type_A, T_avg, P_inA,
+                                          where='3D mean viscosity refresh A')
             mu_avg = float(_mA.mu(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
             _sco2_compress = (
@@ -3093,6 +3115,14 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     # inner pass and the SIMPLE solves converged. (Audit 2026-07-12.)
     _outer_last_iter, _outer_converged = run_outer_coupling(
         max_iter=_max_outer, step=_outer_step_3d, post=_outer_post_3d)
+    # Metrics use P_ref_abs + gauge, independently of the true-h kernel offset.
+    for fluid, temperature, solver, amap, side in (
+            (fluid_type_A, Ta, sA, axis_map, 'A'),
+            (fluid_type_B, Tb, sB, axis_map_B, 'B')):
+        if fluid == 'water' and solver is not None:
+            fluid_props.check_water_state(
+                fluid, temperature, _pressure_real_3d(solver, amap, solver.P_ref_abs),
+                where=f'3D final report state {side}')
 
     return _OuterState(
         K_ffB=K_ffB,
