@@ -397,7 +397,7 @@ def _compute_Q_richardson(
     factor so ṁ_A / ṁ_B reflect ε_A / ε_B (not a shared ε/2).
 
     Returns ``(Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
-    richardson_warn)``.
+    richardson_warn, richardson_info)``. Failed refinement keeps user-grid duty.
     """
     # Per-side duty weighting relative to the symmetric ε/2 baseline (= 1.0 at
     # δ=0 ⇒ bit-identical). Matches the K_ff / convective scaling in the main
@@ -405,7 +405,7 @@ def _compute_Q_richardson(
     _asymQ = (float(split_A) != 0.5)
     _fAQ = 2.0 * float(split_A)
     _fBQ = 2.0 * (1.0 - float(split_A))
-    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid
+    from sjtu_tpmshx.solvers.simple_solver import _aligned_grid, _port_fractions_1d
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
     if za is not None and 'h_vB_arr' in za:
@@ -426,6 +426,21 @@ def _compute_Q_richardson(
     # `h_vB_arr * (Ts - Tb)` broadcasts the wrong way.
     Nx2 = int(len(energy_dx2))
     Ny2 = int(len(energy_dy2))
+
+    # Both thermal BCs and duty use the same physical transverse coordinates.
+    # Negative flow reverses the stream axis only, not these port profiles.
+    def _profiles(port, direction):
+        widths = energy_dy2 if direction in (0, 1) else energy_dx2
+        inlet = _port_fractions_1d(
+            widths, port['in_ctr'] - port['in_w'] / 2,
+            port['in_ctr'] + port['in_w'] / 2)[1]
+        outlet = _port_fractions_1d(
+            widths, port['out_ctr'] - port['out_w'] / 2,
+            port['out_ctr'] + port['out_w'] / 2)[1]
+        return inlet, outlet
+
+    mA_in2, mA_out2 = _profiles(cfgA, dir_A)
+    mB_in2, mB_out2 = _profiles(cfgB, dir_B)
 
     # Interpolate fields from coarse to fine grid using actual coordinates
     from scipy.interpolate import RegularGridInterpolator
@@ -474,14 +489,31 @@ def _compute_Q_richardson(
     else:
         K_ffA2_use = K_ffA2; K_ffB2_use = K_ffB2
         epsA2_use = None; epsB2_use = None
-    Ta2, Tb2, Ts2 = solve_full_domain(
+    Ta_init2, Tb_init2, Ts_init2 = _interp2(Ta), _interp2(Tb), _interp2(Ts)
+    # Off-port inlet cells never update: preserve their cold-start values.
+    for initial, direction, inlet in ((Ta_init2, dir_A, T_inA),
+                                       (Tb_init2, dir_B, T_inB)):
+        if direction == 0:
+            initial[0, :] = inlet
+        elif direction == 1:
+            initial[-1, :] = inlet
+        elif direction == 2:
+            initial[:, 0] = inlet
+        else:
+            initial[:, -1] = inlet
+    Ta2, Tb2, Ts2, refined_info = solve_full_domain(
         L, H, Nx2, Ny2, T_inA, T_inB,
         K_ffA2_use, K_ffB2_use, K_ss2, h_vA2, h_vB2,
         rcp_A2, rcp_B2, eps2,
         ucA2, vcA2, ucB2, vcB2,
         dir_A, dir_B, tol=0.5, max_iter=5000,
         dx_arr=energy_dx2, dy_arr=energy_dy2,
+        inlet_mask_A=mA_in2, inlet_mask_B=mB_in2, return_info=True,
+        Ta_init=Ta_init2, Tb_init=Tb_init2, Ts_init=Ts_init2,
         eps_A=epsA2_use, eps_B=epsB2_use, cancel_check=cancel_check)
+    richardson_info = dict(refined_info, extrapolated=False)
+    refined_ok = bool(refined_info['converged'] and all(
+        np.all(np.isfinite(field)) for field in (Ta2, Tb2, Ts2)))
     _area2 = energy_dx2[:, None] * energy_dy2[None, :]
     if za is not None and 'h_vB_arr' in za:
         Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
@@ -489,38 +521,14 @@ def _compute_Q_richardson(
         Q_solid_200 = float(np.sum(h_vB2 * (Ts2 - Tb2) * _area2))
     # Diagnostic only — solid-side Richardson retains the old signed
     # convention and lets us track grid convergence on ∑h_vB·(Ts−Tb).
-    Q_solid_richardson = (4.0 * Q_solid_200 - Q_solid_100) / 3.0
+    Q_solid_richardson = ((4.0 * Q_solid_200 - Q_solid_100) / 3.0
+                          if refined_ok else Q_solid_100)
 
-    # Primary Q_total via Richardson on enthalpy max(|Q_A|,|Q_B|) — signed-to-
-    # unsigned fix (Option C, 2026-04-24). Coarse grid has no SIMPLE, so mask
-    # is upsampled from the fine-grid inlet_frac (nearest-neighbor 2× repeat;
-    # exact since Nx2 = 2·N_x, Ny2 = 2·N_y).
+    # User-grid duty retains the original SIMPLE port profiles.
     mA_in  = simpA.inlet_frac.astype(np.float64)  if simpA is not None else None
     mA_out = simpA.outlet_frac.astype(np.float64) if simpA is not None else None
     mB_in  = simpB.inlet_frac.astype(np.float64)  if simpB is not None else None
     mB_out = simpB.outlet_frac.astype(np.float64) if simpB is not None else None
-    # 2026-05-09 — np.repeat(m, 2) breaks when Nx2 != 2*N_x (which happens
-    # whenever the master refined grid uses wall-refinement: e.g.
-    # 20 + 2 * n_refine = 40 + 14 = 54 cells, not 40). Resample masks via
-    # linear interpolation onto the actual fine-grid axis length so the
-    # _enthalpy_balance_2d face arithmetic gets matching shapes.
-    def _resample_1d(arr_src, n_dst):
-        if arr_src is None or len(arr_src) == n_dst:
-            return arr_src
-        x_src = np.linspace(0.0, 1.0, len(arr_src))
-        x_dst = np.linspace(0.0, 1.0, n_dst)
-        return np.interp(x_dst, x_src, arr_src).astype(np.float64)
-    Nx2_real, Ny2_real = (energy_dx2.size, energy_dy2.size)
-    # mA_in/out is along the cross-stream axis of A's enthalpy face; for
-    # dir_A in {0,1} (x-flow) the cross axis is real y → length Ny2_real.
-    # For dir_A in {2,3} (y-flow) the cross axis is real x → length Nx2_real.
-    _A_cross_n = Ny2_real if dir_A in (0, 1) else Nx2_real
-    _B_cross_n = Ny2_real if dir_B in (0, 1) else Nx2_real
-    mA_in2  = _resample_1d(mA_in,  _A_cross_n)
-    mA_out2 = _resample_1d(mA_out, _A_cross_n)
-    mB_in2  = _resample_1d(mB_in,  _B_cross_n)
-    mB_out2 = _resample_1d(mB_out, _B_cross_n)
-
     rho_cp_A_fld = (rho_cp_A if np.ndim(rho_cp_A) > 0
                     else np.full((N_x, N_y), rho_cp_A))
     rho_cp_B_fld = (rho_cp_B if np.ndim(rho_cp_B) > 0
@@ -553,16 +561,19 @@ def _compute_Q_richardson(
             inlet_mask=mB_in, outlet_mask=mB_out,
             enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
             eps_side=eps * _sB_Q)
-        Q_A_coarse = _enthalpy_balance_2d(
-            Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
-            inlet_mask=mA_in2, outlet_mask=mA_out2,
-            enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
-            eps_side=eps2 * _sA_Q)
-        Q_B_coarse = _enthalpy_balance_2d(
-            Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
-            inlet_mask=mB_in2, outlet_mask=mB_out2,
-            enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
-            eps_side=eps2 * _sB_Q)
+        if refined_ok:
+            Q_A_coarse = _enthalpy_balance_2d(
+                Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
+                inlet_mask=mA_in2, outlet_mask=mA_out2,
+                enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
+                eps_side=eps2 * _sA_Q)
+            Q_B_coarse = _enthalpy_balance_2d(
+                Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
+                inlet_mask=mB_in2, outlet_mask=mB_out2,
+                enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
+                eps_side=eps2 * _sB_Q)
+        else:
+            Q_A_coarse = Q_B_coarse = float('nan')
         # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
         # separately, THEN take max. Each Richardson acts on a smooth
         # (single-sign) function across refinement, so the formal
@@ -581,6 +592,8 @@ def _compute_Q_richardson(
         Q_B_user, Q_B_ref2x = abs(Q_B_fine), abs(Q_B_coarse)
         Q_A_ext = (4.0 * Q_A_ref2x - Q_A_user) / 3.0
         Q_B_ext = (4.0 * Q_B_ref2x - Q_B_user) / 3.0
+        richardson_info['extrapolated'] = bool(
+            refined_ok and np.isfinite(Q_A_ext) and np.isfinite(Q_B_ext))
         # 2026-05-09 — NaN-fallback: if either side's 2× refined solve
         # NaN-blew up (e.g. ConstDF-v1 K extrapolation at t outside
         # [0.3, 0.5] mm produces unphysical Brinkman coefficients on the
@@ -589,9 +602,8 @@ def _compute_Q_richardson(
         # only depends on the user-grid Ta (already nan-guarded above).
         # User still sees a finite Q in the UI; we set richardson_warn
         # so the warning banner reflects degraded grid convergence.
-        if not np.isfinite(Q_A_ext):
+        if not richardson_info['extrapolated']:
             Q_A_ext = abs(Q_A_fine) if np.isfinite(Q_A_fine) else float('nan')
-        if not np.isfinite(Q_B_ext):
             Q_B_ext = abs(Q_B_fine) if np.isfinite(Q_B_fine) else float('nan')
         # Robust max across (possibly nan) candidates: prefer finite values.
         _q_candidates = [v for v in (Q_A_ext, Q_B_ext)
@@ -610,6 +622,7 @@ def _compute_Q_richardson(
              and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
             or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
     except Exception as _q_exc:
+        richardson_info['extrapolated'] = False
         import traceback as _tb
         _tb.print_exc()
         _log.warning(f"[Q-calc] Richardson try-block raised {_q_exc!r} — "
@@ -691,8 +704,17 @@ def _compute_Q_richardson(
             _tb2.print_exc()
             _log.warning(f"[Q-calc] 1D fallback also raised {_fb_exc!r} — "
                          f"Q_total stays nan.")
+    if not richardson_info['extrapolated']:
+        richardson_warn = True
+        Q_solid_richardson = Q_solid_100
+        source = ('主网格值' if np.isfinite(Q_A_fine) or np.isfinite(Q_B_fine)
+                  else '1D 最后兜底值')
+        warnings_list.append(
+            f"Richardson 细解或外推未通过，换热量使用{source}，未外推 "
+            f"(converged={refined_info['converged']}, "
+            f"iterations={refined_info['iterations']}, residual={refined_info['residual']:.3e})")
     return (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
-            richardson_warn)
+            richardson_warn, richardson_info)
 
 
 def _run_solvers(window, cfg, fields, *, cancel_check=None):
@@ -1398,6 +1420,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         _env_valid = _env_valid and _vB
         _env_reasons += [f"[B] {r}" for r in _rB]
 
+    richardson_info = None
     if _enthalpy_mode:
         Q_A_fine = float(e_info['Q_A'])
         Q_B_fine = float(e_info['Q_B'])
@@ -1409,7 +1432,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
     else:
         # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
         (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
-         richardson_warn) = _compute_Q_richardson(
+         richardson_warn, richardson_info) = _compute_Q_richardson(
             Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
             simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
             energy_dx, energy_dy, _x_breaks, _y_breaks,
@@ -1526,6 +1549,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             coupling_converged                       # outer ΔT+Δρ criterion
             and not simple_warnings                  # every SIMPLE side ok
             and bool(e_info.get('converged', False))  # LTNE inner pass
+            and (_enthalpy_mode or (richardson_info['converged']
+                                    and richardson_info['extrapolated']))
             and (not _enthalpy_mode or energy_rel < 0.05)  # true-h pair balance
             and not _energy_nan_hit                  # no patched-over NaN
             and bool(_env_valid)),                   # envelope gate
@@ -1539,6 +1564,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             'outer_hit_cap': bool(not coupling_converged),
             'simple_ok': bool(not simple_warnings),
             'ltne_ok': bool(e_info.get('converged', False)),
+            'richardson_ok': (None if _enthalpy_mode else bool(
+                richardson_info['converged'] and richardson_info['extrapolated'])),
             'ltne_iterations': int(e_info.get('iterations', 0)),
             'ltne_residual': float(e_info.get('residual', float('inf'))),
             'enthalpy_balance_ok': bool(not _enthalpy_mode or energy_rel < 0.05),
@@ -1558,6 +1585,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         'Q_enthalpy_B': abs(Q_B_fine) if Q_B_fine == Q_B_fine else float('nan'),
         'Q_solid_richardson': Q_solid_richardson,
         'Q_richardson_warn': bool(richardson_warn),
+        'richardson_info': richardson_info,
         # Compressible validity gate (robustness, 2026-06-25)
         'envelope_valid': _env_valid,
         'envelope_reasons': _env_reasons,

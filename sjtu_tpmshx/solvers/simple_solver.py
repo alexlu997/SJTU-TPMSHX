@@ -87,6 +87,23 @@ from ._kernels_simple_2d import (  # noqa: F401
 #  Adaptive grid generation
 # ===================================================================
 
+def _port_fractions_1d(widths, lo, hi):
+    """Return physical overlap and the existing four-cell tapered profile."""
+    x_lo_edge = np.concatenate(([0.0], np.cumsum(widths[:-1])))
+    x_hi_edge = np.cumsum(widths)
+    raw = np.clip((np.minimum(x_hi_edge, hi) - np.maximum(x_lo_edge, lo)) / widths,
+                  0.0, 1.0)
+    profile = raw.copy()
+    for i in range(len(widths)):
+        if raw[i] > 0.99:
+            for d in range(1, 5):
+                if (i - d >= 0 and raw[i - d] < 0.01) or \
+                   (i + d < len(widths) and raw[i + d] < 0.01):
+                    profile[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
+                    break
+    return raw, profile
+
+
 def _aligned_grid(N, L, breakpoints):
     """Generate 1D grid with cell edges aligned to breakpoint positions.
 
@@ -480,20 +497,7 @@ class SIMPLESolver:
         """Initialize port profiles on the final grid before the first solve."""
         Nx = self.Nx
         self.v_inlet_field = np.full(Nx, float(self.v_inlet), dtype=np.float64)
-        x_lo_edge = np.concatenate(([0.0], np.cumsum(self.dx_arr[:-1])))
-        x_hi_edge = np.cumsum(self.dx_arr)
-        self.inlet_frac = np.clip(
-            (np.minimum(x_hi_edge, inlet_hi) - np.maximum(x_lo_edge, inlet_lo)) / self.dx_arr,
-            0.0, 1.0)
-        # Smooth lateral edges: 4-cell exponential taper at wall/open boundary
-        inf_raw = self.inlet_frac.copy()
-        for i in range(Nx):
-            if inf_raw[i] > 0.99:
-                for d in range(1, 5):
-                    if (i - d >= 0 and inf_raw[i - d] < 0.01) or \
-                       (i + d < Nx and inf_raw[i + d] < 0.01):
-                        self.inlet_frac[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
-                        break
+        inf_raw, self.inlet_frac = _port_fractions_1d(self.dx_arr, inlet_lo, inlet_hi)
         # N3 (2026-07-07): the taper smooths the imposed profile but must not
         # DELETE throughput — unrenormalised it under-delivered the imposed
         # inlet mass flux by ~0.914 cell-widths of open area per pipe edge, a
@@ -513,19 +517,8 @@ class SIMPLESolver:
 
         # Outlet — partial or full-width, with smooth lateral transition
         if outlet_lo is not None and outlet_hi is not None:
-            self.outlet_frac = np.clip(
-                (np.minimum(x_hi_edge, outlet_hi) - np.maximum(x_lo_edge, outlet_lo)) / self.dx_arr,
-                0.0, 1.0).astype(np.float64)
-            # Smooth lateral edges: 4-cell exponential taper at wall/open boundary
-            of_raw = self.outlet_frac.copy()
-            for i in range(Nx):
-                if of_raw[i] > 0.99:
-                    # Open cell — check distance to nearest wall
-                    for d in range(1, 5):
-                        if (i - d >= 0 and of_raw[i - d] < 0.01) or \
-                           (i + d < Nx and of_raw[i + d] < 0.01):
-                            self.outlet_frac[i] = 1.0 - 0.8 * np.exp(-1.0 * d)
-                            break
+            _, self.outlet_frac = _port_fractions_1d(self.dx_arr, outlet_lo, outlet_hi)
+            self.outlet_frac = self.outlet_frac.astype(np.float64)
         else:
             self.outlet_frac = np.ones(Nx, dtype=np.float64)
 
