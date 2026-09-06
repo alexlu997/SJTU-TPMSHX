@@ -200,9 +200,14 @@ _FROZEN_2D_NONUNIF = (-7973.354160060764, 4052.0459272924345,
 # (-9736.62293019604, 5859.925022099803, ...).
 # 3D NONUNIF re-baselined 2026-07-13 (#2): see the smooth_df._geom purity
 # note above the 2D constants — same change, same mechanism.
-_FROZEN_3D_UNIFORM = (-9968.94601218934, 7546.892661164707,
+# Six-face outlet closure: old/new original configs both exit legacy tol at
+# 10 iterations (rankings-only, not F2 convergence). Boundary fluxes change;
+# keep the original inputs, budgets and _REL. Geometry mass is unchanged.
+# Old uniform: (-9968.94601218934, 7546.892661164707, ...).
+# Old nonuniform: (-10850.667870259445, 2879.2940311398415, ...).
+_FROZEN_3D_UNIFORM = (-9968.92699806532, 7546.892661221464,
                       6.323593139648438)
-_FROZEN_3D_NONUNIF = (-10850.667870259445, 2879.2940311398415,
+_FROZEN_3D_NONUNIF = (-10850.753888768157, 2879.2941880943804,
                       3.675970458984375)
 
 

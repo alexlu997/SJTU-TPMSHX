@@ -232,22 +232,20 @@ def test_tracking_records_a_history_and_does_not_change_the_result():
 
 def test_momentum_residual_decays_over_a_solve():
     """The metric must actually converge: it rises as the momentum sweeps
-    develop the flow, then falls by orders of magnitude. (LowReExit is disabled
-    so the solve is not cut short by the velocity criterion at iteration 10.)
-
-    Deliberately NOT asserted here: that the mass residual floors. The floor's
-    MAGNITUDE is case-dependent (it is the pinned outlet row's transverse
-    divergence, which is small on a slow uniform toy and 8e-4 on the compressible
-    Shanghai case). Pinning it on a toy config would be a fragile test of a real
-    phenomenon; the evidence lives in ledger C6 with the production numbers.
+    develop the flow, then falls by orders of magnitude. Use production F2 so
+    local outlet closure cannot cut this momentum test short on legacy mass tol.
     """
     s = _make_solver(Nx=8, Ny=12, Nz=4, v_inlet=3.0)
     s.track_momentum_residual = True
+    s.convergence_mode = 'f2'
+    s.mom_tol = 1e-4
     s.lowre_early_exit = False
-    s.solve(max_iter=400, tol=1e-14)
+    converged, n = s.solve(max_iter=400, tol=1e-14)
 
     mom = [r['max'] for r in s.mom_residuals]
-    assert len(mom) == len(s.residuals) >= 100
+    assert converged and s.exit_reason == 'tol'
+    assert s.final_res_mom < s.mom_tol
+    assert len(mom) == len(s.residuals) == n
 
     peak = max(mom)
     tail = min(mom[-10:])
