@@ -41,20 +41,20 @@ def _real_outlet_slice(T_field, dir_code):
 
 
 def _build_partial_masks(fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse):
-    """Build inlet/outlet boolean masks on the 2-axis inlet face.
+    """Build inlet/outlet exact open-area fractions on the 2-axis inlet face.
 
     Solver's inlet_frac shape is (Nx_sol, Nz_sol) = (N_cross1, N_cross2).
     UI inputs `in_ctr/in_w` → cross1 axis; `in_z_ctr/in_z_w` → cross2 axis.
     For ±x/±y streamwise cross2 is real-z; for ±z streamwise cross2 is real-y.
     (Semantic mismatch noted in UI docs — future UI pass may relabel.)
     """
-    c1_centres = np.cumsum(dcross1) - dcross1 / 2
+    from sjtu_tpmshx.solvers.simple_solver import _port_fractions_1d
     in_lo = fA['in_ctr'] - fA['in_w'] / 2
     in_hi = fA['in_ctr'] + fA['in_w'] / 2
     out_lo = fA['out_ctr'] - fA['out_w'] / 2
     out_hi = fA['out_ctr'] + fA['out_w'] / 2
-    in_c1 = (c1_centres >= in_lo - 1e-12) & (c1_centres <= in_hi + 1e-12)
-    out_c1 = (c1_centres >= out_lo - 1e-12) & (c1_centres <= out_hi + 1e-12)
+    in_c1, _ = _port_fractions_1d(dcross1, in_lo, in_hi)
+    out_c1, _ = _port_fractions_1d(dcross1, out_lo, out_hi)
     if not in_c1.any() or not out_c1.any():
         raise ValueError("Inlet / outlet range (cross1) resolves to zero cells.")
 
@@ -62,13 +62,12 @@ def _build_partial_masks(fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse):
     has_c2_partial = all(k in fA for k in
                           ('in_z_ctr', 'in_z_w', 'out_z_ctr', 'out_z_w'))
     if has_c2_partial and dcross2 is not None:
-        c2_centres = np.cumsum(dcross2) - dcross2 / 2
         in_z_lo = fA['in_z_ctr'] - fA['in_z_w'] / 2
         in_z_hi = fA['in_z_ctr'] + fA['in_z_w'] / 2
         out_z_lo = fA['out_z_ctr'] - fA['out_z_w'] / 2
         out_z_hi = fA['out_z_ctr'] + fA['out_z_w'] / 2
-        in_c2 = (c2_centres >= in_z_lo - 1e-12) & (c2_centres <= in_z_hi + 1e-12)
-        out_c2 = (c2_centres >= out_z_lo - 1e-12) & (c2_centres <= out_z_hi + 1e-12)
+        in_c2, _ = _port_fractions_1d(dcross2, in_z_lo, in_z_hi)
+        out_c2, _ = _port_fractions_1d(dcross2, out_z_lo, out_z_hi)
         if not in_c2.any() or not out_c2.any():
             raise ValueError("Inlet / outlet range (cross2) resolves to zero cells.")
     else:

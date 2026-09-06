@@ -440,14 +440,14 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
 
 
 @njit(cache=True, fastmath=True, inline='always')
-def _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_frac,
+def _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
              Nx, Ny, Nz, dx, dy, dz):
     """Close every open outlet CV: Fn = Fs + Fw - Fe + Fb - Ft."""
     j = Ny - 1
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
-            if outlet_frac[i, k] > 0.5:
+            if outlet_mask_ij[i, k]:
                 er = rho_field[i, j, k] * eps_field[i, j, k]
                 ers = (.5 * (rho_field[i, j - 1, k] * eps_field[i, j - 1, k] + er)
                        if j > 0 else er)
@@ -475,7 +475,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps, use_sou, use_eps):
+                        alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     """Solve the y-momentum equation on the v-staggered face.
 
     Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
@@ -494,7 +494,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                                   alpha_u, use_sou, use_eps)
 
     # Apply BCs
-    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_frac,
+    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
              Nx, Ny, Nz, dx, dy, dz)
 
 
@@ -507,7 +507,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps, use_sou, use_eps):
+                                 alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -520,7 +520,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                       rho_field, mu_eff_field, mu_field, eps_field,
                                       K_arr, cF_arr, outlet_frac,
                                       inlet_frac, alpha_u, use_sou, use_eps)
-    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_frac,
+    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
              Nx, Ny, Nz, dx, dy, dz)
 
 

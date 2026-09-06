@@ -827,7 +827,7 @@ def _build_3d_problem(cfg):
     # Partial inlet / outlet on the 2-axis inlet face.
     in_mask_2d, out_mask_2d = _build_partial_masks(
         fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse)
-    v_inlet_field = np.where(in_mask_2d > 0.5, u_A, 0.0).astype(np.float64)
+    v_inlet_field = in_mask_2d * u_A
 
     # ── SIMPLE A (3D, compressible) — BUILD ONLY ──
     # E1: under wall_refine, feed the refined non-uniform spacing (permuted to
@@ -865,7 +865,6 @@ def _build_3d_problem(cfg):
                 sA.mu_field / sA.eps_field, dtype=np.float64)
     if fluid_type_A != 'sco2':
         sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
-    sA.outlet_frac = (sA.outlet_frac * out_mask_2d).astype(np.float64)
     # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
     # A.solve() deferred — build B first then run both in parallel threads.
 
@@ -915,7 +914,7 @@ def _build_3d_problem(cfg):
         in_mask_B, out_mask_B = _build_partial_masks(
             fB, dcross1_B, dcross2_B,
             axis_map_B['N_cross1'], axis_map_B['N_cross2'], is_reverse_B)
-        v_inlet_B = np.where(in_mask_B > 0.5, u_B, 0.0).astype(np.float64)
+        v_inlet_B = in_mask_B * u_B
         # Zoned ε for sB: same eps_field but transposed via B's perm (built
         # below after sB construction).
         _sdxB = _sdyB = _sdzB = None
@@ -947,7 +946,6 @@ def _build_3d_problem(cfg):
                     sB.mu_field / sB.eps_field, dtype=np.float64)
         if fluid_type_B != 'sco2':
             sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
-        sB.outlet_frac = (sB.outlet_frac * out_mask_B).astype(np.float64)
         # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
         # sB.solve deferred — dispatched with sA below in parallel threads.
         sB_info = dict(
@@ -1436,10 +1434,9 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
         axis_B = sB_info['axis_map']['stream_real_axis']
         out_idx_B = 0 if sB_info['axis_map']['is_reverse'] else -1
         T_B_out = float(np.mean(np.take(Tb, out_idx_B, axis=axis_B)))
-    # Mass flow from the solver's actual inlet face: ρ·v_in × open-area.
+    # Mass flow from the solver's actual inlet face: ρ·v_face × full-face area.
     # sA.v has shape (solver Nx, solver Ny+1, solver Nz); inlet face is
-    # j=0. Use rho_field[:, 0, :] × v[:, 0, :] × (dx × dz) with open-area
-    # fraction `inlet_frac` so partial-inlet geometries are honoured.
+    # j=0. The prescribed v_face already contains the open-area fraction f.
     # Q_enthalpy via **SIMPLE-native** mass flow (2026-04-25 FV hardening).
     # Earlier used cell-centered ucA/vcA/wcA reconstructed via
     # _solver_velocity_to_real, but that cell-averaged interpolation lost
@@ -1857,7 +1854,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
             # (in_mask_B; approach-(a), no in/out swap).
             _ltne_mask_B_val = _ltne_mask_B  # from outer loop scope
             if _ltne_mask_B_val is not None:
-                chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.5]
+                chi_in_patch = chi_B_in_face[_ltne_mask_B_val > 0.0]
                 if len(chi_in_patch) > 0:
                     _log.info(f"[CHI-BC] χ_B on inlet PATCH (n={len(chi_in_patch)}): "
                               f"p10={_dbg.percentile(chi_in_patch,10):.3f} "
@@ -1865,7 +1862,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
                               f"p90={_dbg.percentile(chi_in_patch,90):.3f}")
             # Outlet patch
             if chi_B_out_face is not None:
-                chi_out_patch = chi_B_out_face[_ltne_mask_B_val > 0.5] if _ltne_mask_B_val is not None else chi_B_out_face.ravel()
+                chi_out_patch = chi_B_out_face[out_mask_B > 0.0] if out_mask_B is not None else chi_B_out_face.ravel()
                 if len(chi_out_patch) > 0:
                     _log.info(f"[CHI-BC] χ_B on outlet PATCH (n={len(chi_out_patch)}): "
                               f"p10={_dbg.percentile(chi_out_patch,10):.3f} "
@@ -2121,6 +2118,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         _audit_sA_face=dict(
             u=sA.u.copy(), v=sA.v.copy(), w=sA.w.copy(),
             rho=sA.rho_field.copy(),
+            outlet_coeff=sA.outlet_coeff.copy(),
             inlet_frac=(np.asarray(sA.inlet_frac).copy()
                         if getattr(sA, 'inlet_frac', None) is not None else None),
             outlet_frac=(np.asarray(sA.outlet_frac).copy()
@@ -2134,6 +2132,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         _audit_sB_face=(dict(
             u=sB.u.copy(), v=sB.v.copy(), w=sB.w.copy(),
             rho=sB.rho_field.copy(),
+            outlet_coeff=sB.outlet_coeff.copy(),
             inlet_frac=(np.asarray(sB.inlet_frac).copy()
                         if getattr(sB, 'inlet_frac', None) is not None else None),
             outlet_frac=(np.asarray(sB.outlet_frac).copy()
@@ -2481,9 +2480,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                 _area_2d = _dx_s[:, None] * _dz_s[None, :]
                 _A_full = float(np.sum(_area_2d))
                 if in_mask_B is not None:
-                    _A_in = float(np.sum(_area_2d * (in_mask_B > 0.5)))
+                    _A_in = float(np.sum(_area_2d * in_mask_B))
                     _r_in = _A_in / max(_A_full, 1e-30)
-                    _A_out = float(np.sum(_area_2d * (out_mask_B > 0.5)))
+                    _A_out = float(np.sum(_area_2d * out_mask_B))
                     _r_out = _A_out / max(_A_full, 1e-30)
                 else:
                     _r_in = _r_out = 1.0

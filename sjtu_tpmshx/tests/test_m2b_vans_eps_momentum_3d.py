@@ -58,7 +58,7 @@ def _run_sweeps(st, eps_field, use_eps):
                        st['dx'], st['dy'], st['dz'],
                        st['rho'], eps_field, st['mu_eff'], st['mu'],
                        st['K'], st['cF'], st['out'], st['in_'],
-                       0.7, 1, 0, use_eps)
+                       0.7, 1, 0, use_eps, st['out'] > 0.0)
     _sweep_w_jit_df_3d(u, v, w, P, d_w, Nx, Ny, Nz,
                        st['dx'], st['dy'], st['dz'],
                        st['rho'], st['mu_eff'], st['mu'], eps_field,

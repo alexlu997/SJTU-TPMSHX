@@ -351,7 +351,7 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
 
 
 def _build_outlet_frac_taper(Nx, Nz, n_taper=8, min_frac=0.2):
-    """Build (Nx, Nz) outlet_frac with 8-cell exponential taper near x/z walls.
+    """Build (Nx, Nz) numerical outlet taper g near x/z walls.
 
     Mirror 2D `_taper(outlet_frac, ...)` which uses `1 - 0.8 * exp(-1.0 * d)`
     where d is the distance-from-wall in cells (1, 2, ..., n_taper).
@@ -412,21 +412,16 @@ class SIMPLESolver3D:
     """
 
     def apply_outlet_taper(self, n_taper=8, min_frac=0.2):
-        """Enable 8-cell exponential taper on outlet_frac near corner walls.
+        """Enable numerical corner damping c=f*g without changing open area.
 
         Mirror 2D pattern: reduces wall-adjacent cell weights to avoid corner
         pressure artifacts. Use for Shanghai-type full-width validation runs.
         """
-        self.outlet_frac = _build_outlet_frac_taper(
+        self._outlet_taper = _build_outlet_frac_taper(
             self.Nx, self.Nz, n_taper=n_taper, min_frac=min_frac)
+        self.outlet_coeff = self.outlet_frac * self._outlet_taper
 
-    # ── outlet_frac ↔ outlet_mask_ij single-source-of-truth ──────────────
-    # The v-sweep gates wall cells via `outlet_frac > 0.5` (line ~434);
-    # `_correct_jit_3d` re-applies the BC via `outlet_mask_ij` (line ~964).
-    # Before this property the two gates could disagree (e.g. callers set
-    # `outlet_frac` to a partial mask but left `outlet_mask_ij` at default
-    # all-True), letting v leak through wall cells at j=Ny after the pressure
-    # correction. Now any write to `outlet_frac` rebuilds the boolean mask.
+    # Raw geometry owns BC/PPE support; c=f*g owns momentum wall damping.
     @property
     def outlet_frac(self):
         return self._outlet_frac
@@ -435,9 +430,8 @@ class SIMPLESolver3D:
     def outlet_frac(self, value):
         arr = np.ascontiguousarray(value, dtype=np.float64)
         self._outlet_frac = arr
-        # Derive boolean wall/open mask: True = open (lets PPE/correction run),
-        # False = wall (pin v=0). Threshold mirrors v-sweep (`> 0.5`).
-        self.outlet_mask_ij = (arr > 0.5).astype(np.bool_)
+        self.outlet_coeff = arr * self._outlet_taper
+        self.outlet_mask_ij = arr > 0.0
         # 2026-07-13 audit: the pp sparsity's `cell_kind` pin set is built from
         # this mask ONCE at the first solve(). Without invalidation, a caller
         # that changes the outlet mask AFTER a solve keeps the OLD pin set —
@@ -451,7 +445,7 @@ class SIMPLESolver3D:
             self._pp_sparsity = None
 
     @staticmethod
-    def extract_dP_weighted(s):
+    def extract_dP_weighted(s, *, numerical_taper=False):
         """Pipe-weighted inlet-outlet dP — geometric open-area weights.
 
         Uses `s.inlet_frac` / `s.outlet_frac` only (per-cell open-area
@@ -459,16 +453,21 @@ class SIMPLESolver3D:
         the inlet face; under-represents high-speed regions on non-uniform
         profiles. For physically-rigorous reduction use
         `extract_dP_mass_flux_weighted`.
+
+        ``numerical_taper=True`` retains the historical corner-weighted
+        report functional; it is not a geometric open-area average.
         """
-        wI = s.inlet_frac; wO = s.outlet_frac
-        mI = wI > 0.01; mO = wO > 0.5
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = s.inlet_frac * area
+        wO = (s.outlet_coeff if numerical_taper else s.outlet_frac) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return 0.0
         return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
                      - np.average(s.P[:, -1, :][mO], weights=wO[mO]))
 
     @staticmethod
-    def extract_dP_face_extrap(s):
+    def extract_dP_face_extrap(s, *, numerical_taper=False):
         """2nd-order inlet/outlet dP — pressure extrapolated to the FACES.
 
         ``extract_dP_weighted`` differences the first/last **cell-centre**
@@ -491,13 +490,18 @@ class SIMPLESolver3D:
         experiment). Same streamwise axis (1) and open-area weights as
         ``extract_dP_weighted``; falls back to the cell-centre value when the
         streamwise direction has < 2 cells.
+
+        ``numerical_taper=True`` explicitly retains the historical f*g*A
+        report weights, as in ``extract_dP_weighted``.
         """
-        wI = s.inlet_frac; wO = s.outlet_frac
-        mI = wI > 0.01; mO = wO > 0.5
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = s.inlet_frac * area
+        wO = (s.outlet_coeff if numerical_taper else s.outlet_frac) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return 0.0
         if s.P.shape[1] < 2:          # need 2 cells to extrapolate
-            return SIMPLESolver3D.extract_dP_weighted(s)
+            return SIMPLESolver3D.extract_dP_weighted(s, numerical_taper=numerical_taper)
         P_in_face = 1.5 * s.P[:, 0, :] - 0.5 * s.P[:, 1, :]
         P_out_face = 1.5 * s.P[:, -1, :] - 0.5 * s.P[:, -2, :]
         return float(np.average(P_in_face[mI], weights=wI[mI])
@@ -516,9 +520,10 @@ class SIMPLESolver3D:
         v_outlet_face = s.v[:, -1, :]
         rho_in = s.rho_field[:, 0, :]
         rho_out = s.rho_field[:, -1, :]
-        wI = rho_in * np.abs(v_inlet_face) * s.inlet_frac
-        wO = rho_out * np.abs(v_outlet_face) * s.outlet_frac
-        mI = wI > 1e-9; mO = wO > 1e-9
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = rho_in * np.abs(v_inlet_face) * area
+        wO = rho_out * np.abs(v_outlet_face) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return SIMPLESolver3D.extract_dP_weighted(s)
         return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
@@ -642,14 +647,8 @@ class SIMPLESolver3D:
         self.d_v = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
         self.d_w = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-        # Outlet: full-width pin at j=Ny-1 by default. `outlet_mask_ij` is
-        # auto-derived from `outlet_frac` via the property setter below so it
-        # stays in sync; the v-sweep gates via `outlet_frac > 0.5` and the
-        # pressure-correction BC re-apply (`_correct_jit_3d`) gates via
-        # `outlet_mask_ij`. Single source of truth = `outlet_frac`.
-        # outlet_frac (Nx, Nz) float — DEFAULT uniform 1.0 (no taper).
-        # Caller can call `self.apply_outlet_taper()` to enable 8-cell corner
-        # taper (mirror 2D pattern, used for Shanghai-type full-width validation).
+        # Geometry defaults to full-face; taper only changes momentum coefficients.
+        self._outlet_taper = np.ones((Nx, Nz), dtype=np.float64)
         self.outlet_frac = np.ones((Nx, Nz), dtype=np.float64)  # sets mask
         self.inlet_frac = np.ones((Nx, Nz), dtype=np.float64)
 
@@ -1046,7 +1045,7 @@ class SIMPLESolver3D:
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
+                      self.outlet_coeff, self.inlet_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
@@ -1054,14 +1053,15 @@ class SIMPLESolver3D:
                       self.rho_field, self.eps_field,
                       self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner, _use_sou, _use_eps)
+                      self.outlet_coeff, self.inlet_frac,
+                      self.alpha_u, n_inner, _use_sou, _use_eps,
+                      self.outlet_mask_ij)
             _sweep_w(self.u, self.v, self.w, self.P, self.d_w,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
+                      self.outlet_coeff, self.inlet_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
 
             # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
@@ -1279,7 +1279,7 @@ class SIMPLESolver3D:
             Nx, Ny, Nz, dx, dy, dz,
             self.rho_field, self._mu_eff_field, self.mu_field,
             self.eps_field, self.K_arr, self.cF_arr,
-            self.outlet_frac, self.inlet_frac, use_sou, use_eps)
+            self.outlet_coeff, self.inlet_frac, use_sou, use_eps)
         d_ref = max(du_, dv_, dw_)
         floor = self._MOM_FLOOR_FRAC * d_ref
         def _r(n, d):
@@ -1338,7 +1338,7 @@ def _warmup_simple_3d():
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
                rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
-               alpha_u, n, 0, 0)
+               alpha_u, n, 0, 0, out_frac > 0.0)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
                rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,

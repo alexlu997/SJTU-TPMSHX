@@ -44,7 +44,7 @@ def test_correct_reference_cell_closes_both_transverse_fluxes(cross_factor, Ny, 
         sweep(u, v, w, P, np.zeros_like(v), vin, Nx, Ny, Nz, dx, dy, dz,
               rho, eps, np.ones_like(rho), np.ones_like(rho),
               np.ones((Ny, Nz)), np.ones((Ny, Nz)), mask.astype(float),
-              np.ones((Nx, Nz)), .5, 0, 0, 1)
+              np.ones((Nx, Nz)), .5, 0, 0, 1, mask)
     assert er[1, -1, 1] * v[1, -1, 1] * dx[1] * dz[1] == pytest.approx(
         south - cross_x - cross_z, rel=1e-13)
     assert np.all(v[:, -1, :][~mask] == 0.)
