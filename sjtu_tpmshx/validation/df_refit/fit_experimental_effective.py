@@ -1,4 +1,4 @@
-"""Rebuild V3 experiment-effective D-F candidates on the production CFD base.
+"""Evaluate frozen sCO2 corrections and rebuild other V3 D-F candidates.
 
 Outputs under reports/df_refit are review artifacts, not runtime inputs.
 No campaign is interpreted as fluid-intrinsic physics.
@@ -70,7 +70,8 @@ def fit_air() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]]
     return pd.DataFrame(rows), shared
 
 
-def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]]:
+def evaluate_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]]:
+    """Check the existing sF at corrected experiment pressure without refitting."""
     from CoolProp.CoolProp import PropsSI
 
     rows: list[dict[str, object]] = []
@@ -87,7 +88,7 @@ def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]
         u = g.mdot.to_numpy(float) / (g.rho.to_numpy(float) * A)
         rho_in = PropsSI(
             "D", "T", g.Tin_C.to_numpy(float) + 273.15,
-            "P", g.Pin_MPa.to_numpy(float) * 1e6, "CO2")
+            "P", g.Pin_abs_Pa.to_numpy(float), "CO2")
         u_in = g.mdot.to_numpy(float) / (np.asarray(rho_in) * A)
         u_lo, u_hi = hx_velocity_bounds("sco2", tp)
         if not (np.isclose(u_in.min(), u_lo, rtol=0.0, atol=1e-12)
@@ -96,14 +97,16 @@ def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]
         darcy = g.mu.to_numpy(float) * u / K0 * length
         forch = g.rho.to_numpy(float) * cF0 * u * u * length
         measured = g.dP_MPa.to_numpy(float) * 1e6
-        sf, rmsre, bias, _ = _fit_sf(darcy, forch, measured)
         _, packaged, _, _ = correction_scale(
             tp, "sco2", 7.0, 0.6, float(np.median(u_in)))
+        sf = float(np.asarray(packaged))
+        error = (darcy + sf * forch) / measured - 1.0
+        rmsre, bias = float(np.sqrt(np.mean(error * error))), float(error.mean())
         shared.extend(("sco2", tp, d, f, y)
                       for d, f, y in zip(darcy, forch, measured))
         rows.append(dict(
             fluid="sco2", topology=tp, L_mm=7.0, t_mm=0.6,
-            sK=1.0, sF=sf, packaged_sF=float(np.asarray(packaged)), n=len(g),
+            sK=1.0, sF=sf, packaged_sF=sf, n=len(g),
             rmsre=rmsre, bias=bias,
             darcy_fraction_median=float(np.median(darcy / measured)),
             identifiability="K unidentifiable; fixed at CFD K0",
@@ -118,7 +121,8 @@ def fit_sco2() -> tuple[pd.DataFrame, list[tuple[str, str, float, float, float]]
             outside_scope_cases="",
             A_flow_m2=A, L_flow_m=length,
             u_min_mps=u_lo, u_max_mps=u_hi,
-            campaign="sco2-hx-hot-ok-dp"))
+            campaign="sco2-hx-hot-ok-dp",
+            evaluation="frozen sF; corrected absolute pressure; no refit"))
     return pd.DataFrame(rows), shared
 
 
@@ -291,7 +295,7 @@ def shared_counterexample(records: list[tuple[str, str, float, float, float]]) -
 
 def main() -> int:
     air, a_records = fit_air()
-    sco2, s_records = fit_sco2()
+    sco2, s_records = evaluate_sco2()
     water_hx, water_quality = fit_water_hx()
     air_hx, air_quality = fit_air_hx()
     if not (water_hx.status == "approved").all():

@@ -1,4 +1,4 @@
-"""sco2_gamma_f.py — sCO2 rough-wall friction correction γ_f (production).
+"""sco2_gamma_f.py — historical sCO2 friction correction γ_f.
 
     cF_effective(Re_in) = γ_f(tp, Re_in) · cF_smooth_sco2(tp, L, t, Re_in)
     γ_f(tp, Re)         = Γ₀ · (Re / Re_c)^Δ          [IN-WINDOW ONLY]
@@ -68,6 +68,12 @@ _log = get_logger(__name__)
 # own Re support (slightly narrower than exam_sco2's pooled exam window —
 # interpolation-only discipline binds to what the FIT saw).
 #
+# RE-FROZEN 2026-09-06 with user approval: corrected experiment gauge pressure
+# (+101325 Pa), reference coolprop-heos-gauge-101325-v1. Same hot-free method,
+# same Diamond49/Gyroid44 members and historical CFD base; Re support follows
+# the corrected reduction. Current production pipelines do not use this gamma.
+# Prior parameters remain in Git (0f21d97); no CFD K/cF or HX sF was refitted.
+#
 # RE-FROZEN 2026-09-03 (DIAMOND ONLY): rows marked "重做" are now rejected by
 # the experiment loader, removing cases 25 and 42 from the hot-side fit.
 #
@@ -94,21 +100,21 @@ _log = get_logger(__name__)
 # (base −8…−13 % at Re 2e4) — that is the new CFD's information, not drift.
 GAMMA_F_HOT: dict[str, dict[str, float]] = {
     "Diamond": dict(
-        G0=6.902662778552573,
-        dexp=0.12642592155119411,
-        Re_c=19398.07036278048,
-        sig_ln=0.05236223952741611,
-        re_lo=8801.07548108971,
-        re_hi=40949.35902093758,
+        G0=6.9894071472507395,
+        dexp=0.12606826856422002,
+        Re_c=19368.109093325562,
+        sig_ln=0.05229142821826149,
+        re_lo=8790.95679966697,
+        re_hi=40847.70195087056,
         n=49,
     ),
     "Gyroid": dict(
-        G0=7.699836173022563,
-        dexp=0.0867579781106141,
-        Re_c=22517.82778604547,
-        sig_ln=0.03630537836108086,
-        re_lo=10632.405680243332,
-        re_hi=48961.25289670842,
+        G0=7.800953885422526,
+        dexp=0.08670993764778243,
+        Re_c=22485.529483628885,
+        sig_ln=0.03652340246074337,
+        re_lo=10620.777013615836,
+        re_hi=48860.02078334884,
         n=44,
     ),
 }

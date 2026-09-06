@@ -90,8 +90,8 @@ def test_water_hx_velocity_window_is_explicit():
 @pytest.mark.parametrize(
     "topology,lower,upper",
     [
-        ("Diamond", 0.5904924511524777, 2.57313161248901),
-        ("Gyroid", 0.6209347169447897, 2.5022467486185533),
+        ("Diamond", 0.5826657772921353, 2.53960962894522),
+        ("Gyroid", 0.6119811082039116, 2.470456518760552),
     ],
 )
 def test_sco2_hx_velocity_window_is_explicit(topology, lower, upper):
@@ -240,7 +240,8 @@ def test_water_air_2d_and_3d_use_separate_hx_coefficients_once():
                 tpms="Diamond", L_cell_mm=7.0, t_wall_mm=0.6,
                 L_dom_m=0.182, H_dom_m=0.042,
                 Lz_m=0.042 if nz > 1 else None),
-            solver=SolverConfig(Nx=4, Ny=4, Nz=nz, max_outer_ltne=2,
+            # The 2D half-width ports split x into three aligned segments.
+            solver=SolverConfig(Nx=6 if nz == 1 else 4, Ny=4, Nz=nz, max_outer_ltne=2,
                                 max_iter_simple=100),
             bc_A=bc_A,
             bc_B=bc_B,
@@ -270,16 +271,23 @@ _AIR_HX_BOOKS = (
                         _RAW / "试验记录表_整理版.xlsx",
                         _RAW / "sCO2-Experient.xlsx")),
                     reason="private calibration data unavailable")
-def test_reviewed_experiment_pressure_error_gates():
-    from sjtu_tpmshx.validation.df_refit.fit_experimental_effective import (
-        fit_air, fit_sco2)
-    air, _ = fit_air()
-    sco2, _ = fit_sco2()
+def test_reviewed_experiment_pressure_error_gates(monkeypatch):
+    from sjtu_tpmshx.validation.df_refit import fit_experimental_effective as evaluator
+    air, _ = evaluator.fit_air()
+    monkeypatch.setattr(evaluator, "_fit_sf", lambda *args: pytest.fail(
+        "sCO2 acceptance must evaluate frozen sF, not refit it"))
+    sco2, _ = evaluator.evaluate_sco2()
     approved = air[air.status == "approved"]
     assert approved.rmsre.max() <= 0.10
     assert approved.bias.abs().max() <= 0.10
     assert sco2.rmsre.max() <= 0.10
     assert sco2.bias.abs().max() <= 0.10
+    for topology, count, sf in (("Diamond", 51, 6.313005350332494),
+                               ("Gyroid", 44, 7.608907691857889)):
+        row = sco2[sco2.topology == topology].iloc[0]
+        assert row.n == row.n_total == count
+        assert row.n_excluded == row.n_outside_scope == 0
+        assert row.sF == row.packaged_sF == sf
 
 
 @pytest.mark.skipif(not (_RAW / "7-6-Water-dp.xlsx").exists(),
