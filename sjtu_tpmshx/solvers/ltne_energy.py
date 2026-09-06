@@ -90,7 +90,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                    ucA, vcA, ucB, vcB,
                    bc_A, bc_B, T_inA_arr, T_inB_arr,
                    ifrac_A, ifrac_B,
-                   n_iters, freeze_Tb, sou_B):
+                   n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None):
     """Cell-coupled Gauss-Seidel: at each cell update Ta → Ts → Tb.
     dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
 
@@ -159,85 +159,83 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
             for j in range(j0, j1, dj):
 
                 # ── Update Fluid A ──
-                is_inlet_A = ((bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or
-                              (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1))
-                # Numerical regularisation at partial-width inlet cells.
-                # Not a physical face-flux BC — for cells that are partly open
-                # and partly covered by a wall (0.01 < inlet_frac < 0.99), T is
-                # set by a linear blend between T_in and the first interior
-                # neighbour. Fully open (frac > 0.99) pins T exactly to T_in.
-                # Side-effect: T near partial-width edges inherits a small
-                # bias from the interior neighbour. To replace with a rigorous
-                # face-flux BC, rewrite as source term inside the non-inlet
-                # branch below and drop this special-case.
-                if is_inlet_A:
-                    fidx = j if bc_A <= 1 else i
-                    frac = ifrac_A[fidx]
-                    if frac > 0.99:
-                        if bc_A <= 1:
-                            Ta[i, j] = T_inA_arr[j]
-                        else:
-                            Ta[i, j] = T_inA_arr[i]
-                    elif frac > 0.01:
-                        T_in_val = T_inA_arr[j] if bc_A <= 1 else T_inA_arr[i]
-                        if bc_A == 0:   T_nbr = Ta[1, j]
-                        elif bc_A == 1: T_nbr = Ta[Nx-2, j]
-                        elif bc_A == 2: T_nbr = Ta[i, 1]
-                        else:           T_nbr = Ta[i, Ny-2]
-                        Ta[i, j] = frac * T_in_val + (1.0 - frac) * T_nbr
-                else:
-                    dxi = dx_arr[i]; dyj = dy_arr[j]
-                    vol = dxi * dyj
-                    K = K_ffA_arr[i, j]
-                    hvA = h_vA_arr[i, j] * vol
+                dxi = dx_arr[i]; dyj = dy_arr[j]
+                vol = dxi * dyj
+                K = K_ffA_arr[i, j]
+                hvA = h_vA_arr[i, j] * vol
 
-                    # Face spacing δx_e = 0.5·(dx_P + dx_E) ensures conservative
-                    # diffusion stencil — same value used by cell P (as east-flux)
-                    # and cell E (as west-flux) at shared face. Old /dxi used cell
-                    # P width only; non-uniform grids broke face-flux symmetry.
-                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                    dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
-                    dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
-                    dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
-                    dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                # Face spacing δx_e = 0.5·(dx_P + dx_E) ensures conservative
+                # diffusion stencil — same value used by cell P (as east-flux)
+                # and cell E (as west-flux) at shared face. Old /dxi used cell
+                # P width only; non-uniform grids broke face-flux symmetry.
+                dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
-                    u_loc = ucA[i,j]; v_loc = vcA[i,j]
-                    # A3: signed shared-face fluxes (arithmetic mean of the
-                    # two cells' signed fluxes — identical value on both
-                    # sides of a face ⇒ globally telescoping). Domain-edge
-                    # faces fall back to the cell's own flux.
-                    FxP = FxAs[i, j]; FyP = FyAs[i, j]
-                    Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
-                    Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
-                    Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
-                    Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
-                    aE = dE + max(-Fe, 0.0)
-                    aW = dW + max(Fw, 0.0)
-                    aN = dN + max(-Fn, 0.0)
-                    aS = dS + max(Fs, 0.0)
+                u_loc = ucA[i,j]; v_loc = vcA[i,j]
+                # A3: signed shared-face fluxes (arithmetic mean of the
+                # two cells' signed fluxes — identical value on both
+                # sides of a face ⇒ globally telescoping). Domain-edge
+                # faces fall back to the cell's own flux.
+                FxP = FxAs[i, j]; FyP = FyAs[i, j]
+                Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
+                Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
+                Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
+                Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
+                aE = dE + max(-Fe, 0.0)
+                aW = dW + max(Fw, 0.0)
+                aN = dN + max(-Fn, 0.0)
+                aS = dS + max(Fs, 0.0)
 
-                    tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
-                    tW = Ta[i-1,j] if i > 0    else Ta[i,j]
-                    tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
-                    tS = Ta[i,j-1] if j > 0    else Ta[i,j]
+                tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
+                tW = Ta[i-1,j] if i > 0    else Ta[i,j]
+                tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
+                tS = Ta[i,j-1] if j > 0    else Ta[i,j]
+                # Dirichlet temperature on the open physical inlet face only.
+                # All real cells retain diffusion, convection and full hv*dV.
+                if (bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or \
+                   (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1):
+                    idx_in = j if bc_A <= 1 else i
+                    frac = ifrac_A[idx_in]
+                    area = dyj if bc_A <= 1 else dxi
+                    width = dxi if bc_A <= 1 else dyj
+                    d_in = 2.0 * K * area * frac / width
+                    f_in = Fw if bc_A == 0 else (-Fe if bc_A == 1 else
+                            (Fs if bc_A == 2 else -Fn))
+                    if inlet_flux_A is not None:
+                        f_in = inlet_flux_A[idx_in]
+                    a_in = d_in + (max(f_in, 0.0) if frac > 0.0 else 0.0)
+                    if bc_A == 0:
+                        aW = a_in
+                        tW = T_inA_arr[idx_in]
+                    elif bc_A == 1:
+                        aE = a_in
+                        tE = T_inA_arr[idx_in]
+                    elif bc_A == 2:
+                        aS = a_in
+                        tS = T_inA_arr[idx_in]
+                    else:
+                        aN = a_in
+                        tN = T_inA_arr[idx_in]
 
-                    sou = (_sou_corr_x(Ta, i, j, Nx, u_loc, FxA)
-                           + _sou_corr_y(Ta, i, j, Ny, v_loc, FyA))
+                sou = (_sou_corr_x(Ta, i, j, Nx, u_loc, FxA)
+                       + _sou_corr_y(Ta, i, j, Ny, v_loc, FyA))
 
-                    aP = aE + aW + aN + aS + hvA
-                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
-                    # The solid consumes the outlet candidate before its BC copy.
-                    # Keep that candidate unrelaxed; damp only non-outlet cells.
-                    is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
-                                   (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
-                    if not is_outlet_A:
-                        new = Ta[i,j] + 0.7 * (new - Ta[i,j])
-                    chg = abs(new - Ta[i,j])
-                    if chg > max_chg: max_chg = chg
-                    Ta[i,j] = new
+                aP = aE + aW + aN + aS + hvA
+                new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                # Retain the existing per-cell relaxation policy.
+                is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
+                               (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
+                if not is_outlet_A:
+                    new = Ta[i,j] + 0.7 * (new - Ta[i,j])
+                chg = abs(new - Ta[i,j])
+                if chg > max_chg: max_chg = chg
+                Ta[i,j] = new
 
                 # ── Update Solid (using just-updated Ta, old Tb) ──
                 dxi = dx_arr[i]; dyj = dy_arr[j]
@@ -273,96 +271,84 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 # Tb via hvB_s*Tb[i,j] above, so the air→solid→water coupling
                 # remains intact.
                 if freeze_Tb == 0:
-                    is_inlet_B = ((bc_B == 0 and i == 0) or (bc_B == 1 and i == Nx-1) or
-                                  (bc_B == 2 and j == 0) or (bc_B == 3 and j == Ny-1))
-                    if is_inlet_B:
-                        fidx_b = j if bc_B <= 1 else i
-                        frac_b = ifrac_B[fidx_b]
-                        if frac_b > 0.99:
-                            if bc_B <= 1:
-                                Tb[i, j] = T_inB_arr[j]
-                            else:
-                                Tb[i, j] = T_inB_arr[i]
-                        elif frac_b > 0.01:
-                            T_in_b = T_inB_arr[j] if bc_B <= 1 else T_inB_arr[i]
-                            if bc_B == 0:   T_nbr_b = Tb[1, j]
-                            elif bc_B == 1: T_nbr_b = Tb[Nx-2, j]
-                            elif bc_B == 2: T_nbr_b = Tb[i, 1]
-                            else:           T_nbr_b = Tb[i, Ny-2]
-                            Tb[i, j] = frac_b * T_in_b + (1.0 - frac_b) * T_nbr_b
-                    else:
-                        dxi = dx_arr[i]; dyj = dy_arr[j]
-                        vol_b = dxi * dyj
-                        K = K_ffB_arr[i, j]
-                        hvB = h_vB_arr[i, j] * vol_b
+                    dxi = dx_arr[i]; dyj = dy_arr[j]
+                    vol_b = dxi * dyj
+                    K = K_ffB_arr[i, j]
+                    hvB = h_vB_arr[i, j] * vol_b
 
-                        # Face spacing for B diffusion stencil (conservative)
-                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                        dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
-                        dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
-                        dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
-                        dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                    # Face spacing for B diffusion stencil (conservative)
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                    dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                    dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                    dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
 
-                        u_loc = ucB[i,j]; v_loc = vcB[i,j]
-                        # A3: conservative signed shared-face fluxes (see the
-                        # fluid-A block).
-                        FxP = FxBs[i, j]; FyP = FyBs[i, j]
-                        Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
-                        Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
-                        Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
-                        Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
-                        aE = dE + max(-Fe, 0.0)
-                        aW = dW + max(Fw, 0.0)
-                        aN = dN + max(-Fn, 0.0)
-                        aS = dS + max(Fs, 0.0)
+                    u_loc = ucB[i,j]; v_loc = vcB[i,j]
+                    # A3: conservative signed shared-face fluxes (see the
+                    # fluid-A block).
+                    FxP = FxBs[i, j]; FyP = FyBs[i, j]
+                    Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
+                    Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
+                    Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
+                    Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
+                    aE = dE + max(-Fe, 0.0)
+                    aW = dW + max(Fw, 0.0)
+                    aN = dN + max(-Fn, 0.0)
+                    aS = dS + max(Fs, 0.0)
 
-                        tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
-                        tW = Tb[i-1,j] if i > 0    else Tb[i,j]
-                        tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
-                        tS = Tb[i,j-1] if j > 0    else Tb[i,j]
-
-                        # History: fluid-B SOU was disabled 2026-06-24 — the
-                        # then NON-conservative correction injected spurious
-                        # ρcp-scaled energy and destabilised the outer
-                        # coupling at fine grids (water dT_B oscillated at
-                        # N=80). A3 (2026-07-06) re-enables it in the
-                        # face-consistent telescoping form, gated by sou_B
-                        # (kill switch: solve_full_domain(use_sou_B=False)).
-                        if sou_B == 1:
-                            sou = (_sou_corr_x(Tb, i, j, Nx, u_loc, FxB)
-                                   + _sou_corr_y(Tb, i, j, Ny, v_loc, FyB))
+                    tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
+                    tW = Tb[i-1,j] if i > 0    else Tb[i,j]
+                    tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
+                    tS = Tb[i,j-1] if j > 0    else Tb[i,j]
+                    # Dirichlet temperature on the open physical inlet face only.
+                    # All real cells retain diffusion, convection and full hv*dV.
+                    if (bc_B == 0 and i == 0) or (bc_B == 1 and i == Nx-1) or \
+                       (bc_B == 2 and j == 0) or (bc_B == 3 and j == Ny-1):
+                        idx_in = j if bc_B <= 1 else i
+                        frac = ifrac_B[idx_in]
+                        area = dyj if bc_B <= 1 else dxi
+                        width = dxi if bc_B <= 1 else dyj
+                        d_in = 2.0 * K * area * frac / width
+                        f_in = Fw if bc_B == 0 else (-Fe if bc_B == 1 else
+                                (Fs if bc_B == 2 else -Fn))
+                        if inlet_flux_B is not None:
+                            f_in = inlet_flux_B[idx_in]
+                        a_in = d_in + (max(f_in, 0.0) if frac > 0.0 else 0.0)
+                        if bc_B == 0:
+                            aW = a_in
+                            tW = T_inB_arr[idx_in]
+                        elif bc_B == 1:
+                            aE = a_in
+                            tE = T_inB_arr[idx_in]
+                        elif bc_B == 2:
+                            aS = a_in
+                            tS = T_inB_arr[idx_in]
                         else:
-                            sou = 0.0
+                            aN = a_in
+                            tN = T_inB_arr[idx_in]
 
-                        aP = aE + aW + aN + aS + hvB
-                        new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
-                        chg = abs(new - Tb[i,j])
-                        if chg > max_chg: max_chg = chg
-                        Tb[i,j] = new
 
-        # Outlet zero-gradient BCs
-        if bc_A == 0:
-            for j2 in range(Ny): Ta[Nx-1,j2] = Ta[Nx-2,j2]
-        elif bc_A == 1:
-            for j2 in range(Ny): Ta[0,j2] = Ta[1,j2]
-        elif bc_A == 2:
-            for i2 in range(Nx): Ta[i2,Ny-1] = Ta[i2,Ny-2]
-        else:
-            for i2 in range(Nx): Ta[i2,0] = Ta[i2,1]
+                    # History: fluid-B SOU was disabled 2026-06-24 — the
+                    # then NON-conservative correction injected spurious
+                    # ρcp-scaled energy and destabilised the outer
+                    # coupling at fine grids (water dT_B oscillated at
+                    # N=80). A3 (2026-07-06) re-enables it in the
+                    # face-consistent telescoping form, gated by sou_B
+                    # (kill switch: solve_full_domain(use_sou_B=False)).
+                    if sou_B == 1:
+                        sou = (_sou_corr_x(Tb, i, j, Nx, u_loc, FxB)
+                               + _sou_corr_y(Tb, i, j, Ny, v_loc, FyB))
+                    else:
+                        sou = 0.0
 
-        # C-1: skip Tb outlet BC copy when freeze_Tb == 1 (Tb is pinned)
-        if freeze_Tb == 0:
-            if bc_B == 0:
-                for j2 in range(Ny): Tb[Nx-1,j2] = Tb[Nx-2,j2]
-            elif bc_B == 1:
-                for j2 in range(Ny): Tb[0,j2] = Tb[1,j2]
-            elif bc_B == 2:
-                for i2 in range(Nx): Tb[i2,Ny-1] = Tb[i2,Ny-2]
-            else:
-                for i2 in range(Nx): Tb[i2,0] = Tb[i2,1]
+                    aP = aE + aW + aN + aS + hvB
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
+                    chg = abs(new - Tb[i,j])
+                    if chg > max_chg: max_chg = chg
+                    Tb[i,j] = new
 
         if max_chg < 1e-10:
             break
@@ -378,7 +364,7 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                       ucA, vcA, ucB, vcB,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
                       ifrac_A, ifrac_B,
-                      n_iters, freeze_Tb, sou_B):
+                      n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None):
     """Red-black `prange`-parallel twin of `_gs_full_chunk` (2D).
 
     Same construction as the 3D `_gs_full_chunk_3d_stag_rb`: cells are swept by
@@ -422,63 +408,72 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 cell_chg = 0.0
 
                 # ── Fluid A ──
-                is_inlet_A = ((bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or
-                              (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1))
-                if is_inlet_A:
-                    fidx = j if bc_A <= 1 else i
-                    frac = ifrac_A[fidx]
-                    if frac > 0.99:
-                        if bc_A <= 1:
-                            Ta[i, j] = T_inA_arr[j]
-                        else:
-                            Ta[i, j] = T_inA_arr[i]
-                    elif frac > 0.01:
-                        T_in_val = T_inA_arr[j] if bc_A <= 1 else T_inA_arr[i]
-                        if bc_A == 0:   T_nbr = Ta[1, j]
-                        elif bc_A == 1: T_nbr = Ta[Nx-2, j]
-                        elif bc_A == 2: T_nbr = Ta[i, 1]
-                        else:           T_nbr = Ta[i, Ny-2]
-                        Ta[i, j] = frac * T_in_val + (1.0 - frac) * T_nbr
-                else:
-                    dxi = dx_arr[i]; dyj = dy_arr[j]
-                    vol = dxi * dyj
-                    K = K_ffA_arr[i, j]
-                    hvA = h_vA_arr[i, j] * vol
-                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                    dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
-                    dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
-                    dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
-                    dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
-                    u_loc = ucA[i,j]; v_loc = vcA[i,j]
-                    # A3: conservative signed shared-face fluxes (serial twin).
-                    FxP = FxAs[i, j]; FyP = FyAs[i, j]
-                    Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
-                    Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
-                    Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
-                    Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
-                    aE = dE + max(-Fe, 0.0)
-                    aW = dW + max(Fw, 0.0)
-                    aN = dN + max(-Fn, 0.0)
-                    aS = dS + max(Fs, 0.0)
-                    tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
-                    tW = Ta[i-1,j] if i > 0    else Ta[i,j]
-                    tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
-                    tS = Ta[i,j-1] if j > 0    else Ta[i,j]
-                    sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, FxA)
-                           + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, FyA))
-                    aP = aE + aW + aN + aS + hvA
-                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
-                    # Preserve the outlet candidate consumed by the solid, as in serial.
-                    is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
-                                   (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
-                    if not is_outlet_A:
-                        new = Ta[i,j] + 0.7 * (new - Ta[i,j])
-                    c = abs(new - Ta[i,j])
-                    if c > cell_chg: cell_chg = c
-                    Ta[i,j] = new
+                dxi = dx_arr[i]; dyj = dy_arr[j]
+                vol = dxi * dyj
+                K = K_ffA_arr[i, j]
+                hvA = h_vA_arr[i, j] * vol
+                dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                dE = 2.0*K*K_ffA_arr[i+1,j]/(K+K_ffA_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                dW = 2.0*K*K_ffA_arr[i-1,j]/(K+K_ffA_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                dN = 2.0*K*K_ffA_arr[i,j+1]/(K+K_ffA_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                dS = 2.0*K*K_ffA_arr[i,j-1]/(K+K_ffA_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                u_loc = ucA[i,j]; v_loc = vcA[i,j]
+                # A3: conservative signed shared-face fluxes (serial twin).
+                FxP = FxAs[i, j]; FyP = FyAs[i, j]
+                Fe = 0.5 * (FxP + (FxAs[i+1, j] if i < Nx-1 else FxP))
+                Fw = 0.5 * ((FxAs[i-1, j] if i > 0 else FxP) + FxP)
+                Fn = 0.5 * (FyP + (FyAs[i, j+1] if j < Ny-1 else FyP))
+                Fs = 0.5 * ((FyAs[i, j-1] if j > 0 else FyP) + FyP)
+                aE = dE + max(-Fe, 0.0)
+                aW = dW + max(Fw, 0.0)
+                aN = dN + max(-Fn, 0.0)
+                aS = dS + max(Fs, 0.0)
+                tE = Ta[i+1,j] if i < Nx-1 else Ta[i,j]
+                tW = Ta[i-1,j] if i > 0    else Ta[i,j]
+                tN = Ta[i,j+1] if j < Ny-1 else Ta[i,j]
+                tS = Ta[i,j-1] if j > 0    else Ta[i,j]
+                # Dirichlet temperature on the open physical inlet face only.
+                # All real cells retain diffusion, convection and full hv*dV.
+                if (bc_A == 0 and i == 0) or (bc_A == 1 and i == Nx-1) or \
+                   (bc_A == 2 and j == 0) or (bc_A == 3 and j == Ny-1):
+                    idx_in = j if bc_A <= 1 else i
+                    frac = ifrac_A[idx_in]
+                    area = dyj if bc_A <= 1 else dxi
+                    width = dxi if bc_A <= 1 else dyj
+                    d_in = 2.0 * K * area * frac / width
+                    f_in = Fw if bc_A == 0 else (-Fe if bc_A == 1 else
+                            (Fs if bc_A == 2 else -Fn))
+                    if inlet_flux_A is not None:
+                        f_in = inlet_flux_A[idx_in]
+                    a_in = d_in + (max(f_in, 0.0) if frac > 0.0 else 0.0)
+                    if bc_A == 0:
+                        aW = a_in
+                        tW = T_inA_arr[idx_in]
+                    elif bc_A == 1:
+                        aE = a_in
+                        tE = T_inA_arr[idx_in]
+                    elif bc_A == 2:
+                        aS = a_in
+                        tS = T_inA_arr[idx_in]
+                    else:
+                        aN = a_in
+                        tN = T_inA_arr[idx_in]
+
+                sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, FxA)
+                       + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, FyA))
+                aP = aE + aW + aN + aS + hvA
+                new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                # Retain the serial per-cell relaxation policy.
+                is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
+                               (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
+                if not is_outlet_A:
+                    new = Ta[i,j] + 0.7 * (new - Ta[i,j])
+                c = abs(new - Ta[i,j])
+                if c > cell_chg: cell_chg = c
+                Ta[i,j] = new
 
                 # ── Solid ──
                 dxi = dx_arr[i]; dyj = dy_arr[j]
@@ -506,86 +501,76 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 
                 # ── Fluid B ──
                 if freeze_Tb == 0:
-                    is_inlet_B = ((bc_B == 0 and i == 0) or (bc_B == 1 and i == Nx-1) or
-                                  (bc_B == 2 and j == 0) or (bc_B == 3 and j == Ny-1))
-                    if is_inlet_B:
-                        fidx_b = j if bc_B <= 1 else i
-                        frac_b = ifrac_B[fidx_b]
-                        if frac_b > 0.99:
-                            if bc_B <= 1:
-                                Tb[i, j] = T_inB_arr[j]
-                            else:
-                                Tb[i, j] = T_inB_arr[i]
-                        elif frac_b > 0.01:
-                            T_in_b = T_inB_arr[j] if bc_B <= 1 else T_inB_arr[i]
-                            if bc_B == 0:   T_nbr_b = Tb[1, j]
-                            elif bc_B == 1: T_nbr_b = Tb[Nx-2, j]
-                            elif bc_B == 2: T_nbr_b = Tb[i, 1]
-                            else:           T_nbr_b = Tb[i, Ny-2]
-                            Tb[i, j] = frac_b * T_in_b + (1.0 - frac_b) * T_nbr_b
-                    else:
-                        dxi = dx_arr[i]; dyj = dy_arr[j]
-                        vol_b = dxi * dyj
-                        K = K_ffB_arr[i, j]
-                        hvB = h_vB_arr[i, j] * vol_b
-                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                        dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
-                        dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
-                        dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
-                        dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
-                        u_loc = ucB[i,j]; v_loc = vcB[i,j]
-                        # A3: conservative signed shared-face fluxes; SOU
-                        # re-enabled in face-consistent form, gated by sou_B
-                        # (see the serial kernel for the 2026-06-24 history).
-                        FxP = FxBs[i, j]; FyP = FyBs[i, j]
-                        Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
-                        Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
-                        Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
-                        Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
-                        aE = dE + max(-Fe, 0.0)
-                        aW = dW + max(Fw, 0.0)
-                        aN = dN + max(-Fn, 0.0)
-                        aS = dS + max(Fs, 0.0)
-                        tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
-                        tW = Tb[i-1,j] if i > 0    else Tb[i,j]
-                        tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
-                        tS = Tb[i,j-1] if j > 0    else Tb[i,j]
-                        if sou_B == 1:
-                            sou = (_sou_corr_x(Tb_snap, i, j, Nx, u_loc, FxB)
-                                   + _sou_corr_y(Tb_snap, i, j, Ny, v_loc, FyB))
+                    dxi = dx_arr[i]; dyj = dy_arr[j]
+                    vol_b = dxi * dyj
+                    K = K_ffB_arr[i, j]
+                    hvB = h_vB_arr[i, j] * vol_b
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dE = 2.0*K*K_ffB_arr[i+1,j]/(K+K_ffB_arr[i+1,j]+1e-30)*dyj/dxe if i < Nx-1 else 0.0
+                    dW = 2.0*K*K_ffB_arr[i-1,j]/(K+K_ffB_arr[i-1,j]+1e-30)*dyj/dxw if i > 0 else 0.0
+                    dN = 2.0*K*K_ffB_arr[i,j+1]/(K+K_ffB_arr[i,j+1]+1e-30)*dxi/dyn if j < Ny-1 else 0.0
+                    dS = 2.0*K*K_ffB_arr[i,j-1]/(K+K_ffB_arr[i,j-1]+1e-30)*dxi/dys if j > 0 else 0.0
+                    u_loc = ucB[i,j]; v_loc = vcB[i,j]
+                    # A3: conservative signed shared-face fluxes; SOU
+                    # re-enabled in face-consistent form, gated by sou_B
+                    # (see the serial kernel for the 2026-06-24 history).
+                    FxP = FxBs[i, j]; FyP = FyBs[i, j]
+                    Fe = 0.5 * (FxP + (FxBs[i+1, j] if i < Nx-1 else FxP))
+                    Fw = 0.5 * ((FxBs[i-1, j] if i > 0 else FxP) + FxP)
+                    Fn = 0.5 * (FyP + (FyBs[i, j+1] if j < Ny-1 else FyP))
+                    Fs = 0.5 * ((FyBs[i, j-1] if j > 0 else FyP) + FyP)
+                    aE = dE + max(-Fe, 0.0)
+                    aW = dW + max(Fw, 0.0)
+                    aN = dN + max(-Fn, 0.0)
+                    aS = dS + max(Fs, 0.0)
+                    tE = Tb[i+1,j] if i < Nx-1 else Tb[i,j]
+                    tW = Tb[i-1,j] if i > 0    else Tb[i,j]
+                    tN = Tb[i,j+1] if j < Ny-1 else Tb[i,j]
+                    tS = Tb[i,j-1] if j > 0    else Tb[i,j]
+                    # Dirichlet temperature on the open physical inlet face only.
+                    # All real cells retain diffusion, convection and full hv*dV.
+                    if (bc_B == 0 and i == 0) or (bc_B == 1 and i == Nx-1) or \
+                       (bc_B == 2 and j == 0) or (bc_B == 3 and j == Ny-1):
+                        idx_in = j if bc_B <= 1 else i
+                        frac = ifrac_B[idx_in]
+                        area = dyj if bc_B <= 1 else dxi
+                        width = dxi if bc_B <= 1 else dyj
+                        d_in = 2.0 * K * area * frac / width
+                        f_in = Fw if bc_B == 0 else (-Fe if bc_B == 1 else
+                                (Fs if bc_B == 2 else -Fn))
+                        if inlet_flux_B is not None:
+                            f_in = inlet_flux_B[idx_in]
+                        a_in = d_in + (max(f_in, 0.0) if frac > 0.0 else 0.0)
+                        if bc_B == 0:
+                            aW = a_in
+                            tW = T_inB_arr[idx_in]
+                        elif bc_B == 1:
+                            aE = a_in
+                            tE = T_inB_arr[idx_in]
+                        elif bc_B == 2:
+                            aS = a_in
+                            tS = T_inB_arr[idx_in]
                         else:
-                            sou = 0.0
-                        aP = aE + aW + aN + aS + hvB
-                        new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
-                        c = abs(new - Tb[i,j])
-                        if c > cell_chg: cell_chg = c
-                        Tb[i,j] = new
+                            aN = a_in
+                            tN = T_inB_arr[idx_in]
+
+                    if sou_B == 1:
+                        sou = (_sou_corr_x(Tb_snap, i, j, Nx, u_loc, FxB)
+                               + _sou_corr_y(Tb_snap, i, j, Ny, v_loc, FyB))
+                    else:
+                        sou = 0.0
+                    aP = aE + aW + aN + aS + hvB
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
+                    c = abs(new - Tb[i,j])
+                    if c > cell_chg: cell_chg = c
+                    Tb[i,j] = new
 
                 color_chg = max(color_chg, cell_chg)
             if color_chg > sweep_chg:
                 sweep_chg = color_chg
-
-        # Outlet zero-gradient BCs
-        if bc_A == 0:
-            for j2 in range(Ny): Ta[Nx-1,j2] = Ta[Nx-2,j2]
-        elif bc_A == 1:
-            for j2 in range(Ny): Ta[0,j2] = Ta[1,j2]
-        elif bc_A == 2:
-            for i2 in range(Nx): Ta[i2,Ny-1] = Ta[i2,Ny-2]
-        else:
-            for i2 in range(Nx): Ta[i2,0] = Ta[i2,1]
-        if freeze_Tb == 0:
-            if bc_B == 0:
-                for j2 in range(Ny): Tb[Nx-1,j2] = Tb[Nx-2,j2]
-            elif bc_B == 1:
-                for j2 in range(Ny): Tb[0,j2] = Tb[1,j2]
-            elif bc_B == 2:
-                for i2 in range(Nx): Tb[i2,Ny-1] = Tb[i2,Ny-2]
-            else:
-                for i2 in range(Nx): Tb[i2,0] = Tb[i2,1]
 
         max_chg = sweep_chg
         if max_chg < 1e-10:
@@ -630,7 +615,8 @@ def solve_full_domain(L, H, Nx, Ny,
                       Tb_prescribed=None,
                       eps_A=None, eps_B=None,
                       q_rel_tol=None, conv_chunk=None,
-                      use_sou_B=False, cancel_check=None):
+                      use_sou_B=False, cancel_check=None,
+                      inlet_flux_A=None, inlet_flux_B=None):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     q_rel_tol : float or None — per-chunk Q-relative convergence threshold.
@@ -651,6 +637,11 @@ def solve_full_domain(L, H, Nx, Ny,
     ucA, vcA : 2D arrays (Nx, Ny) — Fluid A cell-centre x/y velocity
     ucB, vcB : 2D arrays (Nx, Ny) — Fluid B cell-centre x/y velocity
     dir_A, dir_B : int — flow direction (0=+x, 1=-x, 2=+y, 3=-y)
+    inlet_mask_A, inlet_mask_B : physical open-area fractions, not velocity taper.
+    inlet_flux_A, inlet_flux_B : optional signed inward rho*cp*eps*u*A at the
+        physical inlet, in W/(m K). Already area-integrated, never multiplied
+        by the opening fraction again. Direct cell-centre callers omit these
+        and retain their boundary-cell transport coefficient.
     return_info : bool — if True, return (Ta, Tb, Ts, info_dict)
     Ta_init, Tb_init, Ts_init : 2D arrays (Nx, Ny) — warm-start initial guess
     Tb_prescribed : 2D array (Nx, Ny) or None
@@ -748,7 +739,7 @@ def solve_full_domain(L, H, Nx, Ny,
     T_inA_arr = _arr(T_inA_profile, T_inA, nA)
     T_inB_arr = _arr(T_inB_profile, T_inB, nB)
 
-    # Inlet fractions: continuous 0-1 for smooth blending at wall/open transition
+    # Physical open-area fractions (not a velocity taper).
     if inlet_mask_A is None:
         ifrac_A = np.ones(nA, dtype=np.float64)
     else:
@@ -764,18 +755,7 @@ def solve_full_domain(L, H, Nx, Ny,
         Tb = np.ascontiguousarray(Tb_init.copy(), dtype=np.float64)
         Ts = np.ascontiguousarray(Ts_init.copy(), dtype=np.float64)
     else:
-        # Per-fluid cold-start seed (Ta=T_inA, Tb=T_inB), matching the 3D kernel
-        # and the 2D caller's documented intent (pipelines/solve_2d.py, the
-        # T_s_init warm-start block in _run_solvers).
-        # The old 0.5*(T_inA+T_inB) seed for ALL THREE left partial-inlet
-        # off-pipe cells (inlet frac<=0.01, never updated by a governing
-        # equation — see the inlet branch above) FROZEN at the mid-T, which
-        # diffuses back through the solid h_v coupling as a virtual heat source
-        # (~12-18% Q_A / ~14K T_out_B on partial-B cross-flow geometries; audit
-        # 2026-06-28, found by the ultracode workflow). Full-face / prescribed-Tb
-        # paths are seed-independent at convergence (no frozen cells) → unchanged.
-        # Ts keeps the 0.5-mean (solid sits between the streams); its energy
-        # equation updates it every sweep regardless.
+        # Per-fluid cold starts; every real fluid and solid cell is updated.
         Ta = np.full((Nx, Ny), float(T_inA))
         Tb = np.full((Nx, Ny), float(T_inB))
         Ts = np.full((Nx, Ny), 0.5 * (T_inA + T_inB))
@@ -790,35 +770,6 @@ def solve_full_domain(L, H, Nx, Ny,
             )
         Tb = Tb_arr.copy()
         freeze_Tb = 1
-
-    # Apply inlet BCs with continuous blending (frac > 0.5 gets T_in)
-    if bc_A == 0:
-        for j in range(Ny):
-            if ifrac_A[j] > 0.5: Ta[0, j] = T_inA_arr[j]
-    elif bc_A == 1:
-        for j in range(Ny):
-            if ifrac_A[j] > 0.5: Ta[Nx-1, j] = T_inA_arr[j]
-    elif bc_A == 2:
-        for i in range(Nx):
-            if ifrac_A[i] > 0.5: Ta[i, 0] = T_inA_arr[i]
-    else:
-        for i in range(Nx):
-            if ifrac_A[i] > 0.5: Ta[i, Ny-1] = T_inA_arr[i]
-
-    # C-1: skip Tb inlet BC initialisation when freeze_Tb == 1 (Tb is pinned)
-    if freeze_Tb == 0:
-        if bc_B == 0:
-            for j in range(Ny):
-                if ifrac_B[j] > 0.5: Tb[0, j] = T_inB_arr[j]
-        elif bc_B == 1:
-            for j in range(Ny):
-                if ifrac_B[j] > 0.5: Tb[Nx-1, j] = T_inB_arr[j]
-        elif bc_B == 2:
-            for i in range(Nx):
-                if ifrac_B[i] > 0.5: Tb[i, 0] = T_inB_arr[i]
-        else:
-            for i in range(Nx):
-                if ifrac_B[i] > 0.5: Tb[i, Ny-1] = T_inB_arr[i]
 
     # Iterate in chunks. Convergence uses AND of three criteria (#6):
     #   (1) relative change in Q_B interface integral  < q_rel_tol
@@ -852,7 +803,7 @@ def solve_full_domain(L, H, Nx, Ny,
             ucA, vcA, ucB, vcB,
             bc_A, bc_B, T_inA_arr, T_inB_arr,
             ifrac_A, ifrac_B,
-            n, freeze_Tb, 1 if use_sou_B else 0)
+            n, freeze_Tb, 1 if use_sou_B else 0, inlet_flux_A, inlet_flux_B)
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
