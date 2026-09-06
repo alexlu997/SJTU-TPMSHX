@@ -170,6 +170,10 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     # Surrogate-domain extrap guard — cfg.extrap.allow drives it
     # (shared both-side check in _stage_common; ImportError → skip,
     # ValueError propagates).
+    from sjtu_tpmshx.solvers.fluid_props import check_water_state
+    for side, config in (('A', compute_cfg.fluid_A), ('B', compute_cfg.fluid_B)):
+        check_water_state(config.type, config.T_in_K, config.P_in_Pa,
+                          where=f'pipeline inlet {side}')
     extrap_reasons = surrogate_extrap_reasons(
         compute_cfg, bool(compute_cfg.extrap.allow))
 

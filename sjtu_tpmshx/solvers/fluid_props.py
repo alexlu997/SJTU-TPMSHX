@@ -18,8 +18,53 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
+import CoolProp.CoolProp as CP
+
 from . import tpms_calc
 from . import sco2_props
+
+
+class WaterStateError(ValueError):
+    """An actual water state is unsupported or cannot be confirmed."""
+
+
+def check_water_state(fluid, T, P, *, where="water state") -> None:
+    """Check paired actual K/Pa(abs) states, never a temperature-only primitive.
+
+    This is a stable-liquid exclusion check, not a general pressure/accuracy
+    certificate for the T-only correlations. Their empirical warnings remain.
+    Each call owns its HEOS state, including concurrent A/B calls.
+    """
+    if fluid.strip().lower() != 'water':
+        return
+    try:
+        temperatures, pressures = np.broadcast_arrays(
+            np.asarray(T, dtype=float), np.asarray(P, dtype=float))
+    except (TypeError, ValueError) as exc:
+        raise WaterStateError(f"{where}: water requires paired T/P states") from exc
+    if not temperatures.size or not (
+            np.isfinite(temperatures).all() and np.isfinite(pressures).all()
+            and (temperatures > 0).all() and (pressures > 0).all()):
+        raise WaterStateError(f"{where}: water requires finite positive K and Pa(abs)")
+    state = CP.AbstractState('HEOS', 'Water')
+    for t, p in zip(temperatures.flat, pressures.flat):
+        try:
+            state.update(CP.PT_INPUTS, float(p), float(t))
+            phase = state.phase()
+            if phase == CP.iphase_supercritical_liquid:
+                raise WaterStateError(
+                    "high-pressure liquid: T-only model applicability unconfirmed")
+            if phase != CP.iphase_liquid:
+                raise WaterStateError("only stable single-phase liquid water is supported")
+            if not state.has_melting_line():
+                raise WaterStateError("solid/liquid stability unconfirmed")
+            t_melt = state.melting_line(CP.iT, CP.iP, float(p))
+            if not np.isfinite(t_melt) or t <= t_melt:
+                raise WaterStateError("freezing boundary or solid/metastable water unsupported")
+        except (ValueError, RuntimeError) as exc:
+            raise WaterStateError(
+                f"{where}: water T={t:g} K, P_abs={p:g} Pa: {exc}") from exc
 
 
 def _nu_air(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr=None):

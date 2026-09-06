@@ -34,6 +34,7 @@ _T_LO, _T_HI = 240.0, 420.0
 # h/T(h)/cp/k come from CoolProp at the side's pressure. For 'sco2' these are the
 # SAME CO2 calls sco2_props makes → byte-identical to the sCO2-only path.
 from CoolProp.CoolProp import PropsSI as _PropsSI  # noqa: E402
+from .fluid_props import WaterStateError, check_water_state  # noqa: E402
 _CP_NAME = {'sco2': 'CO2', 'water': 'Water', 'air': 'Air'}
 
 
@@ -48,9 +49,16 @@ def _prop_field(key, T, P, fluid):
 def _T_of_h_field(h, P, fluid):
     h = np.ascontiguousarray(h, dtype=np.float64)
     P = np.broadcast_to(np.asarray(P, dtype=np.float64), h.shape)
-    out = _PropsSI("T", "H", h.ravel(), "P", np.ascontiguousarray(P).ravel(),
-                   _CP_NAME.get(fluid, fluid))
-    return np.asarray(out, dtype=np.float64).reshape(h.shape)
+    try:
+        out = _PropsSI("T", "H", h.ravel(), "P", np.ascontiguousarray(P).ravel(),
+                       _CP_NAME.get(fluid, fluid))
+    except ValueError as exc:
+        if fluid == 'water':
+            raise WaterStateError('water EOS T(h,P) state unconfirmed') from exc
+        raise
+    temperature = np.asarray(out, dtype=np.float64).reshape(h.shape)
+    check_water_state(fluid, temperature, P, where='enthalpy EOS return')
+    return temperature
 
 
 def _h_scalar(T, P, fluid):
@@ -261,6 +269,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     The 703 recuperator runs sco2/sco2, hot ≈8 MPa / cold ≈18.5 MPa."""
     P_A = float(P)
     P_B = float(P_B) if P_B is not None else P_A
+    check_water_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
+    check_water_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
     dx = np.full(Nx, Lx / Nx, dtype=np.float64)
     dy = np.full(Ny, Ly / Ny, dtype=np.float64)
     dz = np.full(Nz, Lz / Nz, dtype=np.float64)
@@ -344,6 +354,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     boundary faces encode arbitrary inlet/outlet patches; zero faces are walls.
     Scalar ``m_dot`` remains only as a compatibility fallback for standalone
     uniform-flow tests."""
+    check_water_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
+    check_water_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
     shape = (Nx, Ny, Nz)
     dx = np.ascontiguousarray(dx, dtype=np.float64)
     dy = np.ascontiguousarray(dy, dtype=np.float64)
@@ -386,6 +398,10 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     h_lo_B = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_B, 230.0)), P_B, fluid_B)
     h_hi_B = _h_scalar(T_span_hi, P_B, fluid_B)
 
+    if Ta_init is not None:
+        check_water_state(fluid_A, Ta_init, P_A_field, where='enthalpy warm start A')
+    if Tb_init is not None:
+        check_water_state(fluid_B, Tb_init, P_B_field, where='enthalpy warm start B')
     hA = (_prop_field("H", np.asarray(Ta_init, dtype=np.float64), P_A_field, fluid_A)
           if Ta_init is not None else np.full(shape, h_in_A))
     hB = (_prop_field("H", np.asarray(Tb_init, dtype=np.float64), P_B_field, fluid_B)

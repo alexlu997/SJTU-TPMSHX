@@ -146,6 +146,10 @@ def fit_water_hx() -> tuple[pd.DataFrame, pd.DataFrame]:
         quality_valid = ~(raw.dp_nonphysical | raw.dup_row)
         T = (0.5 * (raw["水进口温度/℃"].to_numpy(float)
                     + raw["水出口温度/℃"].to_numpy(float)) + 273.15)
+        from sjtu_tpmshx.solvers.fluid_props import check_water_state
+        check_water_state('water', T,
+                          0.5 * (raw.water_P_in_abs_Pa + raw.water_P_out_abs_Pa),
+                          where='water HX mean properties')
         rho = np.asarray(water_density(T), dtype=float)
         mu = np.asarray(water_viscosity(T), dtype=float)
         mdot = raw["样机水流量kg/s"].to_numpy(float)
