@@ -18,7 +18,7 @@ from sjtu_tpmshx.domain.cancellation import CancelledError
 
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
-from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d, _inlet_transport_3d
 from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp,
@@ -361,7 +361,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
     """Energy + mass conservation diagnostics for a converged 3D solve
     (extracted from _run_3d_stack, 2026-06-09 F1). Returns a dict:
     domain-total balances (Q_sA/Q_sB/Q_net/energy_rel/mass_rel_A/mass_rel_B)
-    + BC-layer-excluded interior-corrected metrics (Q_sA_interior /
+    + end-layer-excluded subvolume metrics (Q_sA_interior /
     Q_sB_interior / Q_interior_primary / AB_interior). Always computed so the
     user spots non-physical regressions without re-running validation; any
     failure warns + reports NaN (never silently swallowed)."""
@@ -389,9 +389,9 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
                 stacklevel=2)
         Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
 
-    # Path 0' (v3): exclude the BC inlet/outlet layer, where Ta pinned at T_in
-    # creates artificial h_v·(Ts-T_in) source terms (|Q_sA|_total over-reads
-    # ~28%). Interior-corrected metric recovers the physical Q.
+    # Historical subvolume diagnostics exclude two physical CV layers.
+    # These are neither corrected full-core duty nor an external heat budget.
+    # Full-volume solid exchange is reported above as Q_sA/Q_sB/Q_net.
     try:
         Nx_g, Ny_g, Nz_g = Ta.shape
         cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
@@ -431,7 +431,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
                        / max(abs(Q_sA_interior), abs(Q_sB_interior), 1e-30))
     except Exception as _e:
         import warnings as _w
-        _w.warn(f"3D interior-corrected Q diagnostics failed ({_e!r}); "
+        _w.warn(f"3D subvolume Q diagnostics failed ({_e!r}); "
                 f"reporting NaN.", stacklevel=2)
         Q_sA_interior = Q_sB_interior = Q_interior_primary = float('nan')
         AB_interior = float('nan')
@@ -1905,7 +1905,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         Q_AB_imbalance_rel=Q_AB_imbalance_rel,
         # h_v fields for BC-layer split diagnostic (path 0' v3)
         h_vA_field=h_vA_field, h_vB_field=h_vB_field,
-        # Path 0' interior-corrected metrics (BC layer excluded)
+        # Historical subvolume metrics (physical end CVs excluded)
         Q_sA_interior=Q_sA_interior,
         Q_sB_interior=Q_sB_interior,
         Q_interior=Q_interior_primary,
@@ -2660,6 +2660,11 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             dir_A=fA['dir'],
             dir_B=(fB['dir'] if fB is not None else 3),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
+            inlet_flux_A=_inlet_transport_3d(
+                (ufA, vfA, wfA), eps_fA_arr, rho_cp_fA, dx, dy, dz, fA['dir']),
+            inlet_flux_B=_inlet_transport_3d(
+                (ufB, vfB, wfB), eps_fB_arr, rho_cp_fB, dx, dy, dz,
+                fB['dir'] if fB is not None else 3),
             inlet_mask_A=_ltne_mask_A,
             inlet_mask_B=_ltne_mask_B,
             Tb_prescribed=Tb_presc, max_iter=_eff_ltne_max_iter, tol=1e-5,

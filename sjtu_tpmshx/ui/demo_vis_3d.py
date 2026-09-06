@@ -35,7 +35,7 @@ from sjtu_tpmshx.solvers.tpms_calc import (
     air_conductivity, air_cp, P_atm,
 )
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
-from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d, _inlet_transport_3d
 from sjtu_tpmshx.solvers.sigmoid_field_3d import build_continuous_arrays_3d
 from sjtu_tpmshx.solvers.sigmoid_field import get_geometry_lut
 from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
@@ -128,6 +128,10 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
             rho_cp_A, rho_cp_B, eps_arr,
             ucA, vcA, wcA, ucB, vcB, wcB,
             dir_A=0, dir_B=3,
+            inlet_flux_A=_inlet_transport_3d(
+                (sA.v.transpose(1, 0, 2), sA.u.transpose(1, 0, 2),
+                 sA.w.transpose(1, 0, 2)),
+                0.5*eps_arr, rho_cp_A, dx, dy, dz, 0),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             Tb_prescribed=Tb_presc, max_iter=20000, tol=1e-5,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts, alpha_T=0.7)
