@@ -2817,13 +2817,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _check_property_water('3D property refresh')
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
-        # #5 reverse-dir density-frame fix, fluid-A side (audit 2026-06-28). Same
-        # bug class as the Tb_sB flip below: the velocity transforms flip for a
-        # reverse-dir fluid but this T→SIMPLE transform did not, mirroring the
-        # SIMPLE density frame for a reverse-dir A. Gated to sCO2 reverse-dir A
-        # (ρ(T)-sensitive); forward A (all 703/Shanghai configs, dir 0) → no-op,
-        # bit-identical. air/water keep the legacy frame (validation-safe).
-        if fluid_type_A == 'sco2' and axis_map['is_reverse']:
+        # Invert the velocity/density spatial reflection for every fluid.
+        # After transpose, the real stream axis maps to SIMPLE's stream axis.
+        if axis_map['is_reverse']:
             _ssax_A = solver_to_real_perm[int(axis_map['stream_real_axis'])]
             Ta_sA = np.ascontiguousarray(np.flip(Ta_sA, axis=_ssax_A))
         # Critical: propagate Ta to T_field so SIMPLE inner _update_density()
@@ -3011,20 +3007,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # Air: ρ(P,T) via ideal gas law (mirror of A).
         if sB is not None and Tb is not None:
             Tb_sB = np.ascontiguousarray(Tb.transpose(perm_B))
-            # #5 reverse-dir density-frame fix (2026-06-28). The velocity
-            # transforms (_solver_*_to_real) and rho_cp_fB apply the reverse-dir
-            # np.flip, but this real→solver T transpose does NOT — so for a
-            # reverse-dir B the SIMPLE density frame is MIRRORED relative to the
-            # velocity frame: the hot real-OUTLET T lands on the solver
-            # injection face (j=0), so ρ_in = ρ(T_out) not ρ(T_in). For
-            # ρ(T)-sensitive sCO2 this under-reads ṁ_B ~2.4× (e.g. 703
-            # recuperator: 15.5 vs 37.6 kg/s) and corrupts dP_B + the cold-side
-            # duty. The fix flips T to match the velocity frame. GATED to sCO2:
-            # air/water (weak ρ(T); error within the accepted air-air B-side
-            # imbalance) keep the legacy frame so the Shanghai/golden 3D
-            # baselines stay bit-identical — the general reverse-dir fix needs a
-            # full re-validation (documented follow-up).
-            if fluid_type_B == 'sco2' and axis_map_B['is_reverse']:
+            # Match B's velocity/density frame, as for A above.
+            if axis_map_B['is_reverse']:
                 _ssax_B = perm_B[int(axis_map_B['stream_real_axis'])]
                 Tb_sB = np.ascontiguousarray(np.flip(Tb_sB, axis=_ssax_B))
             if _mB.compressible:
