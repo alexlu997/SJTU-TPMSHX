@@ -173,7 +173,8 @@ def _pipeline_cfg(pair=('air', 'air'), nz=4):
 
 
 @pytest.mark.parametrize('cap', [False, True])
-def test_model_h_ledger_reaches_result_before_final_post(monkeypatch, cap):
+@pytest.mark.parametrize('invalid', [None, ('A', 'unknown'), ('B', 'nan'), ('A', 'inf')])
+def test_model_h_ledger_reaches_result_before_final_post(monkeypatch, cap, invalid):
     from sjtu_tpmshx.pipelines import run_stack_3d_stages as stages
     from sjtu_tpmshx.pipelines import stages_3d
     monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
@@ -183,7 +184,16 @@ def test_model_h_ledger_reaches_result_before_final_post(monkeypatch, cap):
         call = signature.bind(*args, **kwargs).arguments
         shape = call['Nx'], call['Ny'], call['Nz']
         ledger = dict(physical_boundary_complete=False, physical_external_inward_W=None,
-                      numerical_external_inward_W=1.25*(len(seen)+1))
+                      numerical_external_inward_W=1.25*(len(seen)+1), sides={
+            side: dict(physical_boundary_complete=True,
+                       convective_inward_W=value*(len(seen)+1), inlet_diffusion_inward_W=7.)
+            for side, value in (('A', 156.), ('B', -228.))})
+        if invalid is not None:
+            side, reason = invalid
+            if reason == 'unknown':
+                ledger['sides'][side]['physical_boundary_complete'] = False
+            else:
+                ledger['sides'][side]['convective_inward_W'] = float(reason)
         seen.append(ledger)
         return (np.full(shape, 340.), np.full(shape, 310.), np.full(shape, 325.),
                 dict(converged=True, iterations=250, residual=1e-8, model_h_balance=ledger))
@@ -205,6 +215,70 @@ def test_model_h_ledger_reaches_result_before_final_post(monkeypatch, cap):
     assert ledger['post_after_last_thermal'] == cap
     assert ledger['outer_converged'] == (not cap)
     assert result.diagnostics['true_h_balance'] is None
+    for side, expected in (('A', 312.), ('B', 456.)):
+        values = [raw['Q_enthalpy_'+side], result.residuals['Q_enthalpy_'+side]]
+        if side == 'A':
+            values += [raw['Q'], raw['Q_total'], result.Q_W]
+        if invalid is not None and side == invalid[0]:
+            assert all(np.isnan(value) for value in values)
+        else:
+            assert all(value == expected for value in values)
+
+
+def test_reported_model_h_two_unequal_outlets_excludes_diffusion(monkeypatch):
+    from sjtu_tpmshx.pipelines import run_stack_3d_stages as stages, stages_3d
+    # Two CVs with unequal outlet masses. Independent h=2*theta+.01*theta**2:
+    # h(340)=96, h(310)=21, h(330)=69; 4*96-(1*21+3*69)=156 W.
+    # cp(340)*4*(340-325)=168 and 4*(h(340)-h(325))=159 are both wrong.
+    one = np.ones((1, 1, 2)); T = np.array([[[310., 330.]]])
+    mass = (np.broadcast_to([1., 3.], (2, 1, 2)).copy(),
+            np.zeros((1, 2, 2)), np.zeros((1, 1, 3)))
+    coeff = (2., .02, 0., 300., 300.)
+    ledger = energy._model_h_balance(
+        (T, T), one*320., (mass, tuple(-f for f in mass)), (coeff, coeff),
+        (0, 1), (one[0]*340., one[0]*300.), (one[0], one[0]),
+        (one*.0875, one*0), one*0, (one*0, one*0), (one*.5, one*.5),
+        (one*0, one*0), one*0, np.ones(1), np.ones(1), np.ones(2))
+    assert ledger['sides']['A']['convective_inward_W'] == pytest.approx(156.)
+    assert ledger['sides']['B']['convective_inward_W'] == pytest.approx(-228.)
+    assert ledger['sides']['A']['inlet_diffusion_inward_W'] == pytest.approx(7.)
+    monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
+    monkeypatch.setattr(stages, 'solve_full_domain_3d', lambda *a, **k: (
+        T.copy(), T.copy(), one*320.,
+        dict(converged=True, iterations=250, residual=0., model_h_balance=ledger)))
+    def outer(*, step, **kwargs):
+        step(0)
+        return 0, True
+    monkeypatch.setattr(stages, 'run_outer_coupling', outer)
+    cfg = _pipeline_cfg(nz=2)
+    cfg.update(Nx=1, Ny=1, T_inA=340.)
+    cfg['fluid_A_cfg']['dir'] = 0
+    cfg['fluid_B_cfg']['dir'] = 1
+    raw = stages_3d._run_3d_stack(cfg)
+    result = stages_3d._finalize_3d_cfg(raw, {})
+    assert result.Q_W == pytest.approx(156.)
+    assert result.residuals['Q_enthalpy_B'] == pytest.approx(228.)
+
+
+def test_report_without_model_h_ledger_keeps_original_cp_temperature(monkeypatch):
+    from sjtu_tpmshx.pipelines import run_stack_3d_stages as stages
+    monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
+    def thermal(*args, **kwargs):
+        return (np.full((4, 4, 4), 325.), np.full((4, 4, 4), 325.),
+                np.full((4, 4, 4), 325.), dict(converged=True, iterations=250, residual=0.))
+    monkeypatch.setattr(stages, 'solve_full_domain_3d', thermal)
+    monkeypatch.setattr(stages, '_simple_mass_flow', lambda *a, **k: 4.)
+    def outer(*, step, **kwargs):
+        step(0)
+        return 0, True
+    monkeypatch.setattr(stages, 'run_outer_coupling', outer)
+    cfg = _pipeline_cfg()
+    cfg['variable_rho_cp'] = False
+    monkeypatch.delenv('TPMSHX_VAR_RHOCP', raising=False)
+    from sjtu_tpmshx.pipelines.run_stack_3d import _run_3d_stack
+    raw = _run_3d_stack(cfg)
+    assert raw['Q'] == pytest.approx(4*float(air_cp(350.))*25.)
+    assert raw['Q_enthalpy_B'] == pytest.approx(4*float(air_cp(300.))*25.)
 
 
 def test_driver_skips_capacity_projection_and_keeps_sweep_budget(monkeypatch):

@@ -1413,17 +1413,7 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
     m_dot_B_simple = None
     vmag_B = None
     # ── Extract metrics + fields ──
-    # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
-    # 2D UI path (run_calculation.py:_store_results.Q_total) and the
-    # optimizer (both 2D and 3D). This makes Q comparable across the
-    # three paths without a unit-mismatch penalty. (#5 / v1.0.10 #6)
-    #
-    # Q_enthalpy_A (m_dot × cp × ΔT) is kept as a secondary reading;
-    # it uses inlet-plane ρ from the solver's rho_field (not a stale
-    # cold-seed scalar) and respects the solver's inlet mask via
-    # v_inlet_field. (v1.0.10 #2)
-    # NOTE: despite the legacy comment above, the returned Q is assigned from
-    # the enthalpy balance below; Q_solid_B remains diagnostic only.
+    # Solid-fluid exchange is diagnostic; headline Q uses A-side advection.
     cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
     Q_solid_B = float(np.sum(h_vB_field * (Ts - Tb) * cell_vol))
 
@@ -1471,8 +1461,8 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
     # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
     #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
     # A pair containing sCO2 is solved in true enthalpy for BOTH streams, so
-    # report the same boundary-face quantity for both fluids. Air/water-only
-    # keeps the established cp·ΔT result bit-identical.
+    # report the same boundary-face quantity for both fluids. Other routes
+    # retain cp·ΔT unless the completed thermal solve supplied a model-h ledger.
     _true_h_pair = 'sco2' in (fluid_type_A, fluid_type_B)
     if _true_h_pair:
         from sjtu_tpmshx.solvers.ltne_enthalpy_3d import _h_scalar, _prop_field
@@ -1545,25 +1535,18 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
                 "did not close; compare the last true-h ledger and pressure "
                 "sources before attributing the discrepancy to the kernel.", stacklevel=2)
 
-    # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
-    # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
-    # bound to within engineering tolerance (e.g. Shanghai Air-Air NORM:
-    # Q_A=323W, Q_B=374W, NTU_max=333W — both sides physical).
-    #
-    # **|Q_solid_B| = ∫h_vB(Ts−Tb)dV** is KEPT as a diagnostic but NO LONGER
-    # primary: the homogenised h_v applied uniformly over all cells spuriously
-    # counts stagnant wall-BL zones where no real flow carries heat, pushing
-    # |Q_sB| ~25% above the NTU upper bound. The LTNE Q_sA+Q_sB ≈ 0 internal
-    # check still holds (<1%) — it's the magnitude that over-estimates, not
-    # the conservation.
-    # Headline heat duty = AIR/A-side advective enthalpy ONLY. The B/water-side
-    # advective enthalpy (Q_enthalpy_B = m_B·cp·ΔT_B) drops the boundary-
-    # conduction flux, so it over/under-reads by ~8 % even when the scheme
-    # conserves. The old 0.5·(Q_A+Q_B) average therefore drifted non-physically
-    # (e.g. the displayed Q ROSE when coolant flow FELL — the B term polluting
-    # it). Q_enthalpy_A matches the experiment-validated duty: validation/
-    # validate_shanghai_3d_real computes the same m_air·cp·ΔT_A (RMSRE ~3 %).
-    # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
+    # Use the actual last thermal model-h flux, before any final post update.
+    # Its presence identifies the solved route without duplicating its gate.
+    model_balance = (prob._ltne_info[-1].get('model_h_balance')
+                     if prob._ltne_info else None)
+    if model_balance is not None:
+        sides = (model_balance['sides']['A'], model_balance['sides']['B'])
+        Q_enthalpy_A, Q_enthalpy_B = (
+            abs(side['convective_inward_W'])
+            if side['physical_boundary_complete'] and np.isfinite(side['convective_inward_W'])
+            else float('nan') for side in sides)
+    # Headline duty remains A-side advection; inlet diffusion belongs only
+    # to the complete energy ledger, not this convective heat-duty report.
     Q = Q_enthalpy_A
 
     dP = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
