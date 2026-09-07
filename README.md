@@ -149,6 +149,15 @@ property comparisons establish neither general high-pressure applicability nor
 whole-exchanger accuracy. The existing Shanghai validation reports **air-side**
 pressure drop by default.
 
+Water pressure-drop measurements serve as a **system-level water-pressure-drop
+proxy**, including inlet/outlet piping losses that cannot be recovered separately.
+Compare the current core prediction directly with measured system loss over fixed
+case members, reporting RMSRE and signed bias against the 10% RMSRE R&D target.
+Underprediction alone does not establish failure of the core resistance model,
+and meeting this proxy target does not demonstrate 10% core pressure-drop accuracy.
+Preserve the measurements without estimating or subtracting piping losses,
+adding offsets, or refitting parameters to pass.
+
 ---
 
 ## 📐 Closure correlations
