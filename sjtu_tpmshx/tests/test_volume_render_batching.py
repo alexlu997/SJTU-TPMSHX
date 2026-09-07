@@ -1,0 +1,85 @@
+"""Exercise the real volume builder without an OpenGL context."""
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from sjtu_tpmshx.ui.panel_vis_3d import FIELD_META, ThreeDVisPanel
+
+
+@pytest.mark.parametrize('render', [True, False])
+def test_volume_builder_defers_intermediate_render(render):
+    requests = []
+    actor, bar = Mock(), Mock()
+    plotter = Mock(window_size=(1000, 800))
+    plotter.render.side_effect = lambda: requests.append('render')
+
+    def mutation(*args, render=True, **kwargs):
+        if render:
+            plotter.render()
+
+    def volume(*args, render=True, **kwargs):
+        mutation(render=render)
+        return actor
+
+    plotter.remove_actor.side_effect = mutation
+    plotter.remove_scalar_bar.side_effect = mutation
+    plotter.add_volume.side_effect = volume
+    plotter.add_scalar_bar.return_value = bar  # PyVista defaults render=False
+    grid = object()
+    panel = SimpleNamespace(
+        _grid=grid, _grid_vol=grid, _field='Ta', plotter=plotter,
+        _clim_for=lambda field: (300., 420.), _opacity_ramp=lambda: (.2, .5),
+        _vol_min_cell_mm=1., status=Mock(),
+    )
+    ThreeDVisPanel._rebuild_volume(panel, render=render)
+
+    assert requests == (['render'] if render else [])
+    assert panel._volume_actor is actor
+    args, kwargs = plotter.add_volume.call_args
+    assert args == (grid,)
+    assert kwargs['scalars'] == 'Ta'
+    assert kwargs['clim'] == (300., 420.)
+    assert kwargs['opacity'] == [.2, .5]
+    assert kwargs['cmap'] == FIELD_META['Ta']['cmap']
+    assert kwargs['name'] == 'main_volume' and not kwargs['show_scalar_bar']
+    assert plotter.add_scalar_bar.call_count == 1
+    assert plotter.add_scalar_bar.call_args.kwargs['title'] == FIELD_META['Ta']['title']
+    assert plotter.add_scalar_bar.call_args.kwargs['vertical'] is True
+    actor.GetMapper().SetAutoAdjustSampleDistances.assert_called_once_with(True)
+    bar.SetLookupTable.assert_called_once()
+    panel.status.setText.assert_not_called()
+
+
+def test_initial_scene_defers_mesh_and_camera_render():
+    plotter = Mock()
+
+    def mutation(*args, render=True, **kwargs):
+        if render:
+            plotter.render()
+
+    plotter.add_mesh.side_effect = mutation
+    plotter.view_isometric.side_effect = mutation
+    panel = SimpleNamespace(
+        plotter=plotter, _grid=Mock(), _L_mm=(182., 42., 42.),
+        _flow_dir='+x', _flow_dir_B='+y', _arrays={'Ta': object(), 'Tb': object()},
+    )
+    panel._add_flow_glyph = lambda: ThreeDVisPanel._add_flow_glyph(panel)
+    ThreeDVisPanel._render_initial_scene(panel)
+
+    plotter.clear.assert_called_once_with()
+    assert plotter.add_mesh.call_count == 5
+    outline, *arrows = plotter.add_mesh.call_args_list
+    assert outline.args == (panel._grid.outline.return_value,)
+    assert outline.kwargs['line_width'] == 2
+    assert [call.kwargs['name'] for call in arrows] == [
+        '_flow_inlet_A', '_flow_outlet_A', '_flow_inlet_B', '_flow_outlet_B',
+    ]
+    assert [call.kwargs['opacity'] for call in arrows] == [.55, .55, .45, .45]
+    assert all(call.args[0].n_points > 0 for call in arrows)
+    assert all(not call.kwargs['show_scalar_bar'] for call in arrows)
+    plotter.show_bounds.assert_called_once()
+    plotter.add_axes.assert_called_once()
+    plotter.view_isometric.assert_called_once_with(render=False)
+    plotter.camera.zoom.assert_called_once_with(1.75)
+    plotter.render.assert_not_called()
