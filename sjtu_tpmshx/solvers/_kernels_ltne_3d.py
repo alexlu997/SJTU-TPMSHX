@@ -264,13 +264,28 @@ def _inlet_face_terms(dir_code, i, j, k, Nx, Ny, Nz, ifrac, Tin,
     return aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB
 
 
+@njit(cache=True, fastmath=True, inline='always')
+def _inlet_capacity_faces(direction, i, j, k, Nx, Ny, Nz, ifrac, inlet_flux,
+                          Fe, Fw, Fn, Fs, Ft, Fb):
+    """Replace only the physical inlet F before coefficients and net_out."""
+    if inlet_flux is not None and _is_inlet(direction, i, j, k, Nx, Ny, Nz):
+        if _inlet_frac(ifrac, direction, i, j, k) > 0.0:
+            incoming = _inlet_val(inlet_flux, direction, i, j, k)
+            if direction == 0: Fw = incoming
+            elif direction == 1: Fe = -incoming
+            elif direction == 2: Fs = incoming
+            elif direction == 3: Fn = -incoming
+            elif direction == 4: Fb = incoming
+            else: Ft = -incoming
+    return Fe, Fw, Fn, Fs, Ft, Fb
+
+
 # ---------------------------------------------------------------------------
 # Gauss-Seidel chunk — STAGGERED face-velocity version (2026-04-25 FV#6)
 #
-# Uses SIMPLE's staggered face velocities directly so the LTNE advection
-# operator shares the discrete ∇·(ρv) = 0 structure of the momentum solver.
-# NET_OUT at each cell → 0 (to SIMPLE's residual), making Q_enthalpy match
-# Q_source tightly across all grid refinements.
+# Uses staggered velocities with shared internal capacity coefficients.
+# Explicit physical inlet capacity replaces only its boundary F; net_out
+# includes that replacement and need not vanish under the old projection.
 #
 # Face velocity arrays:
 #   uf : (Nx+1, Ny, Nz) — u at x-faces (signed along +x)
@@ -291,7 +306,7 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             alpha_fA, alpha_s, alpha_fB,
                             chi_B_arr, chi_B_kernel_threshold,
                             mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                            conservative):
+                            conservative, inlet_flux_A=None, inlet_flux_B=None):
     max_chg = 0.0
 
     if bc_A == 1:
@@ -367,6 +382,10 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                     F_s = ef_s * rcp_s * v_s * Ay
                     F_t = ef_t * rcp_t * w_t * Az
                     F_b = ef_b * rcp_b * w_b * Az
+
+                    F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
+                        bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
+                        F_e, F_w, F_n, F_s, F_t, F_b)
 
                     # Patankar hybrid upwind on signed face flux
                     aE = dE + max(-F_e, 0.0)
@@ -535,6 +554,10 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             FB_t = efB_t * rcpB_t * wB_t * Az
                             FB_b = efB_b * rcpB_b * wB_b * Az
 
+                            FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
+                                bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
+                                FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
+
                             aEb = dEb  + max(-FB_e, 0.0)
                             aWb = dWb  + max( FB_w, 0.0)
                             aNb = dNb  + max(-FB_n, 0.0)
@@ -606,7 +629,7 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                                alpha_fA, alpha_s, alpha_fB,
                                chi_B_arr, chi_B_kernel_threshold,
                                mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                               conservative):
+                               conservative, inlet_flux_A=None, inlet_flux_B=None):
     """Red-black parallel twin of `_gs_full_chunk_3d_stag`.
 
     Two race-free changes vs the serial kernel make it `prange`-parallelisable:
@@ -689,6 +712,10 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                 F_s = ef_s * rcp_s * v_s * Ay
                 F_t = ef_t * rcp_t * w_t * Az
                 F_b = ef_b * rcp_b * w_b * Az
+
+                F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
+                    bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
+                    F_e, F_w, F_n, F_s, F_t, F_b)
 
                 aE = dE + max(-F_e, 0.0); aW = dW + max( F_w, 0.0)
                 aN = dN + max(-F_n, 0.0); aS = dS + max( F_s, 0.0)
@@ -810,6 +837,9 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                         FB_s = efB_s * rcpB_s * vB_s * Ay
                         FB_t = efB_t * rcpB_t * wB_t * Az
                         FB_b = efB_b * rcpB_b * wB_b * Az
+                        FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
+                            bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
+                            FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
                         aEb = dEb  + max(-FB_e, 0.0); aWb = dWb  + max( FB_w, 0.0)
                         aNb = dNb  + max(-FB_n, 0.0); aSb = dSb  + max( FB_s, 0.0)
                         aTb = dTb_ + max(-FB_t, 0.0); aBb = dBb  + max( FB_b, 0.0)

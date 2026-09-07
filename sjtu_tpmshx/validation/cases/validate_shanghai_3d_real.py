@@ -431,7 +431,7 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
             inlet_flux_A=_inlet_transport_3d(
                 (sA.v.transpose(1, 0, 2), sA.u.transpose(1, 0, 2),
                  sA.w.transpose(1, 0, 2)),
-                0.5*eps_arr, rho_cp_A, dx, dy, dz, 0),
+                0.5*eps_arr, sA.rho_field.transpose(1, 0, 2), cp_A, dx, dy, dz, 0),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             Tb_prescribed=Tb_prescribed,
             max_iter=50000, tol=1e-6,

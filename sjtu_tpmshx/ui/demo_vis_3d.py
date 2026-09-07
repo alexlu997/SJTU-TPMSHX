@@ -131,7 +131,7 @@ def run_case_8_fields(Nx=30, Ny=15, Nz=5, max_outer=3):
             inlet_flux_A=_inlet_transport_3d(
                 (sA.v.transpose(1, 0, 2), sA.u.transpose(1, 0, 2),
                  sA.w.transpose(1, 0, 2)),
-                0.5*eps_arr, rho_cp_A, dx, dy, dz, 0),
+                0.5*eps_arr, sA.rho_field.transpose(1, 0, 2), cp_A, dx, dy, dz, 0),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             Tb_prescribed=Tb_presc, max_iter=20000, tol=1e-5,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts, alpha_T=0.7)
