@@ -167,9 +167,13 @@ _X_NONUNIF = np.array([5.0, 6.0, 7.0, 8.0, 5.5, 6.5, 7.5, 6.0,
 # (-10759.937887695394, 5859.926835485792, ...).
 # V2: production D-F changed from experimental gamma_df to the geometry-only
 # water+sCO2 CFD table. Q and dP change; geometry mass remains bit-identical.
-_FROZEN_2D_UNIFORM = (-8487.736165623135, 4675.147100083514,
+# 2026-09-07: accepted outlet closure/full end-CV changes made the old pins
+# stale already at G=cef75a5. Actual face mass * cp(Tin) then changes |Q| by
+# -0.0031863% / -0.0071319% versus G; measured G/A dP and mass agree.
+# The accumulated historical drift is not attributed to this inlet fix alone.
+_FROZEN_2D_UNIFORM = (-8085.955568764836, 4675.147100112292,
                       3.446685791015626)
-_FROZEN_2D_NONUNIF = (-7973.354160060764, 4052.0459272924345,
+_FROZEN_2D_NONUNIF = (-7561.25242589901, 4052.044538218606,
                       3.6729327392578126)
 # re-baselined 2026-07-09 (M2b): evaluate_3d now installs the PER-CELL
 # eps_field (xmod-eps-field-3d-evaluator closed) + 3D momentum carries the

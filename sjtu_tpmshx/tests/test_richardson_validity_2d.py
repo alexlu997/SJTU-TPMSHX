@@ -63,6 +63,10 @@ def _finite_refined(args, kwargs, converged):
 @pytest.mark.parametrize('full', [False, True])
 def test_refined_profiles_use_physical_coordinates(monkeypatch, directions, full):
     _, arguments = _arguments(monkeypatch, directions, full)
+    arguments.update(rho_cp_A=17., rho_cp_B=23., P_inB_val=202650.)
+    for side in ('A', 'B'):
+        arguments[f'_p{side}'] = dict(arguments[f'_p{side}'],
+                                     cp=lambda T, P: T/100. + P/100000.)
     observed = {}
     balances = []
 
@@ -96,9 +100,11 @@ def test_refined_profiles_use_physical_coordinates(monkeypatch, directions, full
         # Formal duty still uses its existing profile; conductive area does not.
         np.testing.assert_allclose(duty_kwargs['inlet_mask'], expected_in, atol=1e-13)
         np.testing.assert_allclose(duty_kwargs['outlet_mask'], expected_out, atol=1e-13)
-        coarse_flux = solve_2d._inlet_transport_2d(
-            arguments[f'simp{side}'], direction, .5*arguments['eps'],
-            arguments[f'rho_cp_{side}'], arguments['energy_dx'], arguments['energy_dy'])
+        simp = arguments[f'simp{side}']
+        coarse_width = arguments['energy_dy' if direction < 2 else 'energy_dx']
+        coarse_flux = (.5 * arguments['eps'] * simp.rho_field[:, 0]
+                       * simp.v[:, 0] * coarse_width
+                       * {'A': 5.01325, 'B': 5.0265}[side])  # Physical Tin/Pin above.
         assert observed[f'inlet_flux_{side}'].sum() == pytest.approx(coarse_flux.sum())
 
 
