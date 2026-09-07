@@ -71,6 +71,44 @@ def test_q_limits_use_actual_q_per_group(diamond, gyroid, passed):
                             ["2d", "3d"]) is passed
 
 
+@pytest.mark.parametrize("dimension,topology,limit", [
+    ("2d", "Diamond", 0.20), ("2d", "Gyroid", 0.05),
+    ("3d", "Diamond", 0.21), ("3d", "Gyroid", 0.06),
+])
+@pytest.mark.parametrize("offset,passed", [(-1e-8, True), (0., True), (1e-8, False)])
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_q_dimension_boundaries(dimension, topology, limit, offset, passed, sign):
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(0., 0.)
+    result = result[result.dimension == dimension].copy()
+    result.loc[result.topology == topology, "Q_solver_W"] = (
+        100. * (1. + sign * (limit + offset)))
+    assert runner._accept_q(result, result.attrs["expected_cases"], [dimension]) is passed
+
+
+def test_3d_limits_do_not_relax_2d_or_combined_acceptance():
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(0.205, 0.055)
+    expected = result.attrs["expected_cases"]
+    assert runner._accept_q(result[result.dimension == "3d"], expected, ["3d"])
+    assert not runner._accept_q(result[result.dimension == "2d"], expected, ["2d"])
+    assert not runner._accept_q(result, expected, ["2d", "3d"])
+
+
+@pytest.mark.parametrize("dimension", ["2d", "3d"])
+@pytest.mark.parametrize("qualification", ["numerical_ok", "reference_ok"])
+def test_q_limits_require_qualifications_in_each_dimension(dimension, qualification):
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    result = _q_results(0., 0.)
+    result.loc[result.dimension == dimension, qualification] = False
+    expected = result.attrs["expected_cases"]
+    assert not runner._accept_q(result[result.dimension == dimension], expected, [dimension])
+    assert not runner._accept_q(result, expected, ["2d", "3d"])
+
+
 @pytest.mark.parametrize("failure", [
     "empty", "missing_group", "missing_case", "duplicate", "unexpected",
     "nan", "inf", "zero_ref", "negative_ref", "numerical", "null_numerical",
@@ -109,7 +147,7 @@ def test_q_acceptance_rejects_incomplete_or_invalid_results(failure):
         result["reference_ok"] = result["reference_ok"].astype("boolean")
         result.loc[0, "reference_ok"] = pd.NA
     else:
-        result.loc[4:5, "Q_solver_W"] = 130.0  # 3D Diamond alone exceeds 20%.
+        result.loc[4:5, "Q_solver_W"] = 130.0  # 3D Diamond alone exceeds 21%.
     assert not runner._accept_q(result, expected, ["2d", "3d"])
 
 
