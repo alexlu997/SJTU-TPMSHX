@@ -103,6 +103,11 @@ explicit numerical-model change with directly relevant validation.
     not reconstruct a full-face x-flow from a scalar mass rate.
 11. **Current V2 limit.** sCO2 zones and offset level sets remain rejected;
     air/water-only runs retain their existing temperature-form kernels.
+    For Nz>1, those kernels solve every physical fluid and solid end control
+    volume. Tin is imposed at the open inlet face with half-cell conduction;
+    outlet zero-gradient applies at the external face. Explicit CC callers
+    with SIMPLE supply actual inlet capacity transport while retaining the CC
+    interior scheme. Prescribed B remains an external thermal reservoir.
 12. **Experiment-correction applicability.** Air uses only the core-specimen
     L=6..8 mm, t=0.3..0.5 mm interpolation domain; t=0.6 is not extrapolated.
     sCO2 uses only D/G-7-6 hot-side `ok_dp` evidence, keeps K=K0, and is

@@ -107,7 +107,7 @@ from sjtu_tpmshx.solvers.tpms_calc import (
     P_atm,
 )
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
-from sjtu_tpmshx.solvers.ltne_energy_3d import (solve_full_domain_3d,
+from sjtu_tpmshx.solvers.ltne_energy_3d import (solve_full_domain_3d, _inlet_transport_3d,
                                      energy_balance_3d, mass_balance_3d)
 from sjtu_tpmshx.df_surrogate.predict import predict_K_cF
 from sjtu_tpmshx.solvers.roughness import (f_enhancement, nu_extra_factor,
@@ -428,6 +428,10 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
             ucA_real, vcA_real, wcA_real,
             ucB_real, vcB_real, wcB_real,
             dir_A=0, dir_B=3,
+            inlet_flux_A=_inlet_transport_3d(
+                (sA.v.transpose(1, 0, 2), sA.u.transpose(1, 0, 2),
+                 sA.w.transpose(1, 0, 2)),
+                0.5*eps_arr, sA.rho_field.transpose(1, 0, 2), cp_A, dx, dy, dz, 0),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
             Tb_prescribed=Tb_prescribed,
             max_iter=50000, tol=1e-6,

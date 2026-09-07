@@ -18,7 +18,7 @@ from sjtu_tpmshx.domain.cancellation import CancelledError
 
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
-from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d, _inlet_transport_3d
 from sjtu_tpmshx.solvers.tpms_calc import (
     geometry as tpms_geometry, air_density, air_viscosity,
     air_conductivity, air_cp,
@@ -361,7 +361,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
     """Energy + mass conservation diagnostics for a converged 3D solve
     (extracted from _run_3d_stack, 2026-06-09 F1). Returns a dict:
     domain-total balances (Q_sA/Q_sB/Q_net/energy_rel/mass_rel_A/mass_rel_B)
-    + BC-layer-excluded interior-corrected metrics (Q_sA_interior /
+    + end-layer-excluded subvolume metrics (Q_sA_interior /
     Q_sB_interior / Q_interior_primary / AB_interior). Always computed so the
     user spots non-physical regressions without re-running validation; any
     failure warns + reports NaN (never silently swallowed)."""
@@ -389,9 +389,9 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
                 stacklevel=2)
         Q_sA = Q_sB = Q_net = energy_rel = mass_rel_A = mass_rel_B = float('nan')
 
-    # Path 0' (v3): exclude the BC inlet/outlet layer, where Ta pinned at T_in
-    # creates artificial h_v·(Ts-T_in) source terms (|Q_sA|_total over-reads
-    # ~28%). Interior-corrected metric recovers the physical Q.
+    # Historical subvolume diagnostics exclude two physical CV layers.
+    # These are neither corrected full-core duty nor an external heat budget.
+    # Full-volume solid exchange is reported above as Q_sA/Q_sB/Q_net.
     try:
         Nx_g, Ny_g, Nz_g = Ta.shape
         cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
@@ -431,7 +431,7 @@ def _conservation_diagnostics_3d(Ta, Tb, Ts, h_vA_field, h_vB_field,
                        / max(abs(Q_sA_interior), abs(Q_sB_interior), 1e-30))
     except Exception as _e:
         import warnings as _w
-        _w.warn(f"3D interior-corrected Q diagnostics failed ({_e!r}); "
+        _w.warn(f"3D subvolume Q diagnostics failed ({_e!r}); "
                 f"reporting NaN.", stacklevel=2)
         Q_sA_interior = Q_sB_interior = Q_interior_primary = float('nan')
         AB_interior = float('nan')
@@ -1905,7 +1905,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         Q_AB_imbalance_rel=Q_AB_imbalance_rel,
         # h_v fields for BC-layer split diagnostic (path 0' v3)
         h_vA_field=h_vA_field, h_vB_field=h_vB_field,
-        # Path 0' interior-corrected metrics (BC layer excluded)
+        # Historical subvolume metrics (physical end CVs excluded)
         Q_sA_interior=Q_sA_interior,
         Q_sB_interior=Q_sB_interior,
         Q_interior=Q_interior_primary,
@@ -2320,6 +2320,12 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
     def _assemble_real_velocity():
         return _solver_velocity_to_real(sA, axis_map, (Nx, Ny, Nz))
 
+    def _rho_real(solver, amap):
+        field = solver.rho_field.transpose(amap['solver_to_real_perm'])
+        if amap['is_reverse']:
+            field = np.flip(field, axis=amap['stream_real_axis'])
+        return np.ascontiguousarray(field, dtype=np.float64)
+
     # ── Outer SIMPLE ↔ LTNE coupling ──
     Ta = Tb = Ts = None
     # Warm-start delta tracker (shared with the 2D driver). A2 (2026-07-06):
@@ -2584,6 +2590,22 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             vfB = np.zeros((Nx, Ny+1, Nz), dtype=np.float64)
             wfB = np.zeros((Nx, Ny, Nz+1), dtype=np.float64)
 
+        # Capture the physical inlet before the existing thermal-face balancing.
+        inlet_flux_A = _inlet_transport_3d(
+            (ufA, vfA, wfA), eps_fA_arr, _rho_real(sA, axis_map),
+            cp_A, dx, dy, dz, fA['dir'])
+        inlet_flux_B = None if sB is None else _inlet_transport_3d(
+            (ufB, vfB, wfB), eps_fB_arr, _rho_real(sB, axis_map_B),
+            cp_B, dx, dy, dz, fB['dir'])
+
+        # Pair air's current thermal cp with this completed SIMPLE state,
+        # including the first call and B's post-SIMPLE density refresh.
+        if _var_rhocp and fluid_type_A == 'air' and _mA.compressible:
+            rho_cp_fA[:] = _rho_real(sA, axis_map) * air_cp(T_inA if Ta is None else Ta)
+        if (_var_rhocp and fluid_type_B == 'air' and _mB.compressible
+                and sB is not None):
+            rho_cp_fB[:] = _rho_real(sB, axis_map_B) * air_cp(T_inB if Tb is None else Tb)
+
         # Strict-conservation prerequisite (2026-06-09): enforce discrete global
         # mass balance ∮F·n=0 on the extracted stream-boundary faces so the
         # conservative-LTNE kernel's telescoping sum closes to machine
@@ -2660,6 +2682,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             dir_A=fA['dir'],
             dir_B=(fB['dir'] if fB is not None else 3),
             dx_arr=dx, dy_arr=dy, dz_arr=dz,
+            inlet_flux_A=inlet_flux_A,
+            inlet_flux_B=inlet_flux_B,
             inlet_mask_A=_ltne_mask_A,
             inlet_mask_B=_ltne_mask_B,
             Tb_prescribed=Tb_presc, max_iter=_eff_ltne_max_iter, tol=1e-5,
@@ -2728,12 +2752,6 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _P_A_local = _pressure_real_3d(sA, axis_map, P_inA - _dPA)
             _dPB = float(SIMPLESolver3D.extract_dP_face_extrap(sB))
             _P_B_local = _pressure_real_3d(sB, axis_map_B, P_inB - _dPB)
-
-            def _rho_real(solver, amap):
-                field = solver.rho_field.transpose(amap['solver_to_real_perm'])
-                if amap['is_reverse']:
-                    field = np.flip(field, axis=amap['stream_real_axis'])
-                return np.ascontiguousarray(field, dtype=np.float64)
 
             _rho_A_real = _rho_real(sA, axis_map)
             _rho_B_real = _rho_real(sB, axis_map_B)
@@ -2812,13 +2830,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _check_property_water('3D property refresh')
         # Non-iso coupling: Ta real → solver coords via self-inverse perm
         Ta_sA = np.ascontiguousarray(Ta.transpose(solver_to_real_perm))
-        # #5 reverse-dir density-frame fix, fluid-A side (audit 2026-06-28). Same
-        # bug class as the Tb_sB flip below: the velocity transforms flip for a
-        # reverse-dir fluid but this T→SIMPLE transform did not, mirroring the
-        # SIMPLE density frame for a reverse-dir A. Gated to sCO2 reverse-dir A
-        # (ρ(T)-sensitive); forward A (all 703/Shanghai configs, dir 0) → no-op,
-        # bit-identical. air/water keep the legacy frame (validation-safe).
-        if fluid_type_A == 'sco2' and axis_map['is_reverse']:
+        # Invert the velocity/density spatial reflection for every fluid.
+        # After transpose, the real stream axis maps to SIMPLE's stream axis.
+        if axis_map['is_reverse']:
             _ssax_A = solver_to_real_perm[int(axis_map['stream_real_axis'])]
             Ta_sA = np.ascontiguousarray(np.flip(Ta_sA, axis=_ssax_A))
         # Critical: propagate Ta to T_field so SIMPLE inner _update_density()
@@ -2974,13 +2988,14 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _cpA_fld = _mA.cp(Ta, P_inA)
         if disp_C_A > 0.0:
             K_ffA[:] += K_disp_A
-        if _var_rhocp and sA is not None:
+        if (_var_rhocp and sA is not None
+                and not (fluid_type_A == 'air' and _mA.compressible)):
             # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
             _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
             if axis_map['is_reverse']:
                 _rhoA_real = np.flip(_rhoA_real, axis=axis_map['stream_real_axis'])
             rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * _cpA_fld
-        else:
+        elif not (_var_rhocp and fluid_type_A == 'air' and _mA.compressible):
             _rhoA_fld = (air_density(Ta, P_inA) if _mA.compressible
                          else _mA.rho(Ta, P_inA))
             rho_cp_fA[:] = _rhoA_fld * _cpA_fld
@@ -2992,13 +3007,15 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             K_ffB[:] = eps_fB_arr * _mB.k(Tb, P_inB)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above); P for sco2
             if disp_C_B > 0.0:
                 K_ffB[:] += K_disp_B
-            if _mB.compressible and _var_rhocp and sB is not None:
+            if (_mB.compressible and _var_rhocp and sB is not None
+                    and fluid_type_B != 'air'):
                 _rhoB_real = sB.rho_field.transpose(perm_B)
                 if axis_map_B['is_reverse']:
                     _rhoB_real = np.flip(
                         _rhoB_real, axis=axis_map_B['stream_real_axis'])
                 rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb, P_inB)
-            else:
+            elif not (_var_rhocp and fluid_type_B == 'air' and _mB.compressible
+                      and sB is not None):
                 rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb, P_inB)
             # h_vB rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
@@ -3006,20 +3023,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # Air: ρ(P,T) via ideal gas law (mirror of A).
         if sB is not None and Tb is not None:
             Tb_sB = np.ascontiguousarray(Tb.transpose(perm_B))
-            # #5 reverse-dir density-frame fix (2026-06-28). The velocity
-            # transforms (_solver_*_to_real) and rho_cp_fB apply the reverse-dir
-            # np.flip, but this real→solver T transpose does NOT — so for a
-            # reverse-dir B the SIMPLE density frame is MIRRORED relative to the
-            # velocity frame: the hot real-OUTLET T lands on the solver
-            # injection face (j=0), so ρ_in = ρ(T_out) not ρ(T_in). For
-            # ρ(T)-sensitive sCO2 this under-reads ṁ_B ~2.4× (e.g. 703
-            # recuperator: 15.5 vs 37.6 kg/s) and corrupts dP_B + the cold-side
-            # duty. The fix flips T to match the velocity frame. GATED to sCO2:
-            # air/water (weak ρ(T); error within the accepted air-air B-side
-            # imbalance) keep the legacy frame so the Shanghai/golden 3D
-            # baselines stay bit-identical — the general reverse-dir fix needs a
-            # full re-validation (documented follow-up).
-            if fluid_type_B == 'sco2' and axis_map_B['is_reverse']:
+            # Match B's velocity/density frame, as for A above.
+            if axis_map_B['is_reverse']:
                 _ssax_B = perm_B[int(axis_map_B['stream_real_axis'])]
                 Tb_sB = np.ascontiguousarray(np.flip(Tb_sB, axis=_ssax_B))
             if _mB.compressible:
@@ -3098,7 +3103,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                           f"iters={_sb_it}  conv={_sb_conv}  (cap=600)")
                 _prof_res_trace(f"outer {outer} SIMPLE_B", sB)
 
-            # rho_cp_fB already refreshed above (P0/P1/P2 block)
+            # Other routes refreshed rho_cp_fB above; variable-density air
+            # refreshes it before the next thermal call, after this SIMPLE solve.
 
             # Re-extract the full B vector for the next LTNE pass.
             ucB2, vcB2, wcB2 = _solver_velocity_to_real(

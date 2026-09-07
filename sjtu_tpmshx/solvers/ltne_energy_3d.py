@@ -223,8 +223,9 @@ _Q_FLOOR_W = 1.0
 
 
 def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
-                               dx, dy, dz, dir_code):
-    """Rigorous strict-conservation certificate for one fluid phase (B-plan B2).
+                               dx, dy, dz, dir_code, Tin, ifrac, mms_source,
+                               inlet_flux=None):
+    """Full-CV conservative temperature-equation residual for one fluid phase (B-plan B2).
 
     Evaluates, on the CONVERGED field, the residual of the *conservative*
     discrete energy equation per cell — using the exact same shared face
@@ -233,11 +234,11 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
 
         r[c] = a_P·T_c − Σ a_nb·T_nb − h_v·V·Ts
 
-    Summed over INTERIOR cells (inlet-pinned and outlet zero-grad layers
-    excluded), internal faces telescope so Σ r = ∮_∂(interior) flux −
-    ∫ source. For a converged conservative solution r→0 per cell ⇒ Σ r→0
-    (machine/solver-tol). A non-conservative solution evaluated against this
-    discretisation leaves Σ r large. Returns (Σ r, ∫_interior h_v(Ts−T) dV).
+    All actual cells, including both end layers, are included. The physical
+    inlet has Tin and half-cell diffusion; other exterior diffusion is zero.
+    Returns (sum residual, full-volume solid exchange, max cell residual).
+    This certifies the temperature discretisation with its specified inlet F,
+    not physical enthalpy conservation when rho or cp varies.
     """
     Nx, Ny, Nz = T.shape
     Ax = (dy[None, :, None] * dz[None, None, :])
@@ -245,17 +246,24 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     Az = (dx[:, None, None] * dy[None, :, None])
     vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
 
-    coef = eps_f * rcp
-    # Face ε·ρcp (arithmetic mean interior, cell value at boundary) — matches kernel.
-    cf_x = np.empty_like(uf); cf_x[1:-1] = 0.5 * (coef[:-1] + coef[1:])
-    cf_x[0] = coef[0]; cf_x[-1] = coef[-1]
-    cf_y = np.empty_like(vf); cf_y[:, 1:-1] = 0.5 * (coef[:, :-1] + coef[:, 1:])
-    cf_y[:, 0] = coef[:, 0]; cf_y[:, -1] = coef[:, -1]
-    cf_z = np.empty_like(wf); cf_z[:, :, 1:-1] = 0.5 * (coef[:, :, :-1] + coef[:, :, 1:])
-    cf_z[:, :, 0] = coef[:, :, 0]; cf_z[:, :, -1] = coef[:, :, -1]
+    # Kernel interpolates eps and rho*cp separately, then multiplies them.
+    face_coefs = []
+    for axis in range(3):
+        ef = np.moveaxis(eps_f, axis, 0)
+        rc = np.moveaxis(rcp, axis, 0)
+        cf = np.empty((ef.shape[0] + 1, *ef.shape[1:]))
+        cf[1:-1] = 0.25 * (ef[:-1] + ef[1:]) * (rc[:-1] + rc[1:])
+        cf[0] = ef[0] * rc[0]; cf[-1] = ef[-1] * rc[-1]
+        face_coefs.append(np.moveaxis(cf, 0, axis))
+    cf_x, cf_y, cf_z = face_coefs
     Fx = cf_x * uf * np.broadcast_to(Ax, uf.shape)   # (Nx+1,Ny,Nz)
     Fy = cf_y * vf * np.broadcast_to(Ay, vf.shape)
     Fz = cf_z * wf * np.broadcast_to(Az, wf.shape)
+    if inlet_flux is not None:
+        inlet_face = np.moveaxis((Fx, Fy, Fz)[dir_code // 2], dir_code // 2, 0)[
+            0 if dir_code % 2 == 0 else -1]
+        inlet_face[:] = np.where(
+            ifrac > 0.0, inlet_flux * (1.0 if dir_code % 2 == 0 else -1.0), inlet_face)
     Fe = Fx[1:]; Fw = Fx[:-1]; Fn = Fy[:, 1:]; Fs = Fy[:, :-1]
     Ft = Fz[:, :, 1:]; Fb = Fz[:, :, :-1]
     net_out = (Fe - Fw) + (Fn - Fs) + (Ft - Fb)
@@ -299,18 +307,20 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     # convergence. (For pure-upwind it is identically 0 ⇒ no-op.)
     r = r - _sou_field_cons(T, Fx, Fy, Fz)
 
-    # Interior mask: drop inlet-pinned + outlet zero-grad cell layers.
-    interior = np.ones((Nx, Ny, Nz), dtype=bool)
-    inlet_outlet = {0: (0, Nx - 1), 1: (Nx - 1, 0), 2: (0, Ny - 1),
-                    3: (Ny - 1, 0), 4: (0, Nz - 1), 5: (Nz - 1, 0)}[dir_code]
-    ax = 0 if dir_code <= 1 else (1 if dir_code <= 3 else 2)
-    for idx in inlet_outlet:
-        sl = [slice(None)] * 3; sl[ax] = idx
-        interior[tuple(sl)] = False
-
+    axis = dir_code // 2
+    sl = [slice(None)] * 3
+    sl[axis] = 0 if dir_code % 2 == 0 else -1
+    sl = tuple(sl)
+    area = np.broadcast_to((Ax, Ay, Az)[axis], T.shape)[sl]
+    dn = (dx, dy, dz)[axis][0 if dir_code % 2 == 0 else -1]
+    Din = 2.0 * K[sl] * area * ifrac / dn
+    incoming = (np.maximum(Fw, 0.0), np.maximum(-Fe, 0.0),
+                np.maximum(Fs, 0.0), np.maximum(-Fn, 0.0),
+                np.maximum(Fb, 0.0), np.maximum(-Ft, 0.0))[dir_code][sl]
+    r[sl] += (Din + np.where(ifrac > 0.0, incoming, 0.0)) * (T[sl] - Tin)
+    r -= mms_source * vol
     src = hv * vol * (Ts - T)
-    max_abs_r = float(np.max(np.abs(r[interior]))) if np.any(interior) else 0.0
-    return float(np.sum(r[interior])), float(np.sum(src[interior])), max_abs_r
+    return float(np.sum(r)), float(np.sum(src)), float(np.max(np.abs(r)))
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +342,6 @@ from ._kernels_ltne_3d import (  # noqa: F401
     _is_inlet,
     _inlet_frac,
     _inlet_val,
-    _inlet_neighbor,
     _gs_full_chunk_3d_stag,
     _gs_full_chunk_3d_stag_rb,
     _is_bc_face_inlet,
@@ -340,13 +349,25 @@ from ._kernels_ltne_3d import (  # noqa: F401
     _ifrac_at_face,
     _Tin_at_face,
     _gs_full_chunk_3d,
-    _apply_outlet_3d,
 )
 
 
 # ---------------------------------------------------------------------------
 # Main driver
 # ---------------------------------------------------------------------------
+
+def _inlet_transport_3d(faces, eps_f, rho, cp_in, dx, dy, dz, direction):
+    """Actual SIMPLE inlet face mass times physical inlet cp (W/K)."""
+    axis = direction // 2
+    index = 0 if direction % 2 == 0 else -1
+    shape = (len(dx), len(dy), len(dz))
+    coefficient = np.broadcast_to(eps_f, shape) * np.broadcast_to(rho, shape) * cp_in
+    cross = [width for dim, width in enumerate((dx, dy, dz)) if dim != axis]
+    area = cross[0][:, None] * cross[1][None, :]
+    return np.ascontiguousarray(
+        np.take(coefficient, index, axis=axis) * np.take(faces[axis], index, axis=axis)
+        * area * (1.0 if direction % 2 == 0 else -1.0))
+
 
 def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
                     T_inA, T_inB,
@@ -368,7 +389,7 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
                     eps_A=None, eps_B=None,
                     chi_B_field=None,
                     mms_S_A_field=None, mms_S_B_field=None,
-                    mms_S_s_field=None, cancel_check=None):
+                    mms_S_s_field=None, cancel_check=None, inlet_flux_A=None, inlet_flux_B=None):
     """Nz == 1 shortcut: squeeze z axis and call 2D solver for bitwise equivalence.
     alpha_T is accepted but ignored (2D uses Q-chunk convergence).
     q_rel_tol / conv_chunk passed through to the 2D solver (None = legacy).
@@ -441,7 +462,9 @@ def _delegate_to_2d(L, H, D, Nx, Ny, Nz,
         inlet_mask_B=_sq_mask(inlet_mask_B, dir_B),
         Tb_prescribed=_sq3(Tb_prescribed),
         eps_A=_sq3(eps_A), eps_B=_sq3(eps_B),
-        q_rel_tol=q_rel_tol, conv_chunk=conv_chunk, cancel_check=cancel_check)
+        q_rel_tol=q_rel_tol, conv_chunk=conv_chunk, cancel_check=cancel_check,
+        inlet_flux_A=None if inlet_flux_A is None else _sq_mask(inlet_flux_A, dir_A) / D,
+        inlet_flux_B=None if inlet_flux_B is None else _sq_mask(inlet_flux_B, dir_B) / D)
 
     if return_info:
         Ta2, Tb2, Ts2, _info2 = _d2
@@ -498,7 +521,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           mms_S_s_field=None,
                           conservative_ltne=False,
                           cancel_check=None,
-                          q_rel_tol=None, conv_chunk=None):
+                          q_rel_tol=None, conv_chunk=None, inlet_flux_A=None, inlet_flux_B=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
 
     Shape contracts
@@ -520,12 +543,28 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     ucA/vcA/wcA/ucB/vcB/wcB    : (Nx, Ny, Nz) cell-centre.
     dir_A/dir_B ∈ {0=+x, 1=-x, 2=+y, 3=-y, 4=+z, 5=-z}.
     inlet_mask_*               : 2D cross-section or None.
+    inlet_flux_A/B             : optional signed inward eps*rho*cp*u*A (W/K)
+                                at physical inlet faces, separate from internal
+                                cell capacity coefficients in CC/staggered modes.
     alpha_T                    : 0 < α ≤ 1 under-relax (default 0.7).
 
     Nz == 1 fast path: delegates to solvers.ltne_energy.solve_full_domain
     (bitwise-identical Nz=1 regression).
     """
     Nx, Ny, Nz = int(Nx), int(Ny), int(Nz)
+
+    def _inlet_shape(dir_code):
+        if dir_code <= 1: return (Ny, Nz)
+        if dir_code <= 3: return (Nx, Nz)
+        return (Nx, Ny)
+
+    inlet_flux_A, inlet_flux_B = (
+        None if flux is None else np.ascontiguousarray(flux, dtype=np.float64)
+        for flux in (inlet_flux_A, inlet_flux_B))
+    for name, flux, direction in (('A', inlet_flux_A, dir_A), ('B', inlet_flux_B, dir_B)):
+        if flux is not None and (
+                np.shape(flux) != _inlet_shape(direction) or not np.all(np.isfinite(flux))):
+            raise ValueError(f"inlet_flux_{name} must be finite with shape {_inlet_shape(direction)}")
 
     if Nz == 1:
         return _delegate_to_2d(
@@ -543,7 +582,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             eps_A=eps_A, eps_B=eps_B,
             chi_B_field=chi_B_field,
             mms_S_A_field=mms_S_A_field, mms_S_B_field=mms_S_B_field,
-            mms_S_s_field=mms_S_s_field, cancel_check=cancel_check)
+            mms_S_s_field=mms_S_s_field, cancel_check=cancel_check,
+            inlet_flux_A=inlet_flux_A, inlet_flux_B=inlet_flux_B)
 
     if not (0.0 < alpha_T <= 1.0):
         raise ValueError(f"alpha_T must be in (0, 1], got {alpha_T}")
@@ -627,11 +667,6 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     wcB = np.ascontiguousarray(wcB, dtype=np.float64)
 
     # Inlet profiles — 2D cross-section
-    def _inlet_shape(dir_code):
-        if dir_code <= 1: return (Ny, Nz)
-        if dir_code <= 3: return (Nx, Nz)
-        return (Nx, Ny)
-
     def _mk_profile(profile, T_scalar, shape):
         if profile is None:
             return np.full(shape, float(T_scalar), dtype=np.float64)
@@ -662,22 +697,13 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     ifrac_A = _mk_mask(inlet_mask_A, _inlet_shape(dir_A))
     ifrac_B = _mk_mask(inlet_mask_B, _inlet_shape(dir_B))
 
-    # Init — each fluid seeded with its own inlet temperature (2026-04-24 FV
-    # fix). Previous 0.5·(T_inA+T_inB) seed left non-pipe cells at the inlet
-    # face holding a mid-T value (e.g. 361 K for Shanghai A=422/B=300) that
-    # diffused back into the pipe region as a virtual heat source, breaking
-    # energy balance by 20-25% in partial-inlet geometries. Pinning each
-    # fluid field to its physically-correct inlet T avoids the source; Ts
-    # keeps the mid value as a neutral guess.
+    # Initial guesses only: every physical end CV subsequently solves its equation.
     if Ta_init is not None:
         Ta = np.ascontiguousarray(Ta_init.copy(), dtype=np.float64)
         Tb = np.ascontiguousarray(Tb_init.copy(), dtype=np.float64)
         Ts = np.ascontiguousarray(Ts_init.copy(), dtype=np.float64)
     else:
-        # Per-fluid seed (2026-04-24): each fluid starts at its own inlet T
-        # so partial-inlet non-pipe cells don't hold a mid-T (361K for
-        # Shanghai A=422/B=300) that diffuses back in as a virtual heat
-        # source and breaks energy balance by 20-25%.
+        # Each fluid starts at its inlet temperature; solid starts midway.
         Ta = np.full((Nx, Ny, Nz), float(T_inA), dtype=np.float64)
         Tb = np.full((Nx, Ny, Nz), float(T_inB), dtype=np.float64)
         Ts = np.full((Nx, Ny, Nz), 0.5 * (T_inA + T_inB), dtype=np.float64)
@@ -689,11 +715,6 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
             raise ValueError(f"Tb_prescribed shape {Tb_arr.shape} != ({Nx}, {Ny}, {Nz})")
         Tb = Tb_arr.copy()
         freeze_Tb = 1
-
-    # Apply inlet BCs (frac > 0.5)
-    _apply_inlet_3d(Ta, dir_A, T_inA_arr, ifrac_A, Nx, Ny, Nz)
-    if freeze_Tb == 0:
-        _apply_inlet_3d(Tb, dir_B, T_inB_arr, ifrac_B, Nx, Ny, Nz)
 
     # Chunk iterate, convergence = (Q stable) AND (field stable per chunk).
     # chunk=250 (2026-06-24): the old chunk=500 forced >=2 chunks (=1000 sweeps)
@@ -765,9 +786,9 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     mms_S_B_arr = _mms_arr(mms_S_B_field)
     mms_S_s_arr = _mms_arr(mms_S_s_field)
 
-    # B-plan B2: make the real-coords face fluxes discretely solenoidal so the
-    # conservative kernel telescopes exactly. Required because the reverse-dir
-    # transform leaves a per-cell mass divergence; forward fluids are unchanged.
+    # Project the original internal capacity faces. The specified physical
+    # inlet F is applied afterwards and may change the boundary-CV divergence;
+    # the residual below uses that new F rather than the old projection alone.
     if _cons == 1:
         ufA, vfA, wfA = _project_faces_div_free(
             ufA, vfA, wfA, eps_fA_arr, rho_cp_fA_arr, dx_arr, dy_arr, dz_arr)
@@ -794,7 +815,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 n, freeze_Tb, a_fA, a_s, a_fB,
                 chi_B_arr, chi_B_thr,
                 mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                _cons)
+                _cons, inlet_flux_A, inlet_flux_B)
         else:
             chg = _gs_full_chunk_3d(
                 Ta, Tb, Ts, Nx, Ny, Nz,
@@ -805,7 +826,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 ucA, vcA, wcA, ucB, vcB, wcB,
                 dir_A, dir_B, T_inA_arr, T_inB_arr,
                 ifrac_A, ifrac_B,
-                n, freeze_Tb, a_fA, a_s, a_fB)
+                n, freeze_Tb, a_fA, a_s, a_fB, inlet_flux_A, inlet_flux_B)
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
@@ -853,53 +874,28 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     if _cons == 1:
         # Strict-conservation certificate: residual of the conservative
         # discretisation on the converged field. The summed form is the global
-        # balance ∮_∂interior − ∫interior S; the cell-max form (normalised by
+        # balance over all actual CVs; the cell-max form (normalised by
         # the mean per-cell source) certifies per-cell ∮F·n = ∫S.
         ncell = Ta.size
         rA, QA, mA = _conservation_residual_sum(
             Ta, Ts, ufA, vfA, wfA, eps_fA_arr, K_ffA_arr, rho_cp_fA_arr,
-            h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A)
+            h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A, T_inA_arr, ifrac_A, mms_S_A_arr,
+            inlet_flux_A)
         info['eps_A_strict'] = abs(rA) / max(abs(QA), _Q_FLOOR_W)
         info['eps_A_strict_cellmax'] = mA * ncell / max(abs(QA), _Q_FLOOR_W)
         if freeze_Tb == 0:
             rB, QB, mB = _conservation_residual_sum(
                 Tb, Ts, ufB, vfB, wfB, eps_fB_arr, K_ffB_arr, rho_cp_fB_arr,
-                h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B)
+                h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B, T_inB_arr, ifrac_B, mms_S_B_arr,
+                inlet_flux_B)
             info['eps_B_strict'] = abs(rB) / max(abs(QB), _Q_FLOOR_W)
             info['eps_B_strict_cellmax'] = mB * ncell / max(abs(QB), _Q_FLOOR_W)
         else:
-            info['eps_B_strict'] = 0.0
-            info['eps_B_strict_cellmax'] = 0.0
+            info['eps_B_strict'] = None
+            info['eps_B_strict_cellmax'] = None
     if return_info:
         return Ta, Tb, Ts, info
     return Ta, Tb, Ts
-
-
-def _apply_inlet_3d(T, dir_code, Tin2d, ifrac2d, Nx, Ny, Nz):
-    if dir_code == 0:
-        for j in range(Ny):
-            for k in range(Nz):
-                if ifrac2d[j, k] > 0.5: T[0, j, k] = Tin2d[j, k]
-    elif dir_code == 1:
-        for j in range(Ny):
-            for k in range(Nz):
-                if ifrac2d[j, k] > 0.5: T[Nx-1, j, k] = Tin2d[j, k]
-    elif dir_code == 2:
-        for i in range(Nx):
-            for k in range(Nz):
-                if ifrac2d[i, k] > 0.5: T[i, 0, k] = Tin2d[i, k]
-    elif dir_code == 3:
-        for i in range(Nx):
-            for k in range(Nz):
-                if ifrac2d[i, k] > 0.5: T[i, Ny-1, k] = Tin2d[i, k]
-    elif dir_code == 4:
-        for i in range(Nx):
-            for j in range(Ny):
-                if ifrac2d[i, j] > 0.5: T[i, j, 0] = Tin2d[i, j]
-    else:
-        for i in range(Nx):
-            for j in range(Ny):
-                if ifrac2d[i, j] > 0.5: T[i, j, Nz-1] = Tin2d[i, j]
 
 
 # ---------------------------------------------------------------------------

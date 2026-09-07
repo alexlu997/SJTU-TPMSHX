@@ -26,10 +26,10 @@ PDE form (volumetric, kernel-consistent):
   s: -K_ss*Lap(T_s) - h_vA*(T_a - T_s) - h_vB*(T_b - T_s) = S_s
 
 Manufactured T satisfy:
-  T_a inlet at x=0:    Dirichlet from analytical T_a(x_c[0], y_c, z_c)
+  T_a inlet at x=0:    Dirichlet from analytical T_a(0, y_c, z_c)
   T_a outlet at x=L:   Neumann zero-grad — cos(pi x/L) gives sin(pi)=0
   T_a lateral (y,z):   Neumann zero-grad — cos(pi y/H), cos(pi z/Lz) give 0
-  T_b inlet at y=0:    Dirichlet from analytical T_b(x_c, y_c[0], z_c)
+  T_b inlet at y=0:    Dirichlet from analytical T_b(x_c, 0, z_c)
   T_b outlet at y=H:   Neumann zero-grad
   T_s lateral (all):   Neumann zero-grad
 """
@@ -204,14 +204,13 @@ def run_mms(case='3d', Nx=20, Ny=20, Nz=20,
     vfB = np.full((Nx, Ny + 1, Nz), U_B, dtype=np.float64)
     wfB = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-    # Inlet profiles — eval analytical at CELL-CENTER of inlet layer.
-    # (Kernel pins Ta[0,j,k] = T_inA_arr[j,k]; cell-center is at xc[0]=dx/2.)
+    # Inlet profiles live on the physical faces; end cells remain unknowns.
     Yi_grid, Zi_grid = np.meshgrid(yc, zc, indexing='ij')   # (Ny, Nz)
-    x_inlet = np.full_like(Yi_grid, xc[0])
+    x_inlet = np.zeros_like(Yi_grid)
     T_inA_arr = _eval_grid_2d(mms['Ta_fn'], x_inlet, Yi_grid, Zi_grid)
 
     Xi_grid, Zii_grid = np.meshgrid(xc, zc, indexing='ij')   # (Nx, Nz)
-    y_inlet = np.full_like(Xi_grid, yc[0])
+    y_inlet = np.zeros_like(Xi_grid)
     T_inB_arr = _eval_grid_2d(mms['Tb_fn'], Xi_grid, y_inlet, Zii_grid)
 
     # Inlet fraction = 1 (full-face inlet, no partial mask)

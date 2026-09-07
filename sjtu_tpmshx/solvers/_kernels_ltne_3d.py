@@ -228,22 +228,64 @@ def _inlet_val(Tin2d, dir_code, i, j, k):
 
 
 @njit(cache=True, fastmath=True, inline='always')
-def _inlet_neighbor(T, dir_code, i, j, k, Nx, Ny, Nz):
-    if dir_code == 0: return T[1, j, k]
-    if dir_code == 1: return T[Nx-2, j, k]
-    if dir_code == 2: return T[i, 1, k]
-    if dir_code == 3: return T[i, Ny-2, k]
-    if dir_code == 4: return T[i, j, 1]
-    return T[i, j, Nz-2]
+def _inlet_face_terms(dir_code, i, j, k, Nx, Ny, Nz, ifrac, Tin,
+                      K, dx, dy, dz, aE, aW, aN, aS, aT, aB,
+                      tE, tW, tN, tS, tT, tB, inlet_flux=None):
+    """Physical Tin face, with half-CV diffusion; transport is already in a*.
+
+    K includes its existing porosity factor. SIMPLE face velocities already
+    include opening area, so only diffusion receives the raw opening fraction.
+    Other external faces keep zero diffusion and their cell temperature.
+    """
+    if _is_inlet(dir_code, i, j, k, Nx, Ny, Nz):
+        f = _inlet_frac(ifrac, dir_code, i, j, k)
+        if f > 0.0:
+            tin = _inlet_val(Tin, dir_code, i, j, k)
+            if inlet_flux is not None:
+                incoming = max(_inlet_val(inlet_flux, dir_code, i, j, k), 0.0)
+                if dir_code == 0: aW = incoming
+                elif dir_code == 1: aE = incoming
+                elif dir_code == 2: aS = incoming
+                elif dir_code == 3: aN = incoming
+                elif dir_code == 4: aB = incoming
+                else: aT = incoming
+            if dir_code == 0:
+                aW += 2.0*K*dy*dz*f/dx; tW = tin
+            elif dir_code == 1:
+                aE += 2.0*K*dy*dz*f/dx; tE = tin
+            elif dir_code == 2:
+                aS += 2.0*K*dx*dz*f/dy; tS = tin
+            elif dir_code == 3:
+                aN += 2.0*K*dx*dz*f/dy; tN = tin
+            elif dir_code == 4:
+                aB += 2.0*K*dx*dy*f/dz; tB = tin
+            else:
+                aT += 2.0*K*dx*dy*f/dz; tT = tin
+    return aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB
+
+
+@njit(cache=True, fastmath=True, inline='always')
+def _inlet_capacity_faces(direction, i, j, k, Nx, Ny, Nz, ifrac, inlet_flux,
+                          Fe, Fw, Fn, Fs, Ft, Fb):
+    """Replace only the physical inlet F before coefficients and net_out."""
+    if inlet_flux is not None and _is_inlet(direction, i, j, k, Nx, Ny, Nz):
+        if _inlet_frac(ifrac, direction, i, j, k) > 0.0:
+            incoming = _inlet_val(inlet_flux, direction, i, j, k)
+            if direction == 0: Fw = incoming
+            elif direction == 1: Fe = -incoming
+            elif direction == 2: Fs = incoming
+            elif direction == 3: Fn = -incoming
+            elif direction == 4: Fb = incoming
+            else: Ft = -incoming
+    return Fe, Fw, Fn, Fs, Ft, Fb
 
 
 # ---------------------------------------------------------------------------
 # Gauss-Seidel chunk — STAGGERED face-velocity version (2026-04-25 FV#6)
 #
-# Uses SIMPLE's staggered face velocities directly so the LTNE advection
-# operator shares the discrete ∇·(ρv) = 0 structure of the momentum solver.
-# NET_OUT at each cell → 0 (to SIMPLE's residual), making Q_enthalpy match
-# Q_source tightly across all grid refinements.
+# Uses staggered velocities with shared internal capacity coefficients.
+# Explicit physical inlet capacity replaces only its boundary F; net_out
+# includes that replacement and need not vanish under the old projection.
 #
 # Face velocity arrays:
 #   uf : (Nx+1, Ny, Nz) — u at x-faces (signed along +x)
@@ -264,7 +306,7 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             alpha_fA, alpha_s, alpha_fB,
                             chi_B_arr, chi_B_kernel_threshold,
                             mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                            conservative):
+                            conservative, inlet_flux_A=None, inlet_flux_B=None):
     max_chg = 0.0
 
     if bc_A == 1:
@@ -287,134 +329,132 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                 for k in range(k0, k1, dk):
 
                     # ── Fluid A ──
-                    is_inA = _is_inlet(bc_A, i, j, k, Nx, Ny, Nz)
-                    if is_inA:
-                        frac = _inlet_frac(ifrac_A, bc_A, i, j, k)
-                        if frac > 0.99:
-                            Ta[i, j, k] = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                        elif frac > 0.01:
-                            Tin = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                            Tnb = _inlet_neighbor(Ta, bc_A, i, j, k, Nx, Ny, Nz)
-                            Ta[i, j, k] = frac * Tin + (1.0 - frac) * Tnb
+                    dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
+                    vol = dxi * dyj * dzk
+                    Kc = K_ffA_arr[i, j, k]
+                    hvA = h_vA_arr[i, j, k] * vol
+
+                    Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                    # Face spacing δx_e = 0.5(dx_P+dx_E) for conservative
+                    # diffusion stencil (#3D-7 fix). Same value used by both
+                    # adjacent cells; old /dxi broke symmetry on non-uniform.
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                    dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                    dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
+                    dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
+                    dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
+                    dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
+                    dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
+                    dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
+
+                    # Face-centered staggered velocities (directly from SIMPLE).
+                    # u_face_x at (i, i+1), v_face_y at (j, j+1), w_face_z at (k, k+1).
+                    u_e = ufA[i+1, j, k]
+                    u_w = ufA[i, j, k]
+                    v_n = vfA[i, j+1, k]
+                    v_s = vfA[i, j, k]
+                    w_t = wfA[i, j, k+1]
+                    w_b = wfA[i, j, k]
+
+                    # ρcp and eps_f at faces — arithmetic mean of cell values.
+                    rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
+                    rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
+                    rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
+                    rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
+                    rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
+                    rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
+                    rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
+                    ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
+                    ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
+                    ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
+                    ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
+                    ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
+                    ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
+
+                    # Signed face mass-flux (+axis direction)
+                    F_e = ef_e * rcp_e * u_e * Ax
+                    F_w = ef_w * rcp_w * u_w * Ax
+                    F_n = ef_n * rcp_n * v_n * Ay
+                    F_s = ef_s * rcp_s * v_s * Ay
+                    F_t = ef_t * rcp_t * w_t * Az
+                    F_b = ef_b * rcp_b * w_b * Az
+
+                    F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
+                        bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
+                        F_e, F_w, F_n, F_s, F_t, F_b)
+
+                    # Patankar hybrid upwind on signed face flux
+                    aE = dE + max(-F_e, 0.0)
+                    aW = dW + max( F_w, 0.0)
+                    aN = dN + max(-F_n, 0.0)
+                    aS = dS + max( F_s, 0.0)
+                    aT = dT_ + max(-F_t, 0.0)
+                    aB = dB + max( F_b, 0.0)
+
+                    tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
+                    tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
+                    tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
+                    tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
+                    tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
+                    tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
+
+                    (aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB) = _inlet_face_terms(
+                        bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, T_inA_arr,
+                        Kc, dxi, dyj, dzk, aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB)
+
+                    if conservative == 1:
+                        # Strict-conservation (B-plan B2): the SIMPLE
+                        # staggered face flux is the SAME value for the two
+                        # cells sharing a face (F_e of cell i ≡ F_w of cell
+                        # i+1), so advection telescopes. Adding the signed
+                        # net-mass-out term to aP completes the Patankar
+                        # conservative form — summing the discrete per-cell
+                        # balance over the domain then collapses to
+                        # ∮F·n dA = ∫S dV (machine-accurate, see 1D PoC).
+                        # HO accuracy via face-SHARED SOU deferred
+                        # correction (B-plan B4): the increment uses the
+                        # signed shared face flux to pick the upwind side,
+                        # so it telescopes ⇒ conservation preserved AND
+                        # 2nd-order. (cell-local _sou_corr_* would break it.)
+                        sou = (_sou_face_x_cons(Ta, i, j, k, Nx, F_w, F_e)
+                               + _sou_face_y_cons(Ta, i, j, k, Ny, F_s, F_n)
+                               + _sou_face_z_cons(Ta, i, j, k, Nz, F_b, F_t))
+                        net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
+                        aP = aE + aW + aN + aS + aT + aB + net_out + hvA
                     else:
-                        dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
-                        vol = dxi * dyj * dzk
-                        Kc = K_ffA_arr[i, j, k]
-                        hvA = h_vA_arr[i, j, k] * vol
-
-                        Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
-                        # Face spacing δx_e = 0.5(dx_P+dx_E) for conservative
-                        # diffusion stencil (#3D-7 fix). Same value used by both
-                        # adjacent cells; old /dxi broke symmetry on non-uniform.
-                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                        dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
-                        dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
-                        dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
-                        dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
-                        dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
-                        dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
-                        dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
-                        dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
-
-                        # Face-centered staggered velocities (directly from SIMPLE).
-                        # u_face_x at (i, i+1), v_face_y at (j, j+1), w_face_z at (k, k+1).
-                        u_e = ufA[i+1, j, k]
-                        u_w = ufA[i, j, k]
-                        v_n = vfA[i, j+1, k]
-                        v_s = vfA[i, j, k]
-                        w_t = wfA[i, j, k+1]
-                        w_b = wfA[i, j, k]
-
-                        # ρcp and eps_f at faces — arithmetic mean of cell values.
-                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
-                        rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
-                        rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
-                        rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
-                        rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
-                        rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
-                        rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
-                        ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
-                        ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
-                        ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
-                        ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
-                        ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
-                        ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
-
-                        # Signed face mass-flux (+axis direction)
-                        F_e = ef_e * rcp_e * u_e * Ax
-                        F_w = ef_w * rcp_w * u_w * Ax
-                        F_n = ef_n * rcp_n * v_n * Ay
-                        F_s = ef_s * rcp_s * v_s * Ay
-                        F_t = ef_t * rcp_t * w_t * Az
-                        F_b = ef_b * rcp_b * w_b * Az
-
-                        # Patankar hybrid upwind on signed face flux
-                        aE = dE + max(-F_e, 0.0)
-                        aW = dW + max( F_w, 0.0)
-                        aN = dN + max(-F_n, 0.0)
-                        aS = dS + max( F_s, 0.0)
-                        aT = dT_ + max(-F_t, 0.0)
-                        aB = dB + max( F_b, 0.0)
-
-                        tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
-                        tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
-                        tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
-                        tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
-                        tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
-                        tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
-
-                        if conservative == 1:
-                            # Strict-conservation (B-plan B2): the SIMPLE
-                            # staggered face flux is the SAME value for the two
-                            # cells sharing a face (F_e of cell i ≡ F_w of cell
-                            # i+1), so advection telescopes. Adding the signed
-                            # net-mass-out term to aP completes the Patankar
-                            # conservative form — summing the discrete per-cell
-                            # balance over the domain then collapses to
-                            # ∮F·n dA = ∫S dV (machine-accurate, see 1D PoC).
-                            # HO accuracy via face-SHARED SOU deferred
-                            # correction (B-plan B4): the increment uses the
-                            # signed shared face flux to pick the upwind side,
-                            # so it telescopes ⇒ conservation preserved AND
-                            # 2nd-order. (cell-local _sou_corr_* would break it.)
-                            sou = (_sou_face_x_cons(Ta, i, j, k, Nx, F_w, F_e)
-                                   + _sou_face_y_cons(Ta, i, j, k, Ny, F_s, F_n)
-                                   + _sou_face_z_cons(Ta, i, j, k, Nz, F_b, F_t))
-                            net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
-                            aP = aE + aW + aN + aS + aT + aB + net_out + hvA
-                        else:
-                            # SOU deferred correction with cell-center velocity
-                            u_c_sou = 0.5*(u_e + u_w)
-                            v_c_sou = 0.5*(v_n + v_s)
-                            w_c_sou = 0.5*(w_t + w_b)
-                            Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
-                            Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
-                            Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
-                            sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c_sou, Fx_mag)
-                                   + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c_sou, Fy_mag)
-                                   + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c_sou, Fz_mag))
-                            # aP = Σa_nb + hvA. NET_OUT (mass-imbal) tried in
-                            # multiple variants (full, interior-only, BC pin
-                            # penalty, source split): all destabilise because BC
-                            # face flux ≠ adjacent interior face flux when SIMPLE
-                            # has any per-cell residual. cell-local stable + 13-22%
-                            # AB imbal accepted as discretisation limit.
-                            aP = aE + aW + aN + aS + aT + aB + hvA
-                        if aP < 1e-30:
-                            aP = 1e-30
-                        # MMS source injection (volume-integrated, units W).
-                        # Default zero-array → production no-op.
-                        S_A_cell = mms_S_A_arr[i, j, k] * vol
-                        new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
-                               + hvA * Ts[i, j, k] + sou + S_A_cell) / aP
-                        old = Ta[i, j, k]
-                        upd = old + alpha_fA * (new - old)
-                        chg = abs(upd - old)
-                        if chg > max_chg: max_chg = chg
-                        Ta[i, j, k] = upd
+                        # SOU deferred correction with cell-center velocity
+                        u_c_sou = 0.5*(u_e + u_w)
+                        v_c_sou = 0.5*(v_n + v_s)
+                        w_c_sou = 0.5*(w_t + w_b)
+                        Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
+                        Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
+                        Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
+                        sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c_sou, Fx_mag)
+                               + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c_sou, Fy_mag)
+                               + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c_sou, Fz_mag))
+                        # aP = Σa_nb + hvA. NET_OUT (mass-imbal) tried in
+                        # multiple variants (full, interior-only, BC pin
+                        # penalty, source split): all destabilise because BC
+                        # face flux ≠ adjacent interior face flux when SIMPLE
+                        # has any per-cell residual. cell-local stable + 13-22%
+                        # AB imbal accepted as discretisation limit.
+                        aP = aE + aW + aN + aS + aT + aB + hvA
+                    if aP < 1e-30:
+                        aP = 1e-30
+                    # MMS source injection (volume-integrated, units W).
+                    # Default zero-array → production no-op.
+                    S_A_cell = mms_S_A_arr[i, j, k] * vol
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
+                           + hvA * Ts[i, j, k] + sou + S_A_cell) / aP
+                    old = Ta[i, j, k]
+                    upd = old + alpha_fA * (new - old)
+                    chg = abs(upd - old)
+                    if chg > max_chg: max_chg = chg
+                    Ta[i, j, k] = upd
 
                     # ── Solid ──
                     dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
@@ -459,16 +499,7 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
 
                     # ── Fluid B ── (stag kernel)
                     if freeze_Tb == 0:
-                        is_inB = _is_inlet(bc_B, i, j, k, Nx, Ny, Nz)
-                        if is_inB:
-                            frac_b = _inlet_frac(ifrac_B, bc_B, i, j, k)
-                            if frac_b > 0.99:
-                                Tb[i, j, k] = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                            elif frac_b > 0.01:
-                                Tin_b = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                                Tnb_b = _inlet_neighbor(Tb, bc_B, i, j, k, Nx, Ny, Nz)
-                                Tb[i, j, k] = frac_b * Tin_b + (1.0 - frac_b) * Tnb_b
-                        elif chi_B_arr[i, j, k] < chi_B_kernel_threshold:
+                        if chi_B_arr[i, j, k] < chi_B_kernel_threshold:
                             # H6 ghost-skip: at low-participation cells, leave
                             # Tb at its init value (T_inB throughout). Prevents
                             # stagnant cells from relaxing to local Ts via h_v
@@ -523,6 +554,10 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             FB_t = efB_t * rcpB_t * wB_t * Az
                             FB_b = efB_b * rcpB_b * wB_b * Az
 
+                            FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
+                                bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
+                                FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
+
                             aEb = dEb  + max(-FB_e, 0.0)
                             aWb = dWb  + max( FB_w, 0.0)
                             aNb = dNb  + max(-FB_n, 0.0)
@@ -536,6 +571,10 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             tSb = Tb[i, j-1, k] if j > 0    else Tb[i, j, k]
                             tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
                             tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
+
+                            (aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb) = _inlet_face_terms(
+                                bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, T_inB_arr,
+                                Kc_b, dxi, dyj, dzk, aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb)
 
                             if conservative == 1:
                                 # Strict-conservation B side (mirror of A):
@@ -571,9 +610,6 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             if chg > max_chg: max_chg = chg
                             Tb[i, j, k] = upd_b
 
-        _apply_outlet_3d(Ta, bc_A, Nx, Ny, Nz)
-        if freeze_Tb == 0:
-            _apply_outlet_3d(Tb, bc_B, Nx, Ny, Nz)
 
         if max_chg < 1e-10:
             break
@@ -593,7 +629,7 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                                alpha_fA, alpha_s, alpha_fB,
                                chi_B_arr, chi_B_kernel_threshold,
                                mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                               conservative):
+                               conservative, inlet_flux_A=None, inlet_flux_B=None):
     """Red-black parallel twin of `_gs_full_chunk_3d_stag`.
 
     Two race-free changes vs the serial kernel make it `prange`-parallelisable:
@@ -633,97 +669,95 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                 cell_chg = 0.0
 
                 # ── Fluid A ──
-                is_inA = _is_inlet(bc_A, i, j, k, Nx, Ny, Nz)
-                if is_inA:
-                    frac = _inlet_frac(ifrac_A, bc_A, i, j, k)
-                    if frac > 0.99:
-                        Ta[i, j, k] = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                    elif frac > 0.01:
-                        Tin = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                        Tnb = _inlet_neighbor(Ta, bc_A, i, j, k, Nx, Ny, Nz)
-                        Ta[i, j, k] = frac * Tin + (1.0 - frac) * Tnb
+                dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
+                vol = dxi * dyj * dzk
+                Kc = K_ffA_arr[i, j, k]
+                hvA = h_vA_arr[i, j, k] * vol
+
+                Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
+                dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
+                dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
+                dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
+                dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
+                dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
+
+                u_e = ufA[i+1, j, k]; u_w = ufA[i, j, k]
+                v_n = vfA[i, j+1, k]; v_s = vfA[i, j, k]
+                w_t = wfA[i, j, k+1]; w_b = wfA[i, j, k]
+
+                rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
+                rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
+                rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
+                rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
+                rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
+                rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
+                rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
+                ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
+                ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
+                ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
+                ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
+                ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
+                ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
+
+                F_e = ef_e * rcp_e * u_e * Ax
+                F_w = ef_w * rcp_w * u_w * Ax
+                F_n = ef_n * rcp_n * v_n * Ay
+                F_s = ef_s * rcp_s * v_s * Ay
+                F_t = ef_t * rcp_t * w_t * Az
+                F_b = ef_b * rcp_b * w_b * Az
+
+                F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
+                    bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
+                    F_e, F_w, F_n, F_s, F_t, F_b)
+
+                aE = dE + max(-F_e, 0.0); aW = dW + max( F_w, 0.0)
+                aN = dN + max(-F_n, 0.0); aS = dS + max( F_s, 0.0)
+                aT = dT_ + max(-F_t, 0.0); aB = dB + max( F_b, 0.0)
+
+                tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
+                tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
+                tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
+                tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
+                tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
+                tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
+
+                (aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB) = _inlet_face_terms(
+                    bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, T_inA_arr,
+                    Kc, dxi, dyj, dzk, aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB)
+
+                if conservative == 1:
+                    sou = (_sou_face_x_cons(Ta_snap, i, j, k, Nx, F_w, F_e)
+                           + _sou_face_y_cons(Ta_snap, i, j, k, Ny, F_s, F_n)
+                           + _sou_face_z_cons(Ta_snap, i, j, k, Nz, F_b, F_t))
+                    net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
+                    aP = aE + aW + aN + aS + aT + aB + net_out + hvA
                 else:
-                    dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
-                    vol = dxi * dyj * dzk
-                    Kc = K_ffA_arr[i, j, k]
-                    hvA = h_vA_arr[i, j, k] * vol
-
-                    Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
-                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                    dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
-                    dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
-                    dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
-                    dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
-                    dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
-                    dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
-                    dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
-                    dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
-
-                    u_e = ufA[i+1, j, k]; u_w = ufA[i, j, k]
-                    v_n = vfA[i, j+1, k]; v_s = vfA[i, j, k]
-                    w_t = wfA[i, j, k+1]; w_b = wfA[i, j, k]
-
-                    rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
-                    rcp_e = 0.5*(rcpA_c + rho_cp_fA[i+1,j,k]) if i < Nx-1 else rcpA_c
-                    rcp_w = 0.5*(rho_cp_fA[i-1,j,k] + rcpA_c) if i > 0 else rcpA_c
-                    rcp_n = 0.5*(rcpA_c + rho_cp_fA[i,j+1,k]) if j < Ny-1 else rcpA_c
-                    rcp_s = 0.5*(rho_cp_fA[i,j-1,k] + rcpA_c) if j > 0 else rcpA_c
-                    rcp_t = 0.5*(rcpA_c + rho_cp_fA[i,j,k+1]) if k < Nz-1 else rcpA_c
-                    rcp_b = 0.5*(rho_cp_fA[i,j,k-1] + rcpA_c) if k > 0 else rcpA_c
-                    ef_e = 0.5*(ef_c + eps_fA_arr[i+1,j,k]) if i < Nx-1 else ef_c
-                    ef_w = 0.5*(eps_fA_arr[i-1,j,k] + ef_c) if i > 0 else ef_c
-                    ef_n = 0.5*(ef_c + eps_fA_arr[i,j+1,k]) if j < Ny-1 else ef_c
-                    ef_s = 0.5*(eps_fA_arr[i,j-1,k] + ef_c) if j > 0 else ef_c
-                    ef_t = 0.5*(ef_c + eps_fA_arr[i,j,k+1]) if k < Nz-1 else ef_c
-                    ef_b = 0.5*(eps_fA_arr[i,j,k-1] + ef_c) if k > 0 else ef_c
-
-                    F_e = ef_e * rcp_e * u_e * Ax
-                    F_w = ef_w * rcp_w * u_w * Ax
-                    F_n = ef_n * rcp_n * v_n * Ay
-                    F_s = ef_s * rcp_s * v_s * Ay
-                    F_t = ef_t * rcp_t * w_t * Az
-                    F_b = ef_b * rcp_b * w_b * Az
-
-                    aE = dE + max(-F_e, 0.0); aW = dW + max( F_w, 0.0)
-                    aN = dN + max(-F_n, 0.0); aS = dS + max( F_s, 0.0)
-                    aT = dT_ + max(-F_t, 0.0); aB = dB + max( F_b, 0.0)
-
-                    tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
-                    tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
-                    tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
-                    tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
-                    tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
-                    tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
-
-                    if conservative == 1:
-                        sou = (_sou_face_x_cons(Ta_snap, i, j, k, Nx, F_w, F_e)
-                               + _sou_face_y_cons(Ta_snap, i, j, k, Ny, F_s, F_n)
-                               + _sou_face_z_cons(Ta_snap, i, j, k, Nz, F_b, F_t))
-                        net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
-                        aP = aE + aW + aN + aS + aT + aB + net_out + hvA
-                    else:
-                        u_c_sou = 0.5*(u_e + u_w); v_c_sou = 0.5*(v_n + v_s)
-                        w_c_sou = 0.5*(w_t + w_b)
-                        Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
-                        Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
-                        Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
-                        sou = (_sou_corr_x_3d(Ta_snap, i, j, k, Nx, u_c_sou, Fx_mag)
-                               + _sou_corr_y_3d(Ta_snap, i, j, k, Ny, v_c_sou, Fy_mag)
-                               + _sou_corr_z_3d(Ta_snap, i, j, k, Nz, w_c_sou, Fz_mag))
-                        aP = aE + aW + aN + aS + aT + aB + hvA
-                    if aP < 1e-30:
-                        aP = 1e-30
-                    S_A_cell = mms_S_A_arr[i, j, k] * vol
-                    new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
-                           + hvA * Ts[i, j, k] + sou + S_A_cell) / aP
-                    old = Ta[i, j, k]
-                    upd = old + alpha_fA * (new - old)
-                    c = abs(upd - old)
-                    if c > cell_chg: cell_chg = c
-                    Ta[i, j, k] = upd
+                    u_c_sou = 0.5*(u_e + u_w); v_c_sou = 0.5*(v_n + v_s)
+                    w_c_sou = 0.5*(w_t + w_b)
+                    Fx_mag = ef_c * rcpA_c * abs(u_c_sou) * Ax
+                    Fy_mag = ef_c * rcpA_c * abs(v_c_sou) * Ay
+                    Fz_mag = ef_c * rcpA_c * abs(w_c_sou) * Az
+                    sou = (_sou_corr_x_3d(Ta_snap, i, j, k, Nx, u_c_sou, Fx_mag)
+                           + _sou_corr_y_3d(Ta_snap, i, j, k, Ny, v_c_sou, Fy_mag)
+                           + _sou_corr_z_3d(Ta_snap, i, j, k, Nz, w_c_sou, Fz_mag))
+                    aP = aE + aW + aN + aS + aT + aB + hvA
+                if aP < 1e-30:
+                    aP = 1e-30
+                S_A_cell = mms_S_A_arr[i, j, k] * vol
+                new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
+                       + hvA * Ts[i, j, k] + sou + S_A_cell) / aP
+                old = Ta[i, j, k]
+                upd = old + alpha_fA * (new - old)
+                c = abs(upd - old)
+                if c > cell_chg: cell_chg = c
+                Ta[i, j, k] = upd
 
                 # ── Solid ──
                 dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
@@ -763,16 +797,7 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
 
                 # ── Fluid B ──
                 if freeze_Tb == 0:
-                    is_inB = _is_inlet(bc_B, i, j, k, Nx, Ny, Nz)
-                    if is_inB:
-                        frac_b = _inlet_frac(ifrac_B, bc_B, i, j, k)
-                        if frac_b > 0.99:
-                            Tb[i, j, k] = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                        elif frac_b > 0.01:
-                            Tin_b = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                            Tnb_b = _inlet_neighbor(Tb, bc_B, i, j, k, Nx, Ny, Nz)
-                            Tb[i, j, k] = frac_b * Tin_b + (1.0 - frac_b) * Tnb_b
-                    elif chi_B_arr[i, j, k] < chi_B_kernel_threshold:
+                    if chi_B_arr[i, j, k] < chi_B_kernel_threshold:
                         pass
                     else:
                         vol_b = dxi * dyj * dzk
@@ -812,6 +837,9 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                         FB_s = efB_s * rcpB_s * vB_s * Ay
                         FB_t = efB_t * rcpB_t * wB_t * Az
                         FB_b = efB_b * rcpB_b * wB_b * Az
+                        FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
+                            bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
+                            FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
                         aEb = dEb  + max(-FB_e, 0.0); aWb = dWb  + max( FB_w, 0.0)
                         aNb = dNb  + max(-FB_n, 0.0); aSb = dSb  + max( FB_s, 0.0)
                         aTb = dTb_ + max(-FB_t, 0.0); aBb = dBb  + max( FB_b, 0.0)
@@ -821,6 +849,10 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                         tSb = Tb[i, j-1, k] if j > 0    else Tb[i, j, k]
                         tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
                         tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
+
+                        (aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb) = _inlet_face_terms(
+                            bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, T_inB_arr,
+                            Kc_b, dxi, dyj, dzk, aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb)
                         if conservative == 1:
                             soub = (_sou_face_x_cons(Tb_snap, i, j, k, Nx, FB_w, FB_e)
                                     + _sou_face_y_cons(Tb_snap, i, j, k, Ny, FB_s, FB_n)
@@ -855,9 +887,6 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
             if color_chg > sweep_chg:
                 sweep_chg = color_chg
 
-        _apply_outlet_3d(Ta, bc_A, Nx, Ny, Nz)
-        if freeze_Tb == 0:
-            _apply_outlet_3d(Tb, bc_B, Nx, Ny, Nz)
 
         max_chg = sweep_chg
         if max_chg < 1e-10:
@@ -937,7 +966,7 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
                       ifrac_A, ifrac_B,
                       n_iters, freeze_Tb,
-                      alpha_fA, alpha_s, alpha_fB):
+                      alpha_fA, alpha_s, alpha_fB, inlet_flux_A=None, inlet_flux_B=None):
     max_chg = 0.0
 
     # Sweep direction: follow A on i, B on j, A on k
@@ -962,78 +991,72 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
                 for k in range(k0, k1, dk):
 
                     # ── Fluid A ──
-                    is_inA = _is_inlet(bc_A, i, j, k, Nx, Ny, Nz)
-                    if is_inA:
-                        frac = _inlet_frac(ifrac_A, bc_A, i, j, k)
-                        if frac > 0.99:
-                            Ta[i, j, k] = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                        elif frac > 0.01:
-                            Tin = _inlet_val(T_inA_arr, bc_A, i, j, k)
-                            Tnb = _inlet_neighbor(Ta, bc_A, i, j, k, Nx, Ny, Nz)
-                            Ta[i, j, k] = frac * Tin + (1.0 - frac) * Tnb
-                    else:
-                        dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
-                        vol = dxi * dyj * dzk
-                        Kc = K_ffA_arr[i, j, k]
-                        hvA = h_vA_arr[i, j, k] * vol
+                    dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
+                    vol = dxi * dyj * dzk
+                    Kc = K_ffA_arr[i, j, k]
+                    hvA = h_vA_arr[i, j, k] * vol
 
-                        Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
-                        # Face spacing δx_e (#3D-7 fix) — conservative diffusion
-                        dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                        dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                        dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                        dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                        dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
-                        dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
-                        dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
-                        dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
-                        dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
-                        dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
-                        dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
-                        dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
+                    Ax = dyj * dzk; Ay = dxi * dzk; Az = dxi * dyj
+                    # Face spacing δx_e (#3D-7 fix) — conservative diffusion
+                    dxe = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                    dxw = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                    dyn = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                    dys = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                    dzt = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                    dzb = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                    dE = 2.0 * Kc * K_ffA_arr[i+1, j, k] / (Kc + K_ffA_arr[i+1, j, k] + 1e-30) * Ax / dxe if i < Nx-1 else 0.0
+                    dW = 2.0 * Kc * K_ffA_arr[i-1, j, k] / (Kc + K_ffA_arr[i-1, j, k] + 1e-30) * Ax / dxw if i > 0 else 0.0
+                    dN = 2.0 * Kc * K_ffA_arr[i, j+1, k] / (Kc + K_ffA_arr[i, j+1, k] + 1e-30) * Ay / dyn if j < Ny-1 else 0.0
+                    dS = 2.0 * Kc * K_ffA_arr[i, j-1, k] / (Kc + K_ffA_arr[i, j-1, k] + 1e-30) * Ay / dys if j > 0 else 0.0
+                    dT_ = 2.0 * Kc * K_ffA_arr[i, j, k+1] / (Kc + K_ffA_arr[i, j, k+1] + 1e-30) * Az / dzt if k < Nz-1 else 0.0
+                    dB = 2.0 * Kc * K_ffA_arr[i, j, k-1] / (Kc + K_ffA_arr[i, j, k-1] + 1e-30) * Az / dzb if k > 0 else 0.0
 
-                        # Cell-local upwind (2026-04-25 FV#5): match 2D scheme.
-                        # Each cell uses its own |u_c| for face flux magnitudes.
-                        # F_x = F_w = ρcp·|u_c|·Ax → NET_OUT = 0 at cell level by
-                        # construction, so the Patankar aP=Σa_nb + hvA form is
-                        # locally conservative without a NET_OUT correction.
-                        # Face-centered interpolation (FV-1) was theoretically
-                        # more accurate but introduced a ~3× Q_enthalpy/Q_source
-                        # mismatch because cell-averaged face u did not satisfy
-                        # discrete mass conservation cell-wise. 2D has used this
-                        # cell-local pattern forever with <1% AB imbalance.
-                        u_c = ucA[i,j,k]; v_c = vcA[i,j,k]; w_c = wcA[i,j,k]
-                        rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
-                        Fx = ef_c * rcpA_c * abs(u_c) * Ax
-                        Fy = ef_c * rcpA_c * abs(v_c) * Ay
-                        Fz = ef_c * rcpA_c * abs(w_c) * Az
+                    # Cell-local upwind (2026-04-25 FV#5): match 2D scheme.
+                    # Each cell uses its own |u_c| for face flux magnitudes.
+                    # F_x = F_w = ρcp·|u_c|·Ax → NET_OUT = 0 at cell level by
+                    # construction, so the Patankar aP=Σa_nb + hvA form is
+                    # locally conservative without a NET_OUT correction.
+                    # Face-centered interpolation (FV-1) was theoretically
+                    # more accurate but introduced a ~3× Q_enthalpy/Q_source
+                    # mismatch because cell-averaged face u did not satisfy
+                    # discrete mass conservation cell-wise. 2D has used this
+                    # cell-local pattern forever with <1% AB imbalance.
+                    u_c = ucA[i,j,k]; v_c = vcA[i,j,k]; w_c = wcA[i,j,k]
+                    rcpA_c = rho_cp_fA[i,j,k]; ef_c = eps_fA_arr[i,j,k]
+                    Fx = ef_c * rcpA_c * abs(u_c) * Ax
+                    Fy = ef_c * rcpA_c * abs(v_c) * Ay
+                    Fz = ef_c * rcpA_c * abs(w_c) * Az
 
-                        if u_c >= 0.0: aW = dW + Fx; aE = dE
-                        else:          aE = dE + Fx; aW = dW
-                        if v_c >= 0.0: aS = dS + Fy; aN = dN
-                        else:          aN = dN + Fy; aS = dS
-                        if w_c >= 0.0: aB = dB + Fz; aT = dT_
-                        else:          aT = dT_ + Fz; aB = dB
+                    if u_c >= 0.0: aW = dW + Fx; aE = dE
+                    else:          aE = dE + Fx; aW = dW
+                    if v_c >= 0.0: aS = dS + Fy; aN = dN
+                    else:          aN = dN + Fy; aS = dS
+                    if w_c >= 0.0: aB = dB + Fz; aT = dT_
+                    else:          aT = dT_ + Fz; aB = dB
 
-                        tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
-                        tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
-                        tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
-                        tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
-                        tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
-                        tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
+                    tE = Ta[i+1, j, k] if i < Nx-1 else Ta[i, j, k]
+                    tW = Ta[i-1, j, k] if i > 0    else Ta[i, j, k]
+                    tN = Ta[i, j+1, k] if j < Ny-1 else Ta[i, j, k]
+                    tS = Ta[i, j-1, k] if j > 0    else Ta[i, j, k]
+                    tT = Ta[i, j, k+1] if k < Nz-1 else Ta[i, j, k]
+                    tB = Ta[i, j, k-1] if k > 0    else Ta[i, j, k]
 
-                        sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c, Fx)
-                               + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c, Fy)
-                               + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c, Fz))
+                    (aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB) = _inlet_face_terms(
+                        bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, T_inA_arr,
+                        Kc, dxi, dyj, dzk, aE, aW, aN, aS, aT, aB, tE, tW, tN, tS, tT, tB, inlet_flux_A)
 
-                        aP = aE + aW + aN + aS + aT + aB + hvA
-                        new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
-                               + hvA * Ts[i, j, k] + sou) / aP
-                        old = Ta[i, j, k]
-                        upd = old + alpha_fA * (new - old)
-                        chg = abs(upd - old)
-                        if chg > max_chg: max_chg = chg
-                        Ta[i, j, k] = upd
+                    sou = (_sou_corr_x_3d(Ta, i, j, k, Nx, u_c, Fx)
+                           + _sou_corr_y_3d(Ta, i, j, k, Ny, v_c, Fy)
+                           + _sou_corr_z_3d(Ta, i, j, k, Nz, w_c, Fz))
+
+                    aP = aE + aW + aN + aS + aT + aB + hvA
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + aT*tT + aB*tB
+                           + hvA * Ts[i, j, k] + sou) / aP
+                    old = Ta[i, j, k]
+                    upd = old + alpha_fA * (new - old)
+                    chg = abs(upd - old)
+                    if chg > max_chg: max_chg = chg
+                    Ta[i, j, k] = upd
 
                     # ── Solid ──
                     dxi = dx_arr[i]; dyj = dy_arr[j]; dzk = dz_arr[k]
@@ -1075,103 +1098,64 @@ def _gs_full_chunk_3d(Ta, Tb, Ts, Nx, Ny, Nz,
 
                     # ── Fluid B ──
                     if freeze_Tb == 0:
-                        is_inB = _is_inlet(bc_B, i, j, k, Nx, Ny, Nz)
-                        if is_inB:
-                            frac_b = _inlet_frac(ifrac_B, bc_B, i, j, k)
-                            if frac_b > 0.99:
-                                Tb[i, j, k] = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                            elif frac_b > 0.01:
-                                Tin_b = _inlet_val(T_inB_arr, bc_B, i, j, k)
-                                Tnb_b = _inlet_neighbor(Tb, bc_B, i, j, k, Nx, Ny, Nz)
-                                Tb[i, j, k] = frac_b * Tin_b + (1.0 - frac_b) * Tnb_b
-                        else:
-                            vol_b = dxi * dyj * dzk
-                            Kc_b = K_ffB_arr[i, j, k]
-                            hvB = h_vB_arr[i, j, k] * vol_b
+                        vol_b = dxi * dyj * dzk
+                        Kc_b = K_ffB_arr[i, j, k]
+                        hvB = h_vB_arr[i, j, k] * vol_b
 
-                            # Face spacing for B (cell-local kernel)
-                            dxe_b = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
-                            dxw_b = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
-                            dyn_b = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
-                            dys_b = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
-                            dzt_b = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
-                            dzb_b = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
-                            dEb = 2.0*Kc_b*K_ffB_arr[i+1, j, k]/(Kc_b+K_ffB_arr[i+1, j, k]+1e-30)*Ax/dxe_b if i < Nx-1 else 0.0
-                            dWb = 2.0*Kc_b*K_ffB_arr[i-1, j, k]/(Kc_b+K_ffB_arr[i-1, j, k]+1e-30)*Ax/dxw_b if i > 0 else 0.0
-                            dNb = 2.0*Kc_b*K_ffB_arr[i, j+1, k]/(Kc_b+K_ffB_arr[i, j+1, k]+1e-30)*Ay/dyn_b if j < Ny-1 else 0.0
-                            dSb = 2.0*Kc_b*K_ffB_arr[i, j-1, k]/(Kc_b+K_ffB_arr[i, j-1, k]+1e-30)*Ay/dys_b if j > 0 else 0.0
-                            dTb_ = 2.0*Kc_b*K_ffB_arr[i, j, k+1]/(Kc_b+K_ffB_arr[i, j, k+1]+1e-30)*Az/dzt_b if k < Nz-1 else 0.0
-                            dBb = 2.0*Kc_b*K_ffB_arr[i, j, k-1]/(Kc_b+K_ffB_arr[i, j, k-1]+1e-30)*Az/dzb_b if k > 0 else 0.0
+                        # Face spacing for B (cell-local kernel)
+                        dxe_b = 0.5 * (dxi + dx_arr[i+1]) if i < Nx-1 else dxi
+                        dxw_b = 0.5 * (dx_arr[i-1] + dxi) if i > 0    else dxi
+                        dyn_b = 0.5 * (dyj + dy_arr[j+1]) if j < Ny-1 else dyj
+                        dys_b = 0.5 * (dy_arr[j-1] + dyj) if j > 0    else dyj
+                        dzt_b = 0.5 * (dzk + dz_arr[k+1]) if k < Nz-1 else dzk
+                        dzb_b = 0.5 * (dz_arr[k-1] + dzk) if k > 0    else dzk
+                        dEb = 2.0*Kc_b*K_ffB_arr[i+1, j, k]/(Kc_b+K_ffB_arr[i+1, j, k]+1e-30)*Ax/dxe_b if i < Nx-1 else 0.0
+                        dWb = 2.0*Kc_b*K_ffB_arr[i-1, j, k]/(Kc_b+K_ffB_arr[i-1, j, k]+1e-30)*Ax/dxw_b if i > 0 else 0.0
+                        dNb = 2.0*Kc_b*K_ffB_arr[i, j+1, k]/(Kc_b+K_ffB_arr[i, j+1, k]+1e-30)*Ay/dyn_b if j < Ny-1 else 0.0
+                        dSb = 2.0*Kc_b*K_ffB_arr[i, j-1, k]/(Kc_b+K_ffB_arr[i, j-1, k]+1e-30)*Ay/dys_b if j > 0 else 0.0
+                        dTb_ = 2.0*Kc_b*K_ffB_arr[i, j, k+1]/(Kc_b+K_ffB_arr[i, j, k+1]+1e-30)*Az/dzt_b if k < Nz-1 else 0.0
+                        dBb = 2.0*Kc_b*K_ffB_arr[i, j, k-1]/(Kc_b+K_ffB_arr[i, j, k-1]+1e-30)*Az/dzb_b if k > 0 else 0.0
 
-                            # Cell-local upwind (2026-04-25 FV#5): match A branch + 2D.
-                            uBc = ucB[i,j,k]; vBc = vcB[i,j,k]; wBc = wcB[i,j,k]
-                            rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_fB_arr[i,j,k]
-                            FxB = efB_c * rcpB_c * abs(uBc) * Ax
-                            FyB = efB_c * rcpB_c * abs(vBc) * Ay
-                            FzB = efB_c * rcpB_c * abs(wBc) * Az
+                        # Cell-local upwind (2026-04-25 FV#5): match A branch + 2D.
+                        uBc = ucB[i,j,k]; vBc = vcB[i,j,k]; wBc = wcB[i,j,k]
+                        rcpB_c = rho_cp_fB[i,j,k]; efB_c = eps_fB_arr[i,j,k]
+                        FxB = efB_c * rcpB_c * abs(uBc) * Ax
+                        FyB = efB_c * rcpB_c * abs(vBc) * Ay
+                        FzB = efB_c * rcpB_c * abs(wBc) * Az
 
-                            if uBc >= 0.0: aWb = dWb + FxB; aEb = dEb
-                            else:          aEb = dEb + FxB; aWb = dWb
-                            if vBc >= 0.0: aSb = dSb + FyB; aNb = dNb
-                            else:          aNb = dNb + FyB; aSb = dSb
-                            if wBc >= 0.0: aBb = dBb + FzB; aTb = dTb_
-                            else:          aTb = dTb_ + FzB; aBb = dBb
+                        if uBc >= 0.0: aWb = dWb + FxB; aEb = dEb
+                        else:          aEb = dEb + FxB; aWb = dWb
+                        if vBc >= 0.0: aSb = dSb + FyB; aNb = dNb
+                        else:          aNb = dNb + FyB; aSb = dSb
+                        if wBc >= 0.0: aBb = dBb + FzB; aTb = dTb_
+                        else:          aTb = dTb_ + FzB; aBb = dBb
 
-                            tEb = Tb[i+1, j, k] if i < Nx-1 else Tb[i, j, k]
-                            tWb = Tb[i-1, j, k] if i > 0    else Tb[i, j, k]
-                            tNb = Tb[i, j+1, k] if j < Ny-1 else Tb[i, j, k]
-                            tSb = Tb[i, j-1, k] if j > 0    else Tb[i, j, k]
-                            tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
-                            tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
+                        tEb = Tb[i+1, j, k] if i < Nx-1 else Tb[i, j, k]
+                        tWb = Tb[i-1, j, k] if i > 0    else Tb[i, j, k]
+                        tNb = Tb[i, j+1, k] if j < Ny-1 else Tb[i, j, k]
+                        tSb = Tb[i, j-1, k] if j > 0    else Tb[i, j, k]
+                        tTb = Tb[i, j, k+1] if k < Nz-1 else Tb[i, j, k]
+                        tBb = Tb[i, j, k-1] if k > 0    else Tb[i, j, k]
 
-                            soub = (_sou_corr_x_3d(Tb, i, j, k, Nx, uBc, FxB)
-                                    + _sou_corr_y_3d(Tb, i, j, k, Ny, vBc, FyB)
-                                    + _sou_corr_z_3d(Tb, i, j, k, Nz, wBc, FzB))
+                        (aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb) = _inlet_face_terms(
+                            bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, T_inB_arr,
+                            Kc_b, dxi, dyj, dzk, aEb, aWb, aNb, aSb, aTb, aBb, tEb, tWb, tNb, tSb, tTb, tBb, inlet_flux_B)
 
-                            aPb = aEb + aWb + aNb + aSb + aTb + aBb + hvB
-                            new_b = (aEb*tEb + aWb*tWb + aNb*tNb + aSb*tSb
-                                     + aTb*tTb + aBb*tBb + hvB*Ts[i, j, k] + soub) / aPb
-                            old_b = Tb[i, j, k]
-                            upd_b = old_b + alpha_fB * (new_b - old_b)
-                            chg = abs(upd_b - old_b)
-                            if chg > max_chg: max_chg = chg
-                            Tb[i, j, k] = upd_b
+                        soub = (_sou_corr_x_3d(Tb, i, j, k, Nx, uBc, FxB)
+                                + _sou_corr_y_3d(Tb, i, j, k, Ny, vBc, FyB)
+                                + _sou_corr_z_3d(Tb, i, j, k, Nz, wBc, FzB))
 
-        # Outlet zero-gradient (mirror from bc_A / bc_B direction)
-        _apply_outlet_3d(Ta, bc_A, Nx, Ny, Nz)
-        if freeze_Tb == 0:
-            _apply_outlet_3d(Tb, bc_B, Nx, Ny, Nz)
+                        aPb = aEb + aWb + aNb + aSb + aTb + aBb + hvB
+                        new_b = (aEb*tEb + aWb*tWb + aNb*tNb + aSb*tSb
+                                 + aTb*tTb + aBb*tBb + hvB*Ts[i, j, k] + soub) / aPb
+                        old_b = Tb[i, j, k]
+                        upd_b = old_b + alpha_fB * (new_b - old_b)
+                        chg = abs(upd_b - old_b)
+                        if chg > max_chg: max_chg = chg
+                        Tb[i, j, k] = upd_b
+
 
         if max_chg < 1e-10:
             break
 
     return max_chg
-
-
-@njit(cache=True, fastmath=True)
-def _apply_outlet_3d(T, dir_code, Nx, Ny, Nz):
-    # Outlet is opposite face; copy from neighbor (zero-gradient)
-    if dir_code == 0:   # inlet +x, outlet -x... wait: 0 = flow in +x direction, inlet at i=0, outlet at i=Nx-1
-        for j in range(Ny):
-            for k in range(Nz):
-                T[Nx-1, j, k] = T[Nx-2, j, k]
-    elif dir_code == 1:
-        for j in range(Ny):
-            for k in range(Nz):
-                T[0, j, k] = T[1, j, k]
-    elif dir_code == 2:
-        for i in range(Nx):
-            for k in range(Nz):
-                T[i, Ny-1, k] = T[i, Ny-2, k]
-    elif dir_code == 3:
-        for i in range(Nx):
-            for k in range(Nz):
-                T[i, 0, k] = T[i, 1, k]
-    elif dir_code == 4:
-        for i in range(Nx):
-            for j in range(Ny):
-                T[i, j, Nz-1] = T[i, j, Nz-2]
-    else:
-        for i in range(Nx):
-            for j in range(Ny):
-                T[i, j, 0] = T[i, j, 1]

@@ -70,6 +70,11 @@ def test_strict_energy_conservation(name, maker, grid):
     for key in ("eps_A_strict", "eps_B_strict",
                 "eps_A_strict_cellmax", "eps_B_strict_cellmax"):
         v = res.get(key)
+        if cfg['fluid_B_cfg'] is None and key.startswith('eps_B_'):
+            # No B equation was solved; zero is not a conservation certificate.
+            assert v is None
+            assert res['Q_sB'] == 0.0
+            continue
         assert v is not None, f"{name}: {key} not emitted by conservative path"
         assert v < _GATE, f"{name}: {key}={v*100:.3f}% not < 1%"
 
