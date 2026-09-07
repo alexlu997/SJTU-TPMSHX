@@ -1326,9 +1326,11 @@ class ThreeDVisPanel(QWidget):
         # callers of `_rebuild_volume`). Also clear `_volume_actor`
         # ahead of `add_volume` so an exception below does not leave a
         # dangling reference to the just-removed actor.
-        if self._field not in FIELD_META:
-            return
         self._volume_actor = None
+        if self._field not in FIELD_META:
+            if render:
+                pl.render()
+            return
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
         opacity_list = list(self._opacity_ramp())

@@ -8,7 +8,8 @@ from sjtu_tpmshx.ui.panel_vis_3d import FIELD_META, ThreeDVisPanel
 
 
 @pytest.mark.parametrize('render', [True, False])
-def test_volume_builder_defers_intermediate_render(render):
+@pytest.mark.parametrize('field', ['Ta', 'unknown'])
+def test_volume_builder_defers_intermediate_render(render, field):
     requests = []
     actor, bar = Mock(), Mock()
     plotter = Mock(window_size=(1000, 800))
@@ -28,13 +29,21 @@ def test_volume_builder_defers_intermediate_render(render):
     plotter.add_scalar_bar.return_value = bar  # PyVista defaults render=False
     grid = object()
     panel = SimpleNamespace(
-        _grid=grid, _grid_vol=grid, _field='Ta', plotter=plotter,
+        _grid=grid, _grid_vol=grid, _field=field, plotter=plotter,
+        _volume_actor=actor,
         _clim_for=lambda field: (300., 420.), _opacity_ramp=lambda: (.2, .5),
         _vol_min_cell_mm=1., status=Mock(),
     )
     ThreeDVisPanel._rebuild_volume(panel, render=render)
 
     assert requests == (['render'] if render else [])
+    plotter.remove_actor.assert_called_once_with('main_volume', render=False)
+    assert plotter.remove_scalar_bar.call_count == 1 + len(FIELD_META)
+    if field == 'unknown':
+        assert panel._volume_actor is None
+        plotter.add_volume.assert_not_called()
+        plotter.add_scalar_bar.assert_not_called()
+        return
     assert panel._volume_actor is actor
     args, kwargs = plotter.add_volume.call_args
     assert args == (grid,)
