@@ -15,7 +15,7 @@ _log = get_logger(__name__)
 def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
                           dx_arr, dy_arr, inlet_mask=None, outlet_mask=None,
                           enthalpy_fn=None, rho_fn=None, P_ref=None,
-                          eps_side=None):
+                          eps_side=None, T_in=None):
     """Mass-conserving enthalpy balance Q = ṁ_in · (T_in_avg − T_out_avg).
 
     Uses the inlet plane ρ·|u|·A·mask as ṁ·cp reference so the returned Q
@@ -26,6 +26,8 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
     Positive = fluid gives up heat (T_in > T_out).
     Optional 1D masks (length = cross-axis) gate the integral to partial
     inlet / outlet pipes; missing masks default to full face.
+    ``T_in`` supplies the physical inlet temperature when the first stored
+    row is a real control volume. Omit it for independent boundary-field data.
 
     ``eps_side`` (N1 fix, 2026-07-07): the PER-SIDE void fraction (scalar or
     2D field). Velocities are interstitial, so the physical face mass flux is
@@ -77,6 +79,9 @@ def _enthalpy_balance_2d(T_field, uc, vc, rho_cp_field, dir_code,
             eps_in = eps_out = float(eps_side)
         else:
             eps_in, eps_out = eps_side[:, j_in], eps_side[:, j_out]
+
+    if T_in is not None:
+        T_in_face = np.asarray(T_in, dtype=np.float64)
 
     if enthalpy_fn is not None and rho_fn is not None and P_ref is not None:
         # True-enthalpy duty for strongly variable-cp fluids (sCO2).
@@ -258,6 +263,13 @@ def _simple_scalar_to_real_2d(field, direction):
     return np.ascontiguousarray(out)
 
 
+def _simple_pressure_abs_2d(simp, direction, P_in):
+    """Actual property/kernel pressure; retain the weighted-inlet anchor."""
+    gauge = _simple_scalar_to_real_2d(simp.P, direction)
+    inlet_gauge = _pipe_weighted(simp.P[:, 0], simp.inlet_frac.astype(np.float64))
+    return np.ascontiguousarray(P_in + gauge - inlet_gauge)
+
+
 def _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy):
     """Actual signed SIMPLE face mass flows per metre depth."""
     ux, uy = _simple_staggered_to_real_2d(simp, direction)
@@ -271,6 +283,20 @@ def _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy):
     cy[:, 0] = coef[:, 0]; cy[:, -1] = coef[:, -1]
     return (np.ascontiguousarray(cx * ux * np.asarray(dy)[None, :]),
             np.ascontiguousarray(cy * uy * np.asarray(dx)[:, None]))
+
+
+def _inlet_transport_2d(simp, direction, eps_side, cp_in, dx, dy):
+    """Actual inward SIMPLE face mass times cp(Tin, Pin), W/(m K)."""
+    mx, my = _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy)
+    if direction == 0:
+        flux = mx[0]
+    elif direction == 1:
+        flux = -mx[-1]
+    elif direction == 2:
+        flux = my[:, 0]
+    else:
+        flux = -my[:, -1]
+    return np.ascontiguousarray(flux * cp_in)
 
 
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
@@ -380,8 +406,8 @@ def _compute_Q_richardson(
         simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
         energy_dx, energy_dy, _x_breaks, _y_breaks,
         T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
-        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list, split_A=0.5,
-        hv_ratio_A=1.0, hv_ratio_B=1.0, cancel_check=None):
+        _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
+        h_vA_coarse, h_vB_coarse, split_A=0.5, cancel_check=None):
     """Heat duty Q via Richardson extrapolation on the enthalpy balance.
 
     Re-solves the coupled energy field on a 2x-refined grid, applies
@@ -402,17 +428,16 @@ def _compute_Q_richardson(
     # Per-side duty weighting relative to the symmetric ε/2 baseline (= 1.0 at
     # δ=0 ⇒ bit-identical). Matches the K_ff / convective scaling in the main
     # solve so the extracted A / B duties stay balanced on the split geometry.
+    from sjtu_tpmshx.solvers.fluid_props import check_water_state, WaterStateError
+    check_water_state(_pA['name'], T_inA, P_inA_val, where='Richardson inlet A')
+    check_water_state(_pB['name'], T_inB, P_inB_val, where='Richardson inlet B')
     _asymQ = (float(split_A) != 0.5)
     _fAQ = 2.0 * float(split_A)
     _fBQ = 2.0 * (1.0 - float(split_A))
     from sjtu_tpmshx.solvers.simple_solver import _aligned_grid, _port_fractions_1d
     # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
     _cell_area = energy_dx[:, None] * energy_dy[None, :]  # (Nx, Ny)
-    if za is not None and 'h_vB_arr' in za:
-        Q_solid_100 = float(np.sum(za['h_vB_arr'] * (Ts - Tb) * _cell_area))
-    else:
-        h_vB = window._h_vB
-        Q_solid_100 = float(np.sum(h_vB * (Ts - Tb) * _cell_area))
+    Q_solid_100 = float(np.sum(h_vB_coarse * (Ts - Tb) * _cell_area))
 
     # Richardson: run energy at 200×100 for Q extrapolation
     Nx2, Ny2 = N_x * 2, N_y * 2
@@ -431,16 +456,16 @@ def _compute_Q_richardson(
     # Negative flow reverses the stream axis only, not these port profiles.
     def _profiles(port, direction):
         widths = energy_dy2 if direction in (0, 1) else energy_dx2
-        inlet = _port_fractions_1d(
+        raw_inlet, inlet = _port_fractions_1d(
             widths, port['in_ctr'] - port['in_w'] / 2,
-            port['in_ctr'] + port['in_w'] / 2)[1]
+            port['in_ctr'] + port['in_w'] / 2)
         outlet = _port_fractions_1d(
             widths, port['out_ctr'] - port['out_w'] / 2,
             port['out_ctr'] + port['out_w'] / 2)[1]
-        return inlet, outlet
+        return raw_inlet, inlet, outlet
 
-    mA_in2, mA_out2 = _profiles(cfgA, dir_A)
-    mB_in2, mB_out2 = _profiles(cfgB, dir_B)
+    areaA_in2, mA_in2, mA_out2 = _profiles(cfgA, dir_A)
+    areaB_in2, mB_in2, mB_out2 = _profiles(cfgB, dir_B)
 
     # Interpolate fields from coarse to fine grid using actual coordinates
     from scipy.interpolate import RegularGridInterpolator
@@ -465,23 +490,20 @@ def _compute_Q_richardson(
                        np.full((N_x, N_y),
                                _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB, P_inB_val)))
     if za is not None and 'h_vB_arr' in za:
-        h_vA2 = _interp2(za['h_vA_arr'])
-        h_vB2 = _interp2(za['h_vB_arr'])
         K_ffA2 = _interp2(za['K_ffA_arr'])
         K_ffB2 = _interp2(za['K_ffB_arr'])
         K_ss2 = _interp2(za['K_ss_arr'])
         eps2 = _interp2(za['eps_arr'])
     else:
-        h_vA2 = window._h_vA; h_vB2 = window._h_vB
         K_ffA2 = window._K_ffA; K_ffB2 = window._K_ffB
         K_ss2 = window._K_ss; eps2 = eps
+    # Use the actual last coarse thermal problem, including local Re and split.
+    h_vA2, h_vB2 = _interp2(h_vA_coarse), _interp2(h_vB_coarse)
     # Per-side porosity on the refined grid (mirror the main solve) so the
     # Richardson pair is solved with the SAME physics. δ=0 → unchanged.
     if _asymQ:
         K_ffA2_use = K_ffA2 * _fAQ
         K_ffB2_use = K_ffB2 * _fBQ
-        h_vA2 = h_vA2 * hv_ratio_A
-        h_vB2 = h_vB2 * hv_ratio_B
         epsA2_use = (eps2 * float(split_A) if np.ndim(eps2) > 0
                      else float(eps2) * float(split_A))
         epsB2_use = (eps2 * (1.0 - float(split_A)) if np.ndim(eps2) > 0
@@ -490,17 +512,31 @@ def _compute_Q_richardson(
         K_ffA2_use = K_ffA2; K_ffB2_use = K_ffB2
         epsA2_use = None; epsB2_use = None
     Ta_init2, Tb_init2, Ts_init2 = _interp2(Ta), _interp2(Tb), _interp2(Ts)
-    # Off-port inlet cells never update: preserve their cold-start values.
-    for initial, direction, inlet in ((Ta_init2, dir_A, T_inA),
-                                       (Tb_init2, dir_B, T_inB)):
-        if direction == 0:
-            initial[0, :] = inlet
-        elif direction == 1:
-            initial[-1, :] = inlet
-        elif direction == 2:
-            initial[:, 0] = inlet
-        else:
-            initial[:, -1] = inlet
+    water_pressures = []
+    for props, simp, direction, pin, coarse, initial, side in (
+            (_pA, simpA, dir_A, P_inA_val, Ta, Ta_init2, 'A'),
+            (_pB, simpB, dir_B, P_inB_val, Tb, Tb_init2, 'B')):
+        if props['name'] == 'water':
+            if simp is None:
+                raise WaterStateError(f'Richardson {side}: actual water pressure unavailable')
+            pressure = _simple_pressure_abs_2d(simp, direction, pin)
+            check_water_state('water', coarse, pressure, where=f'Richardson coarse {side}')
+            refined_pressure = _interp2(pressure)
+            check_water_state('water', initial, refined_pressure,
+                              where=f'Richardson warm start {side}')
+            water_pressures.append((side, refined_pressure))
+    # Transfer the SAME integrated inlet transport to the fine face partition.
+    # Cumulative interpolation conserves each coarse face's input; it does not
+    # interpolate a cell-centre velocity onto a different physical boundary.
+    eps_coarse = za['eps_arr'] if za is not None and 'eps_arr' in za else eps
+    def _refined_inlet(simp, direction, cp_in, split):
+        coarse = energy_dy if direction <= 1 else energy_dx
+        fine = energy_dy2 if direction <= 1 else energy_dx2
+        flux = _inlet_transport_2d(
+            simp, direction, eps_coarse * split, cp_in, energy_dx, energy_dy)
+        return np.diff(np.interp(np.r_[0., np.cumsum(fine)],
+                                 np.r_[0., np.cumsum(coarse)],
+                                 np.r_[0., np.cumsum(flux)]))
     Ta2, Tb2, Ts2, refined_info = solve_full_domain(
         L, H, Nx2, Ny2, T_inA, T_inB,
         K_ffA2_use, K_ffB2_use, K_ss2, h_vA2, h_vB2,
@@ -508,9 +544,14 @@ def _compute_Q_richardson(
         ucA2, vcA2, ucB2, vcB2,
         dir_A, dir_B, tol=0.5, max_iter=5000,
         dx_arr=energy_dx2, dy_arr=energy_dy2,
-        inlet_mask_A=mA_in2, inlet_mask_B=mB_in2, return_info=True,
+        inlet_mask_A=areaA_in2, inlet_mask_B=areaB_in2, return_info=True,
+        inlet_flux_A=_refined_inlet(simpA, dir_A, _pA['cp'](T_inA, P_inA_val), split_A),
+        inlet_flux_B=_refined_inlet(simpB, dir_B, _pB['cp'](T_inB, P_inB_val), 1. - split_A),
         Ta_init=Ta_init2, Tb_init=Tb_init2, Ts_init=Ts_init2,
         eps_A=epsA2_use, eps_B=epsB2_use, cancel_check=cancel_check)
+    for side, pressure in water_pressures:
+        check_water_state('water', Ta2 if side == 'A' else Tb2, pressure,
+                          where=f'Richardson return {side}')
     richardson_info = dict(refined_info, extrapolated=False)
     refined_ok = bool(refined_info['converged'] and all(
         np.all(np.isfinite(field)) for field in (Ta2, Tb2, Ts2)))
@@ -555,23 +596,23 @@ def _compute_Q_richardson(
             Ta, ucA, vcA, rho_cp_A_fld, dir_A, energy_dx, energy_dy,
             inlet_mask=mA_in, outlet_mask=mA_out,
             enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
-            eps_side=eps * _sA_Q)
+            eps_side=eps * _sA_Q, T_in=T_inA)
         Q_B_fine = _enthalpy_balance_2d(
             Tb, ucB, vcB, rho_cp_B_fld, dir_B, energy_dx, energy_dy,
             inlet_mask=mB_in, outlet_mask=mB_out,
             enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
-            eps_side=eps * _sB_Q)
+            eps_side=eps * _sB_Q, T_in=T_inB)
         if refined_ok:
             Q_A_coarse = _enthalpy_balance_2d(
                 Ta2, ucA2, vcA2, rcp_A2, dir_A, energy_dx2, energy_dy2,
                 inlet_mask=mA_in2, outlet_mask=mA_out2,
                 enthalpy_fn=_enth_A, rho_fn=_pA['rho'], P_ref=P_inA_val,
-                eps_side=eps2 * _sA_Q)
+                eps_side=eps2 * _sA_Q, T_in=T_inA)
             Q_B_coarse = _enthalpy_balance_2d(
                 Tb2, ucB2, vcB2, rcp_B2, dir_B, energy_dx2, energy_dy2,
                 inlet_mask=mB_in2, outlet_mask=mB_out2,
                 enthalpy_fn=_enth_B, rho_fn=_pB['rho'], P_ref=P_inB_val,
-                eps_side=eps2 * _sB_Q)
+                eps_side=eps2 * _sB_Q, T_in=T_inB)
         else:
             Q_A_coarse = Q_B_coarse = float('nan')
         # A-1 refactor (2026-04-24): apply Richardson to |Q_A| and |Q_B|
@@ -621,6 +662,8 @@ def _compute_Q_richardson(
             (np.isfinite(Q_coarse_max)
              and abs(Q_fine_max - Q_coarse_max) / _denom > 0.10)
             or (not np.isfinite(Q_A_coarse) or not np.isfinite(Q_B_coarse)))
+    except WaterStateError:
+        raise
     except Exception as _q_exc:
         richardson_info['extrapolated'] = False
         import traceback as _tb
@@ -699,6 +742,8 @@ def _compute_Q_richardson(
                          f"Q_B={Q_B_simple:.1f}, Q_total={Q_total:.1f} W/m  "
                          f"(T_out_A_mean={T_out_A_mean:.2f}K, "
                          f"T_out_B_mean={T_out_B_mean:.2f}K)")
+        except WaterStateError:
+            raise
         except Exception as _fb_exc:
             import traceback as _tb2
             _tb2.print_exc()
@@ -864,6 +909,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
     mu_A, mu_B = window._mu_A, window._mu_B
     P_inA_val = cfg['compute_cfg'].fluid_A.P_in_Pa
     P_inB_val = cfg['compute_cfg'].fluid_B.P_in_Pa
+    fluid_props.check_water_state(fluid_A, T_inA, P_inA_val, where='2D direct inlet A')
+    fluid_props.check_water_state(fluid_B, T_inB, P_inB_val, where='2D direct inlet B')
 
     # ── Asymmetric per-side porosity (offset-isosurface δ) — mirror 3D ──
     # δ=0 → symmetric (split=0.5, factors=1, no per-side override) → bit-
@@ -970,6 +1017,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
 
     rho_cp_A = _pA['rho'](T_inA, P_inA_val) * _pA['cp'](T_inA, P_inA_val)
     rho_cp_B = _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB, P_inB_val)
+    last_temperature_inputs = None
 
     # Variable density: 2D rho fields for SIMPLE (initialized uniform)
     rho_A_field = np.full((N_x, N_y), _pA['rho'](T_inA, P_inA_val))
@@ -987,6 +1035,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         nonlocal ucA_disp, vcA_disp, ucB_disp, vcB_disp
         nonlocal mu_A, mu_B, _has_partial_A, _has_partial_B
         nonlocal drho_A, drho_B, dT_A, dT_B
+        nonlocal last_temperature_inputs
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
@@ -1079,6 +1128,12 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             raise CancelledError("compute cancelled by user")
         ucA, vcA, simpA = _res[0]
         ucB, vcB, simpB = _res[1]
+        P_abs_A = _simple_pressure_abs_2d(simpA, dir_A, P_inA_val)
+        P_abs_B = _simple_pressure_abs_2d(simpB, dir_B, P_inB_val)
+        fluid_props.check_water_state(fluid_A, T_inA if Ta is None else Ta,
+                                      P_abs_A, where='2D SIMPLE return A')
+        fluid_props.check_water_state(fluid_B, T_inB if Tb is None else Tb,
+                                      P_abs_B, where='2D SIMPLE return B')
 
         window._compute_progress = 10 + int(80 * (_coup_it + 0.3) / _MAX_COUPLING)
 
@@ -1104,9 +1159,14 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 ucB_disp = gaussian_filter(ucB, sigma=_sv)
                 vcB_disp = gaussian_filter(vcB, sigma=_sv)
 
-        # Inlet fractions for energy solver (continuous blending at wall/open edge)
-        _imA = simpA.inlet_frac.astype(np.float64)  # 1D float, length = SIMPLE Nx for A
-        _imB = simpB.inlet_frac.astype(np.float64)  # 1D float, length = SIMPLE Nx for B
+        # Heat diffusion uses physical open area; SIMPLE's taper is velocity data.
+        from sjtu_tpmshx.solvers.simple_solver import _port_fractions_1d
+        _imA, _imB = [
+            _port_fractions_1d(
+                energy_dy if direction <= 1 else energy_dx,
+                port['in_ctr'] - port['in_w']/2,
+                port['in_ctr'] + port['in_w']/2)[0]
+            for port, direction in ((cfgA, dir_A), (cfgB, dir_B))]
 
         # Build local-Re per-cell h_v fields (#1 fix). Use cell-center magnitude.
         u_mag_A = np.sqrt(ucA**2 + vcA**2)
@@ -1125,6 +1185,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                       else np.full_like(u_mag_B, T_inB))
 
             def _enthalpy_side_hv(props, T_field, P_in, u_mag):
+                fluid_props.check_water_state(props['name'], T_field, P_in,
+                                              where='2D h_v property refresh')
                 if props['name'] == 'sco2':
                     return _sco2_hv_local_field(
                         T_field, P_in, u_mag, _g_hv['A_0'], _g_hv['D_h'],
@@ -1190,22 +1252,6 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         else:
             _Kffa_use = _Kffa_src; _Kffb_use = _Kffb_src
             _epsA_use = None; _epsB_use = None
-        def _simp_P_abs_real(simp, direction, P_in, fluid_name):
-            del fluid_name
-            if window._is_x_dir(direction):
-                gauge = simp.P.T.copy()
-                if direction == 1:
-                    gauge = gauge[::-1, :]
-            else:
-                gauge = simp.P.copy()
-                if direction == 3:
-                    gauge = gauge[:, ::-1]
-            inlet_gauge = _pipe_weighted(
-                simp.P[:, 0], simp.inlet_frac.astype(np.float64))
-            return np.ascontiguousarray(P_in + gauge - inlet_gauge)
-
-        P_abs_A = _simp_P_abs_real(simpA, dir_A, P_inA_val, _pA['name'])
-        P_abs_B = _simp_P_abs_real(simpB, dir_B, P_inB_val, _pB['name'])
         if _enthalpy_mode:
             from sjtu_tpmshx.solvers.ltne_enthalpy_2d import solve_enthalpy_2d
             eps_total = np.broadcast_to(
@@ -1234,7 +1280,16 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 P_inA=P_inA_val, P_inB=P_inB_val,
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 max_iter=_e_max_iter, tol=_e_tol, cancel_check=cancel_check)
+            e_info['true_h_balance'] = dict(
+                Q_A=float(e_info['Q_A']), Q_B=float(e_info['Q_B']), units='W/m',
+                outer_index=int(_coup_it), converged=bool(e_info['converged']),
+                iterations=int(e_info['iterations']), residual=float(e_info['residual']),
+                pressure_source='P_in + SIMPLE gauge - weighted inlet gauge',
+                P_in_A_Pa=float(P_inA_val), P_in_B_Pa=float(P_inB_val),
+                P_A_range_Pa=[float(P_abs_A.min()), float(P_abs_A.max())],
+                P_B_range_Pa=[float(P_abs_B.min()), float(P_abs_B.max())])
         else:
+            last_temperature_inputs = (rho_cp_A, rho_cp_B, h_vA_local, h_vB_local)
             Ta, Tb, Ts, e_info = solve_full_domain(
                 L, H, N_x, N_y, T_inA, T_inB,
                 _Kffa_use, _Kffb_use, _Kss_src,
@@ -1247,7 +1302,16 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
                 dx_arr=energy_dx, dy_arr=energy_dy,
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
+                inlet_flux_A=_inlet_transport_2d(
+                    simpA, dir_A, _epsA_use if _epsA_use is not None else .5*_eps_src,
+                    _pA['cp'](T_inA, P_inA_val), energy_dx, energy_dy),
+                inlet_flux_B=_inlet_transport_2d(
+                    simpB, dir_B, _epsB_use if _epsB_use is not None else .5*_eps_src,
+                    _pB['cp'](T_inB, P_inB_val), energy_dx, energy_dy),
                 eps_A=_epsA_use, eps_B=_epsB_use, cancel_check=cancel_check)
+
+        fluid_props.check_water_state(fluid_A, Ta, P_abs_A, where='2D energy return A')
+        fluid_props.check_water_state(fluid_B, Tb, P_abs_B, where='2D energy return B')
 
         # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side
         # stiffness (rho·cp 4100× + h_v 2-3× vs air). Replace nan with the
@@ -1389,6 +1453,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
     P_inB = cfg['compute_cfg'].fluid_B.P_in_Pa
     P_fA, P_fB, dP_A, dP_B = _compute_pressure_2d(
         simpA, simpB, dir_A, dir_B, P_inA, P_inB, window)
+    fluid_props.check_water_state(fluid_A, Ta_raw, P_fA, where='2D final state A')
+    fluid_props.check_water_state(fluid_B, Tb_raw, P_fB, where='2D final state B')
 
     # ── Post-solve compressible validity gate (robustness, 2026-06-25) ──
     # Same fail-loud guard as the 3D pipeline: a choked air case (dP -> P_in,
@@ -1432,15 +1498,16 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         richardson_warn = False
     else:
         # Compute Q with Richardson extrapolation (N_x×N_y + 2N_x×2N_y)
+        rcp_A_energy, rcp_B_energy, hv_A_energy, hv_B_energy = last_temperature_inputs
         (Q_total, Q_A_fine, Q_B_fine, Q_solid_richardson,
          richardson_warn, richardson_info) = _compute_Q_richardson(
-            Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rho_cp_A, rho_cp_B,
+            Ta_raw, Tb_raw, Ts_raw, ucA, vcA, ucB, vcB, rcp_A_energy, rcp_B_energy,
             simpA, simpB, N_x, N_y, L, H, dir_A, dir_B,
             energy_dx, energy_dy, _x_breaks, _y_breaks,
             T_inA, T_inB, P_inA_val, P_inB_val, eps, za, window,
             _pA, _pB, cfgA, cfgB, u_A, u_B, warnings_list,
+            h_vA_coarse=hv_A_energy, h_vB_coarse=hv_B_energy,
             split_A=_split_A_2d,
-            hv_ratio_A=_hv_ratio_A_2d, hv_ratio_B=_hv_ratio_B_2d,
             cancel_check=cancel_check)
 
     # ΔP: always from SIMPLE converged P fields (dP_A, dP_B set above at line 580-581
@@ -1587,6 +1654,11 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         'Q_solid_richardson': Q_solid_richardson,
         'Q_richardson_warn': bool(richardson_warn),
         'richardson_info': richardson_info,
+        'true_h_balance': (dict(
+            e_info['true_h_balance'], outer_converged=bool(coupling_converged),
+            post_after_last_thermal=bool(not coupling_converged),
+            state='last true-h solve, before any final post update')
+            if _enthalpy_mode else None),
         # Compressible validity gate (robustness, 2026-06-25)
         'envelope_valid': _env_valid,
         'envelope_reasons': _env_reasons,

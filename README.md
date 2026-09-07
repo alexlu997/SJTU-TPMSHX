@@ -155,7 +155,10 @@ boundaries, pressure taps, manifolds, flow-area definitions, instruments, and
 reduction paths; their individual contributions are not separated. Air is limited
 to the core-specimen L=6..8 mm, t=0.3..0.5 mm domain. sCO2 is HX-effective only
 for uniform symmetric D/G-7-6 and its measured inlet-velocity windows:
-0.5905..2.5731 m/s (Diamond) or 0.6209..2.5022 m/s (Gyroid). The fitted D-F parameters
+0.5827..2.5396 m/s (Diamond) or 0.6120..2.4705 m/s (Gyroid). These ranges use
+corrected absolute pressures for the same measured hot-side `ok_dp` members,
+mass flows and experimental flow areas; sF remains frozen at 6.313005350332494
+(Diamond) and 7.608907691857889 (Gyroid). The fitted D-F parameters
 act as the porous-region closure and may be used with valid custom inlet/outlet
 centres, widths, and any solver-supported flow direction; the calibration
 measurements themselves used full faces with x-direction flow.
@@ -383,19 +386,32 @@ also checks the inlet-face integral of `epsilon/2 * rho * u * dA` against the
 measured mass flow at `1e-6` relative tolerance. Experimental Q is the midpoint
 of the hot- and cold-side `mdot * abs(h_in - h_out)` values; it is a validation
 reference only and does not refit Nu or the fixed CFD D-F coefficients.
+For this experiment, the loader converts measured gauge MPa to absolute Pa
+once by adding 101325 Pa. Endpoint enthalpies and signed hot/cold duties use
+the locked CoolProp CO2 path at each measured endpoint temperature and absolute
+pressure. The solver inlet pressure and mass-to-velocity conversion use the
+same absolute pressure. Raw gauge pressures, measured pressure drops, and
+cached REFPROP enthalpies/Q/heat balance remain available alongside the new
+`coolprop-heos-gauge-101325-v1` reference; the original REFPROP version is unknown.
+This derived reference is not an independent validation of the equation of state.
 
-The default smoke and `--case` runs check numerical diagnostics only. Explicit
-experimental-Q acceptance requires `--accept-q --all-valid`:
+The default smoke, `--case`, and dynamically selected `--all-valid` runs check
+numerical diagnostics only. Experimental-Q acceptance requires the original
+case list from a prior acceptance metadata JSON (`expected_cases`), preserving
+the same Diamond 43 / Gyroid 40 members across pressure/reference changes:
 
 ```bash
-python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q --all-valid --accept-q --dimension both --csv .cache/sco2-exp-q.csv
+python -m sjtu_tpmshx.validation.cases.validate_sco2_exp_q --case-manifest .cache/prior-acceptance.csv.meta.json --accept-q --dimension both --csv .cache/sco2-exp-q.csv
 ```
 
 This applies only to the D/G-7-6 sCO2 whole-exchanger experiment in the
-`实验数据处理-Diamond` and `实验数据处理-Gyroid` workbook sheets. The fixed
-selection retains cases with both sides passing `ok_done`, `ok_hb`, inlet/outlet
-temperature 280–700 K and inlet/outlet pressure 8–16 MPa; it adds no `ok_dp` or
-`ok_dT` exclusion. Each selected dimension/topology must contain every planned
+`实验数据处理-Diamond` and `实验数据处理-Gyroid` workbook sheets. Fixed members
+are retained even if new reference quality checks fail; new qualifying cases
+are not added. Acceptance requires both sides passing `ok_done`, recomputed
+`ok_hb`, positive finite signed heat duty and mass flow, inlet/outlet temperature
+280–700 K and absolute inlet/outlet pressure 8–16 MPa. Old and new heat-balance
+flags are reported; there is no `ok_dp` or `ok_dT` exclusion.
+Each selected dimension/topology must contain every planned
 case exactly once, with finite positive Q values and all existing numerical
 checks passing. Empty, missing, duplicate or failed results cannot pass.
 Errors are recomputed as `e = Qsolver/Qref - 1`; `sqrt(mean(e**2))` must be

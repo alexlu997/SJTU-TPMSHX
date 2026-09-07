@@ -108,7 +108,10 @@ explicit numerical-model change with directly relevant validation.
     sCO2 uses only D/G-7-6 hot-side `ok_dp` evidence, keeps K=K0, and is
     HX-effective: uniform symmetric core, no zones, delta, other L/t, or
     independent cold-side fit. Its measured inlet-velocity windows are
-    0.5905..2.5731 m/s (Diamond) and 0.6209..2.5022 m/s (Gyroid). The fitted
+    0.5827..2.5396 m/s (Diamond) and 0.6120..2.4705 m/s (Gyroid), corrected
+    at absolute pressure for the same hot-side `ok_dp` members, measured mass
+    flows and experimental flow areas. sF remains frozen at 6.313005350332494
+    (Diamond) and 7.608907691857889 (Gyroid). The fitted
     D-F parameters are a porous-region
     closure and may be used with valid custom port centres, widths, and every
     solver-supported flow direction; only the full-face x-direction calibration

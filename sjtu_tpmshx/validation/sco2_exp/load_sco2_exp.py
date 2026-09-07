@@ -10,7 +10,9 @@
 
 约化口径（全部从原始测量列自算, 不信任表内已算的 Re/Pr/Nu/f 列——
 其 f 口径与 repo 不一致, 差数倍）:
-    物性        CoolProp @ (T̄, P̄)（该侧进出口均温均压）
+    压力        本批原 Pin/Pout 为表压 MPa，绝压 = 表压*1e6+101325 Pa
+    焓/Q        CoolProp @ 各实测端点(T, P_abs)，保留旧 REFPROP 缓存
+    物性        CoolProp @ (T̄, P̄_abs)（该侧进出口均温均绝压）
     Dh          tpms_calc 体素口径（与 CFD 关联式/求解器同源;
                 表内特征长度另存 Dh_sheet_m 供对照）
     u           间隙流速 = ṁ / (ρ̄ · A_flow)（A_flow = 表内硬件流通面积）
@@ -36,12 +38,14 @@ import pandas as pd
 
 _THIS = Path(__file__).resolve()
 _PKG_ROOT = _THIS.parent.parent.parent          # .../sjtu_tpmshx
-from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry  # noqa: E402
+from sjtu_tpmshx.solvers.tpms_props import (  # noqa: E402
+    P_atm, geometry as tpms_geometry)
 from sjtu_tpmshx.logutil import get_logger  # noqa: E402
 
 _log = get_logger(__name__)
 
 XLSX = _PKG_ROOT.parent / "data" / "raw_data" / "sCO2-Experient.xlsx"
+REFERENCE_VERSION = "coolprop-heos-gauge-101325-v1"
 
 # 每表独立列映射（0-based）。header 断言字串取自 row3（含换行已压平）。
 _MAPS = {
@@ -49,8 +53,10 @@ _MAPS = {
         sheet="实验数据处理-Diamond",
         geo_row=4, L_ch=14, Dh_sheet=15, A_flow=16, A_heat=17,
         done=12,
-        hot=dict(mdot=18, Tin=19, Pin=20, Tout=21, Pout=22, Q=30, dP=31),
-        cold=dict(mdot=23, Tin=24, Pin=25, Tout=26, Pout=27, Q=34, dP=35),
+        hot=dict(mdot=18, Tin=19, Pin=20, Tout=21, Pout=22,
+                 hin=28, hout=29, Q=30, dP=31),
+        cold=dict(mdot=23, Tin=24, Pin=25, Tout=26, Pout=27,
+                  hin=32, hout=33, Q=34, dP=35),
         hb=36,
         guards={18: "质量流量", 30: "换热量", 31: "压差", 35: "压差",
                 36: "热平衡"},
@@ -60,9 +66,11 @@ _MAPS = {
         geo_row=4, L_ch=14, Dh_sheet=15, A_flow=16, A_heat=17,
         done=12,
         # 两侧测试块各多一列 差压计 MPa（21 / 27）, 其后 +2 偏移
-        hot=dict(mdot=18, Tin=19, Pin=20, Tout=22, Pout=23, Q=32, dP=33,
+        hot=dict(mdot=18, Tin=19, Pin=20, Tout=22, Pout=23,
+                 hin=30, hout=31, Q=32, dP=33,
                  dP_gauge=21),
-        cold=dict(mdot=24, Tin=25, Pin=26, Tout=28, Pout=29, Q=36, dP=37,
+        cold=dict(mdot=24, Tin=25, Pin=26, Tout=28, Pout=29,
+                  hin=34, hout=35, Q=36, dP=37,
                   dP_gauge=27),
         hb=38,
         guards={18: "质量流量", 21: "差压计", 32: "换热量", 33: "压差",
@@ -85,7 +93,13 @@ def _check_guards(df: pd.DataFrame, mp: dict, topo: str) -> None:
 
 
 def load_exp(topo: str = "Diamond") -> pd.DataFrame:
-    """一侧一行的 tidy 表（每工况 hot/cold 两行), 含重算量与过滤旗标."""
+    """One row per measured side; raw gauge/cached fields remain unchanged.
+
+    Q_kW/HB and reduced properties use the corrected absolute pressure.
+    The source's Q/HB and REFPROP enthalpies remain in *_cached columns.
+    This conversion belongs only to this experiment, not generic fluid inputs.
+    """
+    from CoolProp import AbstractState, __version__
     from CoolProp.CoolProp import PropsSI
 
     mp = _MAPS[topo]
@@ -114,9 +128,11 @@ def load_exp(topo: str = "Diamond") -> pd.DataFrame:
             "Pin_MPa": pd.to_numeric(d[c["Pin"]], errors="coerce"),
             "Tout_C": pd.to_numeric(d[c["Tout"]], errors="coerce"),
             "Pout_MPa": pd.to_numeric(d[c["Pout"]], errors="coerce"),
-            "Q_kW": pd.to_numeric(d[c["Q"]], errors="coerce"),
+            "hin_cached_kJ_kg": pd.to_numeric(d[c["hin"]], errors="coerce"),
+            "hout_cached_kJ_kg": pd.to_numeric(d[c["hout"]], errors="coerce"),
+            "Q_cached_kW": pd.to_numeric(d[c["Q"]], errors="coerce"),
             "dP_MPa": pd.to_numeric(d[c["dP"]], errors="coerce"),
-            "HB": pd.to_numeric(d[mp["hb"]], errors="coerce"),
+            "HB_cached": pd.to_numeric(d[mp["hb"]], errors="coerce"),
             "done": done,
         })
         if "dP_gauge" in c:
@@ -128,7 +144,16 @@ def load_exp(topo: str = "Diamond") -> pd.DataFrame:
     # 壁温构造需要对侧均温 → 先算两侧均温再并
     for s in (hot, cold):
         s["T_mean_K"] = (s["Tin_C"] + s["Tout_C"]) / 2 + 273.15
-        s["P_mean_Pa"] = (s["Pin_MPa"] + s["Pout_MPa"]) / 2 * 1e6
+        s["Pin_abs_Pa"] = s["Pin_MPa"] * 1e6 + P_atm
+        s["Pout_abs_Pa"] = s["Pout_MPa"] * 1e6 + P_atm
+        s["P_mean_Pa"] = (s["Pin_abs_Pa"] + s["Pout_abs_Pa"]) / 2
+        for endpoint in ("in", "out"):
+            s[f"h{endpoint}_J_kg"] = PropsSI(
+                "H", "T", s[f"T{endpoint}_C"].to_numpy() + 273.15,
+                "P", s[f"P{endpoint}_abs_Pa"].to_numpy(), "CO2")
+    hot["Q_kW"] = hot["mdot"] * (hot["hin_J_kg"] - hot["hout_J_kg"]) / 1e3
+    cold["Q_kW"] = cold["mdot"] * (cold["hout_J_kg"] - cold["hin_J_kg"]) / 1e3
+    hot["HB"] = cold["HB"] = (cold["Q_kW"] - hot["Q_kW"]) / hot["Q_kW"]
     hot["T_other_K"], cold["T_other_K"] = (cold["T_mean_K"].values,
                                            hot["T_mean_K"].values)
     df = pd.concat([hot, cold], ignore_index=True)
@@ -155,10 +180,25 @@ def load_exp(topo: str = "Diamond") -> pd.DataFrame:
     df["ok_dp"] = df["dP_MPa"] > 0
     df["ok_dT"] = df["dT_streams_K"] > _DT_MIN_K
     df["ok_hb"] = df["HB"].abs() <= _HB_MAX
+    df["ok_hb_cached"] = df["HB_cached"].abs() <= _HB_MAX
+    df["ok_heat_flow"] = np.isfinite(df["Q_kW"]) & (df["Q_kW"] > 0)
     df["ok_done"] = ~df["done"].str.contains("作废|重做", na=False)
 
     df.attrs.update(dict(L_ch_m=L_ch, Dh_m=Dh, Dh_sheet_m=Dh_sheet,
                          A_flow_m2=A_flow, A_heat_m2=A_heat))
+    df.attrs["reference"] = {
+        "version": REFERENCE_VERSION,
+        "source": str(XLSX), "sheet": mp["sheet"],
+        "CoolProp_version": __version__,
+        "backend": AbstractState("HEOS", "CO2").backend_name(),
+        "fluid": "CO2", "REFPROP_cached_version": "unknown",
+        "pressure": "Pin_MPa/Pout_MPa are measured gauge; *_abs_Pa = gauge*1e6+101325",
+        "atmospheric_pressure_Pa": P_atm,
+        "enthalpy": "measured endpoint T [K], absolute P [Pa] -> h [J/kg]",
+        "Q": "hot mdot*(hin-hout), cold mdot*(hout-hin); mdot kg/s, Q_kW kW",
+        "HB": "(Qcold-Qhot)/Qhot; abs(HB)<=0.15",
+        "scope": "CoolProp derived reference; no solver outputs or EOS-independent validation",
+    }
     _log.info(
         f"load_exp[{topo}]: {len(df)} 行 ({df['case'].nunique()} 工况×2 侧), "
         f"Dh repo {Dh*1e3:.3f} mm vs 表内 {Dh_sheet*1e3:.3f} mm; "

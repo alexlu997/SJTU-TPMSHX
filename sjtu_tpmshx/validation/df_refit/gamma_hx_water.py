@@ -55,6 +55,8 @@ from sjtu_tpmshx.validation.df_refit.gamma_hx_air import (
 from sjtu_tpmshx.validation.df_refit.gamma_hx_air import run as run_air
 from sjtu_tpmshx.validation.df_refit.gamma_specimen import fit_specimen_gamma
 from sjtu_tpmshx.solvers.tpms_props import water_density, water_viscosity
+from sjtu_tpmshx.solvers.fluid_props import check_water_state
+from sjtu_tpmshx.validation.water_exp import with_water_absolute_pressures
 from sjtu_tpmshx.logutil import get_logger
 
 _log = get_logger(__name__)
@@ -96,7 +98,9 @@ def _load_cases(topo: str) -> pd.DataFrame:
     if resid > 1e-6:
         _log.warning("%s: 压差列与进出口差不一致（max %.3g Pa）——口径变了，"
                      "核实哪一列是原始读数", topo, resid)
-    return d
+    return with_water_absolute_pressures(
+        d, source=_BOOK, sheet=sheet, tin="水进口温度/℃", tout="水出口温度/℃",
+        pin="水进口压力/Pa", pout="水出口压力/Pa")
 
 
 def run() -> pd.DataFrame:
@@ -114,6 +118,8 @@ def run() -> pd.DataFrame:
             T_in = float(r["水进口温度/℃"]) + 273.15
             T_out = float(r["水出口温度/℃"]) + 273.15
             T_bar = 0.5 * (T_in + T_out)
+            P_bar = 0.5 * (r.water_P_in_abs_Pa + r.water_P_out_abs_Pa)
+            check_water_state('water', T_bar, P_bar, where='water HX mean properties')
             rho = float(water_density(T_bar))
             mu = float(water_viscosity(T_bar))
             u = mdot / (rho * A)

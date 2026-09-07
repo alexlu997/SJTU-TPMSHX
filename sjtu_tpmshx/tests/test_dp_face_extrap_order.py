@@ -36,7 +36,8 @@ def _make_state(Ny):
     yc = (np.arange(Ny) + 0.5) * h
     P = _Pfield(yc)[None, :, None]          # (1, Ny, 1)
     ones = np.ones((1, 1), dtype=np.float64)
-    return SimpleNamespace(P=P, inlet_frac=ones, outlet_frac=ones)
+    return SimpleNamespace(P=P, inlet_frac=ones, outlet_frac=ones,
+                           dx=np.ones(1), dz=np.ones(1))
 
 
 def _orders():

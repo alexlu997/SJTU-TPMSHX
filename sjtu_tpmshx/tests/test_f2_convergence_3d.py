@@ -58,22 +58,21 @@ def test_f2_exits_on_tol_with_all_three_gates_met():
     assert s.final_res_mom < 1e-4
     assert s.final_res_mass_local < 1e-6
     assert s.final_res_mass_global < 1e-6
-    # The legacy artifact is still recorded, and still floored well above its
-    # own nominal tol — the whole point of C6.
+    # Keep the separate legacy mass diagnostic; local outlet closure need not
+    # leave its historical boundary-artifact floor.
     assert len(s.residuals) == n
     assert np.isfinite(s.final_res)
 
 
 def test_velocity_static_does_not_terminate():
-    """P0-1. The legacy path returns the moment the velocity field goes static.
-    F2 must keep iterating past that point and reach a materially lower momentum
-    residual — otherwise it is the same premature exit wearing a new name.
+    """F2 must continue past a legacy mass-only or static-velocity exit and
+    reach a materially lower momentum residual.
     """
     s_leg = _make_solver()
     s_leg.track_momentum_residual = True
     conv_leg, n_leg = s_leg.solve(max_iter=3000, tol=1e-12)
-    assert s_leg.exit_reason == 'velocity', \
-        "precondition: the legacy path is expected to exit on LowReExit here"
+    assert s_leg.exit_reason in ('tol', 'velocity'), \
+        "legacy can now reach its mass-only tol after local outlet closure"
     mom_leg = s_leg.mom_residuals[-1]['max']
 
     s_f2 = _make_solver(convergence_mode='f2', mom_tol=1e-4,

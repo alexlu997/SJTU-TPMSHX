@@ -100,6 +100,10 @@ def _parse_inputs_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
     fluid_B = compute_cfg.fluid_B.type
     validate_fluid_type(fluid_A, 'A')
     validate_fluid_type(fluid_B, 'B')
+    from sjtu_tpmshx.solvers.fluid_props import check_water_state
+    for side, config in (('A', compute_cfg.fluid_A), ('B', compute_cfg.fluid_B)):
+        check_water_state(config.type, config.T_in_K, config.P_in_Pa,
+                          where=f'pipeline inlet {side}')
 
     # Surrogate training-domain guard for the UI Compute path (#10) —
     # previously only the optimizer did this; the Compute tab now also
@@ -973,6 +977,7 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_solid_richardson': raw.get('Q_solid_richardson'),
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
             'richardson_info': raw.get('richardson_info'),
+            'true_h_balance': raw.get('true_h_balance'),
             'mass_flow_A_kg_s_per_m': float(
                 raw.get('mass_flow_A_kg_s_per_m', float('nan'))),
             'mass_flow_B_kg_s_per_m': float(

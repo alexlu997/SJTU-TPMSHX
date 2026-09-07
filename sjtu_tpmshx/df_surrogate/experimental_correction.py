@@ -47,8 +47,10 @@ _HX_U_BOUNDS = {
     ("water", "Gyroid"): (0.10, 0.2232167044622796),
     ("air", "Diamond"): (7.656604926203154, 22.759887982116293),
     ("air", "Gyroid"): (7.5230599026715375, 24.54137550823153),
-    ("sco2", "Diamond"): (0.5904924511524777, 2.57313161248901),
-    ("sco2", "Gyroid"): (0.6209347169447897, 2.5022467486185533),
+    # Same hot-side members, mdot and flow area; rho_in uses gauge + 101325 Pa.
+    # Corrected 2026-09-06 with user approval; the sF values above stay frozen.
+    ("sco2", "Diamond"): (0.5826657772921353, 2.53960962894522),
+    ("sco2", "Gyroid"): (0.6119811082039116, 2.470456518760552),
 }
 
 

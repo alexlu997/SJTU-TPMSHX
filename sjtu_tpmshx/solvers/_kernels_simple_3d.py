@@ -440,39 +440,29 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
 
 
 @njit(cache=True, fastmath=True, inline='always')
-def _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz):
-    """Inlet + outlet BC tail shared by the serial and parallel v-sweeps."""
+def _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
+             Nx, Ny, Nz, dx, dy, dz):
+    """Close every open outlet CV: Fn = Fs + Fw - Fe + Fb - Ft."""
+    j = Ny - 1
     for i in range(Nx):
         for k in range(Nz):
             v[i, 0, k] = v_inlet_field[i, k]
-            # Gate outflow by outlet_frac — wall cells pin v=0 (consistent
-            # with _correct_jit_3d).
-            if outlet_frac[i, k] > 0.5:
-                if Ny >= 2:
-                    # N1 (2026-06-28): the continuity operator is ∇·(ε·ρ·u)=0
-                    # (PPE/residual receive ε·ρ, and the residual's outlet face
-                    # uses the cell ε·ρ), so the outlet extrapolation must
-                    # conserve ε·ρ·v — else a y-zoned ε leaves a persistent
-                    # outlet-cell divergence 0.5·v·ρ·(ε_{Ny-1}−ε_{Ny-2}). For a
-                    # uniform-ε column ε cancels analytically; branch on it so
-                    # the original ρ-ratio expression is kept bit-for-bit
-                    # (golden-identical), and only the zoned column pays the ε·ρ
-                    # form (whose FP rounding differs at the last bit).
-                    if eps_field[i, Ny - 2, k] == eps_field[i, Ny - 1, k]:
-                        rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
-                                                + rho_field[i, Ny - 1, k])
-                        rho_outer_face = rho_field[i, Ny - 1, k]
-                        v[i, Ny, k] = (v[i, Ny - 1, k]
-                                       * rho_inner_face / rho_outer_face)
-                    else:
-                        er_inner = 0.5 * (
-                            eps_field[i, Ny - 2, k] * rho_field[i, Ny - 2, k]
-                            + eps_field[i, Ny - 1, k] * rho_field[i, Ny - 1, k])
-                        er_outer = (eps_field[i, Ny - 1, k]
-                                    * rho_field[i, Ny - 1, k])
-                        v[i, Ny, k] = v[i, Ny - 1, k] * er_inner / er_outer
-                else:
-                    v[i, Ny, k] = v[i, Ny - 1, k]
+            if outlet_mask_ij[i, k]:
+                er = rho_field[i, j, k] * eps_field[i, j, k]
+                ers = (.5 * (rho_field[i, j - 1, k] * eps_field[i, j - 1, k] + er)
+                       if j > 0 else er)
+                erw = (.5 * (rho_field[i - 1, j, k] * eps_field[i - 1, j, k] + er)
+                       if i > 0 else er)
+                ere = (.5 * (er + rho_field[i + 1, j, k] * eps_field[i + 1, j, k])
+                       if i < Nx - 1 else er)
+                erb = (.5 * (rho_field[i, j, k - 1] * eps_field[i, j, k - 1] + er)
+                       if k > 0 else er)
+                ert = (.5 * (er + rho_field[i, j, k + 1] * eps_field[i, j, k + 1])
+                       if k < Nz - 1 else er)
+                # Divide six-face continuity by the outlet area dx[i]*dz[k].
+                cross_x = (ere * u[i + 1, j, k] - erw * u[i, j, k]) * dy[j] / dx[i]
+                cross_z = (ert * w[i, j, k + 1] - erb * w[i, j, k]) * dy[j] / dz[k]
+                v[i, Ny, k] = (ers * v[i, j, k] - cross_x - cross_z) / er
             else:
                 v[i, Ny, k] = 0.0
 
@@ -485,12 +475,12 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
                         outlet_frac, inlet_frac,
-                        alpha_u, n_sweeps, use_sou, use_eps):
+                        alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     """Solve the y-momentum equation on the v-staggered face.
 
     Inlet BC applied at j=0 (v[i, 0, k] = v_inlet_field[i, k]) — accepts
     non-uniform inlet profile for manifold mal-distribution modeling (P2).
-    Outlet j=Ny preserves rho*v mass flux for variable-density flow.
+    Outlet j=Ny closes the reference CV's full rho*eps face balance.
     Cell body shared with the parallel variant via `_v_cell_df_3d`.
     """
     for _ in range(n_sweeps):
@@ -504,7 +494,8 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                                   alpha_u, use_sou, use_eps)
 
     # Apply BCs
-    _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
+    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
+             Nx, Ny, Nz, dx, dy, dz)
 
 
 # Parallel red-black Gauss-Seidel variant of `_sweep_v_jit_df_3d`.
@@ -516,7 +507,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
                                  outlet_frac, inlet_frac,
-                                 alpha_u, n_sweeps, use_sou, use_eps):
+                                 alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     for _ in range(n_sweeps):
         for color in range(2):
             for i in prange(Nx):
@@ -529,7 +520,8 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                       rho_field, mu_eff_field, mu_field, eps_field,
                                       K_arr, cF_arr, outlet_frac,
                                       inlet_frac, alpha_u, use_sou, use_eps)
-    _v_bc_3d(v, v_inlet_field, rho_field, eps_field, outlet_frac, Nx, Ny, Nz)
+    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
+             Nx, Ny, Nz, dx, dy, dz)
 
 
 # ── SIMPLE Step 3: w-momentum (z-direction) — new in 3D ────────────
@@ -819,7 +811,7 @@ def _assemble_pp_3d(data, rhs, u, v, w, d_u, d_v, d_w,
 def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
                      v_inlet_field,
                      Nx, Ny, Nz, alpha_p, rho_field, eps_field,
-                     outlet_mask_ij):
+                     outlet_mask_ij, dx, dy, dz):
     """Apply pressure + face-velocity correction and re-enforce BCs."""
     # Pressure correction (skip pinned outlet cells)
     for i in range(Nx):
@@ -853,37 +845,11 @@ def _correct_jit_3d(u, v, w, P, Pp, d_u, d_v, d_w,
             u[0, j, k] = 0.0
             u[Nx, j, k] = 0.0
     for i in range(Nx):
-        for k in range(Nz):
-            v[i, 0, k] = v_inlet_field[i, k]
-            # Wall cells (outlet_mask_ij=False) pin v=0; open cells preserve
-            # rho*v mass flux across the outlet for compressible runs.
-            if outlet_mask_ij[i, k]:
-                if Ny >= 2:
-                    # N1 (2026-06-28): conserve ε·ρ·v (continuity operator), not
-                    # ρ·v — matches _v_bc_3d. Uniform-ε column keeps the original
-                    # ρ-ratio expression bit-for-bit (golden-identical); zoned ε
-                    # uses the ε·ρ form so the outlet cell telescopes.
-                    if eps_field[i, Ny - 2, k] == eps_field[i, Ny - 1, k]:
-                        rho_inner_face = 0.5 * (rho_field[i, Ny - 2, k]
-                                                + rho_field[i, Ny - 1, k])
-                        rho_outer_face = rho_field[i, Ny - 1, k]
-                        v[i, Ny, k] = (v[i, Ny - 1, k]
-                                       * rho_inner_face / rho_outer_face)
-                    else:
-                        er_inner = 0.5 * (
-                            eps_field[i, Ny - 2, k] * rho_field[i, Ny - 2, k]
-                            + eps_field[i, Ny - 1, k] * rho_field[i, Ny - 1, k])
-                        er_outer = (eps_field[i, Ny - 1, k]
-                                    * rho_field[i, Ny - 1, k])
-                        v[i, Ny, k] = v[i, Ny - 1, k] * er_inner / er_outer
-                else:
-                    v[i, Ny, k] = v[i, Ny - 1, k]
-            else:
-                v[i, Ny, k] = 0.0
-    for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0
             w[i, j, Nz] = 0.0
+    _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
+             Nx, Ny, Nz, dx, dy, dz)
 
 
 # ── SIMPLE Step 6: mass residual ──────────────────────────────────
@@ -893,20 +859,10 @@ def _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_field):
     """Max PER-CELL divergence |div(rho.u)| over all cells.
 
     NOT the same quantity as the 2D `_mass_res_jit` (`_kernels_simple_2d.py`),
-    which returns a PLANE-INTEGRATED flux defect `max_j |sum_i rho.v[i,j].dx -
-    Q_in| / Q_in`. Transverse per-cell imbalances cancel within a plane and are
-    invisible to the 2D metric; this one sees them. The two solvers are handed
-    the SAME `tol`, so the 3D target is strictly the harder one — and on the
-    Dirichlet-pressure-outlet row (whose continuity equation `_assemble_pp_3d`
-    REPLACES with `Pp = 0`) it is unreachable by construction. See
-    `simple_solver_3d.solve()`'s docstring and ledger C6 before using this
-    number as a convergence measure.
-
-    Do NOT "port" 2D's `_enforce_mass_conservation` rescale here. Measured no-op:
-    3D's scale would be 1.000194 (below 2D's own 1e-3 warn threshold), and the
-    outlet-row residual is 99.97 % scattered / cancelling (|sum| / sum|.| = 0.03 %),
-    so a global rescale removes 0.03 % of the imbalance and leaves the per-cell
-    floor untouched.
+    which returns a PLANE-INTEGRATED flux defect. This metric includes every
+    cell, including pressure-reference CVs locally closed by `_v_bc_3d`.
+    It measures the pp subproblem; it is not a momentum certificate and must
+    not replace F2. No global outlet rescaling is applied.
 
     (CORRECTION 2026-07-12, codex review: an earlier revision explained the above
     by saying the 2D rescale "zeroes the 2D metric, which is why 2D's tol fires".

@@ -41,33 +41,6 @@ _WATER_T_RANGE  = (273.15, 363.15)  # 0 - 90 °C polynomial water fits
 
 _range_warnings_emitted = set()
 
-# Robustness (2026-06-25): water properties are single-phase liquid fits. Above
-# the 1-atm saturation temperature water is two-phase / superheated and these
-# correlations are physically meaningless. Warn loudly once (the prop functions
-# only receive T, not P, so 373.15 K is used as a conservative threshold).
-_WATER_T_SAT_1ATM = 373.15
-_WATER_TWO_PHASE_WARNED = set()
-
-
-def _warn_water_two_phase(T) -> None:
-    T_arr = np.asarray(T, dtype=float)
-    if T_arr.size == 0:
-        return
-    T_max = float(T_arr.max())
-    if T_max > _WATER_T_SAT_1ATM:
-        message = (
-            f"water properties requested at T={T_max:.1f} K > 1-atm "
-            f"saturation 373.15 K: water is likely two-phase / superheated, "
-            "single-phase liquid correlations are not physical here.")
-        if record_warning(('water_phase',), message):
-            return
-        key = round(T_max, 1)
-        if key in _WATER_TWO_PHASE_WARNED:
-            return
-        _WATER_TWO_PHASE_WARNED.add(key)
-        warnings.warn(message, stacklevel=3)
-
-
 def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
     """Emit a single UserWarning per (name) key when T goes outside the
     fitted validity range. Keeps logs readable when coupled solvers
@@ -126,7 +99,6 @@ def air_cp(T_K):
 def water_density(T_K):
     """Density of liquid water [kg/m³]. Polynomial valid 0-90 °C."""
     _warn_range_once('water_density', T_K, *_WATER_T_RANGE)
-    _warn_water_two_phase(T_K)
     T_C = np.asarray(T_K, dtype=float) - 273.15
     return 999.84 - 0.05 * T_C - 0.004 * T_C**2
 
@@ -143,7 +115,6 @@ def water_viscosity(T_K):
     systematically under-viscous → over-predicted Re_water ~50 % at hi T.
     """
     _warn_range_once('water_viscosity', T_K, *_WATER_T_RANGE)
-    _warn_water_two_phase(T_K)
     T_K_arr = np.asarray(T_K, dtype=float)
     # Floor the (T-140) denominator at 10 K so the 10**(247.8/denom) term stays
     # finite: at T~141 K the raw exponent ~247.8 overflows to +inf in float64

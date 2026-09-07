@@ -73,6 +73,7 @@ def test_pipeline_branch_wires_max_outer_into_solver_config():
     row[31] = 1000.0   # P_Aout gauge
     row[33] = 5000.0   # Q_exp
     df = pd.DataFrame([row])
+    df['water_P_in_abs_Pa'] = 99325.0  # supplied by the experiment loader
 
     orig = cp.Pipeline3D
     v3d_orig = getattr(v3d, 'Pipeline3D', None)
@@ -86,6 +87,7 @@ def test_pipeline_branch_wires_max_outer_into_solver_config():
 
     cc = captured.get('cc')
     assert cc is not None, "runner never constructed a ComputeConfig"
+    assert cc.fluid_B.P_in_Pa == 99325.0
     assert cc.solver.max_outer_ltne == 4, (
         "--max-outer must reach SolverConfig.max_outer_ltne; it was silently "
         "dropped before the 2026-07-11 fix (pipeline ran _MAX_OUTER=5)")
@@ -122,6 +124,7 @@ def test_pipeline_branch_reports_real_pressure_diagnostics():
     row[5], row[7], row[24], row[28] = 0.05, 0.10, 20.0, 200.0
     row[30], row[31], row[33] = 3000.0, 1000.0, 5000.0
     df = pd.DataFrame([row])
+    df['water_P_in_abs_Pa'] = 99325.0
 
     orig = cp.Pipeline3D
     cp.Pipeline3D = _FakePipeline3D

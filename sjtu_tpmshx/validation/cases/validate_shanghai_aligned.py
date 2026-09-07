@@ -231,7 +231,7 @@ def _run_one_case_pipeline(ci, df):
         fluid_A=FluidConfig(type='air', u_mps=u_A, T_in_K=T_Ain_K,
                             P_in_Pa=P_Ain),
         fluid_B=FluidConfig(type='water', u_mps=u_B, T_in_K=T_Bin_K,
-                            P_in_Pa=101325.0),
+                            P_in_Pa=float(df['water_P_in_abs_Pa'].iloc[ci])),
         geometry=GeometryConfig(tpms=TPMS, L_cell_mm=L_CELL, t_wall_mm=T_WALL,
                                 k_s_W_mK=K_S, L_dom_m=L_DOM, H_dom_m=H_DOM),
         # Nz omitted -> 1 -> the 2D path. Grid from the same adaptive_grid the

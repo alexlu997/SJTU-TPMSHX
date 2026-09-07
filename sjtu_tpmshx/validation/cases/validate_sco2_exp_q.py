@@ -65,16 +65,21 @@ def _flow_velocity(mdot_kg_s: float, rho_in_kg_m3: float,
     return mdot_kg_s / (rho_in_kg_m3 * void_area_m2)
 
 
-def _valid_case_numbers(df: pd.DataFrame) -> list[int]:
-    in_range = (
+def _reference_valid(df: pd.DataFrame) -> pd.Series:
+    return (
         df["ok_done"]
         & df["ok_hb"]
+        & df["ok_heat_flow"]
+        & (df["mdot"] > 0)
         & (df["Tin_C"] + 273.15).between(280.0, 700.0)
         & (df["Tout_C"] + 273.15).between(280.0, 700.0)
-        & df["Pin_MPa"].between(8.0, 16.0)
-        & df["Pout_MPa"].between(8.0, 16.0)
+        & df["Pin_abs_Pa"].between(8.0e6, 16.0e6)
+        & df["Pout_abs_Pa"].between(8.0e6, 16.0e6)
     )
-    counts = df[in_range].groupby("case")["side"].nunique()
+
+
+def _valid_case_numbers(df: pd.DataFrame) -> list[int]:
+    counts = df[_reference_valid(df)].groupby("case")["side"].nunique()
     return [int(case) for case in counts[counts == 2].index]
 
 
@@ -97,12 +102,12 @@ def _config(topology: str, hot: pd.Series, cold: pd.Series,
         fluid_A=FluidConfig(
             type="sco2", u_mps=u_hot,
             T_in_K=float(hot["Tin_C"]) + 273.15,
-            P_in_Pa=float(hot["Pin_MPa"]) * 1.0e6,
+            P_in_Pa=float(hot["Pin_abs_Pa"]),
         ),
         fluid_B=FluidConfig(
             type="sco2", u_mps=u_cold,
             T_in_K=float(cold["Tin_C"]) + 273.15,
-            P_in_Pa=float(cold["Pin_MPa"]) * 1.0e6,
+            P_in_Pa=float(cold["Pin_abs_Pa"]),
         ),
         geometry=GeometryConfig(
             tpms=topology, L_cell_mm=7.0, t_wall_mm=0.6,
@@ -124,9 +129,9 @@ def _run_case(topology: str, case: int, dimension: str,
     geo = _solver_geometry(topology)
     model = fluid_props.get("sco2")
     rho_hot = float(model.rho(
-        float(hot["Tin_C"]) + 273.15, float(hot["Pin_MPa"]) * 1.0e6))
+        float(hot["Tin_C"]) + 273.15, float(hot["Pin_abs_Pa"])))
     rho_cold = float(model.rho(
-        float(cold["Tin_C"]) + 273.15, float(cold["Pin_MPa"]) * 1.0e6))
+        float(cold["Tin_C"]) + 273.15, float(cold["Pin_abs_Pa"])))
     u_hot = _flow_velocity(float(hot["mdot"]), rho_hot, geo["void_area_m2"])
     u_cold = _flow_velocity(float(cold["mdot"]), rho_cold, geo["void_area_m2"])
 
@@ -151,6 +156,7 @@ def _run_case(topology: str, case: int, dimension: str,
     q_hot = abs(float(hot["Q_kW"])) * 1.0e3
     q_cold = abs(float(cold["Q_kW"])) * 1.0e3
     q_ref = 0.5 * (q_hot + q_cold)
+    reference_ok = bool(_reference_valid(pd.DataFrame([hot, cold])).all())
     t_hot_out_exp = float(hot["Tout_C"]) + 273.15
     t_cold_out_exp = float(cold["Tout_C"]) + 273.15
     t_lo = min(cfg.fluid_A.T_in_K, cfg.fluid_B.T_in_K)
@@ -171,6 +177,14 @@ def _run_case(topology: str, case: int, dimension: str,
         "case": case,
         "dimension": dimension,
         "df_mode": result.metadata["darcy_forchheimer"]["mode"],
+        "Pin_hot_gauge_MPa": float(hot["Pin_MPa"]),
+        "Pout_hot_gauge_MPa": float(hot["Pout_MPa"]),
+        "Pin_cold_gauge_MPa": float(cold["Pin_MPa"]),
+        "Pout_cold_gauge_MPa": float(cold["Pout_MPa"]),
+        "Pin_hot_abs_Pa": float(hot["Pin_abs_Pa"]),
+        "Pout_hot_abs_Pa": float(hot["Pout_abs_Pa"]),
+        "Pin_cold_abs_Pa": float(cold["Pin_abs_Pa"]),
+        "Pout_cold_abs_Pa": float(cold["Pout_abs_Pa"]),
         "mdot_hot_exp_kg_s": mdot_hot,
         "mdot_hot_solver_kg_s": mdot_hot_actual,
         "flow_err_hot_rel": flow_err_hot,
@@ -187,6 +201,17 @@ def _run_case(topology: str, case: int, dimension: str,
         "heat_area_solver_m2": geo["heat_area_m2"],
         "Q_hot_exp_W": q_hot,
         "Q_cold_exp_W": q_cold,
+        "Q_hot_signed_exp_W": float(hot["Q_kW"]) * 1.0e3,
+        "Q_cold_signed_exp_W": float(cold["Q_kW"]) * 1.0e3,
+        "Q_hot_cached_W": float(hot["Q_cached_kW"]) * 1.0e3,
+        "Q_cold_cached_W": float(cold["Q_cached_kW"]) * 1.0e3,
+        "HB_cached": float(hot["HB_cached"]),
+        "HB": float(hot["HB"]),
+        "ok_hb_cached": bool(hot["ok_hb_cached"]),
+        "ok_hb": bool(hot["ok_hb"] and cold["ok_hb"]),
+        "ok_done": bool(hot["ok_done"] and cold["ok_done"]),
+        "ok_heat_flow": bool(hot["ok_heat_flow"] and cold["ok_heat_flow"]),
+        "reference_ok": reference_ok,
         "Q_ref_W": q_ref,
         "Q_solver_W": q_solver,
         "Q_error_rel": q_solver / q_ref - 1.0,
@@ -278,7 +303,8 @@ def _accept_q(results: pd.DataFrame, expected_cases: dict[str, list[int]],
                 valid = bool(valid and np.isfinite(values).all()
                              and (values > 0.0).all()
                              and np.isfinite(err).all()
-                             and group["numerical_ok"].eq(True).fillna(False).all())
+                             and group["numerical_ok"].eq(True).fillna(False).all()
+                             and group["reference_ok"].eq(True).fillna(False).all())
             limit = Q_RMSRE_LIMITS[topology]
             # Only absorb floating-point roundoff at the inclusive boundary.
             passed = valid and (rmsre <= limit or math.isclose(
@@ -293,20 +319,25 @@ def _accept_q(results: pd.DataFrame, expected_cases: dict[str, list[int]],
 
 
 def run(topologies: list[str], dimensions: list[str], *, case: int | None,
-        all_valid: bool) -> pd.DataFrame:
+        all_valid: bool,
+        fixed_cases: dict[str, list[int]] | None = None) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     expected_cases: dict[str, list[int]] = {}
     ranges = {}
+    references = {}
     for topology in topologies:
         df = load_exp(topology)
         _print_geometry(topology, df)
-        cases = (_valid_case_numbers(df) if all_valid else
+        cases = (fixed_cases[topology] if fixed_cases is not None else
+                 _valid_case_numbers(df) if all_valid else
                  [case if case is not None else SMOKE_CASES[topology]])
         expected_cases[topology] = cases
+        references[topology] = df.attrs["reference"]
         selected = df[df["case"].isin(cases)]
         ranges[topology] = {
             column: [float(selected[column].min()), float(selected[column].max())]
-            for column in ("Tin_C", "Tout_C", "Pin_MPa", "Pout_MPa", "mdot")
+            for column in ("Tin_C", "Tout_C", "Pin_MPa", "Pout_MPa",
+                           "Pin_abs_Pa", "Pout_abs_Pa", "mdot")
         } if cases else {}
         print(f"SELECTION {topology}: dimensions={dimensions}, cases={cases}, "
               f"ranges={ranges[topology]}")
@@ -326,32 +357,59 @@ def run(topologies: list[str], dimensions: list[str], *, case: int | None,
                     f"ok={row['numerical_ok']}, df_mode={row['df_mode']}"
                 )
     result = pd.DataFrame(rows)
-    result.attrs.update(expected_cases=expected_cases, ranges=ranges)
+    result.attrs.update(expected_cases=expected_cases, ranges=ranges,
+                        references=references)
     _print_summary(result)
     return result
+
+
+def _read_manifest(path: Path, topologies: list[str]) -> dict[str, list[int]]:
+    """Read the explicit member lists from a previous acceptance metadata file."""
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict):
+        raise ValueError("case manifest must contain expected_cases")
+    manifest = metadata["expected_cases"]
+    if not isinstance(manifest, dict):
+        raise ValueError("expected_cases must map topologies to case lists")
+    selected = {}
+    for topology in topologies:
+        cases = manifest[topology]
+        if (not isinstance(cases, list) or not cases
+                or any(type(case) is not int or case <= 0 for case in cases)
+                or len(cases) != len(set(cases))):
+            raise ValueError(f"{topology}: expected unique positive integer case IDs")
+        selected[topology] = cases
+    return selected
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--topology", choices=("Diamond", "Gyroid"))
-    parser.add_argument("--case", type=int)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--case", type=int)
     parser.add_argument("--dimension", choices=("2d", "3d", "both"),
                         default="both")
-    parser.add_argument("--all-valid", action="store_true")
+    selection.add_argument("--all-valid", action="store_true")
+    selection.add_argument("--case-manifest", type=Path,
+                           help="previous metadata JSON with fixed expected_cases")
     parser.add_argument("--accept-q", action="store_true",
-                        help="require --all-valid and per-group Q RMSRE limits")
+                        help="require a fixed case manifest and per-group Q RMSRE limits")
     parser.add_argument("--csv", type=Path)
     args = parser.parse_args()
-    if args.all_valid and args.case is not None:
-        parser.error("--all-valid and --case are mutually exclusive")
     if args.case is not None and args.topology is None:
         parser.error("--case requires --topology")
-    if args.accept_q and not args.all_valid:
-        parser.error("--accept-q requires --all-valid")
+    if args.accept_q and args.case_manifest is None:
+        parser.error("--accept-q requires --case-manifest; --all-valid is diagnostic only")
 
     topologies = [args.topology] if args.topology else ["Diamond", "Gyroid"]
     dimensions = (["2d", "3d"] if args.dimension == "both"
                   else [args.dimension])
+    fixed_cases = None
+    if args.case_manifest is not None:
+        try:
+            fixed_cases = _read_manifest(args.case_manifest, topologies)
+        except (OSError, ValueError, KeyError) as exc:
+            parser.error(str(exc))
     pin_path = REPO_ROOT / "data-revision.txt"
     metadata = {
         "script": str(Path(__file__).relative_to(REPO_ROOT)),
@@ -365,9 +423,12 @@ def main() -> int:
                               if pin_path.exists() else None),
         "actual_data_revision": "unverified",
         "topologies": topologies, "dimensions": dimensions,
-        "selection": ("all-valid: ok_done & ok_hb, both sides Tin/Tout 280..700 K "
-                      "and Pin/Pout 8..16 MPa; no ok_dp/ok_dT exclusion"
+        "selection": ("fixed expected_cases from prior metadata; no quality-based reselection"
+                      if fixed_cases is not None else
+                      "all-valid: ok_done & ok_hb & ok_heat_flow, both sides Tin/Tout 280..700 K "
+                      "and absolute Pin/Pout 8..16 MPa; no ok_dp/ok_dT exclusion"
                       if args.all_valid else "case/smoke diagnostic"),
+        "case_manifest": str(args.case_manifest) if args.case_manifest is not None else None,
         "Q_definition": "Qref=0.5*(abs(Qhot)+abs(Qcold)); 2D Q and mdot * 0.042 m",
         "metrics": "e=Qsolver/Qref-1; RMSRE=sqrt(mean(e^2)); bias=mean(e)",
         "model": "production sCO2 Nu and D-F; no refit in this run; not a blind validation claim",
@@ -375,7 +436,7 @@ def main() -> int:
     }
     print("RUN " + json.dumps(metadata))
     result = run(topologies, dimensions, case=args.case,
-                 all_valid=args.all_valid)
+                 all_valid=args.all_valid, fixed_cases=fixed_cases)
     accepted = (_accept_q(result, result.attrs["expected_cases"], dimensions)
                 if args.accept_q else
                 not result.empty and bool(

@@ -48,15 +48,15 @@ def test_zoned_air_air_ok_and_disabled_zones_ok():
                                              zones=ZoneInputConfig(enabled=False)))
 
 
-# ── water two-phase warning above 1-atm boiling ────────────────────────────
-def test_water_density_warns_two_phase_above_boiling():
-    tpms_props._WATER_TWO_PHASE_WARNED.clear()
+# A T-only correlation warns about its fit, never infers phase without P.
+def test_water_density_warns_fit_extrapolation_only():
+    tpms_props._range_warnings_emitted.clear()
     with W.catch_warnings(record=True) as rec:
         W.simplefilter('always')
-        water_density(400.0)               # 127 C, two-phase at 1 atm
+        water_density(400.0)
     msgs = [str(w.message).lower() for w in rec]
-    assert any('two-phase' in m or 'boil' in m or 'saturation' in m
-               for m in msgs), msgs
+    assert any('outside fitted range' in m for m in msgs), msgs
+    assert not any('two-phase' in m or 'saturation' in m for m in msgs), msgs
 
 
 def test_water_viscosity_finite_below_140K():
@@ -73,7 +73,6 @@ def test_water_viscosity_unchanged_for_physical_water():
 
 
 def test_water_density_no_two_phase_warn_in_range():
-    tpms_props._WATER_TWO_PHASE_WARNED.clear()
     with W.catch_warnings(record=True) as rec:
         W.simplefilter('always')
         water_density(330.0)               # 57 C, liquid

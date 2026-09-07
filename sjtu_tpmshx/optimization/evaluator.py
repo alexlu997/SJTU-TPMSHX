@@ -676,14 +676,13 @@ def evaluate_design(x: np.ndarray,
     rcp_A = rho_A_field * air_cp(T_inA)
     rcp_B = rho_B_field * air_cp(T_inB)
 
-    # Port BC → tell the energy solver which inlet cells actually carry flow
-    # (same convention as pipelines/solve_2d.py: the SIMPLE inlet_frac, 1D
-    # along each solver's own cross axis). Full-face runs pass None — the
-    # legacy path, bit-identical.
-    _ports_on = (cfg_full.get('ports_A') is not None
-                 or cfg_full.get('ports_B') is not None)
-    _imA = sA.inlet_frac.astype(np.float64) if _ports_on else None
-    _imB = sB.inlet_frac.astype(np.float64) if _ports_on else None
+    # Inlet conduction uses geometric overlap, not the SIMPLE velocity taper.
+    from sjtu_tpmshx.solvers.simple_solver import _port_fractions_1d
+    _imA, _imB = [
+        (_port_fractions_1d(s.dx_arr, float(port[0]), float(port[1]))[0]
+         if port is not None else None)
+        for s, port in ((sA, cfg_full.get('ports_A')),
+                        (sB, cfg_full.get('ports_B')))]
 
     Ta = Tb = Ts = None
     for outer_it in range(n_rho_loops):
@@ -701,6 +700,12 @@ def evaluate_design(x: np.ndarray,
             Ta_init=Ta, Tb_init=Tb, Ts_init=Ts,
             dx_arr=dx_arr, dy_arr=dy_arr,
             inlet_mask_A=_imA, inlet_mask_B=_imB,
+            # Match the evaluator's existing +x A / -y B face mapping.
+            # SIMPLE velocities already include its inlet profile.
+            inlet_flux_A=(.5 * arrays['eps_arr'][0, :] * sA.rho_field[:, 0]
+                          * sA.v[:, 0] * dy_arr * air_cp(T_inA)),
+            inlet_flux_B=(.5 * arrays['eps_arr'][:, -1] * sB.rho_field[:, 0]
+                          * sB.v[:, 0] * dx_arr * air_cp(T_inB)),
         )
 
         if n_rho_loops == 1:

@@ -17,7 +17,7 @@ def standalone_registries(monkeypatch):
     registries = []
     for module, names in (
         (nu, ('_EXTRAP_WARNED', '_WATER_NU_WARNED', '_SCO2_NU_WARNED')),
-        (tpms_props, ('_range_warnings_emitted', '_WATER_TWO_PHASE_WARNED')),
+        (tpms_props, ('_range_warnings_emitted',)),
     ):
         for name in names:
             registry = set()
@@ -64,10 +64,10 @@ def test_later_opposite_nu_and_property_bounds(standalone_registries):
         tpms_props.air_cp(1100)
         tpms_props.water_density(380)
         tpms_props.water_density(381)
-    assert len(records) == 6
+    assert len(records) == 5
     assert records[('property', 'air_cp', 'lo')].startswith('air_cp: T=[200.0')
     assert '1100.0' in records[('property', 'air_cp', 'hi')]
-    assert 'two-phase' in records[('water_phase',)]
+    assert 'outside fitted range' in records[('property', 'water_density', 'hi')]
     assert all(not s for s in standalone_registries)
     # A run must not consume the next standalone call's first warning.
     with pytest.warns(UserWarning, match='Nu extrap'):

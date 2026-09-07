@@ -74,12 +74,10 @@ def _face_flux_weights(solver: SIMPLESolver3D, dir_code: int,
     if face == 'real_outlet':
         v_face = solver.v[:, -1, :]
         rho_face = solver.rho_field[:, -1, :]
-        mask_face = getattr(solver, 'outlet_frac', None)
         face_idx = -1
     else:  # real_inlet
         v_face = solver.v[:, 0, :]
         rho_face = solver.rho_field[:, 0, :]
-        mask_face = getattr(solver, 'inlet_frac', None)
         face_idx = 0
     dx_sol = solver.dx[:, None]; dz_sol = solver.dz[None, :]
     w = rho_face * np.abs(v_face) * dx_sol * dz_sol
@@ -101,8 +99,7 @@ def _face_flux_weights(solver: SIMPLESolver3D, dir_code: int,
                         "_face_flux_weights: eps_mode='ltne' requires either "
                         "solver.eps_field or explicit eps_f_per_side")
                 w = w * float(eps_f_per_side)
-    if mask_face is not None:
-        w = w * np.asarray(mask_face, dtype=np.float64)
+    # Face-average velocity already contains the open-area fraction.
     if chi_face is not None:
         w = w * np.asarray(chi_face, dtype=np.float64)
     return w

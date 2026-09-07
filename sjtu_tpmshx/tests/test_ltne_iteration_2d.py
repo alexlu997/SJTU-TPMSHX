@@ -13,8 +13,8 @@ from sjtu_tpmshx.tests.test_port_grid_alignment_2d import _case
 @pytest.mark.parametrize('kernel_name', ['_gs_full_chunk', '_gs_full_chunk_rb'])
 @pytest.mark.parametrize('direction', [0, 1, 2, 3])
 def test_outlet_solid_consumes_unrelaxed_a_candidate(kernel_name, direction):
-    # No transport: A's candidate is old Ts=350. The solid must consume that
-    # candidate before the outlet copy, so Ts_out=(2*350+300)/3, not (2*365+300)/3.
+    # No transport: A's outlet equation gives old Ts=350. The solid consumes
+    # that value, so Ts_out=(2*350+300)/3. The real outlet retains its solution.
     n = 4
     zero = np.zeros((n, n))
     one = np.ones((n, n))
@@ -28,8 +28,8 @@ def test_outlet_solid_consumes_unrelaxed_a_candidate(kernel_name, direction):
     outlet = ((-1, slice(None)), (0, slice(None)),
               (slice(None), -1), (slice(None), 0))[direction]
     np.testing.assert_allclose(Ts[outlet], (2 * 350.0 + 300.0) / 3, atol=1e-12, rtol=0)
-    # The final A outlet still copies its relaxed interior neighbour.
-    np.testing.assert_allclose(Ta[outlet], 365.0, atol=1e-12, rtol=0)
+    # The approved physical-face BC replaces the former whole-layer copy.
+    np.testing.assert_allclose(Ta[outlet], 350.0, atol=1e-12, rtol=0)
     np.testing.assert_array_equal(Tb, np.full((n, n), 300.0))
 
 

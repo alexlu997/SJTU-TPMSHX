@@ -178,10 +178,9 @@ def _build_pp_sparsity_3d(Nx, Ny, Nz, outlet_mask_ij):
     PRESSURE-OUTLET boundary condition on the whole outlet face — not merely a
     single-point gauge fixing the pressure datum of a singular system. The two
     are different things and this docstring (and C6's first draft) blurred them.
-    Consequences, all measured:
-      * the outlet row's per-cell mass balance is never solved, so its residual
-        is whatever the momentum sweep leaves there (transverse divergence,
-        dominated by Fz) — see `_mom_res_jit_3d` and ledger C6;
+    Consequences:
+      * the outlet row's continuity is excluded from the PPE; `_v_bc_3d`
+        closes its six-face mass balance by setting the outlet velocity;
       * a uniform outlet pressure is defensible physics for a plenum exit, but
         it is a MODELLING CHOICE, not a numerical necessity. Revisiting it
         (ledger F3: impose Pp=0 on the outlet FACE and keep the last CV's
@@ -352,7 +351,7 @@ def _solve_pp_amg(Pp, u, v, w, d_u, d_v, d_w,
 
 
 def _build_outlet_frac_taper(Nx, Nz, n_taper=8, min_frac=0.2):
-    """Build (Nx, Nz) outlet_frac with 8-cell exponential taper near x/z walls.
+    """Build (Nx, Nz) numerical outlet taper g near x/z walls.
 
     Mirror 2D `_taper(outlet_frac, ...)` which uses `1 - 0.8 * exp(-1.0 * d)`
     where d is the distance-from-wall in cells (1, 2, ..., n_taper).
@@ -413,21 +412,16 @@ class SIMPLESolver3D:
     """
 
     def apply_outlet_taper(self, n_taper=8, min_frac=0.2):
-        """Enable 8-cell exponential taper on outlet_frac near corner walls.
+        """Enable numerical corner damping c=f*g without changing open area.
 
         Mirror 2D pattern: reduces wall-adjacent cell weights to avoid corner
         pressure artifacts. Use for Shanghai-type full-width validation runs.
         """
-        self.outlet_frac = _build_outlet_frac_taper(
+        self._outlet_taper = _build_outlet_frac_taper(
             self.Nx, self.Nz, n_taper=n_taper, min_frac=min_frac)
+        self.outlet_coeff = self.outlet_frac * self._outlet_taper
 
-    # ── outlet_frac ↔ outlet_mask_ij single-source-of-truth ──────────────
-    # The v-sweep gates wall cells via `outlet_frac > 0.5` (line ~434);
-    # `_correct_jit_3d` re-applies the BC via `outlet_mask_ij` (line ~964).
-    # Before this property the two gates could disagree (e.g. callers set
-    # `outlet_frac` to a partial mask but left `outlet_mask_ij` at default
-    # all-True), letting v leak through wall cells at j=Ny after the pressure
-    # correction. Now any write to `outlet_frac` rebuilds the boolean mask.
+    # Raw geometry owns BC/PPE support; c=f*g owns momentum wall damping.
     @property
     def outlet_frac(self):
         return self._outlet_frac
@@ -436,9 +430,8 @@ class SIMPLESolver3D:
     def outlet_frac(self, value):
         arr = np.ascontiguousarray(value, dtype=np.float64)
         self._outlet_frac = arr
-        # Derive boolean wall/open mask: True = open (lets PPE/correction run),
-        # False = wall (pin v=0). Threshold mirrors v-sweep (`> 0.5`).
-        self.outlet_mask_ij = (arr > 0.5).astype(np.bool_)
+        self.outlet_coeff = arr * self._outlet_taper
+        self.outlet_mask_ij = arr > 0.0
         # 2026-07-13 audit: the pp sparsity's `cell_kind` pin set is built from
         # this mask ONCE at the first solve(). Without invalidation, a caller
         # that changes the outlet mask AFTER a solve keeps the OLD pin set —
@@ -452,7 +445,7 @@ class SIMPLESolver3D:
             self._pp_sparsity = None
 
     @staticmethod
-    def extract_dP_weighted(s):
+    def extract_dP_weighted(s, *, numerical_taper=False):
         """Pipe-weighted inlet-outlet dP — geometric open-area weights.
 
         Uses `s.inlet_frac` / `s.outlet_frac` only (per-cell open-area
@@ -460,16 +453,21 @@ class SIMPLESolver3D:
         the inlet face; under-represents high-speed regions on non-uniform
         profiles. For physically-rigorous reduction use
         `extract_dP_mass_flux_weighted`.
+
+        ``numerical_taper=True`` retains the historical corner-weighted
+        report functional; it is not a geometric open-area average.
         """
-        wI = s.inlet_frac; wO = s.outlet_frac
-        mI = wI > 0.01; mO = wO > 0.5
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = s.inlet_frac * area
+        wO = (s.outlet_coeff if numerical_taper else s.outlet_frac) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return 0.0
         return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
                      - np.average(s.P[:, -1, :][mO], weights=wO[mO]))
 
     @staticmethod
-    def extract_dP_face_extrap(s):
+    def extract_dP_face_extrap(s, *, numerical_taper=False):
         """2nd-order inlet/outlet dP — pressure extrapolated to the FACES.
 
         ``extract_dP_weighted`` differences the first/last **cell-centre**
@@ -492,13 +490,18 @@ class SIMPLESolver3D:
         experiment). Same streamwise axis (1) and open-area weights as
         ``extract_dP_weighted``; falls back to the cell-centre value when the
         streamwise direction has < 2 cells.
+
+        ``numerical_taper=True`` explicitly retains the historical f*g*A
+        report weights, as in ``extract_dP_weighted``.
         """
-        wI = s.inlet_frac; wO = s.outlet_frac
-        mI = wI > 0.01; mO = wO > 0.5
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = s.inlet_frac * area
+        wO = (s.outlet_coeff if numerical_taper else s.outlet_frac) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return 0.0
         if s.P.shape[1] < 2:          # need 2 cells to extrapolate
-            return SIMPLESolver3D.extract_dP_weighted(s)
+            return SIMPLESolver3D.extract_dP_weighted(s, numerical_taper=numerical_taper)
         P_in_face = 1.5 * s.P[:, 0, :] - 0.5 * s.P[:, 1, :]
         P_out_face = 1.5 * s.P[:, -1, :] - 0.5 * s.P[:, -2, :]
         return float(np.average(P_in_face[mI], weights=wI[mI])
@@ -517,9 +520,10 @@ class SIMPLESolver3D:
         v_outlet_face = s.v[:, -1, :]
         rho_in = s.rho_field[:, 0, :]
         rho_out = s.rho_field[:, -1, :]
-        wI = rho_in * np.abs(v_inlet_face) * s.inlet_frac
-        wO = rho_out * np.abs(v_outlet_face) * s.outlet_frac
-        mI = wI > 1e-9; mO = wO > 1e-9
+        area = s.dx[:, None] * s.dz[None, :]
+        wI = rho_in * np.abs(v_inlet_face) * area
+        wO = rho_out * np.abs(v_outlet_face) * area
+        mI = wI > 0.0; mO = wO > 0.0
         if not (mI.any() and mO.any()):
             return SIMPLESolver3D.extract_dP_weighted(s)
         return float(np.average(s.P[:, 0, :][mI], weights=wI[mI])
@@ -643,14 +647,8 @@ class SIMPLESolver3D:
         self.d_v = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
         self.d_w = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-        # Outlet: full-width pin at j=Ny-1 by default. `outlet_mask_ij` is
-        # auto-derived from `outlet_frac` via the property setter below so it
-        # stays in sync; the v-sweep gates via `outlet_frac > 0.5` and the
-        # pressure-correction BC re-apply (`_correct_jit_3d`) gates via
-        # `outlet_mask_ij`. Single source of truth = `outlet_frac`.
-        # outlet_frac (Nx, Nz) float — DEFAULT uniform 1.0 (no taper).
-        # Caller can call `self.apply_outlet_taper()` to enable 8-cell corner
-        # taper (mirror 2D pattern, used for Shanghai-type full-width validation).
+        # Geometry defaults to full-face; taper only changes momentum coefficients.
+        self._outlet_taper = np.ones((Nx, Nz), dtype=np.float64)
         self.outlet_frac = np.ones((Nx, Nz), dtype=np.float64)  # sets mask
         self.inlet_frac = np.ones((Nx, Nz), dtype=np.float64)
 
@@ -793,12 +791,14 @@ class SIMPLESolver3D:
         `tol` IS NOT THE CONVERGENCE CRITERION — read this before touching it
         ----------------------------------------------------------------------
         `tol` gates `self.final_res`, the mass residual from `_mass_res_jit_3d`.
-        On this solver that number is dominated by a BOUNDARY ARTIFACT and does
-        not measure convergence. Measured, ledger C6 (2026-07-12):
+        It measures the pressure-correction subproblem, not the momentum
+        fixed point. Before the six-face outlet closure it was dominated by
+        a boundary artifact (ledger C6, 2026-07-12):
 
           * `_build_pp_sparsity_3d` marks EVERY open outlet cell `cell_kind = 1`,
             and `_assemble_pp_3d` then REPLACES those cells' continuity equation
-            with `Pp = 0`. They are never solved. This is a DIRICHLET
+            with `Pp = 0`. Their continuity is now closed by `_v_bc_3d`.
+            This is a DIRICHLET
             PRESSURE-OUTLET BC on the whole outlet face — NOT merely a
             single-point gauge for a singular system. (2D does the same.)
           * The residual is evaluated against `rho_eps_field`, the SAME array
@@ -808,17 +808,17 @@ class SIMPLESolver3D:
 
         SCOPE (added 2026-07-12 after review — the original C6 wording overstated
         this). "~0 by construction" is exact only on the DIRECT-SOLVE path:
-        `N <= _AMG_GATE` (30 000 cells) uses `spsolve`, and the measured
+        `N <= _AMG_GATE` uses `spsolve`, and the historical measured
         outlet-row-excluded residual is 2.9e-17. Above the gate the pp system is
         solved by AMG-preconditioned BiCGStab with an ADAPTIVE `rtol_dyn` that
         can be as loose as 1e-3, so on server-sized grids the old mass residual
         also carries the pp LINEAR-SOLVE error. It is then a diagnostic of the pp
-        sub-problem — still NOT a SIMPLE fixed-point residual, and still polluted
-        by the outlet-pin artifact, but do not quote "2.9e-17" outside the small-
+        sub-problem — still NOT a SIMPLE fixed-point residual; do not quote
+        "2.9e-17" outside the small-
         grid regime.
 
-        Consequences, all confirmed on the Shanghai production pipeline (600
-        cells, direct solve):
+        Historical consequences before local outlet closure, measured on
+        the Shanghai production pipeline (600 cells, direct solve):
 
           * NO case has ever exited via 'tol'. Every one exits on LowReExit's
             velocity criterion. The `stall` exits are this plateau, not a solver
@@ -828,11 +828,10 @@ class SIMPLESolver3D:
           * The floor scales with Nz ONLY (the outlet-plane transverse mesh);
             refining Nx/Ny 4x leaves it unchanged.
 
-        DO NOT "fix" this by skipping the outlet row in `_mass_res_jit_3d` while
-        still letting it drive the exit. That makes the residual tautologically
-        zero, `tol` fires at the min-iter floor, and the momentum field exits
-        UNCONVERGED (measured: dP -2.1% on Shanghai case 1). Continuity converges
-        FASTER than momentum here, so a mass-only `tol` can only ever exit early.
+        Local outlet closure removes that boundary floor, but does not make
+        this residual a momentum certificate. The legacy mass-only `tol`
+        may now fire earlier; its definition is unchanged. Production F2
+        still requires independent momentum and fresh-density mass gates.
 
         The honest criterion is the MOMENTUM residual (`_mom_res_jit_3d`, ledger
         C7) ANDed with a solved-cell mass residual — see `convergence_mode`.
@@ -1046,7 +1045,7 @@ class SIMPLESolver3D:
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
+                      self.outlet_coeff, self.inlet_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
@@ -1054,14 +1053,15 @@ class SIMPLESolver3D:
                       self.rho_field, self.eps_field,
                       self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
-                      self.alpha_u, n_inner, _use_sou, _use_eps)
+                      self.outlet_coeff, self.inlet_frac,
+                      self.alpha_u, n_inner, _use_sou, _use_eps,
+                      self.outlet_mask_ij)
             _sweep_w(self.u, self.v, self.w, self.P, self.d_w,
                       Nx, Ny, Nz, dx, dy, dz,
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_frac, self.inlet_frac,
+                      self.outlet_coeff, self.inlet_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
 
             # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
@@ -1092,19 +1092,16 @@ class SIMPLESolver3D:
             _correct_jit_3d(self.u, self.v, self.w, self.P, self.Pp,
                              self.d_u, self.d_v, self.d_w,
                              self.v_inlet_field, Nx, Ny, Nz, self.alpha_p,
-                             self.rho_field, self.eps_field, self.outlet_mask_ij)
+                             self.rho_field, self.eps_field, self.outlet_mask_ij,
+                             dx, dy, dz)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
 
             # NOTE: `rho_eps_field` here is the PRE-`_update_density` array —
             # the one `_solve_pp_amg` above just solved div(rho_eps.u)=0 against.
-            # So this residual is ~0 by construction on every cell the pp
-            # equation solved, and the reported number is entirely the pinned
-            # outlet row's uncorrected transverse divergence. It is a boundary
-            # artifact, not a convergence measure; `tol` on it is unreachable by
-            # design and never fires. See the solve() docstring and ledger C6
-            # BEFORE changing either the rho used here or the cells summed over —
-            # the obvious "fix" (skip the outlet row) makes it tautologically
-            # zero and exits the momentum field unconverged.
+            # The outlet BC now also closes the pinned CVs against this same
+            # density. This remains a pp-subproblem diagnostic, not a momentum
+            # certificate. Keep its definition for the adaptive AMG schedule;
+            # F2 below independently evaluates the final fresh-density state.
             res = _mass_res_jit_3d(self.u, self.v, self.w,
                                      Nx, Ny, Nz, dx, dy, dz,
                                      rho_eps_field)
@@ -1150,7 +1147,8 @@ class SIMPLESolver3D:
                                          self.d_u, self.d_v, self.d_w,
                                          self.v_inlet_field, Nx, Ny, Nz,
                                          self.alpha_p, self.rho_field,
-                                         self.eps_field, self.outlet_mask_ij)
+                                         self.eps_field, self.outlet_mask_ij,
+                                         dx, dy, dz)
                         self._update_density()
                         # Same A2 inlet-flux normalisation as the main `res`
                         # (line ~910) — comparing a raw kg/s norm against the
@@ -1236,8 +1234,8 @@ class SIMPLESolver3D:
             # ── LEGACY path (convergence_mode='legacy') ──────────────────
             # Strict exit: residual below tol (A2: res is now the inlet-flux-
             # normalised relative norm, so tol means a throughput fraction).
-            # Ledger C6: this `tol` is unreachable in practice — `res` is the
-            # outlet-pin artifact. Kept for bit-identity / back-compat only.
+            # Local outlet closure can remove the old outlet-pin floor. Keep
+            # the legacy criterion unchanged; production uses F2 above.
             if res < tol and it >= 10:
                 self.exit_reason = 'tol'
                 return True, it
@@ -1281,7 +1279,7 @@ class SIMPLESolver3D:
             Nx, Ny, Nz, dx, dy, dz,
             self.rho_field, self._mu_eff_field, self.mu_field,
             self.eps_field, self.K_arr, self.cF_arr,
-            self.outlet_frac, self.inlet_frac, use_sou, use_eps)
+            self.outlet_coeff, self.inlet_frac, use_sou, use_eps)
         d_ref = max(du_, dv_, dw_)
         floor = self._MOM_FLOOR_FRAC * d_ref
         def _r(n, d):
@@ -1340,7 +1338,7 @@ def _warmup_simple_3d():
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
                rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
-               alpha_u, n, 0, 0)
+               alpha_u, n, 0, 0, out_frac > 0.0)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
                rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,

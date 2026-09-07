@@ -508,10 +508,11 @@ def _run_one_case(ci, df, Nx_u, Ny_u, Nz_u, wall_refine=False, verbose=False,
                    if Q_sim_am != 0 else float('nan'))
 
     #   dP from SIMPLE A's converged P field; P2-a' uses pipe-weighted mean
-    #   with outlet_frac taper to down-weight corner cells (mirror 2D).
+    #   with numerical f*g*A weights to down-weight corner cells (mirror 2D).
+    #   This historical report functional is not a geometric area average.
     # 2nd-order: extrapolate P to the inlet/outlet FACES (removes the O(h)
     # cell-centre half-cell offset that capped the boundary dP at ~1st order).
-    dP_A_sim = SIMPLESolver3D.extract_dP_face_extrap(sA)
+    dP_A_sim = SIMPLESolver3D.extract_dP_face_extrap(sA, numerical_taper=True)
 
     err_dP = (dP_A_sim - dP_A_exp) / dP_A_exp * 100 if dP_A_exp != 0 else float('nan')
     err_Q = (Q_sim - Q_exp) / Q_exp * 100 if Q_exp != 0 else float('nan')
@@ -595,7 +596,7 @@ def _run_one_case_pipeline(ci, df, Nx_u, Ny_u, Nz_u, spec=None,
         fluid_A=FluidConfig(type='air', u_mps=u_A, T_in_K=T_Ain_K,
                             P_in_Pa=P_Ain),
         fluid_B=FluidConfig(type='water', u_mps=u_B, T_in_K=T_Bin_K,
-                            P_in_Pa=101325.0),
+                            P_in_Pa=float(df['water_P_in_abs_Pa'].iloc[ci])),
         geometry=GeometryConfig(tpms=spec.tpms, L_cell_mm=spec.L_cell_mm,
                                 t_wall_mm=spec.t_wall_mm,
                                 k_s_W_mK=spec.k_s_W_mK,

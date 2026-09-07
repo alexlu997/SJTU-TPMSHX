@@ -325,13 +325,18 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
 #   Diamond γ=1.7557581458289075 σln=0.1284497503774956;
 #   Gyroid  γ=1.0743811537767434 σln=0.033961111486825596.
 # Uncertainty: pointwise ln-residual σln frozen for downstream UQ.
+# REFROZEN 2026-09-06 with user approval on coolprop-heos-gauge-101325-v1:
+# corrected absolute pressure and measured endpoint-Q reference; same pooled
+# Diamond52/Gyroid80 sides, anchored-amplitude method and smooth CFD base.
+# Re windows follow that same set's corrected reduction. Historical validation
+# only; current solver Nu and the former parameters in Git (0f21d97) are intact.
 GAMMA_NU_SCO2 = {
-    'Diamond': {'gamma': 1.8071381249714116,
-                're_lo': 8950.399055885377, 're_hi': 35173.875658799734,
-                'sig_ln': 0.12840542895995066, 'n': 52},
-    'Gyroid':  {'gamma': 1.1290715256456092,
-                're_lo': 10632.405680243332, 're_hi': 48961.25289670842,
-                'sig_ln': 0.03418246063235273, 'n': 80},
+    'Diamond': {'gamma': 1.8090199573275527,
+                're_lo': 8939.609650115377, 're_hi': 35098.141764163316,
+                'sig_ln': 0.1283563539008298, 'n': 52},
+    'Gyroid':  {'gamma': 1.1303616727629382,
+                're_lo': 10620.777013615836, 're_hi': 48860.02078334884,
+                'sig_ln': 0.03428100882817446, 'n': 80},
 }
 
 _GAMMA_NU_WARNED: set[tuple[str, str]] = set()

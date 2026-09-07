@@ -387,6 +387,8 @@ def compute(tpms_type: str,
        wrapper returns a shallow copy (values are scalars).
     """
     from sjtu_tpmshx.df_surrogate.predict import SCO2_DF_METHOD
+    from .fluid_props import check_water_state
+    check_water_state(fluid_type, T_in_K, P_in_Pa, where='compute inlet')
     # Production V2 closure is fluid-independent and fixed for a TPMS/L/t
     # geometry. Research callers can still invoke predict_K_cF directly with
     # another explicit backend.
