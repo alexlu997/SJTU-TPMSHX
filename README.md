@@ -139,6 +139,25 @@
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
+Water use is currently limited to research and design comparisons for existing
+low-temperature, near-atmospheric-pressure cases, retaining the current property
+formulas. R&D acceptance targets are **RMSRE ≤ 10% for both whole-exchanger Q and
+water-side pressure drop**. Outlet temperature is assessed using absolute error
+in K, alongside the actual temperature rise and measurement uncertainty.
+Acceptance against matching fixed experimental cases is still pending; local
+property comparisons establish neither general high-pressure applicability nor
+whole-exchanger accuracy. The existing Shanghai validation reports **air-side**
+pressure drop by default.
+
+Water pressure-drop measurements serve as a **system-level water-pressure-drop
+proxy**, including inlet/outlet piping losses that cannot be recovered separately.
+Compare the current core prediction directly with measured system loss over fixed
+case members, reporting RMSRE and signed bias against the 10% RMSRE R&D target.
+Underprediction alone does not establish failure of the core resistance model,
+and meeting this proxy target does not demonstrate 10% core pressure-drop accuracy.
+Preserve the measurements without estimating or subtracting piping losses,
+adding offsets, or refitting parameters to pass.
+
 ---
 
 ## 📐 Closure correlations
