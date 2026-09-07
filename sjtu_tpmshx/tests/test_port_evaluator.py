@@ -82,13 +82,14 @@ def test_default_config_is_fullface_no_percell():
 
 def test_energy_inlet_uses_same_physical_face_as_pipeline(monkeypatch):
     from sjtu_tpmshx.optimization import evaluator
-    from sjtu_tpmshx.pipelines.solve_2d import _inlet_transport_2d
+    from sjtu_tpmshx.solvers.tpms_calc import air_cp
     from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver, _port_fractions_1d
     cfg = {**_CFG_SMALL, 'ports_A': (.015, .045, 0., .03),
            'ports_B': (.015, .045, .03, .06)}
     captured = []
 
     def face_only(s, **kwargs):
+        s.rho_field[:, 0] = np.arange(2., s.Nx + 2.)
         s.v[:, 0] = np.arange(1., s.Nx + 1.) * s.inlet_frac
         s.v[:, 1] = .1 * s.v[:, 0]  # Centre and inlet face deliberately differ.
         captured.append(s)
@@ -99,10 +100,11 @@ def test_energy_inlet_uses_same_physical_face_as_pipeline(monkeypatch):
 
     def energy(*args, **kwargs):
         eps = .5 * args[13]
-        for side, s, rcp, direction in zip(('A', 'B'), captured,
-                                           (args[11], args[12]), (0, 3)):
-            expected = _inlet_transport_2d(
-                s, direction, eps, rcp, kwargs['dx_arr'], kwargs['dy_arr'])
+        for side, s, eps_in, width in zip(
+                ('A', 'B'), captured, (eps[0, :], eps[:, -1]),
+                (kwargs['dy_arr'], kwargs['dx_arr'])):
+            expected = (eps_in * np.arange(2., s.Nx + 2.) * s.v[:, 0]
+                        * width * air_cp(cfg[f'T_in{side}']))
             np.testing.assert_allclose(kwargs[f'inlet_flux_{side}'], expected,
                                        rtol=1e-14, atol=0)
             port = cfg[f'ports_{side}']

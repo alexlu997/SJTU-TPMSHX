@@ -702,8 +702,10 @@ def evaluate_design(x: np.ndarray,
             inlet_mask_A=_imA, inlet_mask_B=_imB,
             # Match the evaluator's existing +x A / -y B face mapping.
             # SIMPLE velocities already include its inlet profile.
-            inlet_flux_A=.5 * arrays['eps_arr'][0, :] * rcp_A[0, :] * sA.v[:, 0] * dy_arr,
-            inlet_flux_B=.5 * arrays['eps_arr'][:, -1] * rcp_B[:, -1] * sB.v[:, 0] * dx_arr,
+            inlet_flux_A=(.5 * arrays['eps_arr'][0, :] * sA.rho_field[:, 0]
+                          * sA.v[:, 0] * dy_arr * air_cp(T_inA)),
+            inlet_flux_B=(.5 * arrays['eps_arr'][:, -1] * sB.rho_field[:, 0]
+                          * sB.v[:, 0] * dx_arr * air_cp(T_inB)),
         )
 
         if n_rho_loops == 1:

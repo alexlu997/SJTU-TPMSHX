@@ -285,20 +285,18 @@ def _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy):
             np.ascontiguousarray(cy * uy * np.asarray(dx)[:, None]))
 
 
-def _inlet_transport_2d(simp, direction, eps_side, rho_cp, dx, dy):
-    """Signed inward heat-capacity flux on the actual SIMPLE inlet, W/(m K)."""
-    ux, uy = _simple_staggered_to_real_2d(simp, direction)
-    coef = np.broadcast_to(np.asarray(eps_side) * np.asarray(rho_cp),
-                           (len(dx), len(dy)))
+def _inlet_transport_2d(simp, direction, eps_side, cp_in, dx, dy):
+    """Actual inward SIMPLE face mass times cp(Tin, Pin), W/(m K)."""
+    mx, my = _face_mass_fluxes_2d(simp, direction, eps_side, dx, dy)
     if direction == 0:
-        flux = coef[0] * ux[0] * dy
+        flux = mx[0]
     elif direction == 1:
-        flux = -coef[-1] * ux[-1] * dy
+        flux = -mx[-1]
     elif direction == 2:
-        flux = coef[:, 0] * uy[:, 0] * dx
+        flux = my[:, 0]
     else:
-        flux = -coef[:, -1] * uy[:, -1] * dx
-    return np.ascontiguousarray(flux)
+        flux = -my[:, -1]
+    return np.ascontiguousarray(flux * cp_in)
 
 
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
@@ -531,11 +529,11 @@ def _compute_Q_richardson(
     # Cumulative interpolation conserves each coarse face's input; it does not
     # interpolate a cell-centre velocity onto a different physical boundary.
     eps_coarse = za['eps_arr'] if za is not None and 'eps_arr' in za else eps
-    def _refined_inlet(simp, direction, rcp, split):
+    def _refined_inlet(simp, direction, cp_in, split):
         coarse = energy_dy if direction <= 1 else energy_dx
         fine = energy_dy2 if direction <= 1 else energy_dx2
         flux = _inlet_transport_2d(
-            simp, direction, eps_coarse * split, rcp, energy_dx, energy_dy)
+            simp, direction, eps_coarse * split, cp_in, energy_dx, energy_dy)
         return np.diff(np.interp(np.r_[0., np.cumsum(fine)],
                                  np.r_[0., np.cumsum(coarse)],
                                  np.r_[0., np.cumsum(flux)]))
@@ -547,8 +545,8 @@ def _compute_Q_richardson(
         dir_A, dir_B, tol=0.5, max_iter=5000,
         dx_arr=energy_dx2, dy_arr=energy_dy2,
         inlet_mask_A=areaA_in2, inlet_mask_B=areaB_in2, return_info=True,
-        inlet_flux_A=_refined_inlet(simpA, dir_A, rho_cp_A, split_A),
-        inlet_flux_B=_refined_inlet(simpB, dir_B, rho_cp_B, 1. - split_A),
+        inlet_flux_A=_refined_inlet(simpA, dir_A, _pA['cp'](T_inA, P_inA_val), split_A),
+        inlet_flux_B=_refined_inlet(simpB, dir_B, _pB['cp'](T_inB, P_inB_val), 1. - split_A),
         Ta_init=Ta_init2, Tb_init=Tb_init2, Ts_init=Ts_init2,
         eps_A=epsA2_use, eps_B=epsB2_use, cancel_check=cancel_check)
     for side, pressure in water_pressures:
@@ -1306,10 +1304,10 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                 inlet_mask_A=_imA, inlet_mask_B=_imB,
                 inlet_flux_A=_inlet_transport_2d(
                     simpA, dir_A, _epsA_use if _epsA_use is not None else .5*_eps_src,
-                    rho_cp_A, energy_dx, energy_dy),
+                    _pA['cp'](T_inA, P_inA_val), energy_dx, energy_dy),
                 inlet_flux_B=_inlet_transport_2d(
                     simpB, dir_B, _epsB_use if _epsB_use is not None else .5*_eps_src,
-                    rho_cp_B, energy_dx, energy_dy),
+                    _pB['cp'](T_inB, P_inB_val), energy_dx, energy_dy),
                 eps_A=_epsA_use, eps_B=_epsB_use, cancel_check=cancel_check)
 
         fluid_props.check_water_state(fluid_A, Ta, P_abs_A, where='2D energy return A')
