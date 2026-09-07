@@ -1139,7 +1139,7 @@ class ThreeDVisPanel(QWidget):
         pl = self.plotter
         pl.clear()
         t = get_theme()
-        pl.add_mesh(self._grid.outline(), color=t['wireframe'], line_width=2)
+        pl.add_mesh(self._grid.outline(), color=t['wireframe'], line_width=2, render=False)
         # Minimal bounds: only endpoint ticks (2 per axis) + smaller font
         # so numbers don't collide with the bounding-box edges. The full 3-tick
         # grid was overlapping the wireframe on narrow geometries like 42 mm.
@@ -1168,7 +1168,7 @@ class ThreeDVisPanel(QWidget):
                 color=t['ax_text'],
             )
         self._add_flow_glyph()
-        pl.view_isometric()
+        pl.view_isometric(render=False)
         # Auto-fit zoom: 182×42×42 mm aspect is very flat → camera framed
         # too loose by default. 1.75 fills the viewport more (less white
         # margin) while staying clear of clipping the long edges. (A flat
@@ -1215,10 +1215,10 @@ class ThreeDVisPanel(QWidget):
                                   height=tip_len, radius=radius, resolution=32)
             self.plotter.add_mesh(
                 inlet_cone, color=inlet_color, opacity=opacity,
-                name=f'_flow_inlet_{tag}', show_scalar_bar=False, lighting=True)
+                name=f'_flow_inlet_{tag}', show_scalar_bar=False, lighting=True, render=False)
             self.plotter.add_mesh(
                 outlet_cone, color=outlet_color, opacity=opacity,
-                name=f'_flow_outlet_{tag}', show_scalar_bar=False, lighting=True)
+                name=f'_flow_outlet_{tag}', show_scalar_bar=False, lighting=True, render=False)
 
         try:
             _add_pair(self._flow_dir, 'A',
@@ -1313,12 +1313,12 @@ class ThreeDVisPanel(QWidget):
         # (PyVista's add_volume + slice without `show_scalar_bar=False`
         # previously spawned a horizontal bar at the bottom of the viewport.)
         try:
-            pl.remove_scalar_bar()
+            pl.remove_scalar_bar(render=False)
         except Exception:
             pass
         for fkey in list(FIELD_META.keys()):
             try:
-                pl.remove_scalar_bar(FIELD_META[fkey]['title'])
+                pl.remove_scalar_bar(FIELD_META[fkey]['title'], render=False)
             except Exception:
                 pass
         # 2026-05-20 UI sweep: guard against `self._field` being a stale
@@ -1326,9 +1326,11 @@ class ThreeDVisPanel(QWidget):
         # callers of `_rebuild_volume`). Also clear `_volume_actor`
         # ahead of `add_volume` so an exception below does not leave a
         # dangling reference to the just-removed actor.
-        if self._field not in FIELD_META:
-            return
         self._volume_actor = None
+        if self._field not in FIELD_META:
+            if render:
+                pl.render()
+            return
         meta = FIELD_META[self._field]
         clim = self._clim_for(self._field)
         opacity_list = list(self._opacity_ramp())
@@ -1346,6 +1348,7 @@ class ThreeDVisPanel(QWidget):
                 # trimmed to 0.65 to keep overall brightness balanced.
                 shade=False,
                 name='main_volume',
+                render=False,
                 show_scalar_bar=False,     # suppress volume's built-in bar
             )
             # Ray sampling on the UPSAMPLED grid. Smoothness now comes from the
