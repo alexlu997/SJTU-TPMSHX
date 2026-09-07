@@ -27,6 +27,7 @@ import numpy as np
 from sjtu_tpmshx.domain.cancellation import CancelledError
 
 from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain as _solve_full_2d
+from sjtu_tpmshx.solvers.tpms_props import model_h_coefficients
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +225,8 @@ _Q_FLOOR_W = 1.0
 
 def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
                                dx, dy, dz, dir_code, Tin, ifrac, mms_source,
-                               inlet_flux=None):
+                               inlet_flux=None, model_mass=None, model_cp=None,
+                               return_field=False):
     """Full-CV conservative temperature-equation residual for one fluid phase (B-plan B2).
 
     Evaluates, on the CONVERGED field, the residual of the *conservative*
@@ -237,8 +239,8 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     All actual cells, including both end layers, are included. The physical
     inlet has Tin and half-cell diffusion; other exterior diffusion is zero.
     Returns (sum residual, full-volume solid exchange, max cell residual).
-    This certifies the temperature discretisation with its specified inlet F,
-    not physical enthalpy conservation when rho or cp varies.
+    With model_mass, rebuild nonlinear model-h fluxes at the returned T.
+    Otherwise this certifies the original capacity-temperature discretisation.
     """
     Nx, Ny, Nz = T.shape
     Ax = (dy[None, :, None] * dz[None, None, :])
@@ -264,6 +266,9 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
             0 if dir_code % 2 == 0 else -1]
         inlet_face[:] = np.where(
             ifrac > 0.0, inlet_flux * (1.0 if dir_code % 2 == 0 else -1.0), inlet_face)
+    if model_mass is not None:
+        (Fx, Fy, Fz), deferred = _model_h_faces(
+            T, model_mass, model_cp, dir_code, Tin, ifrac)
     Fe = Fx[1:]; Fw = Fx[:-1]; Fn = Fy[:, 1:]; Fs = Fy[:, :-1]
     Ft = Fz[:, :, 1:]; Fb = Fz[:, :, :-1]
     net_out = (Fe - Fw) + (Fn - Fs) + (Ft - Fb)
@@ -305,7 +310,8 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     # residual of the equation the kernel actually solves (FO implicit + sou).
     # The sou itself telescopes, so conservation is preserved; r → 0 at
     # convergence. (For pure-upwind it is identically 0 ⇒ no-op.)
-    r = r - _sou_field_cons(T, Fx, Fy, Fz)
+    r = (r + _face_divergence(deferred) if model_mass is not None
+         else r - _sou_field_cons(T, Fx, Fy, Fz))
 
     axis = dir_code // 2
     sl = [slice(None)] * 3
@@ -320,6 +326,8 @@ def _conservation_residual_sum(T, Ts, uf, vf, wf, eps_f, K, rcp, hv,
     r[sl] += (Din + np.where(ifrac > 0.0, incoming, 0.0)) * (T[sl] - Tin)
     r -= mms_source * vol
     src = hv * vol * (Ts - T)
+    if return_field:
+        return r, src, Din * (Tin - T[sl])
     return float(np.sum(r)), float(np.sum(src)), float(np.max(np.abs(r)))
 
 
@@ -339,6 +347,9 @@ from ._kernels_ltne_3d import (  # noqa: F401
     _sou_face_y_cons,
     _sou_face_z_cons,
     _sou_field_cons,
+    _model_h,
+    _model_h_faces,
+    _face_divergence,
     _is_inlet,
     _inlet_frac,
     _inlet_val,
@@ -494,6 +505,86 @@ _RB_ENERGY = True
 _RB_ENERGY_GATE = 30_000
 
 
+def _model_h_balance(temperatures, Ts, masses, coefficients, directions, inlets,
+                     masks, conductivities, Kss, exchanges, porosities, sources,
+                     solid_source, dx, dy, dz):
+    """Last returned thermal state; no EOS, flow correction or physical PASS."""
+    volume = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
+    zeros = np.zeros_like(Ts)
+    zero_faces = tuple(np.zeros_like(f) for f in masses[0])
+    result = dict(reference_K=coefficients[0][4], cell_count=int(Ts.size),
+                  full_volume_m3=float(volume.sum()),
+                  mass_source='completed SIMPLE raw faces before capacity balance/MAC',
+                  thermal_state='last returned temperatures; nonlinear model h and temperature SOU',
+                  sides={})
+    residuals = []
+    exchange_fields = []
+    for side, T, mass, coeff, direction, Tin, mask, K, hv, eps, source in zip(
+            ('A', 'B'), temperatures, masses, coefficients, directions, inlets,
+            masks, conductivities, exchanges, porosities, sources):
+        capacity, deferred = _model_h_faces(T, mass, coeff, direction, Tin, mask)
+        r, exchange, inlet_diffusion = _conservation_residual_sum(
+            T, Ts, *zero_faces, eps, K, zeros, hv, dx, dy, dz, direction, Tin,
+            mask, source, model_mass=mass, model_cp=coeff, return_field=True)
+        faces = {}
+        for axis in range(3):
+            for end, sign in ((0, -1), (-1, 1)):
+                face_T = np.take(T, end, axis=axis)
+                outward_mass = sign * np.take(mass[axis], end, axis=axis)
+                inlet = axis == direction // 2 and end == (0 if direction % 2 == 0 else -1)
+                patch = mask > 0 if inlet else np.zeros_like(face_T, dtype=bool)
+                inflow = outward_mass < 0.0
+                up_T = np.where(patch & inflow, Tin if inlet else face_T, face_T)
+                energy = sign * (np.take(capacity[axis], end, axis=axis) * up_T
+                                 + np.take(deferred[axis], end, axis=axis))
+                unknown = inflow & ~patch
+                faces['xyz'[axis] + ('-' if end == 0 else '+')] = dict(
+                    outward_mass_kg_s=float(outward_mass.sum()),
+                    outward_model_h_W=float(energy.sum()),
+                    non_inlet_inward_mass_kg_s=float(-outward_mass[unknown].sum()),
+                    unknown_inflow_count=int(unknown.sum()),
+                    inlet_reverse_outward_mass_kg_s=float(outward_mass[patch & ~inflow].sum()))
+        complete = all(f['unknown_inflow_count'] == 0 for f in faces.values())
+        convective_inward = -sum(f['outward_model_h_W'] for f in faces.values())
+        diffusion_inward = float(inlet_diffusion.sum())
+        result['sides'][side] = dict(
+            faces=faces, physical_boundary_complete=complete,
+            model_cp_coefficients=list(coeff),
+            temperature_range_K=[float(T.min()), float(T.max())],
+            net_outward_mass_kg_s=sum(f['outward_mass_kg_s'] for f in faces.values()),
+            convective_inward_W=convective_inward,
+            inlet_diffusion_inward_W=diffusion_inward,
+            numerical_external_inward_W=convective_inward+diffusion_inward,
+            physical_external_inward_W=convective_inward+diffusion_inward if complete else None,
+            fluid_solid_exchange_to_fluid_W=float(exchange.sum()),
+            explicit_source_W=float((source*volume).sum()),
+            residual_sum_W=float(r.sum()), residual_max_abs_W=float(np.max(np.abs(r))),
+            strict_normalization_W=max(abs(float(exchange.sum())), _Q_FLOOR_W))
+        residuals.append(r)
+        exchange_fields.append(exchange)
+    # Reuse the existing nonuniform conduction operator for the solid, with
+    # zero advection/inlet area; exchange cancels the two fluid equations.
+    rsolid, _, _ = _conservation_residual_sum(
+        Ts, Ts, *zero_faces, porosities[0], Kss, zeros, zeros, dx, dy, dz, 0,
+        Ts[0], np.zeros_like(Ts[0]), solid_source, return_field=True)
+    rsolid += exchange_fields[0] + exchange_fields[1]
+    all_residual = residuals[0] + residuals[1] + rsolid
+    external = sum(s['numerical_external_inward_W'] for s in result['sides'].values())
+    explicit = float(((sources[0]+sources[1]+solid_source)*volume).sum())
+    complete = all(s['physical_boundary_complete'] for s in result['sides'].values())
+    result.update(
+        physical_boundary_complete=complete,
+        numerical_external_inward_W=external,
+        physical_external_inward_W=external if complete else None,
+        explicit_source_W=explicit, solid_external_diffusion_W=0.0,
+        solid_residual_sum_W=float(rsolid.sum()),
+        solid_residual_max_abs_W=float(np.max(np.abs(rsolid))),
+        full_residual_sum_W=float(all_residual.sum()),
+        telescoping_error_W=float(all_residual.sum())+external+explicit,
+        qualification='No physical acceptance inferred. Non-inlet inflow uses numerical self-extrapolation; its external h is unspecified.')
+    return result
+
+
 def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           T_inA, T_inB,
                           K_ffA, K_ffB, K_ss,
@@ -521,7 +612,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                           mms_S_s_field=None,
                           conservative_ltne=False,
                           cancel_check=None,
-                          q_rel_tol=None, conv_chunk=None, inlet_flux_A=None, inlet_flux_B=None):
+                          q_rel_tol=None, conv_chunk=None, inlet_flux_A=None, inlet_flux_B=None,
+                          model_mass_A=None, model_mass_B=None, model_fluids=None):
     """3D full-domain 2-fluid LTNE solver (Ta, Tb, Ts).
 
     Shape contracts
@@ -552,6 +644,22 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     (bitwise-identical Nz=1 regression).
     """
     Nx, Ny, Nz = int(Nx), int(Ny), int(Nz)
+    model_enabled = any(x is not None for x in (model_mass_A, model_mass_B, model_fluids))
+    model_cp_A = model_cp_B = None
+    if model_enabled:
+        if (model_mass_A is None or model_mass_B is None
+                or model_fluids not in (('air', 'air'), ('air', 'water'), ('water', 'air'))
+                or Nz <= 1 or not conservative_ltne or Tb_prescribed is not None
+                or chi_B_kernel_threshold > 0.0 or eps_A is not None or eps_B is not None):
+            raise ValueError('model h requires unmasked symmetric 3D AA/AW/WA with two solved fluids')
+        shapes = ((Nx+1, Ny, Nz), (Nx, Ny+1, Nz), (Nx, Ny, Nz+1))
+        for mass in (model_mass_A, model_mass_B):
+            if len(mass) != 3 or any(np.shape(f) != shape or not np.all(np.isfinite(f))
+                                     for f, shape in zip(mass, shapes)):
+                raise ValueError('model h requires finite signed staggered mass faces')
+        model_mass_A = tuple(np.ascontiguousarray(f, dtype=np.float64) for f in model_mass_A)
+        model_mass_B = tuple(np.ascontiguousarray(f, dtype=np.float64) for f in model_mass_B)
+        model_cp_A, model_cp_B = (model_h_coefficients(fluid) for fluid in model_fluids)
 
     def _inlet_shape(dir_code):
         if dir_code <= 1: return (Ny, Nz)
@@ -789,7 +897,7 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
     # Project the original internal capacity faces. The specified physical
     # inlet F is applied afterwards and may change the boundary-CV divergence;
     # the residual below uses that new F rather than the old projection alone.
-    if _cons == 1:
+    if _cons == 1 and not model_enabled:
         ufA, vfA, wfA = _project_faces_div_free(
             ufA, vfA, wfA, eps_fA_arr, rho_cp_fA_arr, dx_arr, dy_arr, dz_arr)
         ufB, vfB, wfB = _project_faces_div_free(
@@ -815,7 +923,8 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
                 n, freeze_Tb, a_fA, a_s, a_fB,
                 chi_B_arr, chi_B_thr,
                 mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                _cons, inlet_flux_A, inlet_flux_B)
+                _cons, inlet_flux_A, inlet_flux_B,
+                model_mass_A, model_mass_B, model_cp_A, model_cp_B)
         else:
             chg = _gs_full_chunk_3d(
                 Ta, Tb, Ts, Nx, Ny, Nz,
@@ -880,19 +989,26 @@ def solve_full_domain_3d(L, H, D, Nx, Ny, Nz,
         rA, QA, mA = _conservation_residual_sum(
             Ta, Ts, ufA, vfA, wfA, eps_fA_arr, K_ffA_arr, rho_cp_fA_arr,
             h_vA_arr, dx_arr, dy_arr, dz_arr, dir_A, T_inA_arr, ifrac_A, mms_S_A_arr,
-            inlet_flux_A)
+            inlet_flux_A, model_mass_A, model_cp_A)
         info['eps_A_strict'] = abs(rA) / max(abs(QA), _Q_FLOOR_W)
         info['eps_A_strict_cellmax'] = mA * ncell / max(abs(QA), _Q_FLOOR_W)
         if freeze_Tb == 0:
             rB, QB, mB = _conservation_residual_sum(
                 Tb, Ts, ufB, vfB, wfB, eps_fB_arr, K_ffB_arr, rho_cp_fB_arr,
                 h_vB_arr, dx_arr, dy_arr, dz_arr, dir_B, T_inB_arr, ifrac_B, mms_S_B_arr,
-                inlet_flux_B)
+                inlet_flux_B, model_mass_B, model_cp_B)
             info['eps_B_strict'] = abs(rB) / max(abs(QB), _Q_FLOOR_W)
             info['eps_B_strict_cellmax'] = mB * ncell / max(abs(QB), _Q_FLOOR_W)
         else:
             info['eps_B_strict'] = None
             info['eps_B_strict_cellmax'] = None
+    if model_enabled:
+        info['model_h_balance'] = _model_h_balance(
+            (Ta, Tb), Ts, (model_mass_A, model_mass_B), (model_cp_A, model_cp_B),
+            (dir_A, dir_B), (T_inA_arr, T_inB_arr), (ifrac_A, ifrac_B),
+            (K_ffA_arr, K_ffB_arr), K_ss_arr, (h_vA_arr, h_vB_arr),
+            (eps_fA_arr, eps_fB_arr), (mms_S_A_arr, mms_S_B_arr), mms_S_s_arr,
+            dx_arr, dy_arr, dz_arr)
     if return_info:
         return Ta, Tb, Ts, info
     return Ta, Tb, Ts

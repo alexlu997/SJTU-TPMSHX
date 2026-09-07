@@ -2104,6 +2104,11 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         post_after_last_thermal=bool(not _outer_converged),
         state='last true-h solve, before any final post update')
         if _ltne_info and 'true_h_balance' in _ltne_info[-1] else None)
+    _result['model_h_balance'] = (dict(
+        _ltne_info[-1]['model_h_balance'], outer_converged=bool(_outer_converged),
+        post_after_last_thermal=bool(not _outer_converged),
+        state='last model-h thermal solve, before any final post update')
+        if _ltne_info and 'model_h_balance' in _ltne_info[-1] else None)
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
@@ -2590,6 +2595,24 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             vfB = np.zeros((Nx, Ny+1, Nz), dtype=np.float64)
             wfB = np.zeros((Nx, Ny, Nz+1), dtype=np.float64)
 
+        # Only the qualified temperature route consumes raw mass transport.
+        # Capture before any capacity balance; all other callers keep their path.
+        _model_kwargs = {}
+        _model_h_gate = (
+            Nz > 1 and _var_rhocp and sB is not None and Tb_presc is None
+            and (fluid_type_A, fluid_type_B) in (('air', 'air'), ('air', 'water'), ('water', 'air'))
+            and bool(cfg.get('conservative_ltne', True))
+            and float(cfg.get('delta_levelset', 0.0)) == 0.0
+            and float(cfg.get('chi_B_kernel_threshold', 0.0)) == 0.0)
+        if _model_h_gate:
+            from sjtu_tpmshx.solvers.ltne_enthalpy_3d import face_mass_fluxes
+            _model_kwargs = dict(
+                model_mass_A=face_mass_fluxes(
+                    ufA, vfA, wfA, _rho_real(sA, axis_map), eps_fA_arr, dx, dy, dz),
+                model_mass_B=face_mass_fluxes(
+                    ufB, vfB, wfB, _rho_real(sB, axis_map_B), eps_fB_arr, dx, dy, dz),
+                model_fluids=(fluid_type_A, fluid_type_B))
+
         # Capture the physical inlet before the existing thermal-face balancing.
         inlet_flux_A = _inlet_transport_3d(
             (ufA, vfA, wfA), eps_fA_arr, _rho_real(sA, axis_map),
@@ -2622,7 +2645,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # the velocity field (measured: air scale 0.58–0.94, +300 % Q error).
         # Compressible reverse-dir conservation is a separate kernel-level
         # (constant-ρcp) limitation, out of scope here.
-        if bool(cfg.get('conservative_ltne', True)) and cfg.get('strict_mass_balance', True):
+        if (not _model_h_gate and bool(cfg.get('conservative_ltne', True))
+                and cfg.get('strict_mass_balance', True)):
             # Incompressible always; compressible only with variable_rho_cp (then
             # rho_cp = ρ_local·cp matches SIMPLE's conserved mass flux, so the
             # balance scale ≈ 1 and it removes only the residual — see _var_rhocp).
@@ -2717,7 +2741,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             eps_B=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0
                    else None),
             cancel_check=_cancel_check,
-            return_info=True)
+            return_info=True, **_model_kwargs)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
         if not _enth_gate:
             _check_property_water('3D temperature return')
@@ -2801,6 +2825,11 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))
+        if 'model_h_balance' in _ltne_info_d:
+            _ltne_info[-1]['model_h_balance'] = dict(
+                _ltne_info_d['model_h_balance'], outer_index=outer,
+                converged=bool(_ltne_info_d['converged']),
+                iterations=int(_ltne_info_d['iterations']))
         if _enth_gate:
             _ltne_info[-1]['true_h_balance'] = dict(
                 Q_A=float(_ltne_info_d['Q_A']), Q_B=float(_ltne_info_d['Q_B']),

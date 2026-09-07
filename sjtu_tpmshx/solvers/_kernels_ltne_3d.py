@@ -198,6 +198,64 @@ def _sou_field_cons(T, Fx, Fy, Fz):
 # inlet helpers
 # ---------------------------------------------------------------------------
 
+@njit(cache=True)
+def _model_h(T, coefficients):
+    a, b, c, origin, reference = coefficients
+    x = T - origin
+    x0 = reference - origin
+    return a*(x-x0) + 0.5*b*(x*x-x0*x0) + c/3.0*(x*x*x-x0*x0*x0)
+
+
+@njit(cache=True)
+def _model_h_faces(T, mass, coefficients, direction, Tin, ifrac):
+    """Shared Picard faces: flux = capacity*T_up + deferred.
+
+    Freeze once per sweep, including both RB colours. Retain the temperature
+    minmod stencil and its edge exclusions, integrating cp at its face T.
+    Boundary backflow outside the inlet retains numerical self-extrapolation;
+    the ledger must identify that missing physical inflow state.
+    """
+    a, b, c, origin, _ = coefficients
+    capacity = (np.empty_like(mass[0]), np.empty_like(mass[1]), np.empty_like(mass[2]))
+    deferred = (np.empty_like(mass[0]), np.empty_like(mass[1]), np.empty_like(mass[2]))
+    for axis in range(3):
+        for i in range(mass[axis].shape[0]):
+            for j in range(mass[axis].shape[1]):
+                for k in range(mass[axis].shape[2]):
+                    face = (i, j, k)
+                    pos = face[axis]
+                    count = T.shape[axis]
+                    m = mass[axis][face]
+                    u = pos - 1 if m >= 0.0 else pos
+                    u = min(max(u, 0), count - 1)
+                    up = (u, j, k) if axis == 0 else ((i, u, k) if axis == 1 else (i, j, u))
+                    t = T[up]
+                    inc = 0.0
+                    if 0 < pos < count and 0 < u < count - 1:
+                        prev = (u-1, j, k) if axis == 0 else ((i, u-1, k) if axis == 1 else (i, j, u-1))
+                        nxt = (u+1, j, k) if axis == 0 else ((i, u+1, k) if axis == 1 else (i, j, u+1))
+                        if m >= 0.0:
+                            inc = 0.5 * _va_limit(t-T[prev], T[nxt]-t)
+                        else:
+                            inc = 0.5 * _va_limit(t-T[nxt], T[prev]-t)
+                    if axis == direction // 2 and pos == (0 if direction % 2 == 0 else count):
+                        patch = (j, k) if axis == 0 else ((i, k) if axis == 1 else (i, j))
+                        inward = m if direction % 2 == 0 else -m
+                        if ifrac[patch] > 0.0 and inward > 0.0:
+                            t = Tin[patch]
+                    x = t - origin
+                    cp = a + b*x + c*x*x
+                    capacity[axis][face] = m * cp
+                    deferred[axis][face] = m * (_model_h(t+inc, coefficients) - cp*t)
+    return capacity, deferred
+
+
+@njit(cache=True)
+def _face_divergence(faces):
+    return (faces[0][1:] - faces[0][:-1]
+            + faces[1][:, 1:] - faces[1][:, :-1]
+            + faces[2][:, :, 1:] - faces[2][:, :, :-1])
+
 @njit(cache=True, fastmath=True, inline='always')
 def _is_inlet(dir_code, i, j, k, Nx, Ny, Nz):
     if dir_code == 0: return i == 0
@@ -306,7 +364,9 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             alpha_fA, alpha_s, alpha_fB,
                             chi_B_arr, chi_B_kernel_threshold,
                             mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                            conservative, inlet_flux_A=None, inlet_flux_B=None):
+                            conservative, inlet_flux_A=None, inlet_flux_B=None,
+                            model_mass_A=None, model_mass_B=None,
+                            model_cp_A=None, model_cp_B=None):
     max_chg = 0.0
 
     if bc_A == 1:
@@ -323,6 +383,17 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
         k0, k1, dk = 0, Nz, 1
 
     for _it in range(n_iters):
+        model_FA = (ufA, vfA, wfA)
+        model_FB = (ufB, vfB, wfB)
+        model_source_A = Ta
+        model_source_B = Tb
+        if model_mass_A is not None:
+            model_FA, deferred_A = _model_h_faces(
+                Ta, model_mass_A, model_cp_A, bc_A, T_inA_arr, ifrac_A)
+            model_FB, deferred_B = _model_h_faces(
+                Tb, model_mass_B, model_cp_B, bc_B, T_inB_arr, ifrac_B)
+            model_source_A = -_face_divergence(deferred_A)
+            model_source_B = -_face_divergence(deferred_B)
         max_chg = 0.0
         for i in range(i0, i1, di):
             for j in range(j0, j1, dj):
@@ -386,6 +457,13 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                     F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
                         bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
                         F_e, F_w, F_n, F_s, F_t, F_b)
+                    if model_mass_A is not None:
+                        F_e = model_FA[0][i+1, j, k]
+                        F_w = model_FA[0][i, j, k]
+                        F_n = model_FA[1][i, j+1, k]
+                        F_s = model_FA[1][i, j, k]
+                        F_t = model_FA[2][i, j, k+1]
+                        F_b = model_FA[2][i, j, k]
 
                     # Patankar hybrid upwind on signed face flux
                     aE = dE + max(-F_e, 0.0)
@@ -423,6 +501,8 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                         sou = (_sou_face_x_cons(Ta, i, j, k, Nx, F_w, F_e)
                                + _sou_face_y_cons(Ta, i, j, k, Ny, F_s, F_n)
                                + _sou_face_z_cons(Ta, i, j, k, Nz, F_b, F_t))
+                        if model_mass_A is not None:
+                            sou = model_source_A[i, j, k]
                         net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
                         aP = aE + aW + aN + aS + aT + aB + net_out + hvA
                     else:
@@ -557,6 +637,13 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                             FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
                                 bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
                                 FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
+                            if model_mass_A is not None:
+                                FB_e = model_FB[0][i+1, j, k]
+                                FB_w = model_FB[0][i, j, k]
+                                FB_n = model_FB[1][i, j+1, k]
+                                FB_s = model_FB[1][i, j, k]
+                                FB_t = model_FB[2][i, j, k+1]
+                                FB_b = model_FB[2][i, j, k]
 
                             aEb = dEb  + max(-FB_e, 0.0)
                             aWb = dWb  + max( FB_w, 0.0)
@@ -582,6 +669,8 @@ def _gs_full_chunk_3d_stag(Ta, Tb, Ts, Nx, Ny, Nz,
                                 soub = (_sou_face_x_cons(Tb, i, j, k, Nx, FB_w, FB_e)
                                         + _sou_face_y_cons(Tb, i, j, k, Ny, FB_s, FB_n)
                                         + _sou_face_z_cons(Tb, i, j, k, Nz, FB_b, FB_t))
+                                if model_mass_A is not None:
+                                    soub = model_source_B[i, j, k]
                                 net_outB = ((FB_e - FB_w) + (FB_n - FB_s)
                                             + (FB_t - FB_b))
                                 aPb = (aEb + aWb + aNb + aSb + aTb + aBb
@@ -629,7 +718,9 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                                alpha_fA, alpha_s, alpha_fB,
                                chi_B_arr, chi_B_kernel_threshold,
                                mms_S_A_arr, mms_S_B_arr, mms_S_s_arr,
-                               conservative, inlet_flux_A=None, inlet_flux_B=None):
+                               conservative, inlet_flux_A=None, inlet_flux_B=None,
+                            model_mass_A=None, model_mass_B=None,
+                            model_cp_A=None, model_cp_B=None):
     """Red-black parallel twin of `_gs_full_chunk_3d_stag`.
 
     Two race-free changes vs the serial kernel make it `prange`-parallelisable:
@@ -653,6 +744,17 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
     ncell = Nx * Ny * Nz
     nyz = Ny * Nz
     for _it in range(n_iters):
+        model_FA = (ufA, vfA, wfA)
+        model_FB = (ufB, vfB, wfB)
+        model_source_A = Ta
+        model_source_B = Tb
+        if model_mass_A is not None:
+            model_FA, deferred_A = _model_h_faces(
+                Ta, model_mass_A, model_cp_A, bc_A, T_inA_arr, ifrac_A)
+            model_FB, deferred_B = _model_h_faces(
+                Tb, model_mass_B, model_cp_B, bc_B, T_inB_arr, ifrac_B)
+            model_source_A = -_face_divergence(deferred_A)
+            model_source_B = -_face_divergence(deferred_B)
         # Start-of-sweep snapshot for the (2-away, same-colour) deferred SOU.
         Ta_snap = Ta.copy()
         Tb_snap = Tb.copy()
@@ -716,6 +818,13 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                 F_e, F_w, F_n, F_s, F_t, F_b = _inlet_capacity_faces(
                     bc_A, i, j, k, Nx, Ny, Nz, ifrac_A, inlet_flux_A,
                     F_e, F_w, F_n, F_s, F_t, F_b)
+                if model_mass_A is not None:
+                    F_e = model_FA[0][i+1, j, k]
+                    F_w = model_FA[0][i, j, k]
+                    F_n = model_FA[1][i, j+1, k]
+                    F_s = model_FA[1][i, j, k]
+                    F_t = model_FA[2][i, j, k+1]
+                    F_b = model_FA[2][i, j, k]
 
                 aE = dE + max(-F_e, 0.0); aW = dW + max( F_w, 0.0)
                 aN = dN + max(-F_n, 0.0); aS = dS + max( F_s, 0.0)
@@ -736,6 +845,8 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                     sou = (_sou_face_x_cons(Ta_snap, i, j, k, Nx, F_w, F_e)
                            + _sou_face_y_cons(Ta_snap, i, j, k, Ny, F_s, F_n)
                            + _sou_face_z_cons(Ta_snap, i, j, k, Nz, F_b, F_t))
+                    if model_mass_A is not None:
+                        sou = model_source_A[i, j, k]
                     net_out = (F_e - F_w) + (F_n - F_s) + (F_t - F_b)
                     aP = aE + aW + aN + aS + aT + aB + net_out + hvA
                 else:
@@ -840,6 +951,13 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                         FB_e, FB_w, FB_n, FB_s, FB_t, FB_b = _inlet_capacity_faces(
                             bc_B, i, j, k, Nx, Ny, Nz, ifrac_B, inlet_flux_B,
                             FB_e, FB_w, FB_n, FB_s, FB_t, FB_b)
+                        if model_mass_A is not None:
+                            FB_e = model_FB[0][i+1, j, k]
+                            FB_w = model_FB[0][i, j, k]
+                            FB_n = model_FB[1][i, j+1, k]
+                            FB_s = model_FB[1][i, j, k]
+                            FB_t = model_FB[2][i, j, k+1]
+                            FB_b = model_FB[2][i, j, k]
                         aEb = dEb  + max(-FB_e, 0.0); aWb = dWb  + max( FB_w, 0.0)
                         aNb = dNb  + max(-FB_n, 0.0); aSb = dSb  + max( FB_s, 0.0)
                         aTb = dTb_ + max(-FB_t, 0.0); aBb = dBb  + max( FB_b, 0.0)
@@ -857,6 +975,8 @@ def _gs_full_chunk_3d_stag_rb(Ta, Tb, Ts, Nx, Ny, Nz,
                             soub = (_sou_face_x_cons(Tb_snap, i, j, k, Nx, FB_w, FB_e)
                                     + _sou_face_y_cons(Tb_snap, i, j, k, Ny, FB_s, FB_n)
                                     + _sou_face_z_cons(Tb_snap, i, j, k, Nz, FB_b, FB_t))
+                            if model_mass_A is not None:
+                                soub = model_source_B[i, j, k]
                             net_outB = ((FB_e - FB_w) + (FB_n - FB_s)
                                         + (FB_t - FB_b))
                             aPb = (aEb + aWb + aNb + aSb + aTb + aBb
