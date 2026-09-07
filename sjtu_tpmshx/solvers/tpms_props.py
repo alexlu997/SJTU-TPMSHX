@@ -38,6 +38,17 @@ P_atm = 101325.0   # Standard atmospheric pressure [Pa] (for Re reference densit
 _AIR_T_RANGE    = (200.0, 1100.0)   # Sutherland + kappa fits
 _AIR_CP_RANGE   = (250.0, 1000.0)   # polynomial cp fit
 _WATER_T_RANGE  = (273.15, 363.15)  # 0 - 90 °C polynomial water fits
+_AIR_CP_COEFFICIENTS = (1004.5, 0.172, -7.56e-5)
+_WATER_CP = 4182.0
+
+
+def model_h_coefficients(fluid):
+    """Existing cp polynomial, temperature origin and model-h reference (K)."""
+    if fluid == 'air':
+        return (*_AIR_CP_COEFFICIENTS, 273.15, 300.0)
+    if fluid == 'water':
+        return (_WATER_CP, 0.0, 0.0, 273.15, 300.0)
+    raise ValueError('model h supports only air and water')
 
 _range_warnings_emitted = set()
 
@@ -91,7 +102,8 @@ def air_cp(T_K):
     Accepts scalar or ndarray T_K; return type matches input shape."""
     _warn_range_once('air_cp', T_K, *_AIR_CP_RANGE)
     dT = T_K - 273.15
-    return 1004.5 + 0.172 * dT - 7.56e-5 * dT**2
+    a, b, c = _AIR_CP_COEFFICIENTS
+    return a + b * dT + c * dT**2
 
 
 # ── Water property correlations ───────────────────────────────
@@ -134,7 +146,7 @@ def water_conductivity(T_K):
 def water_cp(T_K):
     """Specific heat of liquid water [J/(kg·K)]. ~constant 280-370 K."""
     _warn_range_once('water_cp', T_K, *_WATER_T_RANGE)
-    return 4182.0
+    return _WATER_CP
 
 
 # ── Geometry-only interface (no fluid needed) ─────────────────

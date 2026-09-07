@@ -1413,17 +1413,7 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
     m_dot_B_simple = None
     vmag_B = None
     # ── Extract metrics + fields ──
-    # Primary Q is the volume integral of h_vB·(Ts−Tb), matching the
-    # 2D UI path (run_calculation.py:_store_results.Q_total) and the
-    # optimizer (both 2D and 3D). This makes Q comparable across the
-    # three paths without a unit-mismatch penalty. (#5 / v1.0.10 #6)
-    #
-    # Q_enthalpy_A (m_dot × cp × ΔT) is kept as a secondary reading;
-    # it uses inlet-plane ρ from the solver's rho_field (not a stale
-    # cold-seed scalar) and respects the solver's inlet mask via
-    # v_inlet_field. (v1.0.10 #2)
-    # NOTE: despite the legacy comment above, the returned Q is assigned from
-    # the enthalpy balance below; Q_solid_B remains diagnostic only.
+    # Solid-fluid exchange is diagnostic; headline Q uses A-side advection.
     cell_vol = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
     Q_solid_B = float(np.sum(h_vB_field * (Ts - Tb) * cell_vol))
 
@@ -1471,8 +1461,8 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
     # (A side has no χ_B weighting, so there is no chi/no-chi distinction here —
     #  the former duplicate `T_A_out_no_chi` local was dead and was removed.)
     # A pair containing sCO2 is solved in true enthalpy for BOTH streams, so
-    # report the same boundary-face quantity for both fluids. Air/water-only
-    # keeps the established cp·ΔT result bit-identical.
+    # report the same boundary-face quantity for both fluids. Other routes
+    # retain cp·ΔT unless the completed thermal solve supplied a model-h ledger.
     _true_h_pair = 'sco2' in (fluid_type_A, fluid_type_B)
     if _true_h_pair:
         from sjtu_tpmshx.solvers.ltne_enthalpy_3d import _h_scalar, _prop_field
@@ -1545,25 +1535,18 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
                 "did not close; compare the last true-h ledger and pressure "
                 "sources before attributing the discrepancy to the kernel.", stacklevel=2)
 
-    # Primary Q — mean of A and B enthalpy metrics (m·cp·ΔT per side).
-    # NTU check (2026-04-25): Q_enthalpy_A/_B match the cross-flow ε·C_min·ΔT
-    # bound to within engineering tolerance (e.g. Shanghai Air-Air NORM:
-    # Q_A=323W, Q_B=374W, NTU_max=333W — both sides physical).
-    #
-    # **|Q_solid_B| = ∫h_vB(Ts−Tb)dV** is KEPT as a diagnostic but NO LONGER
-    # primary: the homogenised h_v applied uniformly over all cells spuriously
-    # counts stagnant wall-BL zones where no real flow carries heat, pushing
-    # |Q_sB| ~25% above the NTU upper bound. The LTNE Q_sA+Q_sB ≈ 0 internal
-    # check still holds (<1%) — it's the magnitude that over-estimates, not
-    # the conservation.
-    # Headline heat duty = AIR/A-side advective enthalpy ONLY. The B/water-side
-    # advective enthalpy (Q_enthalpy_B = m_B·cp·ΔT_B) drops the boundary-
-    # conduction flux, so it over/under-reads by ~8 % even when the scheme
-    # conserves. The old 0.5·(Q_A+Q_B) average therefore drifted non-physically
-    # (e.g. the displayed Q ROSE when coolant flow FELL — the B term polluting
-    # it). Q_enthalpy_A matches the experiment-validated duty: validation/
-    # validate_shanghai_3d_real computes the same m_air·cp·ΔT_A (RMSRE ~3 %).
-    # Q_enthalpy_B is retained in the result dict as a transparent diagnostic.
+    # Use the actual last thermal model-h flux, before any final post update.
+    # Its presence identifies the solved route without duplicating its gate.
+    model_balance = (prob._ltne_info[-1].get('model_h_balance')
+                     if prob._ltne_info else None)
+    if model_balance is not None:
+        sides = (model_balance['sides']['A'], model_balance['sides']['B'])
+        Q_enthalpy_A, Q_enthalpy_B = (
+            abs(side['convective_inward_W'])
+            if side['physical_boundary_complete'] and np.isfinite(side['convective_inward_W'])
+            else float('nan') for side in sides)
+    # Headline duty remains A-side advection; inlet diffusion belongs only
+    # to the complete energy ledger, not this convective heat-duty report.
     Q = Q_enthalpy_A
 
     dP = float(SIMPLESolver3D.extract_dP_face_extrap(sA))
@@ -2104,6 +2087,11 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         post_after_last_thermal=bool(not _outer_converged),
         state='last true-h solve, before any final post update')
         if _ltne_info and 'true_h_balance' in _ltne_info[-1] else None)
+    _result['model_h_balance'] = (dict(
+        _ltne_info[-1]['model_h_balance'], outer_converged=bool(_outer_converged),
+        post_after_last_thermal=bool(not _outer_converged),
+        state='last model-h thermal solve, before any final post update')
+        if _ltne_info and 'model_h_balance' in _ltne_info[-1] else None)
 
     # ── Audit-only additive exports (read-only, deep-copied) ── OPT-IN.
     # Passthrough of SIMPLE face arrays + masks for the standalone partial-B
@@ -2590,6 +2578,24 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             vfB = np.zeros((Nx, Ny+1, Nz), dtype=np.float64)
             wfB = np.zeros((Nx, Ny, Nz+1), dtype=np.float64)
 
+        # Only the qualified temperature route consumes raw mass transport.
+        # Capture before any capacity balance; all other callers keep their path.
+        _model_kwargs = {}
+        _model_h_gate = (
+            Nz > 1 and _var_rhocp and sB is not None and Tb_presc is None
+            and (fluid_type_A, fluid_type_B) in (('air', 'air'), ('air', 'water'), ('water', 'air'))
+            and bool(cfg.get('conservative_ltne', True))
+            and float(cfg.get('delta_levelset', 0.0)) == 0.0
+            and float(cfg.get('chi_B_kernel_threshold', 0.0)) == 0.0)
+        if _model_h_gate:
+            from sjtu_tpmshx.solvers.ltne_enthalpy_3d import face_mass_fluxes
+            _model_kwargs = dict(
+                model_mass_A=face_mass_fluxes(
+                    ufA, vfA, wfA, _rho_real(sA, axis_map), eps_fA_arr, dx, dy, dz),
+                model_mass_B=face_mass_fluxes(
+                    ufB, vfB, wfB, _rho_real(sB, axis_map_B), eps_fB_arr, dx, dy, dz),
+                model_fluids=(fluid_type_A, fluid_type_B))
+
         # Capture the physical inlet before the existing thermal-face balancing.
         inlet_flux_A = _inlet_transport_3d(
             (ufA, vfA, wfA), eps_fA_arr, _rho_real(sA, axis_map),
@@ -2622,7 +2628,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # the velocity field (measured: air scale 0.58–0.94, +300 % Q error).
         # Compressible reverse-dir conservation is a separate kernel-level
         # (constant-ρcp) limitation, out of scope here.
-        if bool(cfg.get('conservative_ltne', True)) and cfg.get('strict_mass_balance', True):
+        if (not _model_h_gate and bool(cfg.get('conservative_ltne', True))
+                and cfg.get('strict_mass_balance', True)):
             # Incompressible always; compressible only with variable_rho_cp (then
             # rho_cp = ρ_local·cp matches SIMPLE's conserved mass flux, so the
             # balance scale ≈ 1 and it removes only the residual — see _var_rhocp).
@@ -2717,7 +2724,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             eps_B=(eps_fB_arr if float(cfg.get('delta_levelset', 0.0)) != 0.0
                    else None),
             cancel_check=_cancel_check,
-            return_info=True)
+            return_info=True, **_model_kwargs)
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
         if not _enth_gate:
             _check_property_water('3D temperature return')
@@ -2801,6 +2808,11 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _ltne_info.append(dict(outer=outer, iters=_ltne_info_d.get('iterations',0),
                                converged=_ltne_info_d.get('converged',False),
                                residual=_ltne_info_d.get('residual',0.0)))
+        if 'model_h_balance' in _ltne_info_d:
+            _ltne_info[-1]['model_h_balance'] = dict(
+                _ltne_info_d['model_h_balance'], outer_index=outer,
+                converged=bool(_ltne_info_d['converged']),
+                iterations=int(_ltne_info_d['iterations']))
         if _enth_gate:
             _ltne_info[-1]['true_h_balance'] = dict(
                 Q_A=float(_ltne_info_d['Q_A']), Q_B=float(_ltne_info_d['Q_B']),
