@@ -118,6 +118,73 @@ def test_2d_enthalpy_wrapper_propagates_water_state_error():
             fluid_A='water', fluid_B='water', max_iter=1)
 
 
+@pytest.mark.parametrize('bad', [420., np.nan])
+def test_water_error_reports_first_broadcast_cell(bad):
+    with pytest.raises(WaterStateError) as error:
+        check_water_state('water', [[300., bad], [bad, 300.]], 2e5,
+                          where='thermal return B')
+    assert str(error.value).startswith(
+        f'thermal return B: water index=(0, 1), T={bad:g} K, P_abs=200000 Pa:')
+
+
+@pytest.mark.parametrize('adapter', [False, True])
+@pytest.mark.parametrize('side', ['A', 'B'])
+@pytest.mark.parametrize('eos_failure', [False, True])
+def test_shared_driver_final_water_eos_rejection(monkeypatch, adapter, side, eos_failure):
+    from sjtu_tpmshx.solvers import ltne_enthalpy_3d as ent
+    from sjtu_tpmshx.solvers.ltne_enthalpy_2d import solve_enthalpy_2d
+
+    h_vapor = (-1e9 if eos_failure else
+               CP.PropsSI('H', 'T', 420., 'P', 200000., 'Water'))
+    sweeps = []
+
+    def invalidate_last_sweep(hA, hB, *args):
+        sweeps.append(1)
+        (hA if side == 'A' else hB)[:] = h_vapor
+
+    monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', invalidate_last_sweep)
+    cell = np.ones((1, 1, 1))
+    with pytest.raises(WaterStateError, match=f'enthalpy final EOS return {side}') as error:
+        if adapter:
+            flux = (np.zeros((2, 1)), np.zeros((1, 2)))
+            solve_enthalpy_2d(
+                300., 320., 2e5, 2e5, flux, flux, 100., 100., 5., .35, .35,
+                [1.], [1.], P_inA=2e5, P_inB=2e5,
+                fluid_A='water', fluid_B='water', max_iter=1)
+        else:
+            ent.solve_ltne_enthalpy_3d_pipeline(
+                1, 1, 1, [1.], [1.], [1.], cell * .7, cell * 5.,
+                cell * 100., cell * 100., 0., 0., 300., 320., 2e5, 2e5, 0, 1,
+                fluid_A='water', fluid_B='water', n_outer=1)
+    assert sweeps == [1]
+    assert 'index=(0, 0, 0)' in str(error.value)
+    if eos_failure:
+        assert isinstance(error.value.__cause__, ValueError)
+        assert 'state unconfirmed' in str(error.value)
+        assert 'input h=[[[-1.e+09]]] J/kg, P_abs=[[[200000.]]] Pa' in str(error.value)
+    else:
+        assert 'P_abs=200000 Pa' in str(error.value)
+
+
+def test_water_vector_eos_exception_does_not_invent_failed_index(monkeypatch):
+    from sjtu_tpmshx.solvers import ltne_enthalpy_3d as ent
+    calls = []
+    original = ent._PropsSI
+
+    def eos(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(ent, '_PropsSI', eos)
+    with pytest.raises(WaterStateError, match='iteration EOS return B') as error:
+        ent._T_of_h_field(np.array([-1e9, -2e9]), np.array([2e5, 3e5]),
+                          'water', where='enthalpy iteration EOS return B')
+    assert len(calls) == 1
+    assert isinstance(error.value.__cause__, ValueError)
+    assert 'failed index undetermined, input shape=(2,)' in str(error.value)
+    assert 'input h=[-1.e+09 -2.e+09] J/kg, P_abs=[200000. 300000.] Pa' in str(error.value)
+
+
 @pytest.mark.parametrize('side', ['A', 'B'])
 @pytest.mark.parametrize('dimension', [2, 3])
 def test_pipeline_inlet_checks_both_water_sides_before_domain_work(side, dimension):

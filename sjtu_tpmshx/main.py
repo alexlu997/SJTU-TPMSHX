@@ -630,13 +630,13 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
 
 
     # Auto-defaults applied when the user swaps the fluid type for a given
-    # side. Values are conservative "typical operating point" numbers; the
-    # user can still edit afterwards. Temperature stored in K; the parser
+    # side. Values are editable starting points, not guarantees of local-state
+    # validity or convergence. Temperature stored in K; the parser
     # converts to °C if the header toggle is currently °C.
     _FLUID_DEFAULTS = {
         'Air':   {'u': 20.0,  'T': 422.0, 'P': 101325.0},
         'Water': {'u': 0.15,  'T': 300.0, 'P': 101325.0},
-        'sCO₂':  {'u': 2.0,   'T': 350.0, 'P': 8000000.0},
+        'sCO₂':  {'u': 2.0,   'T': 350.0, 'P': 12000000.0},
     }
 
 
@@ -1173,6 +1173,10 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
         self._maybe_show_onboarding()
 
 
+    _CO2_PRESSURE_HELP = (
+        "<br/>For sCO₂, the entire actual local pressure field must remain within "
+        "8–16 MPa; an inlet value in range alone is insufficient. "
+        "Allow for the computed pressure variation.")
     _FIELD_HELP = {
         'le_L': (
             "<b>Domain length <i>L</i></b> [m]<br/>"
@@ -1210,10 +1214,10 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
             "Physics uses K internally. K/°C toggle lives in the header."),
         'le_PinA': (
             "<b>Fluid A inlet absolute pressure <i>P<sub>in,A</sub></i></b> "
-            "[Pa]<br/>101 325 = 1 atm. Gauge + atm."),
+            "[Pa]<br/>101 325 = 1 atm. Gauge + atm." + _CO2_PRESSURE_HELP),
         'le_PinB': (
             "<b>Fluid B inlet absolute pressure <i>P<sub>in,B</sub></i></b> "
-            "[Pa]"),
+            "[Pa]" + _CO2_PRESSURE_HELP),
         'le_Nx': (
             "<b>Grid count along <i>x</i></b><br/>"
             "3D refinement adds +8 cells per wall on each axis."),

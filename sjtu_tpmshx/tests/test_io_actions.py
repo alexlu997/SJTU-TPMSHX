@@ -46,6 +46,33 @@ def win(tmp_path_factory):
     mp.undo()
 
 
+@pytest.mark.parametrize('side', ['A', 'B'])
+def test_sco2_switch_default_and_explicit_pressure_preserved(win, side):
+    from sjtu_tpmshx.ui.window_config import config_from_window
+
+    win._apply_shanghai_defaults()
+    combo = getattr(win, f'combo_fluid{side}')
+    pressure = getattr(win, f'le_Pin{side}')
+    combo.setCurrentIndex(0)
+    combo.setCurrentIndex(2)
+    fluid = getattr(config_from_window(win), f'fluid_{side}')
+    assert (fluid.type, fluid.u_mps, fluid.T_in_K, fluid.P_in_Pa) == (
+        'sco2', 2., 350., 12e6)
+    assert 'absolute' in pressure.toolTip() and '8–16 MPa' in pressure.toolTip()
+    pressure.setText('11000000')
+    assert getattr(config_from_window(win), f'fluid_{side}').P_in_Pa == 11e6
+    assert pressure.text() == '11000000'
+    for endpoint in ('8000000', '16000000'):
+        for previous_type in (0, 2):
+            combo.setCurrentIndex(previous_type)
+            win._apply_user_preset({
+                'line_edits': {f'le_Pin{side}': endpoint},
+                'combos': {f'combo_fluid{side}': 2},
+            })
+            assert pressure.text() == endpoint
+            assert getattr(config_from_window(win), f'fluid_{side}').P_in_Pa == float(endpoint)
+
+
 @pytest.mark.parametrize('dim,unit,fluids,axis,df', [
     (0, 'K', (0, 1), 0, 0),
     (1, 'C', (1, 0), 1, 0),

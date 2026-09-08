@@ -35,18 +35,25 @@ _T_LO, _T_HI = 240.0, 420.0
 # SAME CO2 calls sco2_props makes → byte-identical to the sCO2-only path.
 from CoolProp.CoolProp import PropsSI as _PropsSI  # noqa: E402
 from .fluid_props import WaterStateError, check_water_state  # noqa: E402
+from .sco2_props import _validate_state  # noqa: E402
 _CP_NAME = {'sco2': 'CO2', 'water': 'Water', 'air': 'Air'}
+
+
+def _check_sco2_state(fluid, T, P, *, where):
+    if fluid == 'sco2':
+        _validate_state(T, P, where=where)
 
 
 def _prop_field(key, T, P, fluid):
     T = np.ascontiguousarray(T, dtype=np.float64)
     P = np.broadcast_to(np.asarray(P, dtype=np.float64), T.shape)
+    _check_sco2_state(fluid, T, P, where='enthalpy property field')
     out = _PropsSI(key, "T", T.ravel(), "P", np.ascontiguousarray(P).ravel(),
                    _CP_NAME.get(fluid, fluid))
     return np.asarray(out, dtype=np.float64).reshape(T.shape)
 
 
-def _T_of_h_field(h, P, fluid):
+def _T_of_h_field(h, P, fluid, *, where='enthalpy EOS return'):
     h = np.ascontiguousarray(h, dtype=np.float64)
     P = np.broadcast_to(np.asarray(P, dtype=np.float64), h.shape)
     try:
@@ -54,10 +61,16 @@ def _T_of_h_field(h, P, fluid):
                        _CP_NAME.get(fluid, fluid))
     except ValueError as exc:
         if fluid == 'water':
-            raise WaterStateError('water EOS T(h,P) state unconfirmed') from exc
+            location = (f'index={tuple(0 for _ in h.shape)}' if h.size == 1
+                        else f'failed index undetermined, input shape={h.shape}')
+            raise WaterStateError(
+                f'{where}: water EOS T(h,P) state unconfirmed; {location}; '
+                f'input h={np.array2string(h, threshold=8)} J/kg, '
+                f'P_abs={np.array2string(P, threshold=8)} Pa') from exc
         raise
     temperature = np.asarray(out, dtype=np.float64).reshape(h.shape)
-    check_water_state(fluid, temperature, P, where='enthalpy EOS return')
+    check_water_state(fluid, temperature, P, where=where)
+    _check_sco2_state(fluid, temperature, P, where=where)
     return temperature
 
 
@@ -270,7 +283,9 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     P_A = float(P)
     P_B = float(P_B) if P_B is not None else P_A
     check_water_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
+    _check_sco2_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
     check_water_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
+    _check_sco2_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
     dx = np.full(Nx, Lx / Nx, dtype=np.float64)
     dy = np.full(Ny, Ly / Ny, dtype=np.float64)
     dz = np.full(Nz, Lz / Nz, dtype=np.float64)
@@ -304,8 +319,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
 
     n_done = 0
     for outer in range(n_outer):
-        T_A = _T_of_h_field(hA, P_A, fluid_A)
-        T_B = _T_of_h_field(hB, P_B, fluid_B)
+        T_A = _T_of_h_field(hA, P_A, fluid_A, where='enthalpy iteration EOS return A')
+        T_B = _T_of_h_field(hB, P_B, fluid_B, where='enthalpy iteration EOS return B')
         cpA = _prop_field("C", T_A, P_A, fluid_A)
         cpB = _prop_field("C", T_B, P_B, fluid_B)
         kA = _prop_field("L", T_A, P_A, fluid_A)
@@ -326,8 +341,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 np.max(np.abs(hB - hB_star))) / denom) < tol:
             break
 
-    return dict(Ta=_T_of_h_field(hA, P_A, fluid_A),
-                Tb=_T_of_h_field(hB, P_B, fluid_B),
+    return dict(Ta=_T_of_h_field(hA, P_A, fluid_A, where='enthalpy final EOS return A'),
+                Tb=_T_of_h_field(hB, P_B, fluid_B, where='enthalpy final EOS return B'),
                 Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B,
                 fluid_A=fluid_A, fluid_B=fluid_B)
 
@@ -355,7 +370,9 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     Scalar ``m_dot`` remains only as a compatibility fallback for standalone
     uniform-flow tests."""
     check_water_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
+    _check_sco2_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
     check_water_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
+    _check_sco2_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
     shape = (Nx, Ny, Nz)
     dx = np.ascontiguousarray(dx, dtype=np.float64)
     dy = np.ascontiguousarray(dy, dtype=np.float64)
@@ -398,6 +415,11 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     h_lo_B = _h_scalar(max(T_span_lo, _FL_TLO.get(fluid_B, 230.0)), P_B, fluid_B)
     h_hi_B = _h_scalar(T_span_hi, P_B, fluid_B)
 
+    # Validate actual initial states; the wider scalar h brackets are mathematical.
+    _check_sco2_state(fluid_A, T_inA if Ta_init is None else Ta_init, P_A_field,
+                      where='enthalpy warm start A')
+    _check_sco2_state(fluid_B, T_inB if Tb_init is None else Tb_init, P_B_field,
+                      where='enthalpy warm start B')
     if Ta_init is not None:
         check_water_state(fluid_A, Ta_init, P_A_field, where='enthalpy warm start A')
     if Tb_init is not None:
@@ -416,8 +438,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     for outer in range(n_outer):
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
-        T_A = _T_of_h_field(hA, P_A_field, fluid_A)
-        T_B = _T_of_h_field(hB, P_B_field, fluid_B)
+        T_A = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy iteration EOS return A')
+        T_B = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy iteration EOS return B')
         cpA = _prop_field("C", T_A, P_A_field, fluid_A)
         cpB = _prop_field("C", T_B, P_B_field, fluid_B)
         kA = _prop_field("L", T_A, P_A_field, fluid_A)
@@ -444,8 +466,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
         if resid < tol and imbalance < 0.05:
             break
 
-    Ta = _T_of_h_field(hA, P_A_field, fluid_A)
-    Tb = _T_of_h_field(hB, P_B_field, fluid_B)
+    Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
+    Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
     info = dict(iterations=n_done,
                 converged=bool(resid < tol and imbalance < 0.05),
                 residual=float(resid), enthalpy_mode=True,
