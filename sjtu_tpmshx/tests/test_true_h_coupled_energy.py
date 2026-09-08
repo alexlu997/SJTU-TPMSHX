@@ -20,9 +20,15 @@ def run_driver(**kwargs):
 ])
 def test_driver_continues_for_uncancelled_solid_residual(
         monkeypatch, limit, gate, expected_iterations, expected_ok):
-    calls, final_states, checked_states = [], [], []
+    calls, final_states, checked_states, finite_states = [], [], [], []
     original_eos = ent._T_of_h_field
     original_balance = ent._coupled_energy_balance
+    original_finite = ent.check_finite_temperatures
+
+    def finite(Ta, Tb, Ts, **kw):
+        if kw['where'] == 'enthalpy final return':
+            finite_states.append((Ta, Tb))
+        return original_finite(Ta, Tb, Ts, **kw)
 
     def balance(Ta, Tb, *args):
         checked_states.append((Ta, Tb))
@@ -42,12 +48,16 @@ def test_driver_continues_for_uncancelled_solid_residual(
 
     monkeypatch.setattr(ent, '_T_of_h_field', eos)
     monkeypatch.setattr(ent, '_coupled_energy_balance', balance)
+    monkeypatch.setattr(ent, 'check_finite_temperatures', finite)
     monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', sweep)
     Ta, Tb, _, info = run_driver(n_outer=limit, coupled_energy_tol=gate)
     assert info['iterations'] == expected_iterations
     assert info['converged'] is expected_ok
     assert info['residual'] == 0 and info['energy_imbalance_rel'] == 0
     assert Ta is final_states[-2] and Tb is final_states[-1]
+    assert len(finite_states) == len(final_states) // 2
+    assert all(a is final_states[2*i] and b is final_states[2*i+1]
+               for i, (a, b) in enumerate(finite_states))
     if gate is None:
         assert 'coupled_energy_balance' not in info
     else:
@@ -126,3 +136,51 @@ def test_2d_adapter_explicitly_enables_gate_for_true_h_pairs(monkeypatch, pair):
     assert seen[0]['coupled_energy_tol'] == .001
     assert (seen[0]['n_outer'], seen[0]['n_sweep'], seen[0]['tol']) == (1, 3, .001)
     assert info['converged']
+
+
+@pytest.mark.parametrize('field', ['Ta_init', 'Tb_init', 'Ts_init'])
+def test_nonfinite_warm_state_precedes_warm_enthalpy(monkeypatch, field):
+    def forbidden(*args):
+        pytest.fail('invalid warm state reached field enthalpy conversion')
+    monkeypatch.setattr(ent, '_prop_field', forbidden)
+    with pytest.raises(ValueError, match='enthalpy warm start: .*non-finite'):
+        run_driver(**{field: np.full((2, 1, 1), np.inf)})
+
+
+@pytest.mark.parametrize('gate, old_h_failure', [(None, False), (.001, False), (.001, True)])
+def test_nonfinite_final_eos_precedes_balance_or_return(monkeypatch, gate, old_h_failure):
+    original_eos = ent._T_of_h_field
+    final_order = []
+
+    def eos(*args, **kw):
+        value = original_eos(*args, **kw)
+        where = kw.get('where', '')
+        if 'final' in where:
+            final_order.append(where[-1])
+            if where.endswith('B'):
+                value[-1] = np.inf
+        return value
+
+    def sweep(hA, *args):
+        if old_h_failure:
+            hA[:] += 1000.
+
+    def forbidden(*args):
+        pytest.fail('invalid final EOS reached coupled budget')
+
+    monkeypatch.setattr(ent, '_T_of_h_field', eos)
+    monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', sweep)
+    monkeypatch.setattr(ent, '_coupled_energy_balance', forbidden)
+    with pytest.raises(ValueError, match='enthalpy final return: B temperature'):
+        run_driver(n_outer=1, coupled_energy_tol=gate)
+    assert final_order == ['A', 'B']
+
+
+def test_standalone_rejects_nonfinite_solid_before_dict(monkeypatch):
+    def sweep(hA, hB, Ts, *args):
+        Ts[-1] = np.inf
+    monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', sweep)
+    with pytest.raises(ValueError, match='enthalpy final return: solid temperature'):
+        ent.solve_ltne_enthalpy_3d(
+            2, 1, 1, 2., 1., 1., .7, 0., 0., 0., 1., 1.,
+            350., 300., 2e5, fluid_A='air', fluid_B='air', n_outer=1)

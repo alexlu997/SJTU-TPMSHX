@@ -34,7 +34,9 @@ _T_LO, _T_HI = 240.0, 420.0
 # h/T(h)/cp/k come from CoolProp at the side's pressure. For 'sco2' these are the
 # SAME CO2 calls sco2_props makes → byte-identical to the sCO2-only path.
 from CoolProp.CoolProp import PropsSI as _PropsSI  # noqa: E402
-from .fluid_props import WaterStateError, check_water_state  # noqa: E402
+from .fluid_props import (  # noqa: E402
+    WaterStateError, check_water_state, check_finite_temperatures,
+)
 from .sco2_props import _validate_state  # noqa: E402
 _CP_NAME = {'sco2': 'CO2', 'water': 'Water', 'air': 'Air'}
 
@@ -341,8 +343,10 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 np.max(np.abs(hB - hB_star))) / denom) < tol:
             break
 
-    return dict(Ta=_T_of_h_field(hA, P_A, fluid_A, where='enthalpy final EOS return A'),
-                Tb=_T_of_h_field(hB, P_B, fluid_B, where='enthalpy final EOS return B'),
+    Ta = _T_of_h_field(hA, P_A, fluid_A, where='enthalpy final EOS return A')
+    Tb = _T_of_h_field(hB, P_B, fluid_B, where='enthalpy final EOS return B')
+    check_finite_temperatures(Ta, Tb, Ts, where='enthalpy final return')
+    return dict(Ta=Ta, Tb=Tb,
                 Ts=Ts, hA=hA, hB=hB, n_outer=n_done, P_A=P_A, P_B=P_B,
                 fluid_A=fluid_A, fluid_B=fluid_B)
 
@@ -459,6 +463,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
         check_water_state(fluid_A, Ta_init, P_A_field, where='enthalpy warm start A')
     if Tb_init is not None:
         check_water_state(fluid_B, Tb_init, P_B_field, where='enthalpy warm start B')
+    check_finite_temperatures(
+        Ta_init, Tb_init, Ts_init, where='enthalpy warm start')
     hA = (_prop_field("H", np.asarray(Ta_init, dtype=np.float64), P_A_field, fluid_A)
           if Ta_init is not None else np.full(shape, h_in_A))
     hB = (_prop_field("H", np.asarray(Tb_init, dtype=np.float64), P_B_field, fluid_B)
@@ -510,6 +516,7 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
             if converged or n_done == n_outer:
                 Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
                 Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
+                check_finite_temperatures(Ta, Tb, Ts, where='enthalpy final return')
                 coupled = _coupled_energy_balance(
                     Ta, Tb, Ts, hvA_fld, hvB_fld, Kss, dx, dy, dz, q_A, q_B)
                 converged = converged and coupled['ratio'] <= coupled_energy_tol
@@ -519,6 +526,7 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     if coupled_energy_tol is None:
         Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
         Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
+        check_finite_temperatures(Ta, Tb, Ts, where='enthalpy final return')
     info = dict(iterations=n_done,
                 converged=bool(converged),
                 residual=float(resid), enthalpy_mode=True,
