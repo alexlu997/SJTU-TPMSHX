@@ -5,7 +5,9 @@ import warnings
 import numpy as np
 import pytest
 
-from sjtu_tpmshx.domain.run_warnings import current_warnings, warning_scope
+from sjtu_tpmshx.domain.run_warnings import (
+    current_warnings, warning_scope, range_context, warning_messages, merge_warnings,
+)
 from sjtu_tpmshx.solvers import fluid_props, nu_correlations as nu, tpms_props
 from sjtu_tpmshx.tests.test_compute_pipeline import _RecordingPipeline
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
@@ -45,8 +47,11 @@ def test_real_nu_standalone_then_repeated_runs(fluid, standalone_registries):
                 np.testing.assert_array_equal(evaluate(re), expected)
                 evaluate(re + 1)
         assert not emitted
-        assert list(records) == [('nu', fluid, 'Gyroid', 'lo'),
-                                 ('nu', fluid, 'Gyroid', 'hi')]
+        assert list(records) == [('nu', fluid, 'Gyroid', (2,),
+                                 ('unbound', 'unbound', 'source'))]
+        record = next(iter(records.values()))
+        assert record.minimum == (1.0, (0,))
+        assert record.maximum == (1e6 + 1, (1,))
         if previous is not None:
             assert records == previous
         previous = records
@@ -64,10 +69,12 @@ def test_later_opposite_nu_and_property_bounds(standalone_registries):
         tpms_props.air_cp(1100)
         tpms_props.water_density(380)
         tpms_props.water_density(381)
-    assert len(records) == 5
-    assert records[('property', 'air_cp', 'lo')].startswith('air_cp: T=[200.0')
-    assert '1100.0' in records[('property', 'air_cp', 'hi')]
-    assert 'outside fitted range' in records[('property', 'water_density', 'hi')]
+    assert len(records) == 3
+    cp = records[('property', 'air_cp', (), ('unbound', 'unbound', 'source'))]
+    assert cp.minimum == (200.0, ())
+    assert cp.maximum == (1100.0, ())
+    assert (cp.low, cp.high, cp.size) == (1, 0, 1)  # first equal-fraction snapshot
+    assert any('water_density:' in message for message in warning_messages(records))
     assert all(not s for s in standalone_registries)
     # A run must not consume the next standalone call's first warning.
     with pytest.warns(UserWarning, match='Nu extrap'):
@@ -89,7 +96,7 @@ def test_property_values_and_standalone_warning_location(name, temperature,
         actual = function(temperature)
         function(temperature + 0.1)
     np.testing.assert_array_equal(actual, expected)
-    assert list(records) == [('property', name, 'hi')]
+    assert list(records) == [('property', name, (), ('unbound', 'unbound', 'source'))]
 
 
 def test_compute_uses_underlying_nu_notice_once(standalone_registries):
@@ -99,7 +106,8 @@ def test_compute_uses_underlying_nu_notice_once(standalone_registries):
         result = compute('Gyroid', 7, 0.6, 0.001, 300, 101325, 16,
                          fluid_type='water')
     assert result['Nu'] > 0
-    assert list(records) == [('nu', 'water', 'Gyroid', 'lo')]
+    assert len(list(warning_messages(records))) == 1
+    assert ('nu', 'water', 'Gyroid', (), ('unbound', 'unbound', 'source')) in records
 
 
 def test_compute_cache_hit_replays_warnings_without_recomputation(standalone_registries):
@@ -118,8 +126,8 @@ def test_compute_cache_hit_replays_warnings_without_recomputation(standalone_reg
     for _ in range(2):
         with warning_scope({}) as records:
             assert compute(*args, fluid_type='water') == expected
-        assert ('nu', 'water', 'Diamond', 'lo') in records
-        assert ('property', 'water_viscosity', 'hi') in records
+        assert ('nu', 'water', 'Diamond', (), ('unbound', 'unbound', 'source')) in records
+        assert ('property', 'water_viscosity', (), ('unbound', 'unbound', 'source')) in records
         assert compute.cache_info().misses == misses
 
 
@@ -140,7 +148,7 @@ def test_failed_cache_miss_restores_recording_context(monkeypatch):
     with warning_scope({}) as records:
         tpms_calc.compute('Diamond', 6.91, 0.59, 0.00123, 370.12,
                           101325, 16, 'water')
-    assert ('nu', 'water', 'Diamond', 'lo') in records
+    assert ('nu', 'water', 'Diamond', (), ('unbound', 'unbound', 'source')) in records
 
 
 def test_choke_is_general_warning_and_keeps_return_contract(monkeypatch):
@@ -234,3 +242,82 @@ def test_concurrent_pipeline_runs_do_not_share_records(monkeypatch):
     for fluid, result in results.items():
         assert len(result.warnings) == 1
         assert result.warnings[0].startswith('[water' if fluid == 'water' else '[sCO2')
+
+
+def test_range_snapshots_keep_extrema_separate_and_nonfinite_visible():
+    with warning_scope({}) as records:
+        for temperatures in ([200., 1100., 300.], [190., 300., 300.],
+                             [300., 300., 1200.], [np.nan, np.inf, 300.]):
+            tpms_props.air_cp(np.array(temperatures))
+    value = next(iter(records.values()))
+    assert (value.minimum, value.maximum) == ((190., (0,)), (1200., (2,)))
+    assert (value.low, value.high, value.size, value.nonfinite) == (1, 1, 3, 2)
+    message, = warning_messages(records)
+    assert 'outside=2/3 (66.67%' in message
+    assert 'peak nonfinite in one snapshot=2/3' in message
+    with warning_scope({}) as invalid:
+        tpms_props.air_cp(np.array([np.nan]))
+    value = next(iter(invalid.values()))
+    assert value.minimum is value.maximum is None
+    assert value.nonfinite == 1
+    assert len(list(warning_messages(invalid))) == 1
+
+
+def test_side_stage_layout_and_shape_isolation_and_scope_restore():
+    with warning_scope({}) as records:
+        for side, stage, layout, values in (
+            ('A', 'refresh', 'grid', np.array([200., 300.])),
+            ('B', 'refresh', 'grid', np.array([200., 300.])),
+            ('A', 'inlet', 'grid', np.array([200., 300.])),
+            ('A', 'refresh', 'mean', 200.),
+            ('A', 'refresh', 'grid', np.array([[200., 300.]])),
+        ):
+            with range_context(side=side, stage=stage, layout=layout):
+                tpms_props.air_cp(values)
+        with pytest.raises(ValueError), range_context(side='B', stage='inlet'):
+            with range_context(side='A'):
+                raise ValueError('restore nested context')
+        tpms_props.air_cp(200.)
+    assert len(records) == 6
+    assert ('property', 'air_cp', (), ('unbound', 'unbound', 'source')) in records
+    assert all(value.low == 1 for value in records.values())
+
+
+@pytest.mark.parametrize('prewarm', [False, True])
+def test_cache_facts_bind_to_each_run_context(prewarm, standalone_registries):
+    from sjtu_tpmshx.solvers.tpms_calc import compute
+
+    compute.cache_clear()
+    args = ('Gyroid', 7., .6, .001, 300., 101325., 16., 'water')
+    if prewarm:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            with range_context(side='old', stage='old', layout='old'):
+                compute(*args)
+    with warning_scope({}) as records:
+        for side in ('A', 'B'):
+            with range_context(side=side, stage='inlet', layout='mean'):
+                compute(*args)
+    assert compute.cache_info().misses == 1
+    a = {key[:-1]: value for key, value in records.items()
+         if key[-1] == ('A', 'inlet', 'mean')}
+    b = {key[:-1]: value for key, value in records.items()
+         if key[-1] == ('B', 'inlet', 'mean')}
+    assert a and a == b
+    assert len(records) == len(a) + len(b)
+    assert len(list(warning_messages(records))) == 2
+
+
+def test_worker_merge_keeps_single_snapshot_counts_and_does_not_mutate_source():
+    sources = []
+    for temperatures in ([200., 300.], [190., 1200.]):
+        with warning_scope({}) as worker, range_context(side='A', stage='refresh'):
+            tpms_props.air_cp(np.array(temperatures))
+        sources.append(worker)
+    before = sources[0].copy()
+    merged = {}
+    merge_warnings(merged, sources)
+    merge_warnings(merged, sources)
+    value, = merged.values()
+    assert (value.low, value.high, value.size) == (1, 1, 2)
+    assert sources[0] == before

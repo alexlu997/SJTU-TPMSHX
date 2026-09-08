@@ -50,7 +50,7 @@ from typing import Any, Callable, Dict, Optional
 from sjtu_tpmshx.domain.compute_config import ComputeConfig
 from sjtu_tpmshx.domain.compute_result import ComputeResult
 from sjtu_tpmshx.domain.cancellation import CancelledError
-from sjtu_tpmshx.domain.run_warnings import warning_scope
+from sjtu_tpmshx.domain.run_warnings import warning_scope, warning_messages
 
 
 # ── Pipeline ABC ─────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ class ComputePipeline(ABC):
             result = self.finalize(raw, fields)
             self._check_cancel()
             self.progress_cb(100)
-            for message in records.values():
+            for message in warning_messages(records):
                 if message not in result.warnings:
                     result.warnings.append(message)
             return result
