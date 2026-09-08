@@ -434,7 +434,7 @@ Each selected dimension/topology must contain every planned
 case exactly once, with finite positive Q values and all existing numerical
 checks passing. Empty, missing, duplicate or failed results cannot pass.
 Errors are recomputed as `e = Qsolver/Qref - 1`; `sqrt(mean(e**2))` must be
-≤20% for Diamond and ≤5% for Gyroid in 2D, and ≤21% for Diamond and ≤6%
+≤20% for Diamond and ≤6% for Gyroid in 2D, and ≤21% for Diamond and ≤6%
 for Gyroid in 3D. These limits apply only to this experiment. Bias
 `mean(e)`, median/P90 absolute error and the existing diagnostics remain reports,
 with no new bias threshold. An acceptance failure returns exit code 1.

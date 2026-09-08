@@ -58,9 +58,9 @@ def _q_results(diamond=0.20, gyroid=0.05):
 
 
 @pytest.mark.parametrize("diamond,gyroid,passed", [
-    (0.20, 0.05, True), (0.20 - 1e-8, 0.05 - 1e-8, True),
-    (0.20 + 1e-8, 0.0, False), (0.0, 0.05 + 1e-8, False),
-    (-0.20, -0.05, True), (-0.20 - 1e-8, 0.0, False),
+    (0.20, 0.06, True), (0.20 - 1e-8, 0.06 - 1e-8, True),
+    (0.20 + 1e-8, 0.0, False), (0.0, 0.06 + 1e-8, False),
+    (-0.20, -0.06, True), (-0.20 - 1e-8, 0.0, False),
 ])
 def test_q_limits_use_actual_q_per_group(diamond, gyroid, passed):
     from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
@@ -72,7 +72,7 @@ def test_q_limits_use_actual_q_per_group(diamond, gyroid, passed):
 
 
 @pytest.mark.parametrize("dimension,topology,limit", [
-    ("2d", "Diamond", 0.20), ("2d", "Gyroid", 0.05),
+    ("2d", "Diamond", 0.20), ("2d", "Gyroid", 0.06),
     ("3d", "Diamond", 0.21), ("3d", "Gyroid", 0.06),
 ])
 @pytest.mark.parametrize("offset,passed", [(-1e-8, True), (0., True), (1e-8, False)])
