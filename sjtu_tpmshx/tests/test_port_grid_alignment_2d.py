@@ -48,6 +48,55 @@ def test_aligned_grid_rejects_too_few_cells_for_segments():
         _aligned_grid(17, 1.0, edges)
 
 
+def test_counter_port_endpoints_do_not_create_unknown_fine_inflow():
+    from sjtu_tpmshx.solvers.simple_solver import _prolong_mass_faces_2d
+    from sjtu_tpmshx.solvers.ltne_energy import _model_h_balance
+    from sjtu_tpmshx.solvers.simple_solver import _port_fractions_1d
+
+    # Original counter member: preserve the actual centre/width arithmetic.
+    ports = ((0.0126, 0.01092, 0.02835, 0.01302),
+             (0.0189, 0.01344, 0.01218, 0.015120000000000001))
+    breaks = sorted({ctr + sign * width / 2 for port in ports
+                     for ctr, width in (port[:2], port[2:]) for sign in (-1, 1)})
+    lo, hi = ports[1][0] - ports[1][1]/2, ports[1][0] + ports[1][1]/2
+    coarse, fine = (_aligned_grid(n, 0.042, breaks) for n in (40, 80))
+    for widths, n in ((coarse, 40), (fine, 80)):
+        assert len(widths) == n and np.all(widths > 0)
+        edges = np.r_[0., np.cumsum(widths)]
+        assert all(edge in edges for edge in (*breaks, 0.042))
+    raw, profile = _port_fractions_1d(coarse, lo, hi)
+    raw_fine, _ = _port_fractions_1d(fine, lo, hi)
+    assert raw[10] == 0 and np.all(raw_fine[22:24] == 0)
+    assert np.dot(raw, coarse) == pytest.approx(hi-lo, rel=1e-14)
+    assert np.dot(raw_fine, fine) == pytest.approx(hi-lo, rel=1e-14)
+
+    dx = np.array([0.091, 0.091])
+    mass = (np.tile(-profile*coarse, (3, 1)), np.zeros((2, 41)))
+    refined = _prolong_mass_faces_2d(mass, dx, coarse, dx, fine)
+    assert np.all(refined[0][-1, raw_fine == 0] == 0)
+    np.testing.assert_allclose(refined[0].sum(axis=1), mass[0].sum(axis=1),
+                               rtol=1e-14, atol=0)
+    np.testing.assert_allclose(
+        np.diff(refined[0], axis=0) + np.diff(refined[1], axis=1), 0., atol=1e-15)
+
+    # A real negative flow on a closed face must still fail, even this small.
+    temperature = np.full((2, 80), 310.)
+    zero = np.zeros_like(temperature)
+    no_flow = tuple(np.zeros_like(face) for face in refined)
+    for injected in (0., -4.4917681889235814e-18):
+        refined[0][-1, 22] = injected
+        balance = _model_h_balance(
+            temperature, temperature, temperature, zero, zero, zero, zero, zero,
+            dx, fine, no_flow, refined, (1000., 0., 0., 0., 300.),
+            (1000., 0., 0., 0., 300.), 1, 1,
+            np.full(80, 310.), np.full(80, 310.), raw_fine, raw_fine, False,
+            temperature, temperature)
+        assert balance['B']['unknown_inflow_faces'] == int(injected < 0)
+        assert balance['physical_boundary_complete'] == (injected == 0)
+        if injected < 0:
+            assert not balance['passed']
+
+
 @pytest.mark.parametrize('directions', [(0, 2), (2, 0), (1, 3), (3, 1),
                                          (0, 1), (2, 3)])
 def test_ports_align_on_physical_axis(directions):

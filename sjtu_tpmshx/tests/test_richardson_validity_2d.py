@@ -56,7 +56,50 @@ def _finite_refined(args, kwargs, converged):
     shape = args[2], args[3]
     fields = tuple(np.full(shape, t) for t in (390., 310., 350.))
     info = dict(converged=converged, iterations=5000, residual=2.)
+    if kwargs.get('model_fluids') is not None:
+        # This stub supplies arbitrary finite fields, not a physical solve.
+        info['model_h_balance'] = dict(passed=False,
+            A={'Q_advective_W_per_m': 10.}, B={'Q_advective_W_per_m': -8.})
     return (*fields, info) if kwargs.get('return_info') else fields
+
+
+@pytest.mark.parametrize('model', [False, True])
+@pytest.mark.parametrize('side,bad', [(0, np.inf), (1, -np.inf), (2, np.nan), ('water', np.nan)])
+def test_refined_nonfinite_return_precedes_duty_and_fallback(monkeypatch, model, side, bad):
+    from sjtu_tpmshx.solvers.fluid_props import WaterStateError
+    _, args = _arguments(monkeypatch, full=True)
+    args['_pA'], args['_pB'] = dict(args['_pA']), dict(args['_pB'])
+    if side == 'water':
+        args['_pB']['name'] = 'water'
+    if model:
+        nx, ny = args['Ta'].shape
+        mass = (np.ones((nx + 1, ny)), np.zeros((nx, ny + 1)))
+        for label in ('A', 'B'):
+            args[f'rho_cp_{label}'] = np.ones((nx, ny))
+        args['model_inputs'] = dict(
+            model_fluids=('air', args['_pB']['name']), mass_flux_A=mass, mass_flux_B=mass,
+            K_ffA=.1, K_ffB=.2, K_ss=1.)
+    returned = []
+
+    def refined(*a, **kw):
+        assert (kw.get('model_fluids') is not None) == model
+        result = _finite_refined(a, kw, True)
+        result[1 if side == 'water' else side][0, 0] = bad
+        if side == 'water':
+            result[0][0, 0] = np.inf
+        returned.extend(result[:3])
+        return result
+
+    duties = []
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', refined)
+    monkeypatch.setattr(solve_2d, '_enthalpy_balance_2d', lambda *a, **k: duties.append(a))
+    error = WaterStateError if side == 'water' else ValueError
+    label = 'B' if side == 'water' else ('A', 'B', 'solid')[side]
+    match = 'Richardson return B' if side == 'water' else f'Richardson energy return: {label} temperature index='
+    with pytest.raises(error, match=match):
+        solve_2d._compute_Q_richardson(**args)
+    assert not duties
+    assert not np.isfinite(returned[1 if side == 'water' else side][0, 0])
 
 
 @pytest.mark.parametrize('directions', [(1, 3), (3, 1)])
@@ -197,7 +240,13 @@ def test_cap_post_does_not_replace_last_thermal_coefficients(monkeypatch):
         np.testing.assert_array_equal(args[8], captured['rho_cp_fB'])
         np.testing.assert_array_equal(kwargs['h_vA_coarse'], captured['h_vA'])
         np.testing.assert_array_equal(kwargs['h_vB_coarse'], captured['h_vB'])
-        return 10., 10., -10., 10., False, dict(converged=True, extrapolated=True)
+        model = kwargs['model_inputs']
+        assert model['mass_flux_A'] is captured['mass_flux_A']
+        assert model['mass_flux_B'] is captured['mass_flux_B']
+        assert kwargs['model_balance']['post_after_last_thermal']
+        assert not kwargs['model_balance']['passed']
+        return 10., 10., -10., 10., False, dict(
+            converged=True, extrapolated=True, model_h_balance={'passed': False})
 
     monkeypatch.setattr(solve_2d, 'solve_full_domain', energy)
     monkeypatch.setattr(solve_2d, 'run_outer_coupling', cap)
