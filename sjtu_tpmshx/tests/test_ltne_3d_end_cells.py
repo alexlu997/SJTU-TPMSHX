@@ -212,13 +212,19 @@ def test_prescribed_b_is_external_reservoir_and_not_a_certificate(inlet_scale):
     assert abs(a_boundary+external_b) < 1e-10
 
 
-def test_nz1_passes_integrated_inlet_flux_per_unit_depth():
+@pytest.mark.parametrize('directions', [(0, 3), (3, 0)])
+def test_nz1_passes_integrated_inlet_flux_per_unit_depth(directions):
     from sjtu_tpmshx.tests.test_ltne_energy_3d import _toy_case
     from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
     from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
     cfg = _toy_case(Nx=3,Ny=2,Nz=1)
     cfg.update(max_iter=10,inlet_flux_A=np.array([[0.3],[0.5]]),
                inlet_flux_B=np.array([[0.1],[0.2],[0.4]]))
+    if directions == (3, 0):
+        cfg.update(dir_A=3, dir_B=0,
+                   ucA=cfg['vcA'], vcA=-cfg['ucA'],
+                   ucB=-cfg['vcB'], vcB=cfg['ucB'],
+                   inlet_flux_A=cfg['inlet_flux_B'], inlet_flux_B=cfg['inlet_flux_A'])
     actual = solve_full_domain_3d(**cfg)
     flat = dict(cfg)
     for key in ('D','Nz','wcA','wcB'): flat.pop(key)

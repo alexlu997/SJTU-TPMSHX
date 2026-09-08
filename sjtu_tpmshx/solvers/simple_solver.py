@@ -151,11 +151,16 @@ def _aligned_grid(N, L, breakpoints):
             n_cells[big] -= borrowed
             deficit -= borrowed
 
-    # Build dx array: uniform within each segment
+    # Anchor each segment end despite cumulative roundoff in uniform widths.
     dx_list = []
+    position = 0.0
     for (lo, hi), nc in zip(segments, n_cells):
         seg_dx = (hi - lo) / nc
-        dx_list.extend([seg_dx] * nc)
+        for _ in range(nc - 1):
+            dx_list.append(seg_dx)
+            position += seg_dx
+        dx_list.append(hi - position)
+        position += dx_list[-1]
 
     return np.array(dx_list, dtype=np.float64)
 

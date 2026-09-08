@@ -8,6 +8,14 @@ compiled output byte-identical while collapsing the duplication.
 from numba import njit
 
 
+@njit(cache=True)
+def _model_h(T, coefficients):
+    a, b, c, origin, reference = coefficients
+    x = T - origin
+    x0 = reference - origin
+    return a*(x-x0) + 0.5*b*(x*x-x0*x0) + c/3.0*(x*x*x-x0*x0*x0)
+
+
 @njit(inline='always', cache=True)
 def minmod(gu, gd):
     """MINMOD limiter: signed min(|gu|,|gd|) when gu,gd share a sign, else 0.

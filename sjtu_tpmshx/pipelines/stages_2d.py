@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import os
 
 import numpy as np
+from sjtu_tpmshx.domain.run_warnings import range_context
 from sjtu_tpmshx.domain.compute_config import ComputeConfig, bc_to_dict
 from sjtu_tpmshx.domain.compute_result import ComputeResult
 from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
@@ -885,14 +886,16 @@ def _finalize_cfg(raw: dict[str, Any],
             return float(_np.mean(T_face))
         return float(_np.sum(w * T_face) / wsum)
 
-    T_out_A = _outlet_T(Ta, ucA, vcA, fields['dir_A'],
-                        compute_cfg.fluid_A.type,
-                        compute_cfg.fluid_A.T_in_K,
-                        compute_cfg.fluid_A.P_in_Pa)
-    T_out_B = _outlet_T(Tb, ucB, vcB, fields['dir_B'],
-                        compute_cfg.fluid_B.type,
-                        compute_cfg.fluid_B.T_in_K,
-                        compute_cfg.fluid_B.P_in_Pa)
+    with range_context(side='A', stage='final-outlet', layout='outlet-face'):
+        T_out_A = _outlet_T(Ta, ucA, vcA, fields['dir_A'],
+                            compute_cfg.fluid_A.type,
+                            compute_cfg.fluid_A.T_in_K,
+                            compute_cfg.fluid_A.P_in_Pa)
+    with range_context(side='B', stage='final-outlet', layout='outlet-face'):
+        T_out_B = _outlet_T(Tb, ucB, vcB, fields['dir_B'],
+                            compute_cfg.fluid_B.type,
+                            compute_cfg.fluid_B.T_in_K,
+                            compute_cfg.fluid_B.P_in_Pa)
 
     # Zone slot — None when zones disabled.
     zones_slot = None
@@ -978,6 +981,7 @@ def _finalize_cfg(raw: dict[str, Any],
             'Q_richardson_warn': bool(raw.get('Q_richardson_warn', False)),
             'richardson_info': raw.get('richardson_info'),
             'true_h_balance': raw.get('true_h_balance'),
+            'model_h_balance': raw.get('model_h_balance'),
             'mass_flow_A_kg_s_per_m': float(
                 raw.get('mass_flow_A_kg_s_per_m', float('nan'))),
             'mass_flow_B_kg_s_per_m': float(

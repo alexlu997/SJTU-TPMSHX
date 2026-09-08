@@ -4,6 +4,7 @@ untouched — see ltne_energy_3d.py / docs/architecture.md."""
 
 import numpy as np
 from numba import njit, prange
+from ._kernels_2d import _model_h
 
 
 # ---------------------------------------------------------------------------
@@ -197,14 +198,6 @@ def _sou_field_cons(T, Fx, Fy, Fz):
 # ---------------------------------------------------------------------------
 # inlet helpers
 # ---------------------------------------------------------------------------
-
-@njit(cache=True)
-def _model_h(T, coefficients):
-    a, b, c, origin, reference = coefficients
-    x = T - origin
-    x0 = reference - origin
-    return a*(x-x0) + 0.5*b*(x*x-x0*x0) + c/3.0*(x*x*x-x0*x0*x0)
-
 
 @njit(cache=True)
 def _model_h_faces(T, mass, coefficients, direction, Tin, ifrac):

@@ -17,12 +17,89 @@ SIMPLE solver (cell-centre interpolated), not assumed uniform.
 
 Cell-coupled Gauss-Seidel: at each cell, update Ta → Ts → Tb sequentially
 so that coupling information propagates within a single sweep.
+
+Production R2 air/water callers explicitly supply full mass faces and fluid
+identifiers. That mode solves conservative model-h transport with T unknown;
+the temperature-form equations above remain the default for direct callers.
 """
 
 import numpy as np
 from sjtu_tpmshx.domain.cancellation import CancelledError
 from numba import njit, prange
-from ._kernels_2d import minmod
+from ._kernels_2d import minmod, _model_h
+
+
+@njit(cache=True)
+def _model_h_faces(T, mass, coefficients, direction, Tin, ifrac, sou):
+    """One Picard capacity/intercept per signed mass face, frozen per sweep."""
+    a, b, c, origin, _ = coefficients
+    capacity = (np.empty_like(mass[0]), np.empty_like(mass[1]))
+    deferred = (np.empty_like(mass[0]), np.empty_like(mass[1]))
+    for axis in range(2):
+        for i in range(mass[axis].shape[0]):
+            for j in range(mass[axis].shape[1]):
+                pos = i if axis == 0 else j
+                count = T.shape[axis]
+                m = mass[axis][i, j]
+                u = min(max(pos - 1 if m >= 0.0 else pos, 0), count - 1)
+                up = (u, j) if axis == 0 else (i, u)
+                t = T[up]
+                inc = 0.0
+                if sou and 0 < pos < count and 0 < u < count - 1:
+                    prev = (u-1, j) if axis == 0 else (i, u-1)
+                    nxt = (u+1, j) if axis == 0 else (i, u+1)
+                    inc = (0.5 * minmod(t-T[prev], T[nxt]-t) if m >= 0.0
+                           else 0.5 * minmod(t-T[nxt], T[prev]-t))
+                if axis == direction // 2 and pos == (0 if direction % 2 == 0 else count):
+                    patch = j if axis == 0 else i
+                    inward = m if direction % 2 == 0 else -m
+                    if ifrac[patch] > 0.0 and inward > 0.0:
+                        t = Tin[patch]
+                x = t - origin
+                cp = a + b*x + c*x*x
+                capacity[axis][i, j] = m * cp
+                deferred[axis][i, j] = m * (_model_h(t+inc, coefficients) - cp*t)
+    return capacity, deferred
+
+
+@njit(cache=True)
+def _model_h_cell(T, Ts, K, hv, i, j, dx, dy, direction, Tin, ifrac,
+                  mass, capacity, deferred):
+    """Conservative fluid row; no temperature-form minus T div(capacity)."""
+    nx, ny = T.shape
+    volume = dx[i] * dy[j]
+    diagonal = hv[i, j] * volume
+    rhs = diagonal * Ts[i, j]
+    for face in range(4):
+        axis = face // 2
+        sign = -1.0 if face % 2 == 0 else 1.0
+        ni = i + (int(sign) if axis == 0 else 0)
+        nj = j + (int(sign) if axis == 1 else 0)
+        fi = i + (1 if axis == 0 and sign > 0 else 0)
+        fj = j + (1 if axis == 1 and sign > 0 else 0)
+        cap = sign * capacity[axis][fi, fj]
+        outward = sign * mass[axis][fi, fj]
+        rhs -= sign * deferred[axis][fi, fj]
+        inside = 0 <= ni < nx and 0 <= nj < ny
+        neighbor = T[ni, nj] if inside else T[i, j]
+        conductance = 0.0
+        if inside:
+            distance = .5*(dx[i]+dx[ni]) if axis == 0 else .5*(dy[j]+dy[nj])
+            area = dy[j] if axis == 0 else dx[i]
+            conductance = 2*K[i,j]*K[ni,nj]/(K[i,j]+K[ni,nj]+1e-30)*area/distance
+        elif axis == direction // 2 and face % 2 == direction % 2:
+            patch = j if axis == 0 else i
+            area = dy[j] if axis == 0 else dx[i]
+            width = dx[i] if axis == 0 else dy[j]
+            conductance = 2*K[i,j]*area*ifrac[patch]/width
+            rhs += conductance * Tin[patch]
+            diagonal += conductance
+            conductance = 0.0
+            if ifrac[patch] > 0.0 and outward < 0.0:
+                neighbor = Tin[patch]
+        diagonal += conductance + (cap if outward >= 0.0 else 0.0)
+        rhs += (conductance - (cap if outward < 0.0 else 0.0)) * neighbor
+    return rhs / diagonal
 
 
 @njit(cache=True)
@@ -90,7 +167,9 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                    ucA, vcA, ucB, vcB,
                    bc_A, bc_B, T_inA_arr, T_inB_arr,
                    ifrac_A, ifrac_B,
-                   n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None):
+                   n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None,
+                   mass_A=None, mass_B=None, cp_A=None, cp_B=None,
+                   last_Ta=None, last_Tb=None):
     """Cell-coupled Gauss-Seidel: at each cell update Ta → Ts → Tb.
     dx_arr: 1D [Nx], dy_arr: 1D [Ny] — non-uniform cell widths.
 
@@ -126,7 +205,7 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     else:
         i0, i1, di = 0, Nx, 1
     # j-direction: follow B's preference
-    if bc_B == 3:
+    if bc_B == 3 or (bc_A == 3 and bc_B == 0):
         j0, j1, dj = Ny - 1, -1, -1
     else:
         j0, j1, dj = 0, Ny, 1
@@ -154,6 +233,11 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
 
     for _it in range(n_iters):
         max_chg = 0.0
+        if mass_A is not None:
+            last_Ta[:] = Ta
+            last_Tb[:] = Tb
+            cap_A, def_A = _model_h_faces(last_Ta, mass_A, cp_A, bc_A, T_inA_arr, ifrac_A, True)
+            cap_B, def_B = _model_h_faces(last_Tb, mass_B, cp_B, bc_B, T_inB_arr, ifrac_B, sou_B == 1)
 
         for i in range(i0, i1, di):
             for j in range(j0, j1, dj):
@@ -227,7 +311,11 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                        + _sou_corr_y(Ta, i, j, Ny, v_loc, FyA))
 
                 aP = aE + aW + aN + aS + hvA
-                new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                if mass_A is not None:
+                    new = _model_h_cell(Ta, Ts, K_ffA_arr, h_vA_arr, i, j,
+                                        dx_arr, dy_arr, bc_A, T_inA_arr, ifrac_A, mass_A, cap_A, def_A)
+                else:
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
                 # Retain the existing per-cell relaxation policy.
                 is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
                                (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
@@ -345,7 +433,11 @@ def _gs_full_chunk(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                         sou = 0.0
 
                     aP = aE + aW + aN + aS + hvB
-                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
+                    if mass_A is not None:
+                        new = _model_h_cell(Tb, Ts, K_ffB_arr, h_vB_arr, i, j,
+                                            dx_arr, dy_arr, bc_B, T_inB_arr, ifrac_B, mass_B, cap_B, def_B)
+                    else:
+                        new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
                     chg = abs(new - Tb[i,j])
                     if chg > max_chg: max_chg = chg
                     Tb[i,j] = new
@@ -364,7 +456,9 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                       ucA, vcA, ucB, vcB,
                       bc_A, bc_B, T_inA_arr, T_inB_arr,
                       ifrac_A, ifrac_B,
-                      n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None):
+                      n_iters, freeze_Tb, sou_B, inlet_flux_A=None, inlet_flux_B=None,
+                      mass_A=None, mass_B=None, cp_A=None, cp_B=None,
+                      last_Ta=None, last_Tb=None):
     """Red-black `prange`-parallel twin of `_gs_full_chunk` (2D).
 
     Same construction as the 3D `_gs_full_chunk_3d_stag_rb`: cells are swept by
@@ -397,6 +491,11 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
     for _it in range(n_iters):
         Ta_snap = Ta.copy()
         Tb_snap = Tb.copy()
+        if mass_A is not None:
+            last_Ta[:] = Ta_snap
+            last_Tb[:] = Tb_snap
+            cap_A, def_A = _model_h_faces(last_Ta, mass_A, cp_A, bc_A, T_inA_arr, ifrac_A, True)
+            cap_B, def_B = _model_h_faces(last_Tb, mass_B, cp_B, bc_B, T_inB_arr, ifrac_B, sou_B == 1)
         sweep_chg = 0.0
         for color in range(2):
             color_chg = 0.0
@@ -465,7 +564,11 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                 sou = (_sou_corr_x(Ta_snap, i, j, Nx, u_loc, FxA)
                        + _sou_corr_y(Ta_snap, i, j, Ny, v_loc, FyA))
                 aP = aE + aW + aN + aS + hvA
-                new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
+                if mass_A is not None:
+                    new = _model_h_cell(Ta, Ts, K_ffA_arr, h_vA_arr, i, j,
+                                        dx_arr, dy_arr, bc_A, T_inA_arr, ifrac_A, mass_A, cap_A, def_A)
+                else:
+                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvA*Ts[i,j] + sou) / aP
                 # Retain the serial per-cell relaxation policy.
                 is_outlet_A = ((bc_A == 0 and i == Nx-1) or (bc_A == 1 and i == 0) or
                                (bc_A == 2 and j == Ny-1) or (bc_A == 3 and j == 0))
@@ -563,7 +666,11 @@ def _gs_full_chunk_rb(Ta, Tb, Ts, Nx, Ny, dx_arr, dy_arr,
                     else:
                         sou = 0.0
                     aP = aE + aW + aN + aS + hvB
-                    new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
+                    if mass_A is not None:
+                        new = _model_h_cell(Tb, Ts, K_ffB_arr, h_vB_arr, i, j,
+                                            dx_arr, dy_arr, bc_B, T_inB_arr, ifrac_B, mass_B, cap_B, def_B)
+                    else:
+                        new = (aE*tE + aW*tW + aN*tN + aS*tS + hvB*Ts[i,j] + sou) / aP
                     c = abs(new - Tb[i,j])
                     if c > cell_chg: cell_chg = c
                     Tb[i,j] = new
@@ -598,6 +705,122 @@ _RB_ENERGY_2D = False
 _RB_ENERGY_2D_GATE = 30_000
 
 
+@njit(cache=True)
+def _model_face_values(T, mass, capacity, deferred, direction, Tin, ifrac):
+    flux = (np.empty_like(capacity[0]), np.empty_like(capacity[1]))
+    for axis in range(2):
+        for i in range(capacity[axis].shape[0]):
+            for j in range(capacity[axis].shape[1]):
+                pos = i if axis == 0 else j
+                count = T.shape[axis]
+                cap = capacity[axis][i, j]
+                m = mass[axis][i, j]
+                u = min(max(pos-1 if m >= 0.0 else pos, 0), count-1)
+                t = T[u, j] if axis == 0 else T[i, u]
+                if axis == direction // 2 and pos == (0 if direction % 2 == 0 else count):
+                    patch = j if axis == 0 else i
+                    inward = m if direction % 2 == 0 else -m
+                    if ifrac[patch] > 0.0 and inward > 0.0:
+                        t = Tin[patch]
+                flux[axis][i, j] = cap*t + deferred[axis][i, j]
+    return flux
+
+
+def _model_h_balance(Ta, Tb, Ts, K_A, K_B, K_s, hv_A, hv_B, dx, dy,
+                     mass_A, mass_B, cp_A, cp_B, dir_A, dir_B,
+                     Tin_A, Tin_B, frac_A, frac_B, sou_B, last_Ta, last_Tb):
+    """Evaluate final nonlinear raw-state balances without another sweep."""
+    area = dx[:, None] * dy[None, :]
+
+    def divergence(face):
+        return face[0][1:] - face[0][:-1] + face[1][:, 1:] - face[1][:, :-1]
+
+    def conduction(T, K):
+        fx, fy = np.zeros((T.shape[0]+1, T.shape[1])), np.zeros((T.shape[0], T.shape[1]+1))
+        fx[1:-1] = (2*K[:-1]*K[1:]/(K[:-1]+K[1:]+1e-30)
+                     * dy[None, :] / (.5*(dx[:-1]+dx[1:]))[:, None] * (T[:-1]-T[1:]))
+        fy[:, 1:-1] = (2*K[:, :-1]*K[:, 1:]/(K[:, :-1]+K[:, 1:]+1e-30)
+                       * dx[:, None] / (.5*(dy[:-1]+dy[1:]))[None, :] * (T[:, :-1]-T[:, 1:]))
+        return -divergence((fx, fy))
+
+    def boundaries(face):
+        return (-face[0][0], face[0][-1], -face[1][:, 0], face[1][:, -1])
+
+    sides = {}
+    residuals = []
+    defects = []
+    exchanges = []
+    for label, T, K, hv, mass, cp, direction, tin, frac, sou, snapshot in (
+            ('A', Ta, K_A, hv_A, mass_A, cp_A, dir_A, Tin_A, frac_A, True, last_Ta),
+            ('B', Tb, K_B, hv_B, mass_B, cp_B, dir_B, Tin_B, frac_B, sou_B, last_Tb)):
+        cap, deferred = _model_h_faces(T, mass, cp, direction, tin, frac, sou)
+        flux = _model_face_values(T, mass, cap, deferred, direction, tin, frac)
+        old_cap, old_deferred = _model_h_faces(snapshot, mass, cp, direction, tin, frac, sou)
+        linear_flux = _model_face_values(T, mass, old_cap, old_deferred, direction, tin, frac)
+        defect = divergence(linear_flux) - divergence(flux)
+        exchange = hv*(Ts-T)*area
+        residual = -divergence(flux) + conduction(T, K) + exchange
+        inlet = (0, slice(None)) if direction == 0 else ((-1, slice(None)) if direction == 1
+                 else ((slice(None), 0) if direction == 2 else (slice(None), -1)))
+        cross = dy if direction <= 1 else dx
+        width = (dx[0] if direction == 0 else dx[-1]) if direction <= 1 else (dy[0] if direction == 2 else dy[-1])
+        diffusion_in = 2*K[inlet]*cross*frac/width*(tin-T[inlet])
+        residual[inlet] += diffusion_in
+        outward_mass = boundaries(mass)
+        outward_h = boundaries(flux)
+        unknown = sum(int(np.count_nonzero((m < 0) & (frac <= 0))) if f == direction
+                      else int(np.count_nonzero(m < 0)) for f, m in enumerate(outward_mass))
+        q = -sum(float(f.sum()) for f in outward_h)
+        sides[label] = dict(
+            Q_advective_W_per_m=q, inlet_conduction_W_per_m=float(diffusion_in.sum()),
+            exchange_W_per_m=float(exchange.sum()), source_W_per_m=0.0,
+            residual_sum_W_per_m=float(residual.sum()),
+            residual_max_abs_W_per_m=float(np.max(np.abs(residual))),
+            linearized_residual_sum_W_per_m=float((residual-defect).sum()),
+            linearized_residual_max_abs_W_per_m=float(np.max(np.abs(residual-defect))),
+            linearization_defect_sum_W_per_m=float(defect.sum()),
+            linearization_defect_max_abs_W_per_m=float(np.max(np.abs(defect))),
+            mass_net_out_kg_s_per_m=float(divergence(mass).sum()),
+            mass_local_max_abs_kg_s_per_m=float(np.max(np.abs(divergence(mass)))),
+            mass_in_kg_s_per_m=sum(float(np.maximum(-m, 0).sum()) for m in outward_mass),
+            mass_out_kg_s_per_m=sum(float(np.maximum(m, 0).sum()) for m in outward_mass),
+            boundary_mass_out_kg_s_per_m=[f.tolist() for f in outward_mass],
+            boundary_h_out_W_per_m=[f.tolist() for f in outward_h],
+            mass_faces_kg_s_per_m=[f.tolist() for f in mass],
+            h_faces_W_per_m=[f.tolist() for f in flux],
+            inlet_conduction_faces_W_per_m=diffusion_in.tolist(),
+            cp_coefficients=list(cp), unknown_inflow_faces=unknown,
+            physical_boundary_complete=(unknown == 0))
+        residuals.append(residual)
+        defects.append(defect)
+        exchanges.append(exchange)
+    solid = conduction(Ts, K_s) - exchanges[0] - exchanges[1]
+    net = sum(s['Q_advective_W_per_m'] + s['inlet_conduction_W_per_m'] for s in sides.values())
+    scale = max(abs(sides['A']['exchange_W_per_m']), abs(sides['B']['exchange_W_per_m']), 1.0)
+    solid_sum = float(solid.sum())
+    finite = all(np.all(np.isfinite(a)) for a in (
+        Ta, Tb, Ts, K_A, K_B, K_s, hv_A, hv_B, dx, dy,
+        *mass_A, *mass_B, cp_A, cp_B, last_Ta, last_Tb,
+        *residuals, *defects, solid)) and np.isfinite(net)
+    complete = all(s['physical_boundary_complete'] for s in sides.values())
+    return dict(
+        units='W/m; kg/(s m)', state='raw final thermal return',
+        boundary_order=['-x', '+x', '-y', '+y'], A=sides['A'], B=sides['B'],
+        sou_A=True, sou_B=bool(sou_B), cell_count=int(Ta.size),
+        dx_m=dx.tolist(), dy_m=dy.tolist(), area_m2=float(area.sum()),
+        solid_boundary_W_per_m=0.0, solid_source_W_per_m=0.0,
+        solid_residual_sum_W_per_m=solid_sum,
+        solid_residual_max_abs_W_per_m=float(np.max(np.abs(solid))),
+        residual_sum_W_per_m=float(sum(r.sum() for r in residuals)+solid_sum),
+        telescoping_error_W_per_m=float(sum(r.sum() for r in residuals)+solid_sum-net),
+        net_boundary_in_W_per_m=net, D2_W_per_m=scale,
+        energy_imbalance_rel=abs(net)/scale, solid_imbalance_rel=abs(solid_sum)/scale,
+        physical_boundary_complete=complete, finite=bool(finite),
+        energy_ok=bool(finite and complete and abs(net)/scale <= .005),
+        solid_ok=bool(finite and complete and abs(solid_sum)/scale <= .01),
+        passed=bool(finite and complete and abs(net)/scale <= .005 and abs(solid_sum)/scale <= .01))
+
+
 def solve_full_domain(L, H, Nx, Ny,
                       T_inA, T_inB,
                       K_ffA, K_ffB, K_ss,
@@ -616,7 +839,8 @@ def solve_full_domain(L, H, Nx, Ny,
                       eps_A=None, eps_B=None,
                       q_rel_tol=None, conv_chunk=None,
                       use_sou_B=False, cancel_check=None,
-                      inlet_flux_A=None, inlet_flux_B=None):
+                      inlet_flux_A=None, inlet_flux_B=None,
+                      model_fluids=None, mass_flux_A=None, mass_flux_B=None):
     """Full-domain steady-state 2-fluid LTNE solver.
 
     q_rel_tol : float or None — per-chunk Q-relative convergence threshold.
@@ -643,6 +867,9 @@ def solve_full_domain(L, H, Nx, Ny,
         by the opening fraction again. Direct cell-centre callers omit these
         and retain their boundary-cell transport coefficient.
     return_info : bool — if True, return (Ta, Tb, Ts, info_dict)
+    model_fluids : optional internal (fluid_A, fluid_B) air/water identifiers.
+        Enables conservative model-h transport with both complete signed
+        mass_flux_A/B face tuples, already integrated in kg/(s m).
     Ta_init, Tb_init, Ts_init : 2D arrays (Nx, Ny) — warm-start initial guess
     Tb_prescribed : 2D array (Nx, Ny) or None
         If provided, Tb is pinned to this field and NOT updated by the solver.
@@ -771,6 +998,27 @@ def solve_full_domain(L, H, Nx, Ny,
         Tb = Tb_arr.copy()
         freeze_Tb = 1
 
+    model_args = ()
+    if model_fluids is not None:
+        from .tpms_props import model_h_coefficients
+        if len(model_fluids) != 2 or freeze_Tb:
+            raise ValueError('model h requires two solved air/water fluids')
+        cp_A, cp_B = (model_h_coefficients(f) for f in model_fluids)
+        masses = []
+        for mass in (mass_flux_A, mass_flux_B):
+            if mass is None or len(mass) != 2:
+                raise ValueError('model h requires complete x/y mass faces for both fluids')
+            faces = tuple(np.ascontiguousarray(f, dtype=np.float64) for f in mass)
+            if (faces[0].shape != (Nx+1, Ny) or faces[1].shape != (Nx, Ny+1)
+                    or not all(np.all(np.isfinite(f)) for f in faces)):
+                raise ValueError('model h mass faces must be finite and match the grid')
+            masses.append(faces)
+        mass_A, mass_B = masses
+        last_Ta, last_Tb = Ta.copy(), Tb.copy()
+        model_args = (mass_A, mass_B, cp_A, cp_B, last_Ta, last_Tb)
+    elif mass_flux_A is not None or mass_flux_B is not None:
+        raise ValueError('mass faces require explicit model_fluids')
+
     # Iterate in chunks. Convergence uses AND of three criteria (#6):
     #   (1) relative change in Q_B interface integral  < q_rel_tol
     #   (2) max|ΔTa|, max|ΔTb|, max|ΔTs| between chunks < T_rel_tol·|T|
@@ -803,7 +1051,8 @@ def solve_full_domain(L, H, Nx, Ny,
             ucA, vcA, ucB, vcB,
             bc_A, bc_B, T_inA_arr, T_inB_arr,
             ifrac_A, ifrac_B,
-            n, freeze_Tb, 1 if use_sou_B else 0, inlet_flux_A, inlet_flux_B)
+            n, freeze_Tb, 1 if use_sou_B else 0, inlet_flux_A, inlet_flux_B,
+            *model_args)
         done += n
         if progress_cb:
             progress_cb(done, max_iter)
@@ -832,11 +1081,20 @@ def solve_full_domain(L, H, Nx, Ny,
         Ta_prev = Ta.copy(); Tb_prev = Tb.copy(); Ts_prev = Ts.copy()
 
     if return_info:
-        return Ta, Tb, Ts, {
+        info = {
             'converged': converged,
             'iterations': done,
             'residual': float(chg),
         }
+        if model_fluids is not None:
+            info['model_h_balance'] = _model_h_balance(
+                Ta, Tb, Ts, K_ffA_arr, K_ffB_arr, K_ss_arr, h_vA_arr, h_vB_arr,
+                dx_arr, dy_arr, mass_A, mass_B, cp_A, cp_B, dir_A, dir_B,
+                T_inA_arr, T_inB_arr, ifrac_A, ifrac_B, use_sou_B, last_Ta, last_Tb)
+            info['model_h_balance'].update(
+                thermal_converged=bool(converged), thermal_iterations=int(done),
+                thermal_residual_K=float(chg))
+        return Ta, Tb, Ts, info
     return Ta, Tb, Ts
 
 
