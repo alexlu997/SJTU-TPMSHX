@@ -17,6 +17,46 @@ from __future__ import annotations
 import numpy as np
 
 
+def f2_state_is_finite(solver, velocities):
+    """Numerical qualification of the actual F2 state, not a physical gate."""
+    return all(np.isfinite(field).all() for field in
+               (*velocities, solver.P, solver.rho_field, solver.T_field))
+
+
+def f2_nonfinite_exit(solver, iterations):
+    solver.exit_reason = 'nonfinite'
+    solver.final_res = float('nan')
+    # Finite diagnostics no longer certify this state. Retain any observed
+    # NaN/Inf and the residual histories for diagnosis.
+    for name in ('final_res_mom', 'final_res_mass_local', 'final_res_mass_global',
+                 'outlet_backflow_frac', 'res_norm_ref'):
+        value = getattr(solver, name, None)
+        if value is None or np.isfinite(value):
+            setattr(solver, name, float('nan'))
+    if hasattr(solver, 'f2_cert_post_rescale_ok'):
+        solver.f2_cert_post_rescale_ok = False
+    return False, iterations
+
+
+def momentum_component_residuals(nums, dens, floor_fraction):
+    """Keep invalid raw observations out of finite-only normalization/max."""
+    if not np.isfinite((*nums, *dens)).all():
+        return (float('nan'),) * len(nums)
+    floor = floor_fraction * max(dens)
+
+    def ratio(n, d):
+        den = max(d, floor)
+        return n / den if den > 0.0 else 0.0
+
+    return tuple(ratio(n, d) for n, d in zip(nums, dens))
+
+
+def global_mass_residual(mdot_in, mdot_out):
+    if not np.isfinite((mdot_in, mdot_out)).all():
+        return float('nan')
+    return abs(mdot_out - mdot_in) / abs(mdot_in) if abs(mdot_in) > 1e-14 else 0.0
+
+
 class LowReExit:
     """Velocity-stability-gated early exit for the SIMPLE outer loop.
 
@@ -180,9 +220,12 @@ class F2Monitor:
         |total outlet flux|) — the fourth gate; defaults to 0.0 so callers
         that cannot measure it degrade to the old three-gate behaviour.
 
-        Returns None (keep iterating) | 'tol' (converged) | 'stall' (give up,
-        converged=False).
+        Returns None (keep iterating) | 'tol' (converged) | 'stall' (give up)
+        | 'nonfinite' (invalid numerical observation). Both failures mean False.
         """
+        if not np.isfinite((R_mom, R_mass_local, R_mass_global, vd, backflow_frac)).all():
+            self._streak = 0
+            return 'nonfinite'
         if it < self.min_iter:
             return None
         ok = (R_mom < self.mom_tol

@@ -19,7 +19,10 @@ Skips silently if the coarse grid would be too small to be useful
 (any axis < 4 cells).
 """
 from __future__ import annotations
+import os
 import numpy as np
+
+from ._solve_common import f2_state_is_finite
 
 
 def _block_average_2d(arr: np.ndarray, fy: int, fz: int) -> np.ndarray:
@@ -152,7 +155,13 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
     # Refresh fine ρ field from prolongated P + T_in. Compressible-only;
     # incompressible solvers leave rho_field untouched here.
     if solver_fine.fluid_type == 'ideal_gas':
-        solver_fine._update_density()
+        mode = str(getattr(solver_fine, 'convergence_mode',
+                           os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
+        # Leave invalid fine fields for the owning F2 solve's exit guard;
+        # density clipping must not erase the prolonged pressure failure.
+        if mode != 'f2' or f2_state_is_finite(
+                solver_fine, (solver_fine.u, solver_fine.v, solver_fine.w)):
+            solver_fine._update_density()
 
     return {
         'applied': True,
