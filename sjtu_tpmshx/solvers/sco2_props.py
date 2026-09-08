@@ -33,16 +33,27 @@ T_RANGE_K = (280.0, 700.0)
 P_RANGE_PA = (8.0e6, 16.0e6)
 
 
-def _validate_state(T_K, P_Pa) -> None:
+def _validate_state(T_K, P_Pa, *, where=None) -> None:
     import numpy as _np
     T = _np.asarray(T_K, dtype=float)
     P = _np.asarray(P_Pa, dtype=float)
     if not (_np.all(_np.isfinite(T)) and _np.all(_np.isfinite(P))):
-        raise ValueError("sCO2 state must be finite")
-    if _np.any((T < T_RANGE_K[0]) | (T > T_RANGE_K[1])):
-        raise ValueError("sCO2 V1 temperature must be within 280..700 K")
-    if _np.any((P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])):
-        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
+        message = "sCO2 state must be finite"
+        invalid = ~_np.isfinite(T) | ~_np.isfinite(P)
+    elif _np.any((T < T_RANGE_K[0]) | (T > T_RANGE_K[1])):
+        message = "sCO2 V1 temperature must be within 280..700 K"
+        invalid = (T < T_RANGE_K[0]) | (T > T_RANGE_K[1])
+    elif _np.any((P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])):
+        message = "sCO2 V1 pressure must be within 8..16 MPa"
+        invalid = (P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])
+    else:
+        return
+    if where is not None:
+        T, P, invalid = _np.broadcast_arrays(T, P, invalid)
+        index = _np.unravel_index(_np.flatnonzero(invalid)[0], T.shape)
+        index = tuple(int(i) for i in index)
+        message += f"; {where}, index={index}, T={T[index]} K, P={P[index]} Pa"
+    raise ValueError(message)
 
 
 @lru_cache(maxsize=4096)
