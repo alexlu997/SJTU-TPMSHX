@@ -142,7 +142,7 @@ def test_shared_driver_final_water_eos_rejection(monkeypatch, adapter, side):
 
     monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', invalidate_last_sweep)
     cell = np.ones((1, 1, 1))
-    with pytest.raises(WaterStateError, match='enthalpy EOS return') as error:
+    with pytest.raises(WaterStateError, match=f'enthalpy final EOS return {side}') as error:
         if adapter:
             flux = (np.zeros((2, 1)), np.zeros((1, 2)))
             solve_enthalpy_2d(
