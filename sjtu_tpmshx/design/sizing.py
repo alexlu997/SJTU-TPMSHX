@@ -44,9 +44,15 @@ def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
     返回 (Lx, ForwardResult)。不可达 (LX_MAX 仍欠冷) → (None, None)。"""
     tgt = target if target is not None else t_target(case)
     prev = {"f": seed, "last": None}
+    forward_failed = False
     def ev(Lx, tol):
-        r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"],
-                    k_s=k_s, prop_model=prop_model, tol=tol, height=height)
+        nonlocal forward_failed
+        try:
+            r = forward(case, topo, l, t, s, Lx, arrangement, init=prev["f"],
+                        k_s=k_s, prop_model=prop_model, tol=tol, height=height)
+        except ValueError:
+            forward_failed = True
+            raise
         prev["f"] = r.fields                # 续解种子 (链式)
         prev["last"] = r
         return r
@@ -62,6 +68,8 @@ def solve_Lx(case, topo, l, t, s, arrangement, target=None, k_s=K_STEEL,
         Lx_root = brentq(lambda Lx: ev(Lx, SIZING_TOL).T_out_hot - tgt,
                          lo, hi, xtol=TOL, maxiter=BISECT_IT)
     except ValueError:
+        if forward_failed:
+            raise  # A forward failure is not SciPy's changed-bracket condition.
         # 冷却临界点 (小 LMTD): ev() 改 warm-start 种子 → 松容差 LTNE 解非确定,
         # brentq 复评端点可能同号而崩。退回稳健二分 (不校验端点号; T_out 随 Lx 单调
         # 递减的假设下照常收敛), 取上界 = 满足 T_out≤tgt 的最小 Lx。

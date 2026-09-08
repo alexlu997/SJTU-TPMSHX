@@ -3,6 +3,9 @@
 const 必须与历史一致 (回归); mean 在大 ΔT 改变结果、小 ΔT 收敛回 const;
 prop_model 须穿过 solve_Lx 且二分仍收敛。"""
 from __future__ import annotations
+import importlib
+import numpy as np
+import pytest
 from sjtu_tpmshx.design.cases import DesignCase
 from sjtu_tpmshx.design.forward import forward
 
@@ -40,3 +43,67 @@ def test_mean_threads_solve_Lx_and_converges():
     c = _case(300.)
     Lx, r = solve_Lx(c, "Diamond", 7., 0.5, 0.084, "cross", prop_model="mean")
     assert Lx is not None                          # mean 下二分收敛
+
+
+@pytest.mark.parametrize('side,value', [(i, v) for i in range(3) for v in (np.nan, np.inf)])
+def test_forward_rejects_nonfinite_external_seed_before_properties(monkeypatch, side, value):
+    module = importlib.import_module('sjtu_tpmshx.design.forward')
+    seed = [np.full((2, 2, 1), 400.) for _ in range(3)]
+    seed[side][0, 0, 0] = value
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('bad external seed reached geometry/properties/thermal solve')
+
+    for name in ('tpms_geometry', '_hvol', 'solve_full_domain_3d'):
+        monkeypatch.setattr(module, name, unexpected)
+    case = _case(100.)
+    case.T_in_h = 600.
+    with pytest.raises(ValueError, match='design external warm start'):
+        forward(case, 'Diamond', 7., .5, .084, .084, init=seed)
+
+
+@pytest.mark.parametrize('model,bad_pass,side,value', [
+    ('const', 1, 0, np.nan), ('mean', 1, 2, np.inf), ('mean', 2, 1, np.nan),
+])
+def test_forward_rejects_nonfinite_thermal_return(monkeypatch, model, bad_pass, side, value):
+    module = importlib.import_module('sjtu_tpmshx.design.forward')
+    # Only geometry cost and thermal output are stubbed; _hvol/air properties
+    # and const/mean dispatch are real. This is not a natural PDE divergence.
+    monkeypatch.setattr(module, 'tpms_geometry', lambda *a, **k: {
+        'epsilon': .6, 'epsilon_A': .3, 'A_0': 1000., 'D_h': .002})
+    calls, outlets, properties = [], [], []
+    original_props, original_outlet = module.fluid_props, module._cold_outlet
+
+    def props(*args):
+        properties.append(args)
+        return original_props(*args)
+
+    def thermal(*args, **kwargs):
+        shape = (args[3], args[4], args[5])
+        fields = tuple(np.full(shape, t) for t in (550., 350., 450.))
+        if calls:
+            assert all(kwargs[key] is old for key, old in
+                       zip(('Ta_init', 'Tb_init', 'Ts_init'), calls[-1]))
+        calls.append(fields)
+        if len(calls) == bad_pass:
+            fields[side][0, 0, 0] = value
+        return fields
+
+    def outlet(*args):
+        outlets.append(len(calls))
+        return original_outlet(*args)
+
+    def unexpected_dp(*args, **kwargs):
+        pytest.fail('bad thermal return reached final duty/pressure reporting')
+
+    monkeypatch.setattr(module, 'fluid_props', props)
+    monkeypatch.setattr(module, 'solve_full_domain_3d', thermal)
+    monkeypatch.setattr(module, '_cold_outlet', outlet)
+    monkeypatch.setattr(module, 'dP_fracs', unexpected_dp)
+    case = _case(100.)
+    case.T_in_h = 600.
+    with pytest.raises(ValueError, match='design thermal return'):
+        forward(case, 'Diamond', 7., .5, .084, .084, prop_model=model)
+    assert len(calls) == bad_pass
+    assert outlets == list(range(1, bad_pass))
+    assert len(properties) == 2 * bad_pass
