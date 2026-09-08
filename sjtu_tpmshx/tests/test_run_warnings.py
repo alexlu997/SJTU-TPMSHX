@@ -226,6 +226,39 @@ def test_nested_layout_inherits_side_and_stage():
         ('unbound', 'unbound', 'source')]
 
 
+@pytest.mark.parametrize('pressure', [9e6, 12e6, 16e6])
+def test_sco2_nu_evidence_retains_unknown_qualification_without_eos(monkeypatch, pressure):
+    from sjtu_tpmshx.solvers import sco2_props
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('evidence notice must not query EOS')
+    monkeypatch.setattr(sco2_props, '_PropsSI', forbidden)
+    monkeypatch.setattr(fluid_props.CP, 'AbstractState', forbidden)
+    previous = None
+    for _ in range(2):
+        with warning_scope({}) as records:
+            for side in ('A', 'B'):
+                for _ in range(2):
+                    nu.warn_sco2_nu_evidence(side=side, stage='3D h_v property refresh',
+                                            tpms_type='Gyroid', L_mm=7., t_mm=.6, P_in=pressure)
+        messages = list(warning_messages(records))
+        assert len(messages) == 2
+        for side, message in zip(('A', 'B'), messages):
+            assert f'side={side}, Gyroid, L=7 mm, t=0.6 mm' in message
+            assert f'Nu uses scalar P_in={pressure:g} Pa' in message
+            for text in ('Joint qualification remains unverified', 'Twall=Tref+50 K',
+                         'period-2/3 bulk properties', 'P>=10 MPa AND Tb>=Tpc(P)-2 K',
+                         'actual wall temperature', 'heating/cooling qualification',
+                         'Pressure or Re-window membership alone is not a PASS'):
+                assert text in message
+            assert ('P_in<10 MPa' in message) == (pressure < 10e6)
+            assert ('P_in>15 MPa' in message) == (pressure > 15e6)
+        if previous is not None:
+            assert records == previous
+        previous = records
+        assert current_warnings() is None
+
+
 @pytest.mark.parametrize('fluid,count', [('air', 3), ('water', 4)])
 def test_temperature_state_comparison_does_not_evaluate_properties(monkeypatch, fluid, count):
     def forbidden(*args, **kwargs):

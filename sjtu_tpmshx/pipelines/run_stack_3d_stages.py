@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 from sjtu_tpmshx.domain.cancellation import CancelledError
 from sjtu_tpmshx.domain.run_warnings import range_context
-from sjtu_tpmshx.solvers.nu_correlations import record_raw_nu_range
+from sjtu_tpmshx.solvers.nu_correlations import record_raw_nu_range, warn_sco2_nu_evidence
 from sjtu_tpmshx.solvers.tpms_props import record_temperature_ranges
 
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
@@ -2475,6 +2475,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         with range_context(side='A', stage='main', layout='real-cell(x,y,z)-hv-stream'):
             h_vA_field = _build_hv_local_3d(
                 L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A)
+        if outer == 0 and fluid_type_A == 'sco2':
+            warn_sco2_nu_evidence(
+                side='A', stage='3D h_v property refresh',
+                tpms_type=tpms_type, L_mm=Lcell, t_mm=t_wall, P_in=P_inA)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
         h_vA_field = h_vA_field * _hv_ratio_A   # per-side asym geom (1.0 at δ=0)
@@ -2493,6 +2497,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             with range_context(side='B', stage='main', layout='real-cell(x,y,z)-hv-stream'):
                 h_vB_field = _build_hv_local_3d(
                     L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B)
+            if outer == 0 and fluid_type_B == 'sco2':
+                warn_sco2_nu_evidence(
+                    side='B', stage='3D h_v property refresh',
+                    tpms_type=tpms_type, L_mm=Lcell, t_mm=t_wall, P_in=P_inB)
             h_vB_field = _apply_roughness_h_v(
                 h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
             h_vB_field = h_vB_field * _hv_ratio_B   # per-side asym geom (1.0 at δ=0)

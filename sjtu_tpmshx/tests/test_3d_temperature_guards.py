@@ -129,6 +129,58 @@ def test_true_h_air_return_does_not_use_empirical_temperature_windows(monkeypatc
     assert not any(key[0] == 'property_state' for key in records)
 
 
+def test_sco2_evidence_once_per_side_after_first_local_refresh_with_cached_properties(monkeypatch):
+    cfg = _pipeline_cfg(('sco2', 'sco2'))
+    cfg.update(P_inA=9e6, P_inB=16e6)
+    monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
+    prob = stages._build_3d_problem(cfg)
+    hv = stages._build_hv_machinery(prob)
+    prob.cfg.pop('T_s_init')  # Actual first scalar and subsequent array h_v routes.
+    shape = (prob.Nx, prob.Ny, prob.Nz)
+    fields = [np.full(shape, t) for t in (350., 310., 325.)]
+    info = dict(converged=True, iterations=1, residual=0., Q_A=1., Q_B=1.)
+    monkeypatch.setattr(stages, 'solve_full_domain_3d', lambda *a, **k: (*fields, info))
+    monkeypatch.setattr(ent, 'solve_ltne_enthalpy_3d_pipeline', lambda *a, **k: (*fields, info))
+    from sjtu_tpmshx.solvers import ltne_energy_3d, sco2_props
+    monkeypatch.setattr(ltne_energy_3d, '_project_faces_div_free', lambda u, v, w, *a: (u, v, w))
+    original_hv, original_notice = hv._build_hv_local_3d, stages.warn_sco2_nu_evidence
+    events = []
+
+    def local(*args, **kwargs):
+        before = sco2_props._prop.cache_info()
+        value = original_hv(*args, **kwargs)
+        after = sco2_props._prop.cache_info()
+        ndim = np.ndim(args[3])
+        if ndim == 0:
+            assert after.hits > before.hits and after.misses == before.misses
+        events.append(('hv', ndim))
+        return value
+
+    def notice(**kwargs):
+        events.append(('notice', kwargs['side']))
+        assert kwargs == dict(side=kwargs['side'], stage='3D h_v property refresh',
+                              tpms_type=prob.tpms_type, L_mm=prob.Lcell,
+                              t_mm=prob.t_wall, P_in=prob.P_inA if kwargs['side'] == 'A' else prob.P_inB)
+        return original_notice(**kwargs)
+
+    monkeypatch.setattr(hv, '_build_hv_local_3d', local)
+    monkeypatch.setattr(stages, 'warn_sco2_nu_evidence', notice)
+
+    def drive(*, step, **kwargs):
+        step(0)
+        step(1)
+        return 1, True
+
+    monkeypatch.setattr(stages, 'run_outer_coupling', drive)
+    with warning_scope({}) as records:
+        stages._run_outer_coupling_3d(prob, hv)
+    assert events == [('hv', 0), ('notice', 'A'), ('hv', 0), ('notice', 'B'),
+                      ('hv', 3), ('hv', 3)]
+    notices = {key: value for key, value in records.items() if key[0] == 'nu-evidence'}
+    assert set(notices) == {('nu-evidence', 'sco2', side, '3D h_v property refresh')
+                            for side in ('A', 'B')}
+
+
 @pytest.mark.parametrize('fluid', ['air', 'water'])
 def test_zoned_bulk_re_has_cell_denominator_and_scalar_source(monkeypatch, fluid):
     prob, _ = _problem(monkeypatch, (fluid, fluid))

@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from sjtu_tpmshx.domain.run_warnings import record_range
+from sjtu_tpmshx.domain.run_warnings import record_range, record_warning
 import numpy as np
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -283,6 +283,26 @@ def _warn_sco2_nu(Re_min, Re_max, tpms_type, raw):
         if side not in _SCO2_NU_WARNED:
             _SCO2_NU_WARNED.add(side)
             warnings.warn(message, stacklevel=3)
+
+
+def warn_sco2_nu_evidence(*, side, stage, tpms_type, L_mm, t_mm, P_in):
+    # Source: SCO2_NU_COEFFS lineage/VALIDITY above and
+    # validation/sco2_cfd/README.md, Nu validity and campaign pressure levels.
+    message = (
+        f'[sCO2 Nu evidence] {stage}, side={side}, {tpms_type}, '
+        f'L={L_mm:g} mm, t={t_mm:g} mm; Nu uses scalar P_in={P_in:g} Pa. '
+        'Joint qualification remains unverified: the old CFD evidence uses '
+        'heating at Twall=Tref+50 K and period-2/3 bulk properties. '
+        'The reported subset requires P>=10 MPa AND Tb>=Tpc(P)-2 K within '
+        'that campaign; Tpc, joint Pr/P/T coverage, actual wall temperature '
+        'and heating/cooling qualification are not established here. '
+        'Pressure or Re-window membership alone is not a PASS.')
+    if P_in < 10e6:
+        message += ' P_in<10 MPa does not meet the subset necessary pressure condition.'
+    if P_in > 15e6:
+        message += ' P_in>15 MPa exceeds the old campaign pressure envelope (8/10/12/15 MPa).'
+    if not record_warning(('nu-evidence', 'sco2', side, stage), message):
+        warnings.warn(message, stacklevel=2)
 
 
 def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
