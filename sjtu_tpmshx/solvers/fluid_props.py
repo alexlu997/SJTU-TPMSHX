@@ -75,6 +75,21 @@ def check_water_state(fluid, T, P, *, where="water state") -> None:
                 f"{where}: water index={index}, T={t:g} K, P_abs={p:g} Pa: {exc}") from exc
 
 
+def check_finite_temperatures(Ta, Tb, Ts, *, where):
+    """Reject non-finite actual fields; callers retain water-state precedence."""
+    for side, field in (('A', Ta), ('B', Tb), ('solid', Ts)):
+        if field is None:  # No supplied warm start; the solver initializes it.
+            continue
+        values = np.asarray(field)
+        finite = np.isfinite(values)
+        if not finite.all():
+            index = tuple(map(int, np.unravel_index(
+                np.flatnonzero(~finite)[0], values.shape)))
+            raise ValueError(
+                f'{where}: {side} temperature index={index}, '
+                f'T={values[index]:g} K is non-finite')
+
+
 def _nu_air(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr=None):
     # Air uses nu_from_Re's built-in Pr default (Pr_AIR); any Pr passed in is
     # ignored, matching the air branch in run_calculation{,_3d}.
