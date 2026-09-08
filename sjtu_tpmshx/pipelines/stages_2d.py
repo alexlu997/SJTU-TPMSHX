@@ -19,6 +19,8 @@ state (zone config, _eps_A, extrap reasons, _temp_to_K hook, _DIR_MAP).
 """
 from __future__ import annotations
 
+from sjtu_tpmshx.solvers.nu_correlations import sco2_nu_metadata, sco2_nu_notices
+
 from typing import TYPE_CHECKING, Any
 
 import os
@@ -970,7 +972,7 @@ def _finalize_cfg(raw: dict[str, Any],
                 raw.get('energy_imbalance_rel', float('nan'))),
         },
         zones=zones_slot,
-        warnings=list(raw.get('warnings_list', [])),
+        warnings=list(raw.get('warnings_list', [])) + sco2_nu_notices(fields.get('compute_cfg')),
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             # Dimension marker for write_result dispatch (C4).
@@ -1008,8 +1010,10 @@ def _finalize_cfg(raw: dict[str, Any],
             # Per-gate breakdown behind ComputeResult.converged, so a caller
             # can see WHICH gate failed (convergence truth-table).
             'convergence_detail': raw.get('convergence_detail'),
+            'sco2_nu_observations': raw.get('sco2_nu_observations', {}),
         },
-        metadata={'darcy_forchheimer': raw.get('df_metadata')},
+        metadata={'darcy_forchheimer': raw.get('df_metadata'),
+                  'sco2_nu': sco2_nu_metadata(getattr(fields.get('compute_cfg'), 'sco2_nu', None))},
     )
 
 

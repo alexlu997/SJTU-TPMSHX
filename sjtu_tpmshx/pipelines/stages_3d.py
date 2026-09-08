@@ -27,6 +27,8 @@ The finished :class:`ComputeResult` carries the 3D render/export contract
 
 from __future__ import annotations
 
+from sjtu_tpmshx.solvers.nu_correlations import sco2_nu_metadata, sco2_nu_notices
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -223,6 +225,7 @@ def _parse_inputs_3d_cfg(compute_cfg: ComputeConfig) -> dict[str, Any]:
         fluid_type_A=fluid_type_A,
         fluid_type_B=fluid_type_B,
         df_mode=compute_cfg.df_mode,
+        sco2_nu=compute_cfg.sco2_nu,
         extrap_reasons=extrap_reasons,
         compute_cfg=compute_cfg,
     )
@@ -385,7 +388,7 @@ def _finalize_3d_cfg(raw: dict[str, Any],
         # messages AND the explicit SIMPLE non-convergence warning on the raw
         # dict; forward them so the UI sees them (was hard-coded [], silently
         # dropping a 3D under-resolved/off-envelope flag the 2D path surfaces).
-        warnings=list(raw.get('envelope_warnings', [])),
+        warnings=list(raw.get('envelope_warnings', [])) + sco2_nu_notices(fields.get('compute_cfg')),
         extrap_reasons=list(fields.get('extrap_reasons', [])),
         diagnostics={
             '_ltne_info': raw.get('_ltne_info'),
@@ -414,9 +417,11 @@ def _finalize_3d_cfg(raw: dict[str, Any],
             # outer ΔT history. Produced by _run_3d_stack but never forwarded,
             # so a caller could see `converged=False` and not know why.
             'convergence_detail': raw.get('convergence_detail'),
+            'sco2_nu_observations': raw.get('sco2_nu_observations', {}),
             'AB_interior': raw.get('AB_interior'),
             'Q_sA_interior': raw.get('Q_sA_interior'),
             'Q_sB_interior': raw.get('Q_sB_interior'),
         },
-        metadata={'darcy_forchheimer': raw.get('df_metadata')},
+        metadata={'darcy_forchheimer': raw.get('df_metadata'),
+                  'sco2_nu': sco2_nu_metadata(getattr(fields.get('compute_cfg'), 'sco2_nu', None))},
     )

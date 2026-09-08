@@ -478,11 +478,22 @@ def config_from_window(window, *, strict: bool = False,
     _df_combo = getattr(window, 'combo_df_mode', None)
     df_mode = (_df_combo.currentData() if _df_combo is not None else None)
 
+    nu = sco2_nu_from_window(window)
+
     return ComputeConfig(fluid_A=fluid_A, fluid_B=fluid_B,
                geometry=geom, solver=solver,
                bc_A=bc_A, bc_B=bc_B,
                zones=zones, flags=flags, extrap=extrap,
-               df_mode=df_mode or 'cfd_smooth')
+               df_mode=df_mode or 'cfd_smooth', sco2_nu=nu)
 
 
 __all__ = ['config_from_window', 'FieldSpec', 'CONFIG_FIELDS']
+
+
+def sco2_nu_from_window(window):
+    from dataclasses import replace
+    from sjtu_tpmshx.domain.compute_config import Sco2NuConfig
+    combo = getattr(window, 'combo_sco2_nu_mode', None)
+    mode = combo.currentData() if combo is not None else 'cfd_smooth'
+    settings = Sco2NuConfig(**getattr(window, '_sco2_nu_parameters', {}))
+    return replace(settings, mode=mode).validate()

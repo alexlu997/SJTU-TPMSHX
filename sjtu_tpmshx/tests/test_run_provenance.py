@@ -217,3 +217,44 @@ def test_summary_compares_immediately_previous_success(run_window, monkeypatch):
         _wait_for(win.compute.is_idle)
         assert win._res_chips['Q']._delta_label.text() == delta
     assert [entry['Q'] for entry in win._recent_runs] == ['180', '120', '100']
+
+
+@pytest.mark.parametrize('dim', [0, 1])
+def test_nu_run_snapshot_history_and_export(run_window, monkeypatch, tmp_path, dim):
+    import csv, json
+    from dataclasses import asdict, replace
+    from PySide6.QtWidgets import QFileDialog
+    from sjtu_tpmshx.tests.test_sco2_nu_modes import SYNTHETIC
+    from sjtu_tpmshx.solvers.nu_correlations import sco2_nu_metadata
+    win = run_window
+    win._set_sco2_nu_parameters(asdict(SYNTHETIC))
+    win.combo_sco2_nu_mode.setCurrentIndex(1)
+    win.combo_dim.setCurrentIndex(dim)
+    release = threading.Event()
+    def run(pipe):
+        assert pipe.cfg.sco2_nu == SYNTHETIC
+        assert release.wait(10)
+        return ComputeResult(Q_W=100., diagnostics={'mode': '3d' if dim else '2d'},
+            metadata={'sco2_nu': sco2_nu_metadata(pipe.cfg.sco2_nu),
+                      'darcy_forchheimer': {'mode': pipe.cfg.df_mode}})
+    monkeypatch.setattr(Pipeline3D if dim else Pipeline2D, 'run', run)
+    try:
+        win.run_calculation()
+        win.combo_sco2_nu_mode.setCurrentIndex(0)
+        win._set_sco2_nu_parameters(asdict(replace(SYNTHETIC, alpha_D=1.3)))
+    finally:
+        release.set()
+    _wait_for(win.compute.is_idle)
+    expected = sco2_nu_metadata(SYNTHETIC)
+    assert win._recent_runs[0]['model_metadata']['sco2_nu'] == expected
+    timeline = json.loads((tmp_path / 'timeline.jsonl').read_text().splitlines()[-1])
+    assert timeline['model_metadata']['sco2_nu'] == expected
+    output = tmp_path / 'result.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a: (str(output), ''))
+    win._export_results()
+    with output.open() as stream:
+        rows = dict(csv.reader(stream))
+    assert json.loads(rows['metadata'])['sco2_nu'] == expected
+    if dim:
+        with np.load(tmp_path / 'result_fields.npz', allow_pickle=False) as saved:
+            assert json.loads(saved['metadata'].item())['sco2_nu'] == expected

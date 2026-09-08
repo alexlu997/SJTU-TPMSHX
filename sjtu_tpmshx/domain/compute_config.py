@@ -402,6 +402,33 @@ class FeatureFlags:
     temp_unit: Literal['K', 'C'] = 'K'
 
 
+@dataclass(frozen=True)
+class Sco2NuConfig:
+    """Run-owned effective Nu parameters; no measured coefficients ship by default."""
+    mode: str = 'cfd_smooth'
+    alpha_D: float | None = None
+    alpha_G: float | None = None
+    parameter_version: str = ''
+    source: str = ''
+    applicability: str = ''
+
+    def validate(self):
+        import math
+        if self.mode not in ('cfd_smooth', 'experimental'):
+            raise ValueError(f'Unsupported sCO2 Nu mode: {self.mode!r}')
+        for name in ('alpha_D', 'alpha_G'):
+            value = getattr(self, name)
+            if value is None and self.mode == 'cfd_smooth':
+                continue
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f'sCO2 Nu {name} must be finite and positive')
+        for name in ('parameter_version', 'source', 'applicability'):
+            value = getattr(self, name)
+            if not isinstance(value, str) or (self.mode == 'experimental' and not value.strip()):
+                raise ValueError(f'sCO2 Nu requires {name}')
+        return self
+
+
 @dataclass
 class ComputeConfig:
     """Composite settings handed to solver-side entrypoints.
@@ -436,6 +463,7 @@ class ComputeConfig:
     # V2 water+sCO2 CFD table; experiment mode applies a reviewed effective
     # correction selected by matching dataset/campaign boundaries.
     df_mode: DFMode = 'cfd_smooth'
+    sco2_nu: Sco2NuConfig = field(default_factory=Sco2NuConfig)
 
     # ── derived ──────────────────────────────────────────────────────
 
@@ -484,6 +512,7 @@ class ComputeConfig:
         import math
 
         self.zones.validate()
+        self.sco2_nu.validate()
         if self.df_mode not in ('cfd_smooth', 'experimental'):
             raise ValueError(
                 f"ComputeConfig.df_mode={self.df_mode!r} — must be "
@@ -741,6 +770,7 @@ class ComputeConfig:
                 extrap=ExtrapPolicy(**ex_d) if ex_d else ExtrapPolicy(),
                 envelope_mode=data.get('envelope_mode', 'raise'),
                 df_mode=data.get('df_mode', 'cfd_smooth'),
+                sco2_nu=Sco2NuConfig(**data.get('sco2_nu', {})),
             ).validate()
 
         # ── legacy shanghai_baseline.json layout ────────────────
@@ -757,7 +787,8 @@ class ComputeConfig:
             Lz_m=(float(domain_raw['Lz_m'])
                   if 'Lz_m' in domain_raw else None),
         )
-        return cls(geometry=geom).validate()
+        return cls(geometry=geom,
+                   sco2_nu=Sco2NuConfig(**data.get('sco2_nu', {}))).validate()
 
 
 __all__ = [
@@ -765,5 +796,5 @@ __all__ = [
     'FluidConfig', 'GeometryConfig', 'SolverConfig', 'OptimizerConfig',
     'PartialBCConfig', 'ZoneInputConfig',
     'ExtrapPolicy', 'FeatureFlags',
-    'ComputeConfig',
+    'ComputeConfig', 'Sco2NuConfig',
 ]

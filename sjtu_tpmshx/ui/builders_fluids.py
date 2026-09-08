@@ -125,6 +125,21 @@ def build_page_fluids(window):
         "数据集选择不代表已证实的工质本征效应。")
     add_row(window, g_method, 0, "方法", right_align_combo(window.combo_df_mode))
 
+    g_nu, nu_section = section(window, lay, "sCO₂ Nu 换热模型", _T_NEUTRAL, _F_NEUTRAL)
+    window._ia_sections['sco2_nu'] = nu_section
+    window.combo_sco2_nu_mode = QComboBox()
+    window.combo_sco2_nu_mode.addItem("CFD 光滑壁面（默认）", "cfd_smooth")
+    window.combo_sco2_nu_mode.addItem("实验标定", "experimental")
+    window.combo_sco2_nu_mode.setStyleSheet(_COMBO)
+    window.combo_sco2_nu_mode.setToolTip("独立于 D-F；实验模式需要导入带来源的有效传热参数。")
+    add_row(window, g_nu, 0, "方法", right_align_combo(window.combo_sco2_nu_mode))
+    window.btn_sco2_nu_parameters = QPushButton("导入标定参数…")
+    window.btn_sco2_nu_parameters.clicked.connect(window._load_sco2_nu_parameters)
+    add_row(window, g_nu, 1, "参数", window.btn_sco2_nu_parameters)
+    window.lbl_sco2_nu_parameters = QLabel("未导入标定参数")
+    window.lbl_sco2_nu_parameters.setWordWrap(True)
+    add_row(window, g_nu, 2, "来源", window.lbl_sco2_nu_parameters)
+
     # Pack Fluid A and Fluid B side-by-side when the panel is wide enough
     # (≥ 520 px), stacked vertically when narrower — ResponsiveRow flips the
     # box direction on resize (ui-layout-fixes: the old hard QHBoxLayout

@@ -60,6 +60,7 @@ def main(argv=None) -> int:
                             ).get('outer_converged'),
         'warnings': warnings_list,
         'extrap_reasons': list(result.extrap_reasons),
+        'metadata': result.metadata,
     }
     if args.as_json:
         print(json.dumps(summary, ensure_ascii=False, default=str))
@@ -69,6 +70,7 @@ def main(argv=None) -> int:
         print(f"converged = {summary['converged']}   "
               f"envelope_valid = {summary['envelope_valid']}   "
               f"outer_converged = {summary['outer_converged']}")
+        print(f"models = {json.dumps(summary['metadata'], ensure_ascii=False)}")
         for w in warnings_list:
             print(f"warning: {w}")
         for reason in result.extrap_reasons:

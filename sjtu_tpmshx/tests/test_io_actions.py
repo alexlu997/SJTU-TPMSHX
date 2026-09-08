@@ -560,3 +560,36 @@ def test_result_status_survives_notification_and_mode_switch(
                 np.testing.assert_array_equal(saved['P_kPa'], field / 1000)
         else:
             assert not npz.exists()
+
+
+@pytest.mark.parametrize('nu_mode,df_mode', [(0,0),(0,1),(1,0),(1,1)])
+def test_nu_parameters_import_save_load_snapshot(win, monkeypatch, tmp_path, nu_mode, df_mode):
+    from dataclasses import asdict
+    from PySide6.QtWidgets import QFileDialog
+    from sjtu_tpmshx.tests.test_sco2_nu_modes import SYNTHETIC
+    from sjtu_tpmshx.ui.window_config import config_from_window
+    win._apply_shanghai_defaults()
+    parameter_file = tmp_path / 'synthetic.json'
+    parameter_file.write_text(json.dumps(asdict(SYNTHETIC)))
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a: (str(parameter_file), ''))
+    assert win._load_sco2_nu_parameters()
+    parameter_file.unlink()  # Resolved contents, not an external-file dependency.
+    win.combo_sco2_nu_mode.setCurrentIndex(nu_mode)
+    win.combo_df_mode.setCurrentIndex(df_mode)
+    original = config_from_window(win)
+    output = tmp_path / 'saved.json'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a: (str(output), ''))
+    assert win.save_config()
+    win._set_sco2_nu_parameters({})
+    win.combo_sco2_nu_mode.setCurrentIndex(0)
+    win.combo_df_mode.setCurrentIndex(0)
+    assert original.sco2_nu.alpha_D == .8
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a: (str(output), ''))
+    assert win.load_config()
+    assert config_from_window(win) == original
+    old = win._capture_current_preset('old')
+    del old['sco2_nu_parameters']
+    del old['combos']['combo_sco2_nu_mode']
+    win._apply_user_preset(old)
+    assert config_from_window(win).sco2_nu.mode == 'cfd_smooth'
+    assert config_from_window(win).sco2_nu.alpha_D is None

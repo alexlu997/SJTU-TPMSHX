@@ -163,7 +163,8 @@ class _PipelineWindowShim:
                              compute_cfg.fluid_A.T_in_K,
                              compute_cfg.fluid_A.P_in_Pa,
                              compute_cfg.geometry.k_s_W_mK,
-                             compute_cfg.fluid_A.type)
+                             compute_cfg.fluid_A.type,
+                             sco2_nu=getattr(compute_cfg, 'sco2_nu', None))
         with range_context(side='B', stage='inlet', layout='scalar'):
             rB = _tc.compute(compute_cfg.geometry.tpms,
                              compute_cfg.geometry.L_cell_mm,
@@ -172,7 +173,8 @@ class _PipelineWindowShim:
                              compute_cfg.fluid_B.T_in_K,
                              compute_cfg.fluid_B.P_in_Pa,
                              compute_cfg.geometry.k_s_W_mK,
-                             compute_cfg.fluid_B.type)
+                             compute_cfg.fluid_B.type,
+                             sco2_nu=getattr(compute_cfg, 'sco2_nu', None))
 
         self._rho_A = rA['rho']
         self._rho_B = rB['rho']
@@ -858,6 +860,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         m = fluid_props.get(fluid)
         return dict(rho=m.rho, cp=m.cp, mu=m.mu, k=m.k, name=m.name,
                     enthalpy=m.enthalpy)
+    sco2_nu = getattr(cfg.get('compute_cfg'), 'sco2_nu', None)
+    nu_observations = {'A': {}, 'B': {}}
     _pA = _props_for(fluid_A)
     _pB = _props_for(fluid_B)
     _enthalpy_mode = ('sco2' in (_pA['name'], _pB['name'])
@@ -895,7 +899,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         correlation; air uses its native Nu. ``side_P`` (Pa) is forwarded to
         the property primitives — air/water ignore it (value-identical), sCO2
         requires it (real-gas)."""
-        m = fluid_props.get(side_props['name'])
+        m = fluid_props.get(side_props['name'], sco2_nu=sco2_nu)
         Pr = None
         if side_props['name'] in ('water', 'sco2'):
             # Pr-substitution (2D convention: no k guard) computed here so the
@@ -928,7 +932,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             record_raw_nu_range(side_props['name'] if side_props else 'air', tpms_type, Re_loc)
             Re_arr = np.maximum(Re_loc, 1.0)
             if side_props is not None:
-                m = fluid_props.get(side_props['name'])
+                m = fluid_props.get(side_props['name'], sco2_nu=sco2_nu)
                 Pr = None
                 if side_props['name'] in ('water', 'sco2'):
                     mu_w = float(side_props['mu'](side_T_for_Pr, side_P))
@@ -1281,13 +1285,13 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             _Tb_hv = (Tb if Tb is not None
                       else np.full_like(u_mag_B, T_inB))
 
-            def _enthalpy_side_hv(props, T_field, P_in, u_mag):
+            def _enthalpy_side_hv(props, T_field, P_in, u_mag, observation):
                 fluid_props.check_water_state(props['name'], T_field, P_in,
                                               where='2D h_v property refresh')
                 if props['name'] == 'sco2':
                     return _sco2_hv_local_field(
                         T_field, P_in, u_mag, _g_hv['A_0'], _g_hv['D_h'],
-                        tpms_type, Lcell)
+                        tpms_type, Lcell, sco2_nu=sco2_nu, observation=observation)
                 rho = float(np.asarray(props['rho'](T_field, P_in)).mean())
                 mu = float(np.asarray(props['mu'](T_field, P_in)).mean())
                 return _build_hv_local_2d(
@@ -1296,13 +1300,13 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                     side_T_for_Pr=float(np.mean(T_field)), side_P=P_in)
 
             with range_context(side='A', stage='main-hv', layout='real-cell(x,y)'):
-                h_vA_local = _enthalpy_side_hv(_pA, _Ta_hv, P_inA_val, u_mag_A)
+                h_vA_local = _enthalpy_side_hv(_pA, _Ta_hv, P_inA_val, u_mag_A, nu_observations['A'])
                 if _coup_it == 0 and _pA['name'] == 'sco2':
                     warn_sco2_nu_evidence(
                         side='A', stage='2D main-hv', tpms_type=tpms_type,
                         L_mm=Lcell, t_mm=t_wall, P_in=P_inA_val)
             with range_context(side='B', stage='main-hv', layout='real-cell(x,y)'):
-                h_vB_local = _enthalpy_side_hv(_pB, _Tb_hv, P_inB_val, u_mag_B)
+                h_vB_local = _enthalpy_side_hv(_pB, _Tb_hv, P_inB_val, u_mag_B, nu_observations['B'])
                 if _coup_it == 0 and _pB['name'] == 'sco2':
                     warn_sco2_nu_evidence(
                         side='B', stage='2D main-hv', tpms_type=tpms_type,
@@ -1727,6 +1731,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         Q_net = energy_rel = float('nan')
 
     result = {
+        'sco2_nu_observations': nu_observations,
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
         # N5: display-smoothed copies (partial-BC runs only; None ⇒ use raw).

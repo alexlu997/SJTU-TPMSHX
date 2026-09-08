@@ -337,6 +337,50 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
             * (D_h_mm / L_mm) ** co['d'])
 
 
+def nu_sco2_selected(tpms_type, Re, Pr, L_mm, D_h_mm, *, settings):
+    """Apply the shared effective multiplier before the caller's existing floor."""
+    settings.validate()
+    base = nu_sco2_topo(tpms_type, Re, Pr, L_mm, D_h_mm)
+    if settings.mode == 'cfd_smooth':
+        return base
+    alpha = settings.alpha_D if tpms_type == 'Diamond' else settings.alpha_G
+    return alpha * base
+
+
+def sco2_nu_metadata(settings):
+    """Actual selected model, without attributing inactive parameters to CFD."""
+    if settings is None:
+        from sjtu_tpmshx.domain.compute_config import Sco2NuConfig
+        settings = Sco2NuConfig()
+    settings.validate()
+    info = {'mode': settings.mode, 'model_version': 'sco2-cfd-common-multiplier-v1'}
+    if settings.mode == 'experimental':
+        info.update(alpha_D=settings.alpha_D, alpha_G=settings.alpha_G,
+                    parameter_version=settings.parameter_version, source=settings.source,
+                    applicability=settings.applicability,
+                    interpretation='Frozen-model effective heat transfer; not measured local Nu')
+    else:
+        info.update(model_version='sco2-cfd-smooth', coefficients={name: dict(values) for name, values in SCO2_NU_COEFFS.items()})
+    return info
+
+
+def sco2_nu_notices(config):
+    """Source scope remains distinct from a successful numerical solve."""
+    if getattr(config, 'sco2_nu', None) is None or config.sco2_nu.mode != 'experimental':
+        return []
+    settings = config.sco2_nu
+    if 'sco2' not in (config.fluid_A.type, config.fluid_B.type):
+        return []
+    settings.validate()
+    message = (f"sCO2 Nu experimental effective correction [{settings.parameter_version}]; "
+               f"source: {settings.source}; declared applicability: {settings.applicability}. "
+               "This selection does not certify local Nu or whole-unit validation.")
+    g = config.geometry
+    if g.L_cell_mm != 7.0 or g.t_wall_mm != 0.6 or g.delta_levelset != 0.0 or config.zones.enabled:
+        message += ' Experimental geometry extrapolation beyond the uniform 7 mm / 0.6 mm specimen.'
+    return [message]
+
+
 # ── sCO2 experimental heat-transfer correction γ_Nu (D-2sc-3, 2026-07-22) ──
 # HX-level amplitude on top of the smooth-wall fit above, anchored on the
 # D-7-6 / G-7-6 sCO2 experiments (both sides pooled — the subst.v2 use-card's

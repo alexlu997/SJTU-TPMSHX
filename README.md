@@ -498,3 +498,38 @@ If you use this code, please cite the dissertation (in preparation). Provisional
 <div align="center">
 <sub>Research / dissertation code · APIs evolve, expect rough edges · contributions & issues welcome</sub>
 </div>
+
+### sCO₂ Nu modes
+
+The independent **sCO₂ Nu** selector offers **CFD 光滑壁面** (default) and
+**实验标定**. CFD keeps the existing smooth-wall formula. Experimental mode
+multiplies it by one positive `alpha_D` or `alpha_G` before the existing Nu
+floor; both sides and both dimensions use the same topology parameter.
+Values below one are allowed. D-F, frozen sF, air and water Nu are unchanged.
+This is effective heat-transfer correction in the frozen model, not measured
+local Nu or a separately identified roughness effect.
+
+No fitted parameters are bundled. In the GUI, use **导入标定参数…** to load a
+local JSON with `alpha_D`, `alpha_G`, `parameter_version`, `source`, and
+`applicability` (nonempty source/scope descriptions), then select the mode.
+Save/Load and run snapshots retain the resolved contents, so subsequent file
+or UI edits do not change an accepted run. Missing or invalid experimental
+parameters are errors, never an automatic CFD fallback. Old configurations
+without Nu settings use CFD.
+
+For the existing CLI, add the same fields under `sco2_nu` in a canonical
+ComputeConfig JSON, plus `"mode": "experimental"`, and run
+`python -m sjtu_tpmshx.cli CONFIG.json --json` with the configured interpreter.
+Keep real calibration files and derived experiment data private. Synthetic
+parameters in tests are only software checks, not usable fitted coefficients.
+
+Results, CLI/CSV/NPZ exports and persistent run history record the selected
+Nu and D-F models separately, including parameter version/source/scope.
+The source's declared scope is not a validation verdict; geometry outside
+the uniform 7 mm / 0.6 mm specimen is flagged and existing state/closure
+checks remain active. Uniform sCO₂ local-hv diagnostics retain the last
+coefficient evaluation's pre-floor extrema and floor counts, explicitly
+labelled as using lagged temperature. They do not recompute Nu on the final
+returned temperature or accumulate a full time series. Calibration,
+holdout, numerical/energy and final experimental Q acceptance are separate
+from these software functionality checks.

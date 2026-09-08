@@ -1173,12 +1173,13 @@ def _build_hv_machinery(prob: _Problem3D):
     # Uniform case reduces to the old scalar path.
     from sjtu_tpmshx.solvers.tpms_calc import compute as tpms_compute
     from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _NU_LAM_FLOOR  # Hagen-Poiseuille single-tube limit
+    cfg['sco2_nu_observations'] = {'A': {}, 'B': {}}
     u_B_val = cfg.get('u_B', u_A)
 
     def _fluid_transport_props(fluid_type, T_side, P_side):
         fluid_props.check_water_state(fluid_type, T_side, P_side,
                                       where='3D h_v property refresh')
-        m = fluid_props.get(fluid_type)
+        m = fluid_props.get(fluid_type, sco2_nu=cfg.get('sco2_nu'))
         # air/water ignore P (value-identical to the old T-only calls → golden-
         # safe); sco2 is real-gas and REQUIRES P.
         with range_context(layout='scalar-hv-property'):
@@ -1192,7 +1193,7 @@ def _build_hv_machinery(prob: _Problem3D):
 
     def _nu_for_fluid(fluid_type, Re_val, eps_f_val, L_mm_val, D_h_mm_val, Pr_val=None):
         Re_eff = max(float(Re_val), 1.0)
-        m = fluid_props.get(fluid_type)
+        m = fluid_props.get(fluid_type, sco2_nu=cfg.get('sco2_nu'))
         # water: Pr-substitution with 7.0 fallback; air ignores Pr (built-in default).
         Pr = float(Pr_val if Pr_val is not None else 7.0) if not m.compressible else None
         Nu_val = m.nu(tpms_type, Re_eff, float(eps_f_val), float(L_mm_val),
@@ -1252,7 +1253,7 @@ def _build_hv_machinery(prob: _Problem3D):
     # the NTU thermodynamic bound.
     def _build_hv_local_3d(
         L_fld, t_fld, u_field_3d, T_side, P_side, fluid_type='air',
-        A_0_scalar=None,
+        A_0_scalar=None, observation=None,
     ):
         """Per-cell h_v using LOCAL |u_cc|·D_h·ρ/μ Reynolds + Nu floor."""
         u_abs = np.abs(u_field_3d) + 1e-12
@@ -1265,7 +1266,8 @@ def _build_hv_machinery(prob: _Problem3D):
         if fluid_type == 'sco2' and L_fld is None and np.ndim(T_side) > 0:
             g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
             return _sco2_hv_local_field(T_side, P_side, u_abs,
-                                        g['A_0'], g['D_h'], tpms_type, Lcell)
+                                        g['A_0'], g['D_h'], tpms_type, Lcell,
+                                        sco2_nu=cfg.get('sco2_nu'), observation=observation)
         rho, mu, k_f, Pr_f = _fluid_transport_props(fluid_type, T_side, P_side)
         if L_fld is None:
             g = tpms_geometry(tpms_type, Lcell, t_wall, k_s)
@@ -1279,7 +1281,7 @@ def _build_hv_machinery(prob: _Problem3D):
             # post-floor at _NU_LAM_FLOOR, single-stream ε_f = ε/2), so it is
             # bit-identical to the prior per-cell triple loop — just Nx·Ny·Nz×
             # fewer Python calls. 2026-06-09 perf B1.
-            _m = fluid_props.get(fluid_type)
+            _m = fluid_props.get(fluid_type, sco2_nu=cfg.get('sco2_nu'))
             _Pr = (None if _m.compressible
                    else float(Pr_f if Pr_f is not None else 7.0))
             Nu_loc = _m.nu(tpms_type, np.maximum(Re_loc, 1.0),
@@ -1947,6 +1949,7 @@ def _assemble_3d_verdict(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState,
         _needs_full_validate=(_compact_diag and not all(
             d['converged'] for d in _ltne_info)),
     )
+    _result['sco2_nu_observations'] = cfg.get('sco2_nu_observations', {})
     _result['df_metadata'] = {
         'mode': prob.cfg.get('df_mode', 'cfd_smooth'),
         'A': getattr(sA, '_df_metadata', None),
@@ -2475,7 +2478,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         _T_hvA = Ta if (fluid_type_A == 'sco2' and Ta is not None) else T_inA
         with range_context(side='A', stage='main', layout='real-cell(x,y,z)-hv-stream'):
             h_vA_field = _build_hv_local_3d(
-                L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A)
+                L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A,
+                    observation=cfg['sco2_nu_observations']['A'])
         if outer == 0 and fluid_type_A == 'sco2':
             warn_sco2_nu_evidence(
                 side='A', stage='3D h_v property refresh',
@@ -2499,7 +2503,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _T_hvB = Tb if (fluid_type_B == 'sco2' and Tb is not None) else T_inB
             with range_context(side='B', stage='main', layout='real-cell(x,y,z)-hv-stream'):
                 h_vB_field = _build_hv_local_3d(
-                    L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B)
+                    L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B,
+                    observation=cfg['sco2_nu_observations']['B'])
             if outer == 0 and fluid_type_B == 'sco2':
                 warn_sco2_nu_evidence(
                     side='B', stage='3D h_v property refresh',

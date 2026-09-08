@@ -71,6 +71,10 @@ class RunResultsMixin:
                        "（提高 max_iter、放宽 tol 或加密网格后重算）。")
             if _nc_msg not in result.warnings:
                 result.warnings.insert(0, _nc_msg)
+        from copy import deepcopy
+        self._result_model_metadata = {key: deepcopy(result.metadata[key])
+                                       for key in ('darcy_forchheimer', 'sco2_nu')
+                                       if key in result.metadata}
         self._diag_summary = {
             'mode': result.diagnostics.get('mode', '2d'),
             'converged': bool(getattr(result, 'converged', True)),
@@ -106,6 +110,7 @@ class RunResultsMixin:
             self._result_3d = None
         f = result.fields
         self._compute_results = {
+            'metadata': deepcopy(result.metadata),
             'converged': result.converged,
             'warnings': list(result.warnings),
             'extrap_reasons': list(result.extrap_reasons),
