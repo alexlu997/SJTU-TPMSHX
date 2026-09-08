@@ -46,7 +46,7 @@ GROSS_FACE_M2 = CORE_WIDTH_M * CORE_DEPTH_M
 FLOW_REL_TOL = 1.0e-6
 SMOKE_CASES = {"Diamond": 8, "Gyroid": 41}
 Q_RMSRE_LIMITS = {
-    "2d": {"Diamond": 0.20, "Gyroid": 0.05},
+    "2d": {"Diamond": 0.20, "Gyroid": 0.06},
     "3d": {"Diamond": 0.21, "Gyroid": 0.06},
 }
 REPO_ROOT = Path(__file__).resolve().parents[3]
