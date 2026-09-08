@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from sjtu_tpmshx.domain.run_warnings import record_warning
+from sjtu_tpmshx.domain.run_warnings import record_range, record_warning
 import numpy as np
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -81,8 +81,11 @@ def _smooth_nu(tpms_type, Re, L_mm, D_h_mm, *, Pr=Pr_AIR):
     return c['c'] * Pr ** (1/3) * Re ** c['a'] * (D_h_mm / L_mm) ** c['d']
 
 
-def _warn_extrap(tpms_type, Re_min, Re_max):
+def _warn_extrap(tpms_type, Re_min, Re_max, raw):
     """One-shot warning per (tpms, 'lo'|'hi') when Re leaves the fit window."""
+    if record_range(('nu', 'air', tpms_type), raw, NU_RE_FIT_RANGE,
+                    label=f'[Nu extrap] {tpms_type}', quantity='Re', unit='-'):
+        return
     lo, hi = NU_RE_FIT_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
         if not oob:
@@ -91,8 +94,6 @@ def _warn_extrap(tpms_type, Re_min, Re_max):
             f"[Nu extrap] {tpms_type}: Re=[{Re_min:.0f},{Re_max:.0f}] "
             f"outside fit window [{lo:.0f},{hi:.0f}]. "
             "Suppressing further warnings for this (tpms, side).")
-        if record_warning(('nu', 'air', tpms_type, side), message):
-            continue
         if (tpms_type, side) not in _EXTRAP_WARNED:
             _EXTRAP_WARNED.add((tpms_type, side))
             warnings.warn(message, stacklevel=3)
@@ -114,11 +115,11 @@ def nu_from_Re(tpms_type, Re, eps_f, L_mm, D_h_mm, *, Pr=Pr_AIR):
     del eps_f
     Re_arr = np.asarray(Re, dtype=np.float64)
     if Re_arr.ndim == 0:
-        _warn_extrap(tpms_type, float(Re_arr), float(Re_arr))
+        _warn_extrap(tpms_type, float(Re_arr), float(Re_arr), Re_arr)
         return NU_ROUGHNESS_FACTOR * _smooth_nu(
             tpms_type, float(Re_arr), L_mm, D_h_mm, Pr=Pr)
     if Re_arr.size:
-        _warn_extrap(tpms_type, float(Re_arr.min()), float(Re_arr.max()))
+        _warn_extrap(tpms_type, float(Re_arr.min()), float(Re_arr.max()), Re)
     return NU_ROUGHNESS_FACTOR * _smooth_nu(
         tpms_type, Re_arr, L_mm, D_h_mm, Pr=Pr)
 
@@ -129,7 +130,7 @@ def nu_vec(tpms_type, Re, L_mm, D_h_mm, *, Re_floor=10.0, Pr=Pr_AIR):
     L_mm / D_h_mm accept scalar or ndarray broadcastable to ``Re``."""
     Re_arr = np.maximum(np.asarray(Re, dtype=np.float64), Re_floor)
     if Re_arr.size:
-        _warn_extrap(tpms_type, float(Re_arr.min()), float(Re_arr.max()))
+        _warn_extrap(tpms_type, float(Re_arr.min()), float(Re_arr.max()), Re)
     return NU_ROUGHNESS_FACTOR * _smooth_nu(
         tpms_type, Re_arr, L_mm, D_h_mm, Pr=Pr)
 
@@ -172,15 +173,16 @@ WATER_NU_COEFFS = {
 _WATER_NU_WARNED: set[str] = set()
 
 
-def _warn_water_nu(Re_min, Re_max, tpms_type):
+def _warn_water_nu(Re_min, Re_max, tpms_type, raw):
+    if record_range(('nu', 'water', tpms_type), raw, WATER_NU_RE_RANGE,
+                    label=f'[water Nu extrap] {tpms_type}', quantity='Re', unit='-'):
+        return
     lo, hi = WATER_NU_RE_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
         if not oob:
             continue
         message = (f"[water Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
                    f"water-CFD fit window [{lo:.0f},{hi:.0f}].")
-        if record_warning(('nu', 'water', tpms_type, side), message):
-            continue
         if side not in _WATER_NU_WARNED:
             _WATER_NU_WARNED.add(side)
             warnings.warn(message, stacklevel=3)
@@ -194,7 +196,7 @@ def nu_water_topo(tpms_type, Re, Pr_water):
     Re_safe = np.maximum(Re, 1.0)             # original expression (unchanged)
     _Re_arr = np.asarray(Re_safe, dtype=np.float64)
     if _Re_arr.size:
-        _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type)
+        _warn_water_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type, Re)
     co = WATER_NU_COEFFS[tpms_type]
     return co['c'] * Re_safe ** co['a'] * Pr_water ** (1 / 3)
 
@@ -260,18 +262,52 @@ SCO2_NU_COEFFS = {
 _SCO2_NU_WARNED: set[str] = set()
 
 
-def _warn_sco2_nu(Re_min, Re_max, tpms_type):
+def record_raw_nu_range(fluid, tpms_type, Re):
+    """Observe an upstream Re before its floor, separately from Nu source inputs."""
+    bounds = {'air': NU_RE_FIT_RANGE, 'water': WATER_NU_RE_RANGE,
+              'sco2': SCO2_NU_RE_RANGE}[fluid]
+    record_range(('nu_raw', fluid, tpms_type), Re, bounds,
+                 label=f'[{fluid} Nu raw] {tpms_type}', quantity='Re', unit='-')
+
+
+def _warn_sco2_nu(Re_min, Re_max, tpms_type, raw):
+    if record_range(('nu', 'sco2', tpms_type), raw, SCO2_NU_RE_RANGE,
+                    label=f'[sCO2 Nu extrap] {tpms_type}', quantity='Re', unit='-'):
+        return
     lo, hi = SCO2_NU_RE_RANGE
     for side, oob in (('lo', Re_min < lo), ('hi', Re_max > hi)):
         if not oob:
             continue
         message = (f"[sCO2 Nu extrap] Re=[{Re_min:.0f},{Re_max:.0f}] outside "
                    f"sCO2-CFD fit window [{lo:.0f},{hi:.0f}].")
-        if record_warning(('nu', 'sco2', tpms_type, side), message):
-            continue
         if side not in _SCO2_NU_WARNED:
             _SCO2_NU_WARNED.add(side)
             warnings.warn(message, stacklevel=3)
+
+
+def warn_sco2_nu_evidence(*, side, stage, tpms_type, L_mm, t_mm, P_in):
+    # Source: SCO2_NU_COEFFS lineage/VALIDITY above and
+    # validation/sco2_cfd/README.md, Nu validity and campaign pressure levels.
+    if np.ndim(L_mm) > 0:
+        geometry = (f'zoned L=[{np.min(L_mm):g},{np.max(L_mm):g}] mm, '
+                    f't=[{np.min(t_mm):g},{np.max(t_mm):g}] mm')
+    else:
+        geometry = f'L={L_mm:g} mm, t={t_mm:g} mm'
+    message = (
+        f'[sCO2 Nu evidence] {stage}, side={side}, {tpms_type}, '
+        f'{geometry}; Nu uses scalar P_in={P_in:g} Pa. '
+        'Joint qualification remains unverified: the old CFD evidence uses '
+        'heating at Twall=Tref+50 K and period-2/3 bulk properties. '
+        'The reported subset requires P>=10 MPa AND Tb>=Tpc(P)-2 K within '
+        'that campaign; Tpc, joint Pr/P/T coverage, actual wall temperature '
+        'and heating/cooling qualification are not established here. '
+        'Pressure or Re-window membership alone is not a PASS.')
+    if P_in < 10e6:
+        message += ' P_in<10 MPa does not meet the subset necessary pressure condition.'
+    if P_in > 15e6:
+        message += ' P_in>15 MPa exceeds the old campaign pressure envelope (8/10/12/15 MPa).'
+    if not record_warning(('nu-evidence', 'sco2', side, stage), message):
+        warnings.warn(message, stacklevel=2)
 
 
 def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
@@ -295,7 +331,7 @@ def nu_sco2_topo(tpms_type, Re, Pr_sco2, L_mm, D_h_mm):
     Re_safe = np.maximum(Re, 1.0)
     _Re_arr = np.asarray(Re_safe, dtype=np.float64)
     if _Re_arr.size:
-        _warn_sco2_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type)
+        _warn_sco2_nu(float(_Re_arr.min()), float(_Re_arr.max()), tpms_type, Re)
     co = SCO2_NU_COEFFS[tpms_type]
     return (co['c'] * Re_safe ** co['a'] * Pr_sco2 ** (1 / 3)
             * (D_h_mm / L_mm) ** co['d'])

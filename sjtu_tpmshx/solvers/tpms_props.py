@@ -11,7 +11,7 @@ imports on the solvers side). New direction, module-load level:
 ``tpms_calc`` re-exports every name below verbatim, so existing consumers
 (``from solvers.tpms_calc import geometry, air_viscosity, ...``) are
 unaffected. Dependencies stay limited to stdlib / numpy / ``.tpms_geometry``
-and the stdlib-only ``domain.run_warnings`` leaf.
+and the Qt-free ``domain.run_warnings`` leaf.
 
 All functions moved verbatim (bit-identical); see tpms_calc.py's module
 docstring for the project-wide Re/Nu conventions.
@@ -24,7 +24,7 @@ import warnings
 import numpy as np
 
 from .tpms_geometry import compute_geometry as _tpms_geom
-from sjtu_tpmshx.domain.run_warnings import record_warning
+from sjtu_tpmshx.domain.run_warnings import record_range
 
 # ── Physical constants ────────────────────────────────────────
 R     = 8.314      # Universal gas constant [J/(mol·K)]
@@ -52,6 +52,28 @@ def model_h_coefficients(fluid):
 
 _range_warnings_emitted = set()
 
+
+def record_temperature_ranges(fluid, T):
+    """Compare a temperature-model state with existing fits, without property calls.
+
+    Callers select only the empirical temperature/model-h route, not HEOS Air.
+    This is run-local evidence; standalone property warning behavior is unchanged.
+    """
+    if T is None:
+        return
+    if fluid == 'air':
+        fits = (('air_viscosity', _AIR_T_RANGE),
+                ('air_conductivity', _AIR_T_RANGE), ('air_cp', _AIR_CP_RANGE))
+    elif fluid == 'water':
+        fits = tuple((f'water_{name}', _WATER_T_RANGE)
+                     for name in ('density', 'viscosity', 'conductivity', 'cp'))
+    else:
+        return
+    for name, bounds in fits:
+        record_range(('property_state', name), T, bounds,
+                     label=name, quantity='T', unit='K')
+
+
 def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
     """Emit a single UserWarning per (name) key when T goes outside the
     fitted validity range. Keeps logs readable when coupled solvers
@@ -59,18 +81,15 @@ def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
     T_arr = np.asarray(T, dtype=float)
     if T_arr.size == 0:
         return
+    if record_range(('property', name), T_arr, (lo, hi),
+                    label=name, quantity='T', unit='K'):
+        return
     T_min = float(T_arr.min())
     T_max = float(T_arr.max())
     if T_min < lo or T_max > hi:
         message = (
             f"{name}: T=[{T_min:.1f}, {T_max:.1f}] K outside fitted range "
             f"[{lo:.1f}, {hi:.1f}] K — extrapolating.")
-        handled = False
-        for side, oob in (('lo', T_min < lo), ('hi', T_max > hi)):
-            if oob:
-                handled = record_warning(('property', name, side), message)
-        if handled:
-            return
         key = (name, round(T_min, 1), round(T_max, 1))
         if key in _range_warnings_emitted:
             return

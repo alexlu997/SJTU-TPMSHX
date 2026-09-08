@@ -190,12 +190,14 @@ def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
     from sjtu_tpmshx.solvers import sco2_props as _s2
     from sjtu_tpmshx.solvers.tpms_calc import nu_sco2_topo as _nu_s2
     from sjtu_tpmshx.solvers.nu_correlations import NU_LAM_FLOOR as _floor
+    from sjtu_tpmshx.solvers.nu_correlations import record_raw_nu_range
     T = np.asarray(T_field, dtype=np.float64)
     rho = _s2.sco2_density_field(T, P_Pa)
     mu = _s2.sco2_viscosity_field(T, P_Pa)
     k_f = _s2.sco2_conductivity_field(T, P_Pa)
     Pr = _s2.sco2_cp_field(T, P_Pa) * mu / np.maximum(k_f, 1e-30)
     Re_loc = rho * np.abs(u_abs) * D_h_m / np.maximum(mu, 1e-30)
+    record_raw_nu_range('sco2', tpms_type, Re_loc)
     Nu_loc = np.maximum(
         np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
                           L_cell_mm, D_h_m * 1000.0),
