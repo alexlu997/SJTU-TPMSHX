@@ -61,7 +61,12 @@ def _T_of_h_field(h, P, fluid, *, where='enthalpy EOS return'):
                        _CP_NAME.get(fluid, fluid))
     except ValueError as exc:
         if fluid == 'water':
-            raise WaterStateError('water EOS T(h,P) state unconfirmed') from exc
+            location = (f'index={tuple(0 for _ in h.shape)}' if h.size == 1
+                        else f'failed index undetermined, input shape={h.shape}')
+            raise WaterStateError(
+                f'{where}: water EOS T(h,P) state unconfirmed; {location}; '
+                f'input h={np.array2string(h, threshold=8)} J/kg, '
+                f'P_abs={np.array2string(P, threshold=8)} Pa') from exc
         raise
     temperature = np.asarray(out, dtype=np.float64).reshape(h.shape)
     check_water_state(fluid, temperature, P, where=where)
