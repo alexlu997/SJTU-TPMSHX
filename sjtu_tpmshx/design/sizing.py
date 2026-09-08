@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from scipy.optimize import brentq
+from sjtu_tpmshx.domain.run_warnings import warning_scope, warning_messages
 
 from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
 from .fluids import fluid_props, nu_re_window
@@ -268,14 +269,16 @@ def size_fixed_cell(cases, topo, l, t, arrangement="cross", rho_s=RHO_S,
     re_h_max = re_c_max = 0.0
     warns = set()                                   # A 外推 + B 退化 标记
     for c in cases:
-        r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s,
-                    prop_model=prop_model, height=height)
+        with warning_scope({}) as records:
+            r = forward(c, topo, l, t, s_star, Lx_star, arrangement, k_s=k_s,
+                        prop_model=prop_model, height=height)
         percase.append(dict(
             case=c.case, hot_fluid=c.hot_fluid, cold_fluid=c.cold_fluid,
             T_air_out=r.T_out_hot, T_cold_out=r.T_out_cold, Q_W=r.Q_hot,
             dP_hot_frac=r.dP_hot_frac, dP_hot_pa=r.dP_hot_frac * c.P_in_h,
             dP_cold_frac=r.dP_cold_frac, dP_cold_pa=r.dP_cold_frac * c.P_in_c,
-            Re_hot=r.Re_hot, Re_cold=r.Re_cold))
+            Re_hot=r.Re_hot, Re_cold=r.Re_cold,
+            warnings=list(warning_messages(records))))
         dPh = max(dPh, r.dP_hot_frac); dPc = max(dPc, r.dP_cold_frac)
         Tout_max = max(Tout_max, r.T_out_hot)
         re_h_max = max(re_h_max, r.Re_hot); re_c_max = max(re_c_max, r.Re_cold)

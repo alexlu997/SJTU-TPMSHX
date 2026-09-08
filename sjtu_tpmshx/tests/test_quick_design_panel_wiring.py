@@ -110,3 +110,31 @@ def test_run_quick_design_malformed_fixed_cell_gives_feedback():
     w._qd_worker = None
     run_quick_design(w)               # must NOT raise
     assert ("解析" in w._qd_status.text() or "失败" in w._qd_status.text())
+
+
+def test_thread_result_warnings_reach_table_and_fallback(monkeypatch):
+    from PySide6.QtWidgets import QApplication, QTableWidget
+    from sjtu_tpmshx.design.sizing import Design
+    from sjtu_tpmshx.ui import quick_design_panel as panel
+    d = Design(True, topo='Diamond', l=5., t=.5, s=.1, Lx=.1,
+               percase=[dict(case=2, warnings=['final-source'])])
+    monkeypatch.setattr('sjtu_tpmshx.design.cases.load_cases', lambda path: ['case'])
+    monkeypatch.setattr('sjtu_tpmshx.design.sizing.size_fixed_cell', lambda *a, **kw: d)
+    worker = _make_worker_class()(_gather_inputs(_make_window('fixed')))
+    received = []
+    worker.finished_with_result.connect(received.append)
+    worker.start()
+    assert worker.wait(5000)
+    QApplication.processEvents()
+    assert received[0]['best'] is d
+    assert received[0]['all'][0].percase == d.percase
+    w = types.SimpleNamespace(_qd_table=QTableWidget())
+    panel._fill_table(w, received[0]['feasible'], received[0]['best'])
+    cell = w._qd_table.item(0, 11)
+    assert cell.text() == '有警告'
+    assert cell.toolTip() == '[工况 2] final-source'
+    assert cell.foreground().color().red() == 200
+    logs = []
+    monkeypatch.setattr(panel._log, 'info', logs.append)
+    panel._fill_table(types.SimpleNamespace(), [d], d)
+    assert '[工况 2] final-source' in logs

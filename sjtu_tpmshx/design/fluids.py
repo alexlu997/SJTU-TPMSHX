@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from sjtu_tpmshx.domain.run_warnings import range_context, record_warning
 
 from sjtu_tpmshx.solvers import fluid_props as _registry
 from sjtu_tpmshx.solvers.tpms_calc import nu_from_Re
@@ -50,16 +51,22 @@ def fluid_nu(fluid: str, topo: str, Re: float, eps_f: float,
              L_mm: float, D_h_mm: float) -> float:
     """单股 Nu。air: 项目幂律×f_rough; water: 拓扑专属 c·Re^a·Pr^(1/3);
     sco2: nu_sco2_topo (光滑壁 CFD, c·Re^a·Pr^⅓·(Dh/L)^d, Diamond+Gyroid).
-    ⚠ design 工具是常物性 ε-NTU，对 sco2 变-cp/近临界本就粗糙——sco2 正式定尺
+    ⚠ design 工具是 plug LTNE，对 sco2 变-cp/近临界本就粗糙——sco2 正式定尺
     用 projects/703-sCO2-D76/size_sco2_703.py (焓基)。此处 Pr 取代表性远离临界态。
     ⚠ sco2 为光滑壁值（粗糙度未标定, 2026-07-15）。"""
     if fluid == "air":
         return nu_from_Re(topo, Re, eps_f, L_mm, D_h_mm)
     if fluid == "water":
-        Pr_w = fluid_props("water", 320.0, 2e5).Pr
+        with range_context(stage='design-nu-representative-pr', layout='scalar'):
+            Pr_w = fluid_props("water", 320.0, 2e5).Pr
         return nu_water_topo(topo, Re, Pr_w)
     if fluid == "sco2":
         # representative far-from-critical sCO2 (D-7-6 mid ~480K/9MPa)
-        Pr_s = fluid_props("sco2", 480.0, 9.0e6).Pr
+        with range_context(stage='design-nu-representative-pr', layout='scalar'):
+            Pr_s = fluid_props("sco2", 480.0, 9.0e6).Pr
+        record_warning(('design-sco2-representative-pr',),
+                       'sCO2 Nu uses representative Pr queried at 480 K / 9 MPa, '
+                       'not at this case inlet or mean state. The smooth-wall CFD '
+                       'correlation joint qualification for this case is not established.')
         return nu_sco2_topo(topo, Re, Pr_s, L_mm, D_h_mm)
     raise ValueError(f"unknown fluid {fluid!r}")
