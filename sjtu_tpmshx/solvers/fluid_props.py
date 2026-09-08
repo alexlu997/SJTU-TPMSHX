@@ -43,12 +43,19 @@ def check_water_state(fluid, T, P, *, where="water state") -> None:
             np.asarray(T, dtype=float), np.asarray(P, dtype=float))
     except (TypeError, ValueError) as exc:
         raise WaterStateError(f"{where}: water requires paired T/P states") from exc
-    if not temperatures.size or not (
+    if not temperatures.size:
+        raise WaterStateError(f"{where}: water requires finite positive K and Pa(abs)")
+    if not (
             np.isfinite(temperatures).all() and np.isfinite(pressures).all()
             and (temperatures > 0).all() and (pressures > 0).all()):
-        raise WaterStateError(f"{where}: water requires finite positive K and Pa(abs)")
+        index = tuple(map(int, np.unravel_index(np.flatnonzero(
+            ~np.isfinite(temperatures) | ~np.isfinite(pressures)
+            | (temperatures <= 0) | (pressures <= 0))[0], temperatures.shape)))
+        raise WaterStateError(
+            f"{where}: water index={index}, T={temperatures[index]:g} K, "
+            f"P_abs={pressures[index]:g} Pa: requires finite positive K and Pa(abs)")
     state = CP.AbstractState('HEOS', 'Water')
-    for t, p in zip(temperatures.flat, pressures.flat):
+    for flat_index, (t, p) in enumerate(zip(temperatures.flat, pressures.flat)):
         try:
             state.update(CP.PT_INPUTS, float(p), float(t))
             phase = state.phase()
@@ -63,8 +70,9 @@ def check_water_state(fluid, T, P, *, where="water state") -> None:
             if not np.isfinite(t_melt) or t <= t_melt:
                 raise WaterStateError("freezing boundary or solid/metastable water unsupported")
         except (ValueError, RuntimeError) as exc:
+            index = tuple(map(int, np.unravel_index(flat_index, temperatures.shape)))
             raise WaterStateError(
-                f"{where}: water T={t:g} K, P_abs={p:g} Pa: {exc}") from exc
+                f"{where}: water index={index}, T={t:g} K, P_abs={p:g} Pa: {exc}") from exc
 
 
 def _nu_air(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr=None):
