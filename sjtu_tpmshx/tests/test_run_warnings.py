@@ -210,6 +210,69 @@ def test_parallel_worker_scopes_merge_in_side_order():
     with warning_scope({}) as records:
         _run_two_simple_parallel(Side('air'), Side('water'))
     assert [key[1] for key in records] == ['air', 'water']
+    assert [key[-1] for key in records] == [
+        (side, 'initial', 'solver-cell(cross1,stream,cross2)') for side in ('A', 'B')]
+
+
+def test_nested_layout_inherits_side_and_stage():
+    with warning_scope({}) as records:
+        with range_context(side='B', stage='main', layout='cell'):
+            with range_context(layout='mean'):
+                tpms_props.air_cp(1200.)
+            tpms_props.air_cp(1200.)
+        tpms_props.air_cp(1200.)
+    assert [key[-1] for key in records] == [
+        ('B', 'main', 'mean'), ('B', 'main', 'cell'),
+        ('unbound', 'unbound', 'source')]
+
+
+@pytest.mark.parametrize('fluid,count', [('air', 3), ('water', 4)])
+def test_temperature_state_comparison_does_not_evaluate_properties(monkeypatch, fluid, count):
+    def forbidden(*args, **kwargs):
+        raise AssertionError('state observation must not evaluate properties')
+
+    for name in ('density', 'viscosity', 'conductivity', 'cp'):
+        monkeypatch.setattr(tpms_props, f'{fluid}_{name}', forbidden)
+    temperatures = np.array([[[200., 1200.]]])
+    with warning_scope({}) as records, range_context(side='A', stage='final', layout='cell'):
+        for _ in range(2):
+            tpms_props.record_temperature_ranges(fluid, temperatures)
+        tpms_props.record_temperature_ranges(fluid, None)
+        tpms_props.record_temperature_ranges('sco2', temperatures)
+    assert len(records) == count
+    assert all(key[0] == 'property_state' and key[-1] == ('A', 'final', 'cell')
+               for key in records)
+    assert all(record.size == 2 and record.minimum == (200., (0, 0, 0))
+               and record.maximum == (1200., (0, 0, 1)) for record in records.values())
+
+
+@pytest.mark.parametrize('bound_context', [False, True])
+def test_sco2_local_raw_re_is_before_floor_without_extra_properties(monkeypatch, bound_context):
+    from contextlib import nullcontext
+    from sjtu_tpmshx.pipelines.flux_3d import _sco2_hv_local_field
+    from sjtu_tpmshx.solvers import sco2_props
+
+    calls = []
+    for name, value in (('density', 2.), ('viscosity', 0.5),
+                        ('conductivity', 0.25), ('cp', 4.)):
+        def prop(T, P, name=name, value=value):
+            calls.append(name)
+            return np.full_like(T, value)
+        monkeypatch.setattr(sco2_props, f'sco2_{name}_field', prop)
+    temperature = np.full((1, 1, 2), 310.)
+    velocity = np.array([[[0., 0.125]]])
+    context = range_context(side='B', stage='main', layout='real-cell(x,y,z)') if bound_context else nullcontext()
+    with warning_scope({}) as records, context:
+        actual = _sco2_hv_local_field(temperature, 8e6, velocity, 10., 1., 'Gyroid', 7.)
+    assert calls == ['density', 'viscosity', 'conductivity', 'cp']
+    labels = ('B', 'main', 'real-cell(x,y,z)') if bound_context else ('unbound', 'unbound', 'source')
+    raw = records[('nu_raw', 'sco2', 'Gyroid', temperature.shape, labels)]
+    source = records[('nu', 'sco2', 'Gyroid', temperature.shape, labels)]
+    assert raw.minimum == (0., (0, 0, 0)) and raw.maximum == (0.5, (0, 0, 1))
+    assert source.minimum[0] == source.maximum[0] == 1.
+    with warning_scope({}):
+        expected = 2.5 * np.maximum(nu.nu_sco2_topo('Gyroid', np.ones_like(temperature), 8., 7., 1000.), nu.NU_LAM_FLOOR)
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_concurrent_pipeline_runs_do_not_share_records(monkeypatch):

@@ -12,9 +12,11 @@ _range_context = ContextVar('range_context', default=('unbound', 'unbound', 'sou
 
 
 @contextmanager
-def range_context(*, side='unbound', stage='unbound', layout='source'):
-    """Label a source observation; callers must identify means/boundaries explicitly."""
-    token = _range_context.set((side, stage, layout))
+def range_context(*, side=None, stage=None, layout=None):
+    """Override supplied labels, retaining enclosing side/stage for nested sources."""
+    token = _range_context.set(tuple(
+        old if new is None else new
+        for old, new in zip(_range_context.get(), (side, stage, layout))))
     try:
         yield
     finally:
@@ -93,7 +95,7 @@ def warning_messages(records):
         sample = 'scalar' if not shape else f'array{shape}'
         yield (
             f'{value.label}: {value.quantity} source range {value.bounds} {value.unit}; '
-            f'side={side}, stage={stage}, layout={layout}, sample={sample}; '
+            f'view={key[0]}, side={side}, stage={stage}, layout={layout}, sample={sample}; '
             f'finite extrema across observations: min={value.minimum}, max={value.maximum} '
             '(value, index); '
             f'worst single snapshot: low={value.low}, high={value.high}, '

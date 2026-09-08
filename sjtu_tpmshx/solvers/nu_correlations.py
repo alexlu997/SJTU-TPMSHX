@@ -262,6 +262,14 @@ SCO2_NU_COEFFS = {
 _SCO2_NU_WARNED: set[str] = set()
 
 
+def record_raw_nu_range(fluid, tpms_type, Re):
+    """Observe an upstream Re before its floor, separately from Nu source inputs."""
+    bounds = {'air': NU_RE_FIT_RANGE, 'water': WATER_NU_RE_RANGE,
+              'sco2': SCO2_NU_RE_RANGE}[fluid]
+    record_range(('nu_raw', fluid, tpms_type), Re, bounds,
+                 label=f'[{fluid} Nu raw] {tpms_type}', quantity='Re', unit='-')
+
+
 def _warn_sco2_nu(Re_min, Re_max, tpms_type, raw):
     if record_range(('nu', 'sco2', tpms_type), raw, SCO2_NU_RE_RANGE,
                     label=f'[sCO2 Nu extrap] {tpms_type}', quantity='Re', unit='-'):

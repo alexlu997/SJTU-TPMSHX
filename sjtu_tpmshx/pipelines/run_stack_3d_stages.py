@@ -15,6 +15,9 @@ import time as _time
 from dataclasses import dataclass
 import numpy as np
 from sjtu_tpmshx.domain.cancellation import CancelledError
+from sjtu_tpmshx.domain.run_warnings import range_context
+from sjtu_tpmshx.solvers.nu_correlations import record_raw_nu_range
+from sjtu_tpmshx.solvers.tpms_props import record_temperature_ranges
 
 from sjtu_tpmshx.solvers.coupling_skeleton import OuterConvergence, run_outer_coupling
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
@@ -277,7 +280,8 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
 
     def _solve_A():
         try:
-            with warning_scope(side_warnings[0]):
+            with warning_scope(side_warnings[0]), range_context(
+                    side='A', stage='initial', layout='solver-cell(cross1,stream,cross2)'):
                 res[0] = sA.solve(max_iter=max_iter, tol=tol, verbose=False,
                                   cancel_check=cancel_check)
         except Exception as e:
@@ -285,7 +289,8 @@ def _run_two_simple_parallel(sA, sB, *, max_iter=2000, tol=None,
 
     def _solve_B():
         try:
-            with warning_scope(side_warnings[1]):
+            with warning_scope(side_warnings[1]), range_context(
+                    side='B', stage='initial', layout='solver-cell(cross1,stream,cross2)'):
                 res[1] = sB.solve(max_iter=max_iter, tol=tol, verbose=False,
                                   cancel_check=cancel_check)
         except Exception as e:
@@ -750,10 +755,11 @@ def _build_3d_problem(cfg):
     fluid_props.check_water_state(fluid_type_A, T_inA, P_inA, where='3D direct inlet A')
     fluid_props.check_water_state(fluid_type_B, T_inB, P_inB, where='3D direct inlet B')
     _mA = fluid_props.get(fluid_type_A)
-    rho_A = float(_mA.rho(T_inA, P_inA))
-    mu_A = float(_mA.mu(T_inA, P_inA))
-    cp_A = float(_mA.cp(T_inA, P_inA))
-    k_A = float(_mA.k(T_inA, P_inA))
+    with range_context(side='A', stage='inlet', layout='scalar'):
+        rho_A = float(_mA.rho(T_inA, P_inA))
+        mu_A = float(_mA.mu(T_inA, P_inA))
+        cp_A = float(_mA.cp(T_inA, P_inA))
+        k_A = float(_mA.k(T_inA, P_inA))
 
     # D-F surrogate. SIMPLE3D K_arr/cF_arr shape = (Ny_sA, Nz) where Ny_sA
     # is the solver streamwise axis = N_stream in real coords.
@@ -836,13 +842,14 @@ def _build_3d_problem(cfg):
     _sdxA = _sdyA = _sdzA = None
     if wall_refine:
         _sdxA, _sdyA, _sdzA = _solver_spacings(dx, dy, dz, solver_to_real_perm)
-    sA = SIMPLESolver3D(
-        **solver_init,
-        rho=rho_A, mu=mu_A, T_in=T_inA, v_inlet=v_inlet_field,
-        eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
-        P_ref_abs=P_ref_A, fluid_type=solver_fluid_type_A,
-        dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
-    )
+    with range_context(side='A', stage='inlet', layout='solver-initial'):
+        sA = SIMPLESolver3D(
+            **solver_init,
+            rho=rho_A, mu=mu_A, T_in=T_inA, v_inlet=v_inlet_field,
+            eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
+            P_ref_abs=P_ref_A, fluid_type=solver_fluid_type_A,
+            dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
+        )
     sA._df_metadata = _df_meta_A
     # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
     _apply_accel_flags(sA, cfg)
@@ -879,8 +886,9 @@ def _build_3d_problem(cfg):
     sB_info = None
     if fB is not None:
         u_B = cfg.get('u_B', u_A)
-        rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
-        mu_B = float(_mB.mu(T_inB, P_inB))     # air/water ignore P; sco2 needs P
+        with range_context(side='B', stage='inlet', layout='scalar'):
+            rho_B = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
+            mu_B = float(_mB.mu(T_inB, P_inB))     # air/water ignore P; sco2 needs P
         axis_map_B = _resolve_axis_map(fB, Nx, Ny, Nz, L, H, Lz, dx, dy, dz)
         is_reverse_B = axis_map_B['is_reverse']
         N_stream_B = axis_map_B['N_stream']
@@ -920,13 +928,14 @@ def _build_3d_problem(cfg):
         _sdxB = _sdyB = _sdzB = None
         if wall_refine:
             _sdxB, _sdyB, _sdzB = _solver_spacings(dx, dy, dz, perm_B)
-        sB = SIMPLESolver3D(
-            **axis_map_B['solver_init'],
-            rho=rho_B, mu=mu_B, T_in=T_inB, v_inlet=v_inlet_B,
-            eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
-            P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
-            dx_arr=_sdxB, dy_arr=_sdyB, dz_arr=_sdzB,
-        )
+        with range_context(side='B', stage='inlet', layout='solver-initial'):
+            sB = SIMPLESolver3D(
+                **axis_map_B['solver_init'],
+                rho=rho_B, mu=mu_B, T_in=T_inB, v_inlet=v_inlet_B,
+                eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
+                P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
+                dx_arr=_sdxB, dy_arr=_sdyB, dz_arr=_sdzB,
+            )
         sB._df_metadata = _df_meta_B
         # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
         _apply_accel_flags(sB, cfg)
@@ -981,10 +990,11 @@ def _build_3d_problem(cfg):
     else:
         # No B: run A alone (serial)
         _prof_t_a0 = _time.perf_counter() if _prof_3d_enabled() else None
-        _a0_conv, _a0_it = sA.solve(max_iter=_simple_max_iter(cfg, 2000),
-                                    tol=_simple_tol_default(cfg),
-                                    verbose=False,
-                                    cancel_check=cfg.get('_cancel_check'))
+        with range_context(side='A', stage='initial', layout='solver-cell(cross1,stream,cross2)'):
+            _a0_conv, _a0_it = sA.solve(max_iter=_simple_max_iter(cfg, 2000),
+                                        tol=_simple_tol_default(cfg),
+                                        verbose=False,
+                                        cancel_check=cfg.get('_cancel_check'))
         if not _a0_conv:
             _simple_nonconv.append(
                 f"A@init[{getattr(sA, 'exit_reason', '?')}]")
@@ -999,9 +1009,10 @@ def _build_3d_problem(cfg):
 
     # LTNE inputs — Fluid A and B via the registry. air/water ignore P
     # (value-identical); sco2 needs P (real-gas).
-    cp_B = _mB.cp(T_inB, P_inB)
-    k_B = float(_mB.k(T_inB, P_inB))
-    rho_B_ltne = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
+    with range_context(side='B', stage='inlet', layout='scalar'):
+        cp_B = _mB.cp(T_inB, P_inB)
+        k_B = float(_mB.k(T_inB, P_inB))
+        rho_B_ltne = float(_mB.rho(T_inB, P_inB))   # water rho ignores P; sco2 (T,P)
     eps_arr = (eps_field_3d.copy() if eps_field_3d is not None
                else np.full((Nx, Ny, Nz), eps))
     # Per-cell single-channel void fraction (#2/#3). When zoned, eps varies
@@ -1170,13 +1181,14 @@ def _build_hv_machinery(prob: _Problem3D):
         m = fluid_props.get(fluid_type)
         # air/water ignore P (value-identical to the old T-only calls → golden-
         # safe); sco2 is real-gas and REQUIRES P.
-        rho = float(m.rho(T_side, P_side))
-        mu = float(m.mu(T_side, P_side))
-        k_f = float(m.k(T_side, P_side))
-        if not m.compressible:               # water/sco2: Pr-substitution (3D: k guard)
-            Pr_f = float(m.cp(T_side, P_side)) * mu / max(k_f, 1e-30)
-            return rho, mu, k_f, Pr_f
-        return rho, mu, k_f, None
+        with range_context(layout='scalar-hv-property'):
+            rho = float(m.rho(T_side, P_side))
+            mu = float(m.mu(T_side, P_side))
+            k_f = float(m.k(T_side, P_side))
+            if not m.compressible:               # water/sco2: Pr-substitution (3D: k guard)
+                Pr_f = float(m.cp(T_side, P_side)) * mu / max(k_f, 1e-30)
+                return rho, mu, k_f, Pr_f
+            return rho, mu, k_f, None
 
     def _nu_for_fluid(fluid_type, Re_val, eps_f_val, L_mm_val, D_h_mm_val, Pr_val=None):
         Re_eff = max(float(Re_val), 1.0)
@@ -1197,12 +1209,14 @@ def _build_hv_machinery(prob: _Problem3D):
             rho, mu, k_f, Pr_f = _fluid_transport_props(fluid_type, T_side, P_side)
             D_h_m = max(float(g['D_h']), 1e-12)
             Re_val = rho * max(abs(float(u_side)), 0.0) * D_h_m / max(mu, 1e-30)
+            record_raw_nu_range(fluid_type, tpms_type, Re_val)
             Nu_val = _nu_for_fluid(
                 fluid_type, Re_val, float(g['epsilon']) / 2.0,
                 Lcell, D_h_m * 1000.0, Pr_f,
             )
             return np.full((Nx, Ny, Nz), g['A_0'] * Nu_val * k_f / D_h_m, dtype=np.float64)
         out = np.empty((Nx, Ny, Nz), dtype=np.float64)
+        raw_Re = np.empty_like(out)
         rho, mu, k_f, Pr_f = _fluid_transport_props(fluid_type, T_side, P_side)
         for i in range(Nx):
             for j in range(Ny):
@@ -1210,17 +1224,23 @@ def _build_hv_machinery(prob: _Problem3D):
                     Li = float(L_fld[i, j, k])
                     ti = float(t_fld[i, j, k])
                     if fluid_type == 'air':
-                        g = tpms_compute(tpms_type, Li, ti, u_side, T_side, P_side, k_s)
+                        with range_context(layout='scalar-zoned-call'):
+                            g = tpms_compute(tpms_type, Li, ti, u_side, T_side, P_side, k_s)
+                        raw_Re[i, j, k] = g['Re']
                         out[i, j, k] = g['A_0'] * g['H_sf']
                     else:
                         g = tpms_geometry(tpms_type, Li, ti, k_s)
                         D_h_m = max(float(g['D_h']), 1e-12)
                         Re_val = rho * max(abs(float(u_side)), 0.0) * D_h_m / max(mu, 1e-30)
-                        Nu_val = _nu_for_fluid(
-                            fluid_type, Re_val, float(g['epsilon']) / 2.0,
-                            Li, D_h_m * 1000.0, Pr_f,
-                        )
+                        raw_Re[i, j, k] = Re_val
+                        with range_context(layout='scalar-zoned-call'):
+                            Nu_val = _nu_for_fluid(
+                                fluid_type, Re_val, float(g['epsilon']) / 2.0,
+                                Li, D_h_m * 1000.0, Pr_f,
+                            )
                         out[i, j, k] = g['A_0'] * Nu_val * k_f / D_h_m
+        with range_context(layout='real-cell(x,y,z)-bulk-Re'):
+            record_raw_nu_range(fluid_type, tpms_type, raw_Re)
         return out
 
     # Local-Re per-cell h_v (2026-04-25 #B fix).
@@ -1252,6 +1272,7 @@ def _build_hv_machinery(prob: _Problem3D):
             A_0 = g['A_0']; D_h_m = g['D_h']
             D_h_mm = D_h_m * 1000.0
             Re_loc = rho * u_abs * D_h_m / mu
+            record_raw_nu_range(fluid_type, tpms_type, Re_loc)
             # Vectorized Nu over the whole grid. fluid_props .nu forwards to
             # nu_from_Re, which accepts an array Re. This mirrors the scalar
             # _nu_for_fluid path element-for-element (Re pre-floor at 1.0, Nu
@@ -1269,6 +1290,7 @@ def _build_hv_machinery(prob: _Problem3D):
             return A_0 * H_sf_loc
         # Zoned (L,t) varying — recompute geom per cell
         out = np.empty((Nx, Ny, Nz), dtype=np.float64)
+        raw_Re = np.empty_like(out)
         for i in range(Nx):
             for j in range(Ny):
                 for k in range(Nz):
@@ -1276,12 +1298,15 @@ def _build_hv_machinery(prob: _Problem3D):
                     g = tpms_geometry(tpms_type, L_ij, t_ij, k_s)
                     D_h_m_l = g['D_h']
                     Re_l = rho * float(u_abs[i,j,k]) * D_h_m_l / mu
+                    raw_Re[i, j, k] = Re_l
                     # single-stream: ε_f = ε/2
-                    Nu_l = _nu_for_fluid(
-                        fluid_type, Re_l, g['epsilon'] / 2.0,
-                        L_ij, D_h_m_l * 1000.0, Pr_f,
-                    )
+                    with range_context(layout='scalar-zoned-call'):
+                        Nu_l = _nu_for_fluid(
+                            fluid_type, Re_l, g['epsilon'] / 2.0,
+                            L_ij, D_h_m_l * 1000.0, Pr_f,
+                        )
                     out[i,j,k] = g['A_0'] * Nu_l * k_f / D_h_m_l
+        record_raw_nu_range(fluid_type, tpms_type, raw_Re)
         return out
 
     # Per-side h_v geometric multiplier for asymmetric offset-isosurface δ.
@@ -1314,25 +1339,32 @@ def _build_hv_machinery(prob: _Problem3D):
         def _hv(A0, Dh):
             Dh_m = max(float(Dh), 1e-12)
             Re = _rho * max(abs(float(u_side)), 0.0) * Dh_m / max(_mu, 1e-30)
+            record_raw_nu_range(fluid_type, tpms_type, Re)
             Nu = _nu_for_fluid(fluid_type, Re, 0.5 * float(eps),
                                Lcell, Dh_m * 1000.0, _Pr)
             return A0 * Nu / Dh_m
-        _ref = _hv(A0_r, Dh_r)
-        return (_hv(A0_s, Dh_s) / _ref) if _ref > 0 else 1.0
+        with range_context(layout='scalar-geometry-reference'):
+            _ref = _hv(A0_r, Dh_r)
+        with range_context(layout='scalar-geometry-side'):
+            return (_hv(A0_s, Dh_s) / _ref) if _ref > 0 else 1.0
 
-    _hv_ratio_A = _hv_side_geom_ratio(fluid_type_A, u_A, T_inA, P_inA, 'A')
-    _hv_ratio_B = _hv_side_geom_ratio(fluid_type_B, u_B_val, T_inB, P_inB, 'B')
+    with range_context(side='A', stage='inlet', layout='scalar-geometry-ratio'):
+        _hv_ratio_A = _hv_side_geom_ratio(fluid_type_A, u_A, T_inA, P_inA, 'A')
+    with range_context(side='B', stage='inlet', layout='scalar-geometry-ratio'):
+        _hv_ratio_B = _hv_side_geom_ratio(fluid_type_B, u_B_val, T_inB, P_inB, 'B')
 
     # Initial bulk h_v (used at outer=0 before SIMPLE solves; becomes local
     # after first outer iter when ucA/B are available).
-    h_vA_field = _build_hv_field_3d(
-        L_mm_field, t_field_3d, u_A, T_inA, P_inA, fluid_type_A)
+    with range_context(side='A', stage='inlet', layout='scalar-hv-bulk'):
+        h_vA_field = _build_hv_field_3d(
+            L_mm_field, t_field_3d, u_A, T_inA, P_inA, fluid_type_A)
     h_vA_field = _apply_roughness_h_v(
         h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
     h_vA_field = h_vA_field * _hv_ratio_A
     if sB is not None:
-        h_vB_field = _build_hv_field_3d(
-            L_mm_field, t_field_3d, u_B_val, T_inB, P_inB, fluid_type_B)
+        with range_context(side='B', stage='inlet', layout='scalar-hv-bulk'):
+            h_vB_field = _build_hv_field_3d(
+                L_mm_field, t_field_3d, u_B_val, T_inB, P_inB, fluid_type_B)
         h_vB_field = _apply_roughness_h_v(
             h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
         h_vB_field = h_vB_field * _hv_ratio_B
@@ -1470,13 +1502,17 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
         if is_reverse:
             _P_A_real = np.flip(_P_A_real, axis=stream_real_axis)
         _P_A_out = _real_outlet_slice(_P_A_real, fA['dir'])
-        h_A_out = _mass_weighted_h_out(
-            T_A_out_face, _P_A_out,
-            lambda T, P: _prop_field('H', T, P, fluid_type_A), sA, fA['dir'],
-            eps_f_per_side, eps_side_override=_eps_ov_A)
-        Q_enthalpy_A = abs(m_dot_A_simple * (
-            _h_scalar(float(T_inA), P_inA, fluid_type_A) - h_A_out))
+        with range_context(side='A', stage='final', layout='outlet-cell-face(real-transverse-axes)'):
+            h_A_out = _mass_weighted_h_out(
+                T_A_out_face, _P_A_out,
+                lambda T, P: _prop_field('H', T, P, fluid_type_A), sA, fA['dir'],
+                eps_f_per_side, eps_side_override=_eps_ov_A)
+        with range_context(side='A', stage='final', layout='scalar-inlet-reference'):
+            Q_enthalpy_A = abs(m_dot_A_simple * (
+                _h_scalar(float(T_inA), P_inA, fluid_type_A) - h_A_out))
     else:
+        with range_context(side='A', stage='final', layout='outlet-cell-face(real-transverse-axes)'):
+            record_temperature_ranges(fluid_type_A, T_A_out_face)
         Q_enthalpy_A = abs(m_dot_A_simple * cp_A * (T_inA - T_A_out))
 
     # Fluid B
@@ -1509,14 +1545,18 @@ def _extract_3d_metrics(prob: _Problem3D, hv: _HvMachinery, outer: _OuterState):
                 _P_B_real_h = np.flip(
                     _P_B_real_h, axis=sB_info['axis_map']['stream_real_axis'])
             _P_B_out = _real_outlet_slice(_P_B_real_h, fB['dir'])
-            h_B_out = _mass_weighted_h_out(
-                T_B_out_face, _P_B_out,
-                lambda T, P: _prop_field('H', T, P, fluid_type_B), sB, fB['dir'],
-                eps_f_per_side, chi_face=chi_B_out_face,
-                eps_side_override=_eps_ov_B)
-            Q_enthalpy_B = abs(m_dot_B_simple * (
-                _h_scalar(float(T_inB), P_inB, fluid_type_B) - h_B_out))
+            with range_context(side='B', stage='final', layout='outlet-cell-face(real-transverse-axes)'):
+                h_B_out = _mass_weighted_h_out(
+                    T_B_out_face, _P_B_out,
+                    lambda T, P: _prop_field('H', T, P, fluid_type_B), sB, fB['dir'],
+                    eps_f_per_side, chi_face=chi_B_out_face,
+                    eps_side_override=_eps_ov_B)
+            with range_context(side='B', stage='final', layout='scalar-inlet-reference'):
+                Q_enthalpy_B = abs(m_dot_B_simple * (
+                    _h_scalar(float(T_inB), P_inB, fluid_type_B) - h_B_out))
         else:
+            with range_context(side='B', stage='final', layout='outlet-cell-face(real-transverse-axes)'):
+                record_temperature_ranges(fluid_type_B, T_B_out_face)
             Q_enthalpy_B = abs(m_dot_B_simple * cp_B * (T_inB - T_B_out))
 
     # Reported duties use a different pressure anchor from the last true-h
@@ -2396,6 +2436,12 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         fluid_props.check_water_state(fluid_type_B, T_inB if Tb is None else Tb,
                                       P_inB, where=f'{where} B')
 
+    def _record_temperature_state(stage, layout):
+        # Only called for the empirical temperature/model-h route, not HEOS.
+        for side, fluid, temperature in (('A', fluid_type_A, Ta), ('B', fluid_type_B, Tb)):
+            with range_context(side=side, stage=stage, layout=layout):
+                record_temperature_ranges(fluid, temperature)
+
     def _outer_step_3d(outer):
         nonlocal Ta, Tb, Ts, chi_B, h_vA_field, h_vB_field, K_ffB
         nonlocal _ltne_mask_A, _ltne_mask_B
@@ -2417,6 +2463,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _check_property_water('3D temperature warm start')
             fluid_props.check_finite_temperatures(
                 Ta, Tb, Ts, where='3D temperature warm start')
+            _record_temperature_state('main', 'real-cell(x,y,z)-warm')
 
         # #B fix: rebuild h_v per cell using LOCAL Re (cell-center stream u).
         # Wall cells with |u_local|→0 → Nu_lam floor (4.36) → h_local much
@@ -2425,8 +2472,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # D3: sCO2 uses the LOCAL temperature field (lagged Ta) for h_v props;
         # iter-0 Ta is None → scalar T_inA (frozen, = old behaviour).
         _T_hvA = Ta if (fluid_type_A == 'sco2' and Ta is not None) else T_inA
-        h_vA_field = _build_hv_local_3d(
-            L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A)
+        with range_context(side='A', stage='main', layout='real-cell(x,y,z)-hv-stream'):
+            h_vA_field = _build_hv_local_3d(
+                L_mm_field, t_field_3d, u_stream_A, _T_hvA, P_inA, fluid_type_A)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
         h_vA_field = h_vA_field * _hv_ratio_A   # per-side asym geom (1.0 at δ=0)
@@ -2442,8 +2490,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         if sB is not None:
             u_stream_B = _stream_component(ucB, vcB, wcB, fB['dir'])
             _T_hvB = Tb if (fluid_type_B == 'sco2' and Tb is not None) else T_inB
-            h_vB_field = _build_hv_local_3d(
-                L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B)
+            with range_context(side='B', stage='main', layout='real-cell(x,y,z)-hv-stream'):
+                h_vB_field = _build_hv_local_3d(
+                    L_mm_field, t_field_3d, u_stream_B, _T_hvB, P_inB, fluid_type_B)
             h_vB_field = _apply_roughness_h_v(
                 h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
             h_vB_field = h_vB_field * _hv_ratio_B   # per-side asym geom (1.0 at δ=0)
@@ -2609,10 +2658,12 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # Pair air's current thermal cp with this completed SIMPLE state,
         # including the first call and B's post-SIMPLE density refresh.
         if _var_rhocp and fluid_type_A == 'air' and _mA.compressible:
-            rho_cp_fA[:] = _rho_real(sA, axis_map) * air_cp(T_inA if Ta is None else Ta)
+            with range_context(side='A', stage='property-refresh', layout='real-cell(x,y,z)-thermal-cp'):
+                rho_cp_fA[:] = _rho_real(sA, axis_map) * air_cp(T_inA if Ta is None else Ta)
         if (_var_rhocp and fluid_type_B == 'air' and _mB.compressible
                 and sB is not None):
-            rho_cp_fB[:] = _rho_real(sB, axis_map_B) * air_cp(T_inB if Tb is None else Tb)
+            with range_context(side='B', stage='property-refresh', layout='real-cell(x,y,z)-thermal-cp'):
+                rho_cp_fB[:] = _rho_real(sB, axis_map_B) * air_cp(T_inB if Tb is None else Tb)
 
         # Strict-conservation prerequisite (2026-06-09): enforce discrete global
         # mass balance ∮F·n=0 on the extracted stream-boundary faces so the
@@ -2732,6 +2783,7 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             _check_property_water('3D temperature return')
             fluid_props.check_finite_temperatures(
                 Ta, Tb, Ts, where='3D temperature return')
+            _record_temperature_state('main', 'real-cell(x,y,z)-return')
 
         # ── Option B: enthalpy-conservative LTNE for variable-cp sCO2 ──
         # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
@@ -2855,26 +2907,27 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             Ta_sA = np.ascontiguousarray(np.flip(Ta_sA, axis=_ssax_A))
         # Critical: propagate Ta to T_field so SIMPLE inner _update_density()
         # uses local cell T, not stale T_in. (Mirror sB.update_T_field below.)
-        sA.update_T_field(Ta_sA)
-        P_abs = sA.P_ref_abs + sA.P
-        if _mA.compressible:
-            rho_new = P_abs / (R_AIR * Ta_sA)            # ideal gas
-            mu_new_A = air_viscosity(Ta_sA)
-        elif (fluid_type_A == 'sco2'
-              and os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower()
-              in ('1', 'true', 'yes')):
-            # #4 Phase-B (opt-in, EXPERIMENTAL): sco2 ρ/μ at the LOCAL absolute-P
-            # field (ρ tracks local P, not frozen inlet P). ⚠ PROPERTY SIDE ONLY —
-            # the full compressible continuity (∂ρ/∂P in the pressure correction,
-            # Karki-Patankar ψ) is NOT implemented, so high-dP convergence is
-            # unverified. 703 dP<2% ⇒ default Phase A (below) is sufficient.
-            rho_new = sco2_props.sco2_prop("D", Ta_sA, P_abs)
-            mu_new_A = sco2_props.sco2_prop("V", Ta_sA, P_abs)
-        else:
-            # Incompressible registry path. Water ignores P; sCO2 Phase A
-            # evaluates ρ(T,P_in) and μ(T,P_in) with pressure frozen.
-            rho_new = _mA.rho(Ta_sA, P_inA)
-            mu_new_A = _mA.mu(Ta_sA, P_inA)
+        with range_context(side='A', stage='property-refresh', layout='solver-cell(cross1,stream,cross2)'):
+            sA.update_T_field(Ta_sA)
+            P_abs = sA.P_ref_abs + sA.P
+            if _mA.compressible:
+                rho_new = P_abs / (R_AIR * Ta_sA)            # ideal gas
+                mu_new_A = air_viscosity(Ta_sA)
+            elif (fluid_type_A == 'sco2'
+                  and os.environ.get('TPMSHX_SCO2_COMPRESSIBLE', '').lower()
+                  in ('1', 'true', 'yes')):
+                # #4 Phase-B (opt-in, EXPERIMENTAL): sco2 ρ/μ at the LOCAL absolute-P
+                # field (ρ tracks local P, not frozen inlet P). ⚠ PROPERTY SIDE ONLY —
+                # the full compressible continuity (∂ρ/∂P in the pressure correction,
+                # Karki-Patankar ψ) is NOT implemented, so high-dP convergence is
+                # unverified. 703 dP<2% ⇒ default Phase A (below) is sufficient.
+                rho_new = sco2_props.sco2_prop("D", Ta_sA, P_abs)
+                mu_new_A = sco2_props.sco2_prop("V", Ta_sA, P_abs)
+            else:
+                # Incompressible registry path. Water ignores P; sCO2 Phase A
+                # evaluates ρ(T,P_in) and μ(T,P_in) with pressure frozen.
+                rho_new = _mA.rho(Ta_sA, P_inA)
+                mu_new_A = _mA.mu(Ta_sA, P_inA)
         if outer > 0:
             # Damped-Picard property update — the outer coupling's relaxation.
             # `_and_A` (opt-in, cfg['outer_anderson'], default OFF) replaces the
@@ -2922,7 +2975,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                 - _dp_meas * (_dp_meas + 2.0 * _pref_old))
                 _shoot_ctx = 'fluid A shooting reseed (outer iter)'
             else:
-                mu_avg = float(air_viscosity(T_avg))
+                with range_context(side='A', stage='property-refresh', layout='mean'):
+                    mu_avg = float(air_viscosity(T_avg))
                 C_avg = (mu_avg * G_A / max(K_pred, 1e-16)
                          + cF_pred * G_A * G_A)
                 P_out_sq_new = (P_inA ** 2
@@ -2936,7 +2990,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             # registry supplies the fluid viscosity at the mean temperature.
             fluid_props.check_water_state(fluid_type_A, T_avg, P_inA,
                                           where='3D mean viscosity refresh A')
-            mu_avg = float(_mA.mu(T_avg, P_inA))
+            with range_context(side='A', stage='property-refresh', layout='mean'):
+                mu_avg = float(_mA.mu(T_avg, P_inA))
             C_avg = mu_avg * G_A / max(K_pred, 1e-16) + cF_pred * G_A * G_A
             _sco2_compress = (
                 fluid_type_A == 'sco2'
@@ -2976,9 +3031,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # for the residual to re-sink to 1e-3. Saves ~50% of SIMPLE work in
         # outer iters 1-2.
         _prof_t_sa = _time.perf_counter() if _prof_3d_enabled() else None
-        _sa_conv, _sa_it = sA.solve(max_iter=_simple_max_iter(cfg, 600),
-                                    tol=_simple_tol_default(cfg),
-                                    verbose=False, cancel_check=_cancel_check)
+        with range_context(side='A', stage='main', layout='solver-cell(cross1,stream,cross2)'):
+            _sa_conv, _sa_it = sA.solve(max_iter=_simple_max_iter(cfg, 600),
+                                        tol=_simple_tol_default(cfg),
+                                        verbose=False, cancel_check=_cancel_check)
         if not _sa_conv:
             _simple_nonconv.append(
                 f"A@outer{outer}[{getattr(sA, 'exit_reason', '?')}]")
@@ -2998,43 +3054,45 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         # Also re-add the optional thermal-dispersion term that the old in-place
         # refresh silently dropped. δ=0 ⇒ eps_fA_arr IS eps_f_arr (bit-identical);
         # disp_C_A=0 ⇒ no-op.
-        if _mA.compressible:
-            K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
-            _cpA_fld = air_cp(Ta)
-        else:
-            K_ffA[:] = eps_fA_arr * _mA.k(Ta, P_inA)
-            _cpA_fld = _mA.cp(Ta, P_inA)
-        if disp_C_A > 0.0:
-            K_ffA[:] += K_disp_A
-        if (_var_rhocp and sA is not None
-                and not (fluid_type_A == 'air' and _mA.compressible)):
-            # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
-            _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
-            if axis_map['is_reverse']:
-                _rhoA_real = np.flip(_rhoA_real, axis=axis_map['stream_real_axis'])
-            rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * _cpA_fld
-        elif not (_var_rhocp and fluid_type_A == 'air' and _mA.compressible):
-            _rhoA_fld = (air_density(Ta, P_inA) if _mA.compressible
-                         else _mA.rho(Ta, P_inA))
-            rho_cp_fA[:] = _rhoA_fld * _cpA_fld
+        with range_context(side='A', stage='property-refresh', layout='real-cell(x,y,z)'):
+            if _mA.compressible:
+                K_ffA[:] = eps_fA_arr * air_conductivity(Ta)
+                _cpA_fld = air_cp(Ta)
+            else:
+                K_ffA[:] = eps_fA_arr * _mA.k(Ta, P_inA)
+                _cpA_fld = _mA.cp(Ta, P_inA)
+            if disp_C_A > 0.0:
+                K_ffA[:] += K_disp_A
+            if (_var_rhocp and sA is not None
+                    and not (fluid_type_A == 'air' and _mA.compressible)):
+                # SIMPLE's local ρ(P_local,T) → real coords (transpose + reverse flip)
+                _rhoA_real = sA.rho_field.transpose(axis_map['solver_to_real_perm'])
+                if axis_map['is_reverse']:
+                    _rhoA_real = np.flip(_rhoA_real, axis=axis_map['stream_real_axis'])
+                rho_cp_fA[:] = np.ascontiguousarray(_rhoA_real) * _cpA_fld
+            elif not (_var_rhocp and fluid_type_A == 'air' and _mA.compressible):
+                _rhoA_fld = (air_density(Ta, P_inA) if _mA.compressible
+                             else _mA.rho(Ta, P_inA))
+                rho_cp_fA[:] = _rhoA_fld * _cpA_fld
         # h_v rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         if Tb is not None:
             # B1 1.1: per-fluid primitives via registry; the local-P
             # rho·cp path is compressible-only physics (water keeps ρ(T)).
-            K_ffB[:] = eps_fB_arr * _mB.k(Tb, P_inB)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above); P for sco2
-            if disp_C_B > 0.0:
-                K_ffB[:] += K_disp_B
-            if (_mB.compressible and _var_rhocp and sB is not None
-                    and fluid_type_B != 'air'):
-                _rhoB_real = sB.rho_field.transpose(perm_B)
-                if axis_map_B['is_reverse']:
-                    _rhoB_real = np.flip(
-                        _rhoB_real, axis=axis_map_B['stream_real_axis'])
-                rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb, P_inB)
-            elif not (_var_rhocp and fluid_type_B == 'air' and _mB.compressible
-                      and sB is not None):
-                rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb, P_inB)
+            with range_context(side='B', stage='property-refresh', layout='real-cell(x,y,z)'):
+                K_ffB[:] = eps_fB_arr * _mB.k(Tb, P_inB)  # FIX (2026-06-24 audit): asym per-side eps + re-add dispersion (see fluid-A note above); P for sco2
+                if disp_C_B > 0.0:
+                    K_ffB[:] += K_disp_B
+                if (_mB.compressible and _var_rhocp and sB is not None
+                        and fluid_type_B != 'air'):
+                    _rhoB_real = sB.rho_field.transpose(perm_B)
+                    if axis_map_B['is_reverse']:
+                        _rhoB_real = np.flip(
+                            _rhoB_real, axis=axis_map_B['stream_real_axis'])
+                    rho_cp_fB[:] = np.ascontiguousarray(_rhoB_real) * _mB.cp(Tb, P_inB)
+                elif not (_var_rhocp and fluid_type_B == 'air' and _mB.compressible
+                          and sB is not None):
+                    rho_cp_fB[:] = _mB.rho(Tb, P_inB) * _mB.cp(Tb, P_inB)
             # h_vB rebuilt at top of next outer iter using LOCAL Re (#B fix).
 
         # Non-iso coupling for fluid B. Water: ρ(T) only, no ideal gas.
@@ -3045,12 +3103,13 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             if axis_map_B['is_reverse']:
                 _ssax_B = perm_B[int(axis_map_B['stream_real_axis'])]
                 Tb_sB = np.ascontiguousarray(np.flip(Tb_sB, axis=_ssax_B))
-            if _mB.compressible:
-                P_abs_B = sB.P_ref_abs + sB.P
-                rho_new_B = P_abs_B / (R_AIR * Tb_sB)
-            else:
-                rho_new_B = _mB.rho(Tb_sB, P_inB)   # water ignores P; sco2 (T,P_in)
-            mu_new_B = _mB.mu(Tb_sB, P_inB)          # air/water ignore P; sco2 needs P
+            with range_context(side='B', stage='property-refresh', layout='solver-cell(cross1,stream,cross2)'):
+                if _mB.compressible:
+                    P_abs_B = sB.P_ref_abs + sB.P
+                    rho_new_B = P_abs_B / (R_AIR * Tb_sB)
+                else:
+                    rho_new_B = _mB.rho(Tb_sB, P_inB)   # water ignores P; sco2 (T,P_in)
+                mu_new_B = _mB.mu(Tb_sB, P_inB)          # air/water ignore P; sco2 needs P
             if outer > 0:
                 # Mirror of the fluid-A property update above (see comment
                 # there). Separate Anderson instance per side: A's blend is
@@ -3090,7 +3149,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                                       + 2.0 * _pref_old_B))
                     _shoot_ctx_B = 'fluid B shooting reseed (outer iter)'
                 else:
-                    mu_avg_B = float(_mB.mu(Tb_avg))
+                    with range_context(side='B', stage='property-refresh', layout='mean'):
+                        mu_avg_B = float(_mB.mu(Tb_avg))
                     # Use the B-side permeability / Forchheimer coeff (audit
                     # 2026-06-28): the outer-loop reseed previously used fluid
                     # A's K_pred / cF_pred, inconsistent with the initial B
@@ -3108,11 +3168,13 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                            warn_list=_env_warnings,
                                            context=_shoot_ctx_B)
 
-            sB.update_T_field(Tb_sB)
+            with range_context(side='B', stage='property-refresh', layout='solver-cell(cross1,stream,cross2)'):
+                sB.update_T_field(Tb_sB)
             _prof_t_sb = _time.perf_counter() if _prof_3d_enabled() else None
-            _sb_conv, _sb_it = sB.solve(max_iter=_simple_max_iter(cfg, 600),
-                                        tol=_simple_tol_default(cfg),
-                                        verbose=False, cancel_check=_cancel_check)
+            with range_context(side='B', stage='main', layout='solver-cell(cross1,stream,cross2)'):
+                _sb_conv, _sb_it = sB.solve(max_iter=_simple_max_iter(cfg, 600),
+                                            tol=_simple_tol_default(cfg),
+                                            verbose=False, cancel_check=_cancel_check)
             if not _sb_conv:
                 _simple_nonconv.append(
                     f"B@outer{outer}[{getattr(sB, 'exit_reason', '?')}]")
@@ -3150,6 +3212,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             sco2_props._validate_state(
                 temperature, _pressure_real_3d(solver, amap, solver.P_ref_abs),
                 where=f'3D final report state {side}')
+
+    if not (sB is not None and 'sco2' in (fluid_type_A, fluid_type_B)):
+        _record_temperature_state('final', 'real-cell(x,y,z)')
 
     return _OuterState(
         K_ffB=K_ffB,

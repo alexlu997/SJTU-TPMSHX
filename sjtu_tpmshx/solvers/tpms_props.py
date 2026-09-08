@@ -52,6 +52,28 @@ def model_h_coefficients(fluid):
 
 _range_warnings_emitted = set()
 
+
+def record_temperature_ranges(fluid, T):
+    """Compare a temperature-model state with existing fits, without property calls.
+
+    Callers select only the empirical temperature/model-h route, not HEOS Air.
+    This is run-local evidence; standalone property warning behavior is unchanged.
+    """
+    if T is None:
+        return
+    if fluid == 'air':
+        fits = (('air_viscosity', _AIR_T_RANGE),
+                ('air_conductivity', _AIR_T_RANGE), ('air_cp', _AIR_CP_RANGE))
+    elif fluid == 'water':
+        fits = tuple((f'water_{name}', _WATER_T_RANGE)
+                     for name in ('density', 'viscosity', 'conductivity', 'cp'))
+    else:
+        return
+    for name, bounds in fits:
+        record_range(('property_state', name), T, bounds,
+                     label=name, quantity='T', unit='K')
+
+
 def _warn_range_once(name: str, T, lo: float, hi: float) -> None:
     """Emit a single UserWarning per (name) key when T goes outside the
     fitted validity range. Keeps logs readable when coupled solvers
