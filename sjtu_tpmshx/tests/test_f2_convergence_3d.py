@@ -482,7 +482,7 @@ def test_nonfinite_restart_resets_current_diagnostics(monkeypatch, dim, stage, b
     np.testing.assert_equal(s.P.flat[0], bad)
     assert s.mom_residuals == history
     # Execute the actual nested result projection without rerunning thermal PDEs.
-    tree = ast.parse(Path(run_stack_3d_stages.__file__).read_text())
+    tree = ast.parse(Path(run_stack_3d_stages.__file__).read_text(encoding='utf-8'))
     projection = next(n for n in ast.walk(tree)
                       if isinstance(n, ast.FunctionDef) and n.name == '_simple_detail')
     namespace = {}
