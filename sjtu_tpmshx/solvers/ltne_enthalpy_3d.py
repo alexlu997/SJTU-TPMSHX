@@ -342,6 +342,37 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
                 fluid_A=fluid_A, fluid_B=fluid_B)
 
 
+def _coupled_energy_balance(Ta, Tb, Ts, hvA, hvB, Kss, dx, dy, dz, q_A, q_B):
+    """Adiabatic solid CV residuals at the final EOS state; W (W/m in 2D)."""
+    widths = (dx, dy, dz)
+    volume = dx[:, None, None] * dy[None, :, None] * dz[None, None, :]
+    residual = (hvA * (Ta - Ts) + hvB * (Tb - Ts)) * volume
+    for axis, width in enumerate(widths):
+        lo = [slice(None)] * 3; hi = lo.copy()
+        lo[axis] = slice(None, -1); hi[axis] = slice(1, None)
+        lo, hi = tuple(lo), tuple(hi)
+        kl, kh = Kss[lo], Kss[hi]
+        harmonic = np.zeros_like(kl)
+        np.divide(2 * kl * kh, kl + kh, out=harmonic, where=kl + kh > 0)
+        shape = [1, 1, 1]; shape[axis] = -1
+        distance = (0.5 * (width[:-1] + width[1:])).reshape(shape)
+        area = volume / width.reshape(shape)
+        flux = harmonic * area[lo] / distance * (Ts[hi] - Ts[lo])
+        residual[lo] += flux; residual[hi] -= flux
+    net = q_A + q_B
+    solid_abs = float(np.abs(residual).sum())
+    # Check each operand before max: max(finite, NaN) can hide NaN.
+    if not np.all(np.isfinite((q_A, q_B, net, solid_abs))):
+        raise FloatingPointError('Non-finite coupled energy budget')
+    denominator = max(abs(q_A), abs(q_B), 1.0)
+    numerator = max(abs(net), solid_abs)
+    ratio = numerator / denominator
+    if not np.all(np.isfinite((numerator, denominator, ratio))):
+        raise FloatingPointError('Non-finite coupled energy ratio')
+    return dict(net=float(net), solid_abs_sum=solid_abs,
+                denominator=float(denominator), ratio=float(ratio))
+
+
 def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                                     h_vA_field, h_vB_field, m_dot_A, m_dot_B,
                                     T_inA, T_inB, P_A, P_B, dir_A, dir_B,
@@ -351,7 +382,7 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                                     mass_flux_A=None, mass_flux_B=None,
                                     Ta_init=None, Tb_init=None, Ts_init=None,
                                     n_outer=3000, n_sweep=5, omega=0.6, tol=2e-5,
-                                    cancel_check=None):
+                                    cancel_check=None, coupled_energy_tol=None):
     """Pipeline-facing true-enthalpy LTNE solve using SIMPLE face mass flow.
 
     Drives the njit enthalpy kernel from the production pipeline's fielded data
@@ -363,7 +394,11 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     ``mass_flux_A/B`` are signed real-coordinate ``(Fx,Fy,Fz)`` arrays. Their
     boundary faces encode arbitrary inlet/outlet patches; zero faces are walls.
     Scalar ``m_dot`` remains only as a compatibility fallback for standalone
-    uniform-flow tests."""
+    uniform-flow tests. ``coupled_energy_tol`` adds an EOS solid/boundary
+    balance gate; only the 2D adapter enables it (unit depth, W/m)."""
+    if coupled_energy_tol is not None and (
+            not np.isfinite(coupled_energy_tol) or coupled_energy_tol <= 0):
+        raise ValueError('coupled_energy_tol must be finite and positive')
     check_water_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
     _check_sco2_state(fluid_A, T_inA, P_A, where='enthalpy inlet A')
     check_water_state(fluid_B, T_inB, P_B, where='enthalpy inlet B')
@@ -430,6 +465,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
 
     n_done = 0
     resid = 0.0
+    coupled = None
+    converged = False
     for outer in range(n_outer):
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
@@ -452,22 +489,38 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
         n_done = outer + 1
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
+        if coupled_energy_tol is not None and not all(
+                np.all(np.isfinite(field)) for field in (hA, hB, Ts)):
+            raise FloatingPointError('Non-finite coupled energy state')
         denom = max(abs(h_in_A - h_in_B), 1.0)
         resid = max(np.max(np.abs(hA - hA_star)),
                     np.max(np.abs(hB - hB_star))) / denom
         q_A = _boundary_enthalpy_duty(hA, h_in_A, flux_A)
         q_B = _boundary_enthalpy_duty(hB, h_in_B, flux_B)
         imbalance = abs(q_A + q_B) / max(abs(q_A), abs(q_B), 1e-30)
-        if resid < tol and imbalance < 0.05:
+        converged = bool(resid < tol and imbalance < 0.05)
+        if coupled_energy_tol is not None:
+            if not np.all(np.isfinite((resid, q_A, q_B, imbalance))):
+                raise FloatingPointError('Non-finite coupled energy convergence')
+            if converged or n_done == n_outer:
+                Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
+                Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
+                coupled = _coupled_energy_balance(
+                    Ta, Tb, Ts, hvA_fld, hvB_fld, Kss, dx, dy, dz, q_A, q_B)
+                converged = converged and coupled['ratio'] <= coupled_energy_tol
+        if converged:
             break
 
-    Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
-    Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
+    if coupled_energy_tol is None:
+        Ta = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy final EOS return A')
+        Tb = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy final EOS return B')
     info = dict(iterations=n_done,
-                converged=bool(resid < tol and imbalance < 0.05),
+                converged=bool(converged),
                 residual=float(resid), enthalpy_mode=True,
                 Q_A=float(q_A), Q_B=float(q_B),
                 energy_imbalance_rel=float(imbalance))
+    if coupled is not None:
+        info['coupled_energy_balance'] = coupled
     return Ta, Tb, Ts, info
 
 

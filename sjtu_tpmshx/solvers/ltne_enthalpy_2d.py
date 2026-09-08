@@ -192,7 +192,7 @@ def solve_enthalpy_2d(
         Tb_init=None if Tb_init is None else cell3(Tb_init),
         Ts_init=None if Ts_init is None else cell3(Ts_init),
         n_outer=max_iter, n_sweep=3, tol=max(float(tol), 1e-8) / 100.0,
-        cancel_check=cancel_check,
+        cancel_check=cancel_check, coupled_energy_tol=0.001,
     )
     Ta, Tb, Ts, info = result
     return Ta[..., 0], Tb[..., 0], Ts[..., 0], info
