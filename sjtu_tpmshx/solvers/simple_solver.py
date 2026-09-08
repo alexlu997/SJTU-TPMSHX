@@ -165,6 +165,29 @@ def _aligned_grid(N, L, breakpoints):
     return np.array(dx_list, dtype=np.float64)
 
 
+def _prolong_mass_faces_2d(mass, dx, dy, fine_dx, fine_dy):
+    """Integrate the coarse CV's linear-normal, constant-transverse flux.
+
+    Works on nonnested partitions. Fine divergence is the overlap integral
+    of coarse divergence; this transfers the flow and does not solve momentum.
+    """
+    edges = [np.r_[0., np.cumsum(w)] for w in (dx, dy, fine_dx, fine_dy)]
+    x, y, xf, yf = edges
+    if not (np.isclose(x[-1], xf[-1], rtol=1e-12, atol=1e-15)
+            and np.isclose(y[-1], yf[-1], rtol=1e-12, atol=1e-15)):
+        raise ValueError('mass prolongation requires the same physical domain')
+    # These are the same physical boundary, despite cumsum roundoff.
+    xf[-1], yf[-1] = x[-1], y[-1]
+    overlap_x = np.maximum(0., np.minimum(xf[1:, None], x[None, 1:])
+                            - np.maximum(xf[:-1, None], x[None, :-1]))
+    overlap_y = np.maximum(0., np.minimum(yf[1:, None], y[None, 1:])
+                            - np.maximum(yf[:-1, None], y[None, :-1]))
+    jx = np.column_stack([np.interp(xf, x, mass[0][:, j]) for j in range(len(dy))])
+    jy = np.vstack([np.interp(yf, y, mass[1][i]) for i in range(len(dx))])
+    return (np.ascontiguousarray((jx / np.asarray(dy)[None, :]) @ overlap_y.T),
+            np.ascontiguousarray(overlap_x @ (jy / np.asarray(dx)[:, None])))
+
+
 def build_wall_refined_1d(W, N_bulk, n_refine=8, first_cell=0.02e-3, growth=1.8):
     """Build a 1D cross-stream grid with geometric refinement at both walls.
 

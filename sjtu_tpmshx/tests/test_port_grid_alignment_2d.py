@@ -49,7 +49,7 @@ def test_aligned_grid_rejects_too_few_cells_for_segments():
 
 
 def test_counter_port_endpoints_do_not_create_unknown_fine_inflow():
-    from sjtu_tpmshx.pipelines.solve_2d import _prolong_mass_faces_2d
+    from sjtu_tpmshx.solvers.simple_solver import _prolong_mass_faces_2d
     from sjtu_tpmshx.solvers.ltne_energy import _model_h_balance
     from sjtu_tpmshx.solvers.simple_solver import _port_fractions_1d
 

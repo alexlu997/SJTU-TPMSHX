@@ -7,6 +7,7 @@ from numba import get_num_threads, set_num_threads
 
 from sjtu_tpmshx.solvers import ltne_energy as energy
 from sjtu_tpmshx.solvers.tpms_props import model_h_coefficients
+from sjtu_tpmshx.solvers.simple_solver import _prolong_mass_faces_2d
 from sjtu_tpmshx.pipelines import solve_2d
 
 
@@ -148,7 +149,7 @@ def test_nonnested_mass_prolongation_preserves_overlap_divergence(sign, imbalanc
     psi = np.array([[0., 0., 1., 1.], [0., .1, .8, 1.], [0., 0., 1., 1.]])
     mx, my = sign*np.diff(psi, axis=1), -sign*np.diff(psi, axis=0)
     mx[1, 1] += imbalance
-    fine = solve_2d._prolong_mass_faces_2d((mx, my), dx, dy, fx, fy)
+    fine = _prolong_mass_faces_2d((mx, my), dx, dy, fx, fy)
     coarse_div = mx[1:]-mx[:-1]+my[:, 1:]-my[:, :-1]
     fine_div = fine[0][1:]-fine[0][:-1]+fine[1][:, 1:]-fine[1][:, :-1]
     x, y, xf, yf = [np.r_[0., np.cumsum(w)] for w in (dx, dy, fx, fy)]
@@ -163,7 +164,7 @@ def test_nonnested_mass_prolongation_preserves_overlap_divergence(sign, imbalanc
     np.testing.assert_allclose(fine_div, expected, atol=1e-14, rtol=0)
     # Every coarse face lies in this second requested partition: evaluate
     # the constructed field there rather than reverse-interpolating samples.
-    same = solve_2d._prolong_mass_faces_2d((mx, my), dx, dy, dx, dy)
+    same = _prolong_mass_faces_2d((mx, my), dx, dy, dx, dy)
     np.testing.assert_allclose(same[0], mx, atol=1e-14)
     np.testing.assert_allclose(same[1], my, atol=1e-14)
     for coarse_face, fine_face in ((0, 0), (1, 2), (2, 4)):
@@ -278,7 +279,7 @@ def test_richardson_uses_model_faces_duty_and_energy_gate(monkeypatch, energy_ok
     seen = []
     def thermal(*a, **kw):
         seen.append(True)
-        expected = solve_2d._prolong_mass_faces_2d(mass, dx, dy, kw['dx_arr'], kw['dy_arr'])
+        expected = _prolong_mass_faces_2d(mass, dx, dy, kw['dx_arr'], kw['dy_arr'])
         for got, want in zip(kw['mass_flux_A'], expected):
             np.testing.assert_array_equal(got, want)
         assert kw['inlet_flux_A'] is kw['inlet_flux_B'] is None
