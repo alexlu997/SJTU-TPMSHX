@@ -30,6 +30,13 @@ def f2_nonfinite_exit(solver, iterations, cancel_check=None):
         raise CancelledError("compute cancelled by user")
     solver.exit_reason = 'nonfinite'
     solver.final_res = float('nan')
+    # Finite diagnostics no longer certify this state. Retain any observed
+    # NaN/Inf and the residual histories for diagnosis.
+    for name in ('final_res_mom', 'final_res_mass_local', 'final_res_mass_global',
+                 'outlet_backflow_frac', 'res_norm_ref'):
+        value = getattr(solver, name, None)
+        if value is None or np.isfinite(value):
+            setattr(solver, name, float('nan'))
     if hasattr(solver, 'f2_cert_post_rescale_ok'):
         solver.f2_cert_post_rescale_ok = False
     return False, iterations

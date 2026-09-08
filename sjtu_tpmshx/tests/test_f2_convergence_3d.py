@@ -284,6 +284,7 @@ def test_nonfinite_actual_state_cannot_be_certified(monkeypatch, dim, field, bad
         monkeypatch.setattr(s, '_update_density', update)
     assert s.solve(max_iter=1, verbose=False) == (False, 0 if stage == 'entry' else 1)
     assert s.exit_reason == 'nonfinite'
+    _assert_invalid_final_diagnostics(s)
     if dim == 2:
         assert s.f2_cert_post_rescale_ok is False
         assert not closed
@@ -331,6 +332,9 @@ def test_nonfinite_global_flux_stops_before_momentum_schedule(monkeypatch, dim, 
     assert s.solve(max_iter=1, verbose=False) == (False, 1)
     assert s.exit_reason == 'nonfinite'
     assert s.mom_residuals == []  # Do not force an unscheduled momentum assembly.
+    _assert_invalid_final_diagnostics(s)
+    if index == 2:
+        np.testing.assert_equal(s.outlet_backflow_frac, bad)
 
 
 @pytest.mark.parametrize('field', ['u', 'v', 'P', 'rho_field', 'T_field'])
@@ -351,6 +355,7 @@ def test_nonfinite_after_2d_closeout_cannot_be_certified(monkeypatch, field, rea
     assert s.solve(max_iter=1, verbose=False) == (False, 1)
     assert s.exit_reason == 'nonfinite'
     assert s.f2_cert_post_rescale_ok is False
+    _assert_invalid_final_diagnostics(s)
 
 
 @pytest.mark.parametrize('dim', [2, 3])
@@ -390,6 +395,7 @@ def test_nonfinite_momentum_observation_exits_solver(monkeypatch, dim, bad):
     assert s.solve(max_iter=1, verbose=False) == (False, 1)
     assert s.exit_reason == 'nonfinite'
     np.testing.assert_equal(s.mom_residuals[-1]['num'], raw[::2])
+    _assert_invalid_final_diagnostics(s)
 
 
 @pytest.mark.parametrize('metric', ['mom', 'local', 'global', 'backflow'])
@@ -409,17 +415,18 @@ def test_nonfinite_post_closeout_observation_rejects_2d(monkeypatch, metric):
     assert s.solve(max_iter=1, verbose=False) == (False, 1)
     assert s.exit_reason == 'nonfinite'
     assert s.f2_cert_post_rescale_ok is False
+    _assert_invalid_final_diagnostics(s)
 
 
 def test_nonfinite_exit_is_rejected_by_3d_result_consumer(monkeypatch):
     from sjtu_tpmshx.tests.test_convergence_truth_table import _cheap_3d, _run_3d_stack
+    from sjtu_tpmshx.solvers._solve_common import f2_nonfinite_exit
     original = SIMPLESolver3D.solve
 
     def failed(self, *args, **kwargs):
         # Keep the existing finite flow; isolate the returned status only.
         _, iterations = original(self, *args, **kwargs)
-        self.exit_reason = 'nonfinite'
-        return False, iterations
+        return f2_nonfinite_exit(self, iterations)
 
     monkeypatch.setattr(SIMPLESolver3D, 'solve', failed)
     result = _run_3d_stack(_cheap_3d())
@@ -427,6 +434,9 @@ def test_nonfinite_exit_is_rejected_by_3d_result_consumer(monkeypatch):
     assert detail['simple_exit_A'] == 'nonfinite'
     assert detail['simple_ok'] is False
     assert result['solver_converged'] is False
+    for key in ('final_res', 'final_res_mom', 'final_res_mass_local',
+                'final_res_mass_global', 'outlet_backflow_frac', 'res_norm_ref'):
+        assert np.isnan(detail['simple_A'][key])
 
 
 def test_nonfinite_bootstrap_return_is_rejected_before_main_iteration(monkeypatch):
@@ -445,6 +455,7 @@ def test_nonfinite_bootstrap_return_is_rejected_before_main_iteration(monkeypatc
     monkeypatch.setattr(_solver_module(3), '_sweep_u_jit_df_3d', forbidden)
     assert s.solve(max_iter=1, verbose=False) == (False, 0)
     assert s.exit_reason == 'nonfinite'
+    _assert_invalid_final_diagnostics(s)
 
 
 @pytest.mark.parametrize('dim,stage', [(2, 'entry'), (3, 'entry'), (3, 'bootstrap')])
@@ -489,10 +500,86 @@ def test_nonfinite_restart_resets_current_diagnostics(monkeypatch, dim, stage, b
     exec(compile(ast.Module(body=[projection], type_ignores=[]), '<_simple_detail>', 'exec'), namespace)
     detail = namespace['_simple_detail'](s)
     assert detail['exit_reason'] == 'nonfinite'
-    for key in ('final_res_mom', 'final_res_mass_local', 'final_res_mass_global'):
-        assert detail[key] is None
-    assert detail['outlet_backflow_frac'] == 0.0
-    if dim == 3:
-        assert detail['res_norm_ref'] == 1.0
+    for key in ('final_res_mom', 'final_res_mass_local', 'final_res_mass_global',
+                'outlet_backflow_frac', 'res_norm_ref'):
+        assert np.isnan(detail[key])
+    if dim == 2:
+        assert s.f2_cert_post_rescale_ok is False
+
+
+def _assert_invalid_final_diagnostics(s):
+    for key in ('final_res', 'final_res_mom', 'final_res_mass_local',
+                'final_res_mass_global', 'outlet_backflow_frac'):
+        assert not np.isfinite(float(getattr(s, key))), key
+    if hasattr(s, 'res_norm_ref'):
+        assert not np.isfinite(s.res_norm_ref)
+
+
+@pytest.mark.parametrize('dim,stage', [
+    (2, 'density'), (3, 'density'), (2, 'momentum'), (3, 'momentum'),
+    (2, 'tol'), (2, 'stall'), (2, 'max_iter')])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_later_nonfinite_invalidates_final_diagnostics(monkeypatch, dim, stage, bad):
+    from copy import deepcopy
+    s = _small_f2(dim)
+    s.track_momentum_residual = True
+    module = _solver_module(dim)
+    monkeypatch.setattr(module.F2Monitor, 'should_eval_momentum', lambda *a: True)
+    saved = {}
+
+    def snapshot():
+        for key in ('final_res_mom', 'final_res_mass_local',
+                    'final_res_mass_global', 'outlet_backflow_frac'):
+            assert np.isfinite(getattr(s, key)), key
+        assert s.mom_residuals  # A real earlier F2 evaluation, not seeded attributes.
+        saved['mom'] = deepcopy(s.mom_residuals)
+        saved['local'] = list(s.mass_local_residuals)
+        saved['global'] = list(s.mass_global_residuals)
+
+    if stage == 'density':
+        original = s._update_density
+
+        def update():
+            original()
+            if s.mom_residuals:
+                snapshot()
+                s.P.flat[0] = bad
+
+        monkeypatch.setattr(s, '_update_density', update)
+    elif stage == 'momentum':
+        name = f'_mom_res_jit_{dim}d'
+        original = getattr(module, name)
+
+        def momentum(*args):
+            if s.mom_residuals:
+                snapshot()
+                return (bad, 1.) * dim
+            return original(*args)
+
+        monkeypatch.setattr(module, name, momentum)
     else:
+        if stage != 'max_iter':
+            monkeypatch.setattr(module.F2Monitor, 'submit',
+                                lambda self, it, *a: stage if it == 2 else None)
+        original = s._enforce_mass_conservation
+
+        def close(**kwargs):
+            original(**kwargs)
+            snapshot()
+            s.P.flat[0] = bad
+
+        monkeypatch.setattr(s, '_enforce_mass_conservation', close)
+
+    assert s.solve(max_iter=2, verbose=False) == (False, 2)
+    assert s.exit_reason == 'nonfinite'
+    _assert_invalid_final_diagnostics(s)
+    assert saved
+    np.testing.assert_equal(s.mom_residuals[:len(saved['mom'])], saved['mom'])
+    assert s.mass_local_residuals[:len(saved['local'])] == saved['local']
+    assert s.mass_global_residuals[:len(saved['global'])] == saved['global']
+    if stage == 'momentum':
+        np.testing.assert_equal(s.mom_residuals[-1]['num'], (bad,) * dim)
+    else:
+        np.testing.assert_equal(s.P.flat[0], bad)
+    if dim == 2:
         assert s.f2_cert_post_rescale_ok is False
