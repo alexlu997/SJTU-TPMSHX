@@ -220,3 +220,75 @@ def test_cf_aniso_penalizes_turning_flow_only():
     assert dP_pA > dP_p0, (
         f"cf_aniso={A} did not penalize turning port flow: "
         f"{dP_p0:.2f} → {dP_pA:.2f}")
+
+
+def _temperature_boundary(monkeypatch, fields, *, stop_after_return=False):
+    """Exercise evaluator orchestration without SIMPLE or thermal sweeps."""
+    from sjtu_tpmshx.optimization import evaluator
+    from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+
+    calls = []
+
+    def unsolved(s, **kwargs):
+        calls.append('simple')
+        return False, kwargs['max_iter']
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('non-finite temperature reached density or Q')
+
+    def thermal(*args, **kwargs):
+        calls.append('thermal')
+        assert calls.count('thermal') == 1
+        if stop_after_return:
+            monkeypatch.setattr(evaluator, 'air_density', forbidden)
+            monkeypatch.setattr(evaluator, '_enthalpy_q', forbidden)
+        return fields
+
+    monkeypatch.setattr(SIMPLESolver, 'solve', unsolved)
+    monkeypatch.setattr(evaluator, 'solve_full_domain', thermal)
+    monkeypatch.setattr(evaluator, 'extract_dP_from_simple', lambda s: 20.)
+    return calls
+
+
+@pytest.mark.parametrize('loops', [1, 3])
+@pytest.mark.parametrize('side,label', [(0, 'A'), (1, 'B'), (2, 'solid')])
+@pytest.mark.parametrize('bad', [np.nan, np.inf])
+def test_optimizer_temperature_rejected_before_use(monkeypatch, loops, side, label, bad):
+    fields = [np.full((20, 20), t) for t in (380., 300., 340.)]
+    fields[side][-1, -1] = bad
+    calls = _temperature_boundary(monkeypatch, fields, stop_after_return=True)
+    with pytest.raises(ValueError) as error:
+        evaluate_design(encode_decision_vector(np.full((4, 4), 5.), np.full((4, 4), .4), False), {**_CFG_SMALL, 'n_rho_loops': loops,
+                                         'max_iter_simple': 1, 'max_iter_energy': 1})
+    assert f'optimizer temperature return: {label} temperature index=(19, 19)' in str(error.value)
+    assert calls == ['simple', 'simple', 'thermal']
+
+
+@pytest.mark.parametrize('loops', [1, 3])
+@pytest.mark.parametrize('cap', [30., 100.])
+def test_optimizer_finite_low_budget_keeps_objectives(monkeypatch, loops, cap):
+    fields = [np.full((20, 20), t) for t in (380., 300., 340.)]
+    calls = _temperature_boundary(monkeypatch, fields)
+    Qn, dp, mass = evaluate_design(encode_decision_vector(np.full((4, 4), 5.), np.full((4, 4), .4), False), {
+        **_CFG_SMALL, 'n_rho_loops': loops, 'max_iter_simple': 1,
+        'max_iter_energy': 1, 'penalty_enabled': False, 'dp_cap_pa': cap})
+    assert DEFAULT_CONFIG['reject_unconverged'] is False
+    assert np.isfinite(Qn) and Qn < 0 and np.isfinite(mass) and mass > 0
+    assert dp == min(40., cap)
+    if cap == 30.:
+        assert Qn == -1e-6
+    else:
+        assert Qn < -1e-6
+    assert calls == ['simple', 'simple', 'thermal']
+
+
+def test_optimizer_worker_preserves_failure_penalties():
+    from sjtu_tpmshx.optimization.optimizer_qnehvi import _eval_worker
+
+    def invalid(*args):
+        raise ValueError('optimizer temperature return')
+
+    Q, dp, error = _eval_worker(None, {}, 100., invalid)
+    assert (Q, dp) == (1e-6, 100.) and 'ValueError' in error
+    assert _eval_worker(None, {}, 100., lambda *a: (np.nan, 20., 1.)) == (1e-6, 100., 'infeasible')
+    assert _eval_worker(None, {}, 100., lambda *a: (-12., 20., 1.)) == (12., 20., None)
