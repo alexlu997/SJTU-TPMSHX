@@ -41,35 +41,18 @@ from sjtu_tpmshx._version import __version__  # noqa: E402
 
 
 def _git_commit_hash():
-    """Return short commit hash (7-char) of the running tree, or '' if git
-    metadata is absent. Read from `.git/HEAD` + refs so users on source
-    checkouts see a real hash; frozen builds silently fall back to ''.
-    """
-    import os as _os_gh
-    root = _os_gh.path.dirname(_os_gh.path.dirname(_os_gh.path.abspath(__file__)))
-    git_dir = _os_gh.path.join(root, '.git')
-    if not _os_gh.path.isdir(git_dir):
+    """Return the running source tree's 7-character commit, or '' without Git."""
+    import subprocess
+
+    root = _PathBoot(__file__).resolve().parent.parent
+    if not (root / '.git').exists():
         return ''
     try:
-        with open(_os_gh.path.join(git_dir, 'HEAD'), 'r', encoding='utf-8') as f:
-            head = f.read().strip()
-        if head.startswith('ref: '):
-            ref = head[5:]
-            ref_path = _os_gh.path.join(git_dir, *ref.split('/'))
-            if _os_gh.path.exists(ref_path):
-                with open(ref_path, 'r', encoding='utf-8') as f:
-                    return f.read().strip()[:7]
-            # Packed refs fallback
-            packed = _os_gh.path.join(git_dir, 'packed-refs')
-            if _os_gh.path.exists(packed):
-                with open(packed, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if len(parts) == 2 and parts[1] == ref:
-                            return parts[0][:7]
-            return ''
-        return head[:7]
-    except Exception:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--verify', 'HEAD'], cwd=root,
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()[:7]
+    except (OSError, subprocess.CalledProcessError):
         return ''
 
 def _rebuild_styles(theme_name=None):
