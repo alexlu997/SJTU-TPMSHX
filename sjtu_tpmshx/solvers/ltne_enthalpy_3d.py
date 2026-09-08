@@ -478,11 +478,16 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
     resid = 0.0
     coupled = None
     converged = False
+    next_temperatures = None
     for outer in range(n_outer):
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
-        T_A = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy iteration EOS return A')
-        T_B = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy iteration EOS return B')
+        if next_temperatures is None:
+            T_A = _T_of_h_field(hA, P_A_field, fluid_A, where='enthalpy iteration EOS return A')
+            T_B = _T_of_h_field(hB, P_B_field, fluid_B, where='enthalpy iteration EOS return B')
+        else:
+            T_A, T_B = next_temperatures
+            next_temperatures = None
         cpA = _prop_field("C", T_A, P_A_field, fluid_A)
         cpB = _prop_field("C", T_B, P_B_field, fluid_B)
         kA = _prop_field("L", T_A, P_A_field, fluid_A)
@@ -520,6 +525,9 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
                 coupled = _coupled_energy_balance(
                     Ta, Tb, Ts, hvA_fld, hvB_fld, Kss, dx, dy, dz, q_A, q_B)
                 converged = converged and coupled['ratio'] <= coupled_energy_tol
+                if not converged and n_done < n_outer:
+                    # Same h/P at the next chunk; consume once before its sweep.
+                    next_temperatures = (Ta, Tb)
         if converged:
             break
 

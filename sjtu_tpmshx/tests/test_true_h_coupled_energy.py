@@ -184,3 +184,124 @@ def test_standalone_rejects_nonfinite_solid_before_dict(monkeypatch):
         ent.solve_ltne_enthalpy_3d(
             2, 1, 1, 2., 1., 1., .7, 0., 0., 0., 1., 1.,
             350., 300., 2e5, fluid_A='air', fluid_B='air', n_outer=1)
+
+
+@pytest.mark.parametrize('case, increments, gate, pass_at, cancel_at, eos_failure, reused', [
+    ('continuous', [1., 2., 3., 4.], .001, 4, None, None, 3),
+    ('old_gate_falls', [1., 1000., 3., 4.], .001, 4, None, None, 2),
+    ('disabled', [1000., 1000., 1., 1.], None, 3, None, None, 0),
+    ('last_budget', [1.], .001, 2, None, None, 0),
+    ('break', [1., 2.], .001, 1, None, None, 0),
+    ('cancel_before_consume', [1., 2.], .001, 3, 3, None, 0),
+    ('cancel_after_sweep', [1., 2.], .001, 3, 4, None, 1),
+    ('final_A_failure', [1., 2.], .001, 3, None, 'A', 0),
+    ('final_B_failure', [1., 2.], .001, 3, None, 'B', 0),
+])
+def test_validated_pair_is_consumed_only_by_next_chunk(
+        monkeypatch, case, increments, gate, pass_at, cancel_at, eos_failure, reused):
+    # Controlled EOS/sweeps: expected fields follow the old algorithm's explicit
+    # h->T conversion each chunk. No real PDE solve or timing claim here.
+    shape = (2, 1, 1)
+    pressures = [np.array([2e5, 3e5]).reshape(shape),
+                 np.array([4e5, 5e5]).reshape(shape)]
+    initial = [np.full(shape, 350000. + 200.), np.full(shape, 300000. + 200.)]
+    calls, sweeps, finals, properties, cancellations = [], [], [], [], []
+    original_balance = ent._coupled_energy_balance
+    original_finite = ent.check_finite_temperatures
+
+    class EOSFailure(ValueError):
+        pass
+
+    def temperature(h, pressure):
+        return (h - pressure * .001) / 1000.
+
+    def eos(h, pressure, fluid, *, where):
+        calls.append((where, h.copy(), pressure.copy()))
+        if 'final' in where and where.endswith(eos_failure or '!'):
+            raise EOSFailure(where)
+        return temperature(h, pressure)
+
+    def prop(key, T, pressure, fluid):
+        properties.append((key, T.copy(), pressure.copy()))
+        return 1000. + T if key == 'C' else T / 1000.
+
+    def finite(Ta, Tb, Ts, **kwargs):
+        if kwargs['where'] == 'enthalpy final return':
+            finals.append((Ta.copy(), Tb.copy(), Ts.copy()))
+        return original_finite(Ta, Tb, Ts, **kwargs)
+
+    def sweep(hA, hB, Ts, dhA, dhB, cpA, cpB, TA, TB, hA_star, hB_star, *args):
+        i = len(sweeps)
+        prior = sum(increments[:i])
+        expected_h = [initial[0] + prior, initial[1] - prior]
+        expected_T = [temperature(h, p) for h, p in zip(expected_h, pressures)]
+        for actual, expected in zip((hA, hB, hA_star, hB_star, TA, TB),
+                                     (*expected_h, *expected_h, *expected_T)):
+            np.testing.assert_array_equal(actual, expected)
+        for T, cp, dh in zip(expected_T, (cpA, cpB), (dhA, dhB)):
+            np.testing.assert_array_equal(cp, 1000. + T)
+            np.testing.assert_array_equal(dh, .35 * (T / 1000.) / (1000. + T))
+        sweeps.append(expected_T)
+        hA[:] += increments[i]
+        hB[:] -= increments[i]
+        Ts[:] = .5 * (temperature(hA, pressures[0]) + temperature(hB, pressures[1]))
+        if i + 1 < pass_at:
+            Ts[:] += 1.
+
+    def cancel():
+        cancellations.append(len(calls))
+        return len(cancellations) == cancel_at
+
+    monkeypatch.setattr(ent, '_h_scalar', lambda T, P, fluid: T * 1000. + P * .001)
+    monkeypatch.setattr(ent, '_T_of_h_field', eos)
+    monkeypatch.setattr(ent, '_prop_field', prop)
+    monkeypatch.setattr(ent, '_gs_enthalpy_sweeps_3d', sweep)
+    monkeypatch.setattr(ent, 'check_finite_temperatures', finite)
+    # Repeat a complete thermal call: a pair must never survive into that call.
+    for _ in range(2 if case == 'continuous' else 1):
+        calls.clear(); sweeps.clear(); finals.clear(); properties.clear(); cancellations.clear()
+        options = dict(n_outer=len(increments), coupled_energy_tol=gate,
+                       pressure_A_field=pressures[0], pressure_B_field=pressures[1],
+                       cancel_check=cancel)
+        if cancel_at:
+            with pytest.raises(ent.CancelledError, match='compute cancelled by user'):
+                run_driver(**options)
+            assert len(cancellations) == cancel_at
+            # Original cancellation at next chunk start precedes any consumption/EOS.
+            if cancel_at == 3:
+                assert cancellations == [0, 2, 4]
+        elif eos_failure:
+            with pytest.raises(EOSFailure, match=f'enthalpy final EOS return {eos_failure}'):
+                run_driver(**options)
+            assert not finals
+            assert [c[0][-1] for c in calls if 'final' in c[0]] == (
+                ['A'] if eos_failure == 'A' else ['A', 'B'])
+        else:
+            Ta, Tb, Ts, info = run_driver(**options)
+            n = min(pass_at, len(increments))
+            delta = sum(increments[:n])
+            expected_T = [temperature(initial[0] + delta, pressures[0]),
+                          temperature(initial[1] - delta, pressures[1])]
+            expected_s = .5 * (expected_T[0] + expected_T[1]) + (n < pass_at)
+            for actual, expected in zip((Ta, Tb, Ts), (*expected_T, expected_s)):
+                np.testing.assert_array_equal(actual, expected)
+            expected_info = dict(iterations=n, converged=n == pass_at,
+                residual=increments[n - 1] / 50000., enthalpy_mode=True,
+                Q_A=0., Q_B=0., energy_imbalance_rel=0.)
+            if gate is not None:
+                expected_info['coupled_energy_balance'] = original_balance(
+                    *expected_T, expected_s, np.ones(shape), np.ones(shape), np.zeros(shape),
+                    np.array([1., 1.]), np.ones(1), np.ones(1), 0., 0.)
+            assert info == expected_info
+        assert len(properties) == 4 * len(sweeps)
+        for i, expected_T in enumerate(sweeps):
+            for observed, key, side in zip(properties[4*i:4*i+4], ('C', 'C', 'L', 'L'), (0, 1, 0, 1)):
+                assert observed[0] == key
+                np.testing.assert_array_equal(observed[1], expected_T[side])
+                np.testing.assert_array_equal(observed[2], pressures[side])
+        final_calls = [c for c in calls if 'final' in c[0]]
+        assert len(finals) == len(final_calls) // 2 if not eos_failure else not finals
+        # Old algorithm: two iteration conversions per completed chunk plus all
+        # final conversions; only the explicitly reusable pairs may disappear.
+        old_count = 2 * len(sweeps) + len(final_calls)
+        assert len(calls) == old_count - 2 * reused
