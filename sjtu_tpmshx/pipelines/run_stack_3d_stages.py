@@ -2415,6 +2415,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                       and 'sco2' in (fluid_type_A, fluid_type_B))
         if not _enth_gate:
             _check_property_water('3D temperature warm start')
+            fluid_props.check_finite_temperatures(
+                Ta, Tb, Ts, where='3D temperature warm start')
 
         # #B fix: rebuild h_v per cell using LOCAL Re (cell-center stream u).
         # Wall cells with |u_local|→0 → Nu_lam floor (4.36) → h_local much
@@ -2728,6 +2730,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         Ta, Tb, Ts, _ltne_info_d = _ltne_result
         if not _enth_gate:
             _check_property_water('3D temperature return')
+            fluid_props.check_finite_temperatures(
+                Ta, Tb, Ts, where='3D temperature return')
 
         # ── Option B: enthalpy-conservative LTNE for variable-cp sCO2 ──
         # The ρcp·u·T conservative kernel above conserves ρcp·T-energy, which
@@ -2797,6 +2801,8 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                                           where='3D enthalpy return A')
             fluid_props.check_water_state(fluid_type_B, Tb, _P_B_local,
                                           where='3D enthalpy return B')
+            fluid_props.check_finite_temperatures(
+                Ta, Tb, Ts, where='3D enthalpy return')
 
         # B2 strict-conservation certificate (last outer iter holds final).
         _eps_A_strict = _ltne_info_d.get('eps_A_strict')
@@ -3139,6 +3145,10 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         if fluid == 'water' and solver is not None:
             fluid_props.check_water_state(
                 fluid, temperature, _pressure_real_3d(solver, amap, solver.P_ref_abs),
+                where=f'3D final report state {side}')
+        elif fluid == 'sco2' and solver is not None:
+            sco2_props._validate_state(
+                temperature, _pressure_real_3d(solver, amap, solver.P_ref_abs),
                 where=f'3D final report state {side}')
 
     return _OuterState(
