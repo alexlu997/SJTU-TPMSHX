@@ -814,7 +814,7 @@ class SIMPLESolver:
         self.exit_reason = None
         self.final_res = None
         if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
-            return f2_nonfinite_exit(self, 0, cancel_check)
+            return f2_nonfinite_exit(self, 0)
 
         # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
         # any pressure build-up. The `not hasattr` guard keeps it fixed across
@@ -954,10 +954,10 @@ class SIMPLESolver:
                              Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
             if (_f2 is not None and self.fluid_type == 'ideal_gas'
                     and not f2_state_is_finite(self, (self.u, self.v))):
-                return f2_nonfinite_exit(self, it, cancel_check)
+                return f2_nonfinite_exit(self, it)
             self._update_density()  # compressible: update rho from P
             if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
-                return f2_nonfinite_exit(self, it, cancel_check)
+                return f2_nonfinite_exit(self, it)
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
             self.residuals.append(res)
@@ -991,7 +991,7 @@ class SIMPLESolver:
                 self.final_res_mass_local = _Rml
                 self.final_res_mass_global = _Rmg
                 if not np.isfinite((res, _vd, _Rml, _Rmg, _bf)).all():
-                    return f2_nonfinite_exit(self, it, cancel_check)
+                    return f2_nonfinite_exit(self, it)
 
                 if _f2.should_eval_momentum(it, _vd):
                     _Rmom, _rec = self._momentum_residual(Nx, Ny, dx_a, dy_a,
@@ -1001,11 +1001,11 @@ class SIMPLESolver:
                     self.final_res_mom = _Rmom
                     _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
                     if _reason == 'nonfinite':
-                        return f2_nonfinite_exit(self, it, cancel_check)
+                        return f2_nonfinite_exit(self, it)
                     if _reason is not None:
                         self._enforce_mass_conservation(verbose=verbose)
                         if not f2_state_is_finite(self, (self.u, self.v)):
-                            return f2_nonfinite_exit(self, it, cancel_check)
+                            return f2_nonfinite_exit(self, it)
                         # Re-measure the returned field after local outlet closure.
                         # Keep the original exit decision; post-checks may only
                         # reject convergence, never upgrade a failed pre-check.
@@ -1024,7 +1024,7 @@ class SIMPLESolver:
                         self.final_res_mom = _Rmom_p
                         self.outlet_backflow_frac = _bf_p
                         if not np.isfinite((_Rmom_p, _Rml_p, _Rmg_p, _bf_p)).all():
-                            return f2_nonfinite_exit(self, it, cancel_check)
+                            return f2_nonfinite_exit(self, it)
                         self.f2_cert_post_rescale_ok = bool(
                             _Rmom_p < _f2.mom_tol
                             and _Rml_p < _f2.mass_local_tol
@@ -1087,7 +1087,7 @@ class SIMPLESolver:
         # Post-solve: enforce mass conservation at partial outlet
         self._enforce_mass_conservation(verbose=verbose)
         if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
-            return f2_nonfinite_exit(self, max_iter, cancel_check)
+            return f2_nonfinite_exit(self, max_iter)
 
         self.exit_reason = 'max_iter'
         self.final_res = res

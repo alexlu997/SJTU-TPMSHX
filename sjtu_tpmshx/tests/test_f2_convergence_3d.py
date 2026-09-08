@@ -375,12 +375,20 @@ def test_nonfinite_does_not_hide_configuration_error(dim, mode):
 
 
 @pytest.mark.parametrize('dim', [2, 3])
-def test_nonfinite_input_preserves_cancellation(dim):
-    from sjtu_tpmshx.domain.cancellation import CancelledError
+def test_nonfinite_input_does_not_poll_cancellation(dim):
     s = _small_f2(dim)
     s.P.flat[0] = np.nan
-    with pytest.raises(CancelledError):
-        s.solve(max_iter=1, verbose=False, cancel_check=lambda: True)
+    calls = []
+
+    def cancel():
+        calls.append(True)
+        return True
+
+    assert s.solve(max_iter=1, verbose=False, cancel_check=cancel) == (False, 0)
+    assert calls == []
+    assert s.exit_reason == 'nonfinite'
+    assert np.isnan(s.P.flat[0])
+    _assert_invalid_final_diagnostics(s)
 
 
 @pytest.mark.parametrize('dim', [2, 3])
@@ -666,3 +674,46 @@ def test_prolongated_pressure_reaches_parent_without_density_clip(monkeypatch, m
         applied=True, coarse_iters=1, coarse_converged=True,
         coarse_residual=0.0, coarse_shape=(4, 4, 4))
     _assert_invalid_final_diagnostics(s)
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+def test_nonfinite_iteration_does_not_add_cancel_checkpoint(monkeypatch, dim):
+    s = _small_f2(dim)
+    calls = []
+
+    def cancel():
+        calls.append(True)
+        # 2D's original iteration checkpoint continues; another poll would cancel.
+        return dim == 3 or len(calls) > 1
+
+    update = s._update_density
+
+    def density():
+        update()
+        s.P.flat[0] = np.nan
+
+    monkeypatch.setattr(s, '_update_density', density)
+    assert s.solve(max_iter=1, verbose=False, cancel_check=cancel) == (False, 1)
+    assert len(calls) == (1 if dim == 2 else 0)
+    assert s.exit_reason == 'nonfinite'
+    assert np.isnan(s.P.flat[0])
+    _assert_invalid_final_diagnostics(s)
+
+
+@pytest.mark.parametrize('dim,completed', [(2, 0), (3, 24)])
+def test_finite_f2_cancels_at_original_checkpoint(dim, completed):
+    from sjtu_tpmshx.domain.cancellation import CancelledError
+    from sjtu_tpmshx.solvers._solve_common import f2_state_is_finite
+    s = _small_f2(dim)
+    s.mom_tol = 0.0  # Hold convergence open until the original checkpoint.
+    calls = []
+
+    def cancel():
+        calls.append(len(s.residuals))
+        return True
+
+    with pytest.raises(CancelledError):
+        s.solve(max_iter=25, verbose=False, cancel_check=cancel)
+    assert calls == [completed]
+    assert len(s.residuals) == completed
+    assert f2_state_is_finite(s, (s.u, s.v) + ((s.w,) if dim == 3 else ()))

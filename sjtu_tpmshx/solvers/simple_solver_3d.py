@@ -876,7 +876,7 @@ class SIMPLESolver3D:
             self.final_res_mass_global = None
             self.outlet_backflow_frac = 0.0
         if _mode == 'f2' and not f2_state_is_finite(self, (self.u, self.v, self.w)):
-            return f2_nonfinite_exit(self, 0, cancel_check)
+            return f2_nonfinite_exit(self, 0)
 
         # Capture the mass-flux inlet target ONCE, at reference inlet
         # conditions (prescribed v × initial ρ), before any pressure build-up.
@@ -925,7 +925,7 @@ class SIMPLESolver3D:
                 if verbose:
                     _log.warning(f"  3D coarse bootstrap skipped: {exc}")
             if _mode == 'f2' and not f2_state_is_finite(self, (self.u, self.v, self.w)):
-                return f2_nonfinite_exit(self, 0, cancel_check)
+                return f2_nonfinite_exit(self, 0)
 
         if self._pp_sparsity is None:
             self._pp_sparsity = _build_pp_sparsity_3d(Nx, Ny, Nz,
@@ -1104,10 +1104,10 @@ class SIMPLESolver3D:
                              dx, dy, dz)
             if (_f2 is not None and self.fluid_type == 'ideal_gas'
                     and not f2_state_is_finite(self, (self.u, self.v, self.w))):
-                return f2_nonfinite_exit(self, it, cancel_check)
+                return f2_nonfinite_exit(self, it)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
             if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v, self.w)):
-                return f2_nonfinite_exit(self, it, cancel_check)
+                return f2_nonfinite_exit(self, it)
 
             # NOTE: `rho_eps_field` here is the PRE-`_update_density` array —
             # the one `_solve_pp_amg` above just solved div(rho_eps.u)=0 against.
@@ -1230,13 +1230,13 @@ class SIMPLESolver3D:
                 self.final_res_mass_local = _Rml
                 self.final_res_mass_global = _Rmg
                 if not np.isfinite((res, _vd, _Rml, _Rmg, _bf)).all():
-                    return f2_nonfinite_exit(self, it, cancel_check)
+                    return f2_nonfinite_exit(self, it)
 
                 if _Rmom is not None:
                     self.final_res_mom = _Rmom
                     _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
                     if _reason == 'nonfinite':
-                        return f2_nonfinite_exit(self, it, cancel_check)
+                        return f2_nonfinite_exit(self, it)
                     if _reason is not None:
                         self.exit_reason = _reason
                         return (_reason == 'tol'), it

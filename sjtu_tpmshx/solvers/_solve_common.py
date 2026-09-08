@@ -23,11 +23,7 @@ def f2_state_is_finite(solver, velocities):
                (*velocities, solver.P, solver.rho_field, solver.T_field))
 
 
-def f2_nonfinite_exit(solver, iterations, cancel_check=None):
-    from ..domain.cancellation import CancelledError
-    if cancel_check is not None and cancel_check():
-        solver.exit_reason = 'cancelled'
-        raise CancelledError("compute cancelled by user")
+def f2_nonfinite_exit(solver, iterations):
     solver.exit_reason = 'nonfinite'
     solver.final_res = float('nan')
     # Finite diagnostics no longer certify this state. Retain any observed
