@@ -10,6 +10,66 @@ from sjtu_tpmshx.tests.test_3d_model_enthalpy_transport import _pipeline_cfg
 from sjtu_tpmshx.domain.run_warnings import warning_scope, range_context
 
 
+@pytest.mark.parametrize('co2_side', ['A', 'B'])
+@pytest.mark.parametrize('seed', [np.nan, np.inf, -np.inf, None, 325.])
+def test_typed_co2_solid_seed_checked_before_thermal_calls(monkeypatch, co2_side, seed):
+    from sjtu_tpmshx.pipelines.stages_3d import _parse_inputs_3d_cfg
+    from sjtu_tpmshx.tests.test_pipeline_3d_e2e import _small_air_cfg
+    from sjtu_tpmshx.solvers import ltne_energy_3d
+
+    cfg = _small_air_cfg()
+    fluid = getattr(cfg, f'fluid_{co2_side}')
+    fluid.type, fluid.P_in_Pa = 'sco2', 12e6
+    cfg.solver.T_s_init_K = seed
+    cfg.validate()
+    parsed = _parse_inputs_3d_cfg(cfg)
+    monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
+    prob = stages._build_3d_problem(parsed)
+    hv = stages._build_hv_machinery(prob)
+    shape = (prob.Nx, prob.Ny, prob.Nz)
+    returned = tuple(np.full(shape, t) for t in (400., 330., 350.))
+    invalid = seed is not None and not np.isfinite(seed)
+    calls = []
+
+    class ObservedBothThermalEntries(Exception):
+        pass
+
+    def temperature(*args, **kwargs):
+        assert not invalid, 'invalid config seed reached temperature thermal call'
+        calls.append('temperature')
+        assert kwargs['max_iter'] == 2
+        for key, value in (('Ta_init', prob.T_inA), ('Tb_init', prob.T_inB), ('Ts_init', seed)):
+            if seed is None:
+                assert kwargs[key] is None
+            else:
+                np.testing.assert_array_equal(kwargs[key], np.full(shape, value))
+        return (*returned, dict(converged=True, iterations=2, residual=0.))
+
+    def enthalpy(*args, **kwargs):
+        assert not invalid, 'invalid config seed reached true-h thermal call'
+        calls.append('enthalpy')
+        for key, value in zip(('Ta_init', 'Tb_init', 'Ts_init'), returned):
+            np.testing.assert_array_equal(kwargs[key], value)
+        raise ObservedBothThermalEntries
+
+    monkeypatch.setattr(stages, 'solve_full_domain_3d', temperature)
+    monkeypatch.setattr(ent, 'solve_ltne_enthalpy_3d_pipeline', enthalpy)
+    monkeypatch.setattr(ltne_energy_3d, '_project_faces_div_free', lambda u, v, w, *a: (u, v, w))
+    monkeypatch.setattr(stages, 'run_outer_coupling', lambda *, step, **k: step(0))
+    with warning_scope({}):
+        if invalid:
+            with pytest.raises(ValueError) as error:
+                stages._run_outer_coupling_3d(prob, hv)
+            assert str(error.value) == (
+                f'3D temperature warm start: solid temperature index=(0, 0, 0), '
+                f'T={seed:g} K is non-finite')
+            assert calls == []
+        else:
+            with pytest.raises(ObservedBothThermalEntries):
+                stages._run_outer_coupling_3d(prob, hv)
+            assert calls == ['temperature', 'enthalpy']
+
+
 @pytest.mark.parametrize('side', range(3))
 @pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
 def test_finite_temperature_reports_first_c_index_and_original_value(side, bad):

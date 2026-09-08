@@ -2461,8 +2461,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
                       and 'sco2' in (fluid_type_A, fluid_type_B))
         if not _enth_gate:
             _check_property_water('3D temperature warm start')
-            fluid_props.check_finite_temperatures(
-                Ta, Tb, Ts, where='3D temperature warm start')
+        fluid_props.check_finite_temperatures(
+            Ta, Tb, Ts, where='3D temperature warm start')
+        if not _enth_gate:
             _record_temperature_state('main', 'real-cell(x,y,z)-warm')
 
         # #B fix: rebuild h_v per cell using LOCAL Re (cell-center stream u).
