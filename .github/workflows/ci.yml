@@ -28,10 +28,27 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - name: Install project
+      - name: Create isolated CI environment
+        shell: bash
         run: |
-          python -m pip install -r requirements.txt
-          python -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt --allow-extra sjtu-tpmshx
-          python -m pip check
+          python -m venv "$RUNNER_TEMP/sjtu-ci-venv"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'sjtu-ci-venv'
+          interpreter = root / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              output.write(f'CI_PYTHON={interpreter.as_posix()}\n')
+          PY
+      - name: Install project
+        shell: bash
+        run: '"$CI_PYTHON" -m pip install -r requirements.txt'
+      - name: Check exact dependency lock
+        shell: bash
+        run: '"$CI_PYTHON" -m sjtu_tpmshx.runs.tools.check_locked_environment requirements-lock.txt --allow-extra sjtu-tpmshx'
+      - name: Check dependency compatibility
+        shell: bash
+        run: '"$CI_PYTHON" -m pip check'
       - name: Run fast test subset
-        run: python -m pytest sjtu_tpmshx/tests/ -q -m "not slow and not heavy" --timeout=600 --timeout-method=thread
+        shell: bash
+        run: '"$CI_PYTHON" -m pytest sjtu_tpmshx/tests/ -q -m "not slow and not heavy" --timeout=600 --timeout-method=thread'
