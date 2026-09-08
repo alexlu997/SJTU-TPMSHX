@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
 
+from sjtu_tpmshx.solvers.fluid_props import check_finite_temperatures
 from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
 from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
 from sjtu_tpmshx.df_surrogate.predict import predict_dP_compressible, predict_dP
@@ -103,6 +104,8 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     tol: LTNE 收敛残差 (默认 1e-5); 定尺搜索阶段可放松 (sizing 渐进收紧)。
     height: 矩形迎风高(z)向尺寸 [m]; None → 方形 (s_z=s, 现状/UI 默认)。
     叉流 nz=1 → 2D x-y 物理, z 仅经迎风面积影响流速; height 与宽 s 解耦不破方形。"""
+    if init is not None:
+        check_finite_temperatures(*init, where='design external warm start')
     sz = s if height is None else height           # z(高)向跨度
     geo = tpms_geometry(topo, l, t, k_s, N=GEOM_N)
     EPS, EPS_A, A0, D_h = (geo["epsilon"], geo["epsilon_A"],
@@ -139,6 +142,7 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
             Ta_init=Ta0, Tb_init=Tb0, Ts_init=Ts0,
             max_iter=arr["maxit"], tol=tol, alpha_T=arr["alpha"],
             q_rel_tol=arr["qtol"], conv_chunk=arr["chunk"])  # 双股都解 + (cross) 自适应早停
+        check_finite_temperatures(Ta, Tb, Ts, where='design thermal return')
         Toh = float(np.asarray(Ta)[-1, :, :].mean())
         Toc = _cold_outlet(Tb, arrangement)
         return (Ta, Tb, Ts), Toh, Toc, pA, pB, Re_h, Re_c
