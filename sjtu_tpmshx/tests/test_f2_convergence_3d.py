@@ -445,3 +445,54 @@ def test_nonfinite_bootstrap_return_is_rejected_before_main_iteration(monkeypatc
     monkeypatch.setattr(_solver_module(3), '_sweep_u_jit_df_3d', forbidden)
     assert s.solve(max_iter=1, verbose=False) == (False, 0)
     assert s.exit_reason == 'nonfinite'
+
+
+@pytest.mark.parametrize('dim,stage', [(2, 'entry'), (3, 'entry'), (3, 'bootstrap')])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_nonfinite_restart_resets_current_diagnostics(monkeypatch, dim, stage, bad):
+    import ast
+    from pathlib import Path
+    from sjtu_tpmshx.pipelines import run_stack_3d_stages
+
+    if dim == 2:
+        from sjtu_tpmshx.tests.test_f2_convergence_2d import _make
+        s = _make(convergence_mode='f2')
+    else:
+        s = _make_solver(convergence_mode='f2', use_coarse_bootstrap=False)
+    assert s.solve(max_iter=3000, verbose=False)[0] is True
+    assert s.exit_reason == 'tol'
+    assert s.final_res_mom is not None
+    history = list(s.mom_residuals)
+    if stage == 'bootstrap':
+        from sjtu_tpmshx.solvers import coarse_bootstrap_3d
+        # Explicit cold-start request on the reused instance; retain diagnostics.
+        s.residuals.clear()
+        s.use_coarse_bootstrap = True
+
+        def bootstrap(solver, **kwargs):
+            solver.P.flat[0] = bad
+            return {'applied': False}
+
+        monkeypatch.setattr(coarse_bootstrap_3d, 'bootstrap_simple_3d', bootstrap)
+    else:
+        s.P.flat[0] = bad
+    assert s.solve(max_iter=1, verbose=False) == (False, 0)
+    assert s.exit_reason == 'nonfinite'
+    assert np.isnan(s.final_res)
+    np.testing.assert_equal(s.P.flat[0], bad)
+    assert s.mom_residuals == history
+    # Execute the actual nested result projection without rerunning thermal PDEs.
+    tree = ast.parse(Path(run_stack_3d_stages.__file__).read_text())
+    projection = next(n for n in ast.walk(tree)
+                      if isinstance(n, ast.FunctionDef) and n.name == '_simple_detail')
+    namespace = {}
+    exec(compile(ast.Module(body=[projection], type_ignores=[]), '<_simple_detail>', 'exec'), namespace)
+    detail = namespace['_simple_detail'](s)
+    assert detail['exit_reason'] == 'nonfinite'
+    for key in ('final_res_mom', 'final_res_mass_local', 'final_res_mass_global'):
+        assert detail[key] is None
+    assert detail['outlet_backflow_frac'] == 0.0
+    if dim == 3:
+        assert detail['res_norm_ref'] == 1.0
+    else:
+        assert s.f2_cert_post_rescale_ok is False

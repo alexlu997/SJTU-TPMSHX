@@ -865,6 +865,16 @@ class SIMPLESolver3D:
                 "C6-falsified mass residual and its rollback does not "
                 "restore rho_field/v_inlet_field exactly (ledger C7 P0-3). "
                 "Disable one of them.")
+        # Reset current diagnostics before either entry rejection, including
+        # the optional bootstrap return. Histories survive warm restarts.
+        self.exit_reason = None
+        self.final_res = None
+        self.res_norm_ref = 1.0
+        if _mode == 'f2':
+            self.final_res_mom = None
+            self.final_res_mass_local = None
+            self.final_res_mass_global = None
+            self.outlet_backflow_frac = 0.0
         if _mode == 'f2' and not f2_state_is_finite(self, (self.u, self.v, self.w)):
             return f2_nonfinite_exit(self, 0, cancel_check)
 
@@ -978,12 +988,6 @@ class SIMPLESolver3D:
         # Criteria single-sourced in solvers/_solve_common.LowReExit since
         # arch-b-c-e batch C (shared with the 2D solver).
         _lowre = LowReExit(self, (self.u, self.v, self.w), min_iter=10)
-        # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter'
-        # | 'cancelled' | 'nonfinite'; reset on every (re-)entry so warm restarts don't
-        # carry a stale reason.
-        self.exit_reason = None
-        self.final_res = None
-        self.res_norm_ref = 1.0
 
         # Ledger C6 — OPT-IN momentum residual. DIAGNOSTIC ONLY: it is recorded
         # but does NOT gate the exit, so enabling it cannot change any result.
@@ -1020,10 +1024,6 @@ class SIMPLESolver3D:
                     setattr(self, _h, [])
             if not hasattr(self, 'mom_residuals'):
                 self.mom_residuals = []
-            self.final_res_mom = None
-            self.final_res_mass_local = None
-            self.final_res_mass_global = None
-            self.outlet_backflow_frac = 0.0
         elif _track_mom and bool(getattr(self, 'use_anderson', False)):
             _log.warning(
                 "  [WARN] track_momentum_residual + use_anderson: the recorded "
