@@ -47,12 +47,18 @@ def _check_sco2_state(fluid, T, P, *, where):
 
 
 def _prop_field(key, T, P, fluid):
+    """Return one field, or contiguous fields for a sequence of output keys."""
     T = np.ascontiguousarray(T, dtype=np.float64)
     P = np.broadcast_to(np.asarray(P, dtype=np.float64), T.shape)
     _check_sco2_state(fluid, T, P, where='enthalpy property field')
     out = _PropsSI(key, "T", T.ravel(), "P", np.ascontiguousarray(P).ravel(),
                    _CP_NAME.get(fluid, fluid))
-    return np.asarray(out, dtype=np.float64).reshape(T.shape)
+    out = np.asarray(out, dtype=np.float64)
+    if isinstance(key, str):
+        return out.reshape(T.shape)
+    # CoolProp squeezes a single state; restore state/output axes before splitting.
+    return np.ascontiguousarray(out.reshape(-1, len(key)).T).reshape(
+        (len(key),) + T.shape)
 
 
 def _T_of_h_field(h, P, fluid, *, where='enthalpy EOS return'):
@@ -323,10 +329,8 @@ def solve_ltne_enthalpy_3d(Nx, Ny, Nz, Lx, Ly, Lz, eps, k_s,
     for outer in range(n_outer):
         T_A = _T_of_h_field(hA, P_A, fluid_A, where='enthalpy iteration EOS return A')
         T_B = _T_of_h_field(hB, P_B, fluid_B, where='enthalpy iteration EOS return B')
-        cpA = _prop_field("C", T_A, P_A, fluid_A)
-        cpB = _prop_field("C", T_B, P_B, fluid_B)
-        kA = _prop_field("L", T_A, P_A, fluid_A)
-        kB = _prop_field("L", T_B, P_B, fluid_B)
+        cpA, kA = _prop_field(("C", "L"), T_A, P_A, fluid_A)
+        cpB, kB = _prop_field(("C", "L"), T_B, P_B, fluid_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)   # h-space diffusivity
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()
@@ -488,10 +492,8 @@ def solve_ltne_enthalpy_3d_pipeline(Nx, Ny, Nz, dx, dy, dz, eps_arr, K_ss,
         else:
             T_A, T_B = next_temperatures
             next_temperatures = None
-        cpA = _prop_field("C", T_A, P_A_field, fluid_A)
-        cpB = _prop_field("C", T_B, P_B_field, fluid_B)
-        kA = _prop_field("L", T_A, P_A_field, fluid_A)
-        kB = _prop_field("L", T_B, P_B_field, fluid_B)
+        cpA, kA = _prop_field(("C", "L"), T_A, P_A_field, fluid_A)
+        cpB, kB = _prop_field(("C", "L"), T_B, P_B_field, fluid_B)
         dhA = epsA * kA / np.maximum(cpA, 1e-30)
         dhB = epsB * kB / np.maximum(cpB, 1e-30)
         hA_star = hA.copy(); hB_star = hB.copy()

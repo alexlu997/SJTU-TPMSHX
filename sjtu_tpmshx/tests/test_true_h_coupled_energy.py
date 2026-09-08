@@ -223,7 +223,8 @@ def test_validated_pair_is_consumed_only_by_next_chunk(
 
     def prop(key, T, pressure, fluid):
         properties.append((key, T.copy(), pressure.copy()))
-        return 1000. + T if key == 'C' else T / 1000.
+        assert key == ('C', 'L')
+        return 1000. + T, T / 1000.
 
     def finite(Ta, Tb, Ts, **kwargs):
         if kwargs['where'] == 'enthalpy final return':
@@ -293,10 +294,10 @@ def test_validated_pair_is_consumed_only_by_next_chunk(
                     *expected_T, expected_s, np.ones(shape), np.ones(shape), np.zeros(shape),
                     np.array([1., 1.]), np.ones(1), np.ones(1), 0., 0.)
             assert info == expected_info
-        assert len(properties) == 4 * len(sweeps)
+        assert len(properties) == 2 * len(sweeps)
         for i, expected_T in enumerate(sweeps):
-            for observed, key, side in zip(properties[4*i:4*i+4], ('C', 'C', 'L', 'L'), (0, 1, 0, 1)):
-                assert observed[0] == key
+            for side, observed in enumerate(properties[2*i:2*i+2]):
+                assert observed[0] == ('C', 'L')
                 np.testing.assert_array_equal(observed[1], expected_T[side])
                 np.testing.assert_array_equal(observed[2], pressures[side])
         final_calls = [c for c in calls if 'final' in c[0]]
