@@ -13,24 +13,10 @@ import time
 
 from sjtu_tpmshx.runs import _smoke_boot   # sets QT_QPA=offscreen BEFORE any Qt import
 
-from PySide6.QtWidgets import QMessageBox
-
-
-def _patch_modals():
-    def _auto(*a, **k):
-        print('  [dialog auto-Yes]', flush=True)
-        return QMessageBox.StandardButton.Yes
-    QMessageBox.question = staticmethod(_auto)
-    QMessageBox.warning = staticmethod(_auto)
-    QMessageBox.information = staticmethod(_auto)
-    QMessageBox.exec = lambda self: (print('  [instance modal auto-Yes]',
-                                           flush=True)
-                                     or QMessageBox.StandardButton.Yes)
-
 
 def main():
     app = _smoke_boot.get_app()
-    _patch_modals()
+    _smoke_boot.patch_modals()
     from sjtu_tpmshx.main import Main_Menu
     win = Main_Menu()
     app.processEvents()
