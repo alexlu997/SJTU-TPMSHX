@@ -61,6 +61,7 @@ from sjtu_tpmshx.solvers.tpms_calc import (
 )
 from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 from sjtu_tpmshx.solvers.ltne_energy import solve_full_domain
+from sjtu_tpmshx.solvers.fluid_props import check_finite_temperatures
 from sjtu_tpmshx.solvers.df_projection import (
     extract_dP_from_simple,
     override_simple_K_cF,
@@ -707,6 +708,8 @@ def evaluate_design(x: np.ndarray,
             inlet_flux_B=(.5 * arrays['eps_arr'][:, -1] * sB.rho_field[:, 0]
                           * sB.v[:, 0] * dx_arr * air_cp(T_inB)),
         )
+
+        check_finite_temperatures(Ta, Tb, Ts, where='optimizer temperature return')
 
         if n_rho_loops == 1:
             break
