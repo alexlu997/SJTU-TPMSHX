@@ -583,3 +583,86 @@ def test_later_nonfinite_invalidates_final_diagnostics(monkeypatch, dim, stage, 
         np.testing.assert_equal(s.P.flat[0], bad)
     if dim == 2:
         assert s.f2_cert_post_rescale_ok is False
+
+
+@pytest.mark.parametrize('backend', ['2d', '3d', '3d_rb'])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_pressure_invalid_after_correction_precedes_density(monkeypatch, backend, bad):
+    dim = 2 if backend == '2d' else 3
+    s = _small_f2(dim)
+    assert s.fluid_type == 'ideal_gas'
+    module = _solver_module(dim)
+    if dim == 3:
+        monkeypatch.setattr(module, '_should_parallelize', lambda *a: backend == '3d_rb')
+    name = '_correct_jit' if dim == 2 else '_correct_jit_3d'
+    original = getattr(module, name)
+
+    def correct(*args):
+        original(*args)
+        for field in (s.u, s.v) + ((s.w,) if dim == 3 else ()):
+            assert np.isfinite(field).all()
+        s.P.flat[0] = bad
+
+    reached = []
+    update = s._update_density
+
+    def density():
+        update()
+        reached.append((float(s.P.flat[0]), getattr(s, '_p_clip_hits', 0)))
+
+    monkeypatch.setattr(module, name, correct)
+    monkeypatch.setattr(s, '_update_density', density)
+    result = s.solve(max_iter=1, verbose=False)
+    assert not reached, f'density overwrote/consumed invalid pressure: {reached}'
+    assert result == (False, 1)
+    assert s.exit_reason == 'nonfinite'
+    np.testing.assert_equal(s.P.flat[0], bad)
+    assert s.residuals == []
+    _assert_invalid_final_diagnostics(s)
+
+
+@pytest.mark.parametrize('mode_source', ['attribute', 'environment'])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_prolongated_pressure_reaches_parent_without_density_clip(monkeypatch, mode_source, bad):
+    from sjtu_tpmshx.solvers import coarse_bootstrap_3d
+    s = _make_solver(Nx=8, Ny=8, Nz=8, convergence_mode='f2', use_coarse_bootstrap=True)
+    if mode_source == 'environment':
+        del s.convergence_mode
+        monkeypatch.setenv('TPMSHX_CONV_MODE', 'f2')
+    solve = SIMPLESolver3D.solve
+    coarse = []
+
+    def coarse_solve(self, **kwargs):
+        # Keep the real bootstrap/prolongation, without a coarse PDE campaign.
+        coarse.append(self)
+        self.residuals.append(0.0)
+        return True, 1
+
+    zoom = coarse_bootstrap_3d._trilinear_zoom
+
+    def prolongate(arr, shape):
+        result = zoom(arr, shape)
+        if arr is coarse[0].P:
+            result.flat[0] = bad
+        return result
+
+    reached = []
+    update = s._update_density
+
+    def density():
+        update()
+        reached.append(float(s.P.flat[0]))
+
+    monkeypatch.setattr(SIMPLESolver3D, 'solve', coarse_solve)
+    monkeypatch.setattr(coarse_bootstrap_3d, '_trilinear_zoom', prolongate)
+    monkeypatch.setattr(s, '_update_density', density)
+    result = solve(s, max_iter=1, verbose=False)
+    assert not reached, f'fine density consumed prolongated bad pressure: {reached}'
+    assert result == (False, 0)
+    assert s.exit_reason == 'nonfinite'
+    np.testing.assert_equal(s.P.flat[0], bad)
+    assert s.residuals == []
+    assert s._coarse_bootstrap_info == dict(
+        applied=True, coarse_iters=1, coarse_converged=True,
+        coarse_residual=0.0, coarse_shape=(4, 4, 4))
+    _assert_invalid_final_diagnostics(s)

@@ -952,6 +952,9 @@ class SIMPLESolver:
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                              Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
+            if (_f2 is not None and self.fluid_type == 'ideal_gas'
+                    and not f2_state_is_finite(self, (self.u, self.v))):
+                return f2_nonfinite_exit(self, it, cancel_check)
             self._update_density()  # compressible: update rho from P
             if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
                 return f2_nonfinite_exit(self, it, cancel_check)
