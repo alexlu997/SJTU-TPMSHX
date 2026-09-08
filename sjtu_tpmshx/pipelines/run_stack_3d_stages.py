@@ -2479,7 +2479,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
         if outer == 0 and fluid_type_A == 'sco2':
             warn_sco2_nu_evidence(
                 side='A', stage='3D h_v property refresh',
-                tpms_type=tpms_type, L_mm=Lcell, t_mm=t_wall, P_in=P_inA)
+                tpms_type=tpms_type, L_mm=Lcell if L_mm_field is None else L_mm_field,
+                t_mm=t_wall if L_mm_field is None else t_field_3d,
+                P_in=P_inA)
         h_vA_field = _apply_roughness_h_v(
             h_vA_field, fluid_type_A, rho_A, mu_A, u_A, D_h)
         h_vA_field = h_vA_field * _hv_ratio_A   # per-side asym geom (1.0 at δ=0)
@@ -2501,7 +2503,9 @@ def _run_outer_coupling_3d(prob: _Problem3D, hv: _HvMachinery):
             if outer == 0 and fluid_type_B == 'sco2':
                 warn_sco2_nu_evidence(
                     side='B', stage='3D h_v property refresh',
-                    tpms_type=tpms_type, L_mm=Lcell, t_mm=t_wall, P_in=P_inB)
+                    tpms_type=tpms_type, L_mm=Lcell if L_mm_field is None else L_mm_field,
+                    t_mm=t_wall if L_mm_field is None else t_field_3d,
+                    P_in=P_inB)
             h_vB_field = _apply_roughness_h_v(
                 h_vB_field, fluid_type_B, rho_B, mu_B, u_B_val, D_h)
             h_vB_field = h_vB_field * _hv_ratio_B   # per-side asym geom (1.0 at δ=0)

@@ -288,9 +288,14 @@ def _warn_sco2_nu(Re_min, Re_max, tpms_type, raw):
 def warn_sco2_nu_evidence(*, side, stage, tpms_type, L_mm, t_mm, P_in):
     # Source: SCO2_NU_COEFFS lineage/VALIDITY above and
     # validation/sco2_cfd/README.md, Nu validity and campaign pressure levels.
+    if np.ndim(L_mm) > 0:
+        geometry = (f'zoned L=[{np.min(L_mm):g},{np.max(L_mm):g}] mm, '
+                    f't=[{np.min(t_mm):g},{np.max(t_mm):g}] mm')
+    else:
+        geometry = f'L={L_mm:g} mm, t={t_mm:g} mm'
     message = (
         f'[sCO2 Nu evidence] {stage}, side={side}, {tpms_type}, '
-        f'L={L_mm:g} mm, t={t_mm:g} mm; Nu uses scalar P_in={P_in:g} Pa. '
+        f'{geometry}; Nu uses scalar P_in={P_in:g} Pa. '
         'Joint qualification remains unverified: the old CFD evidence uses '
         'heating at Twall=Tref+50 K and period-2/3 bulk properties. '
         'The reported subset requires P>=10 MPa AND Tb>=Tpc(P)-2 K within '

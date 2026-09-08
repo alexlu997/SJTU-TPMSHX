@@ -227,7 +227,8 @@ def test_nested_layout_inherits_side_and_stage():
 
 
 @pytest.mark.parametrize('pressure', [9e6, 12e6, 16e6])
-def test_sco2_nu_evidence_retains_unknown_qualification_without_eos(monkeypatch, pressure):
+@pytest.mark.parametrize('zoned', [False, True])
+def test_sco2_nu_evidence_retains_unknown_qualification_without_eos(monkeypatch, pressure, zoned):
     from sjtu_tpmshx.solvers import sco2_props
 
     def forbidden(*args, **kwargs):
@@ -240,11 +241,14 @@ def test_sco2_nu_evidence_retains_unknown_qualification_without_eos(monkeypatch,
             for side in ('A', 'B'):
                 for _ in range(2):
                     nu.warn_sco2_nu_evidence(side=side, stage='3D h_v property refresh',
-                                            tpms_type='Gyroid', L_mm=7., t_mm=.6, P_in=pressure)
+                                            tpms_type='Gyroid',
+                                            L_mm=np.array([5., 6.]) if zoned else 7.,
+                                            t_mm=np.array([.3, .4]) if zoned else .6, P_in=pressure)
         messages = list(warning_messages(records))
         assert len(messages) == 2
         for side, message in zip(('A', 'B'), messages):
-            assert f'side={side}, Gyroid, L=7 mm, t=0.6 mm' in message
+            geometry = 'zoned L=[5,6] mm, t=[0.3,0.4] mm' if zoned else 'L=7 mm, t=0.6 mm'
+            assert f'side={side}, Gyroid, {geometry}' in message
             assert f'Nu uses scalar P_in={pressure:g} Pa' in message
             for text in ('Joint qualification remains unverified', 'Twall=Tref+50 K',
                          'period-2/3 bulk properties', 'P>=10 MPa AND Tb>=Tpc(P)-2 K',

@@ -189,6 +189,55 @@ def test_true_h_air_return_does_not_use_empirical_temperature_windows(monkeypatc
     assert not any(key[0] == 'property_state' for key in records)
 
 
+def test_zoned_sco2_notice_uses_successful_local_hv_fields(monkeypatch):
+    cfg = _pipeline_cfg(('sco2', 'sco2'))
+    cfg.pop('T_s_init')  # Only the raw-stage first scalar-temperature refresh.
+    cfg.update(P_inA=9e6, P_inB=16e6, zone_grid_cells=[
+        dict(x0=0., x1=.5, y0=0., y1=1., L=5., t=.3),
+        dict(x0=.5, x1=1., y0=0., y1=1., L=6., t=.4)])
+    monkeypatch.setattr(stages.SIMPLESolver3D, 'solve', lambda *a, **k: (True, 0))
+    prob = stages._build_3d_problem(cfg)
+    hv = stages._build_hv_machinery(prob)
+    assert 5. < prob.L_mm_field.min() < prob.L_mm_field.max() < 6.
+    assert .3 < prob.t_field_3d.min() < prob.t_field_3d.max() < .4
+    original_hv, original_notice = hv._build_hv_local_3d, stages.warn_sco2_nu_evidence
+    events = []
+
+    def local(*args, **kwargs):
+        assert args[0] is prob.L_mm_field and args[1] is prob.t_field_3d
+        assert np.ndim(args[3]) == 0
+        value = original_hv(*args, **kwargs)
+        events.append(('hv', args[4]))
+        return value
+
+    def notice(**kwargs):
+        pressure = prob.P_inA if kwargs['side'] == 'A' else prob.P_inB
+        assert events[-1] == ('hv', pressure)
+        assert kwargs['L_mm'] is prob.L_mm_field and kwargs['t_mm'] is prob.t_field_3d
+        assert kwargs['P_in'] == pressure and kwargs['stage'] == '3D h_v property refresh'
+        events.append(('notice', kwargs['side']))
+        return original_notice(**kwargs)
+
+    class ThermalBoundary(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise ThermalBoundary
+
+    monkeypatch.setattr(hv, '_build_hv_local_3d', local)
+    monkeypatch.setattr(stages, 'warn_sco2_nu_evidence', notice)
+    monkeypatch.setattr(stages, 'solve_full_domain_3d', stop)
+    monkeypatch.setattr(stages, 'run_outer_coupling', lambda *, step, **k: step(0))
+    with warning_scope({}) as records, pytest.raises(ThermalBoundary):
+        stages._run_outer_coupling_3d(prob, hv)
+    assert events == [('hv', 9e6), ('notice', 'A'), ('hv', 16e6), ('notice', 'B')]
+    messages = [value for key, value in records.items() if key[0] == 'nu-evidence']
+    assert len(messages) == 2
+    geometry = (f'zoned L=[{prob.L_mm_field.min():g},{prob.L_mm_field.max():g}] mm, '
+                f't=[{prob.t_field_3d.min():g},{prob.t_field_3d.max():g}] mm')
+    assert all(geometry in message and 'L=7 mm, t=0.6 mm' not in message for message in messages)
+
+
 def test_sco2_evidence_once_per_side_after_first_local_refresh_with_cached_properties(monkeypatch):
     cfg = _pipeline_cfg(('sco2', 'sco2'))
     cfg.update(P_inA=9e6, P_inB=16e6)
