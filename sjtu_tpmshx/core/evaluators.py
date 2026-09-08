@@ -39,6 +39,7 @@ from sjtu_tpmshx.solvers.tpms_calc import (
 )
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 from sjtu_tpmshx.solvers.ltne_energy_3d import solve_full_domain_3d
+from sjtu_tpmshx.solvers.fluid_props import check_finite_temperatures
 from sjtu_tpmshx.solvers.df_projection import (
     project_fields_to_streamwise_K_cF_3d,
 )
@@ -462,6 +463,7 @@ def evaluate_3d(x_decision: np.ndarray,
             conservative_ltne=True,
             return_info=True,
         )
+        check_finite_temperatures(Ta, Tb, Ts, where='3D evaluator temperature return')
         ltne_inner_ok = bool(_ltne_info.get('converged', False))
         if verbose:
             _log.info(f"{time.perf_counter()-t0:.0f}s")
