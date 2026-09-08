@@ -396,7 +396,7 @@ def compute(tpms_type: str,
     _df_env = (_df_method, '')
     result, records = _compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
                                      P_in_Pa, k_s, fluid_type, _df_env)
-    merge_warnings(current_warnings(), [records])
+    merge_warnings(current_warnings(), [records], bind_context=True)
     return dict(result)
 
 

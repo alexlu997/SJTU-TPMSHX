@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QFileDialog
 from sjtu_tpmshx.controllers.compute_pipeline import Pipeline2D, Pipeline3D
 from sjtu_tpmshx.domain.compute_result import ComputeResult
 from sjtu_tpmshx.solvers.tpms_calc import compute
+from sjtu_tpmshx.solvers.nu_correlations import warn_sco2_nu_evidence
 from sjtu_tpmshx.tests.test_worker_result_handoff import (
     _configure, _wait_for, win as win,
 )
@@ -25,6 +26,10 @@ def test_cached_nu_warning_worker_to_export(win, monkeypatch, tmp_path, mode):
 
     def build(pipe):
         compute(*args)  # Actual Nu source and cache replay, no injected notice.
+        if mode == '3d':
+            warn_sco2_nu_evidence(side='B', stage='3D h_v property refresh',
+                                  tpms_type='Gyroid', L_mm=np.array([5., 6.]),
+                                  t_mm=np.array([.3, .4]), P_in=12e6)
         return {}
 
     monkeypatch.setattr(pipeline, 'build_fields', build)
@@ -39,6 +44,9 @@ def test_cached_nu_warning_worker_to_export(win, monkeypatch, tmp_path, mode):
         assert not win._test_error_dialogs
         result = win.compute.last_result()
         assert any('[Nu extrap]' in message for message in result.warnings)
+        assert sum('[sCO2 Nu evidence]' in message for message in result.warnings) == (mode == '3d')
+        if mode == '3d':
+            assert any('zoned L=[5,6] mm, t=[0.3,0.4] mm' in message for message in result.warnings)
         assert result.extrap_reasons == []
         assert win._diag_summary['warnings'] == result.warnings
         win._compute_warnings = None  # Notification lifetime is independent.

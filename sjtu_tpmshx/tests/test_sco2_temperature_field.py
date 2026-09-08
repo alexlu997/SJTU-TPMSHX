@@ -111,10 +111,47 @@ def test_true_h_refresh_and_final_return_reject(monkeypatch, dimension, side, it
 
 
 @pytest.mark.parametrize('temperature', [280., 700.])
-def test_true_h_boundary_allows_mathematical_bracket_outside_model(temperature):
+def test_true_h_boundary_allows_mathematical_bracket_outside_model(monkeypatch, temperature):
+    from sjtu_tpmshx.solvers import ltne_enthalpy_3d as ent
+    original = ent._PropsSI
+    bracket_queries = []
+
+    def eos(key, input_key, value, *args):
+        if key == 'T':
+            return np.full(np.shape(value), temperature)
+        if key == 'H' and input_key == 'T':
+            bracket_queries.append(float(value))
+        return original(key, input_key, value, *args)
+
+    monkeypatch.setattr(ent, '_PropsSI', eos)
     Ta, Tb, _, _ = _guard_pipeline(T_inA=temperature, T_inB=temperature)
-    np.testing.assert_allclose(Ta, temperature, atol=1e-9)
-    np.testing.assert_allclose(Tb, temperature, atol=1e-9)
+    assert max(temperature - 60., 230.) in bracket_queries
+    assert temperature + 60. in bracket_queries
+    np.testing.assert_array_equal(Ta, temperature)
+    np.testing.assert_array_equal(Tb, temperature)
+
+
+@pytest.mark.parametrize('temperature', [280., 700.])
+def test_true_h_real_boundary_roundtrip_obeys_strict_return_domain(temperature):
+    from sjtu_tpmshx.solvers import ltne_enthalpy_3d as ent
+    h = np.array([ent._h_scalar(temperature, 12e6, 'sco2')])
+    raw = np.asarray(ent._PropsSI('T', 'H', h, 'P', np.array([12e6]), 'CO2')).reshape(1)
+    # Exact-boundary inputs can round-trip outside the domain on some platforms.
+    if raw[0] < 280. or raw[0] > 700.:
+        with pytest.raises(ValueError, match='temperature must be within 280..700 K'):
+            ent._T_of_h_field(h, 12e6, 'sco2')
+    else:
+        np.testing.assert_array_equal(ent._T_of_h_field(h, 12e6, 'sco2'), raw)
+
+
+@pytest.mark.parametrize('boundary,direction', [(280., -np.inf), (700., np.inf)])
+def test_true_h_one_ulp_outside_boundary_is_rejected(monkeypatch, boundary, direction):
+    from sjtu_tpmshx.solvers import ltne_enthalpy_3d as ent
+    raw = np.array([np.nextafter(boundary, direction)])
+    monkeypatch.setattr(ent, '_PropsSI', lambda *args: raw)
+    with pytest.raises(ValueError, match='temperature must be within 280..700 K'):
+        ent._T_of_h_field(np.ones(1), 12e6, 'sco2')
+    assert raw[0] == np.nextafter(boundary, direction)
 
 
 @pytest.mark.parametrize('returned', [np.nan, np.inf])

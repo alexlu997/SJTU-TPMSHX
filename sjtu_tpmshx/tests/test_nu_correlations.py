@@ -94,3 +94,28 @@ def test_legacy_sigmoid_field_nu_vec_still_works():
     Nu = _nu_vec('Gyroid', Re_arr, eps_arr, L_arr, D_h_arr)
     assert Nu.shape == (2,)
     assert np.all(Nu > 0)
+
+
+@pytest.mark.parametrize('fluid', ['air', 'water', 'sco2'])
+def test_source_statistics_precede_floor_without_changing_nu(fluid):
+    from sjtu_tpmshx.domain.run_warnings import warning_scope
+    from sjtu_tpmshx.solvers import nu_correlations as nu
+
+    raw = np.array([0., .1, 5000.])
+    if fluid == 'air':
+        evaluate = lambda re: nu.nu_vec('Diamond', re, 7., 2.)
+        expected = nu.NU_ROUGHNESS_FACTOR * _ref_diamond_smooth(np.maximum(raw, 10.), 7., 2.)
+    elif fluid == 'water':
+        evaluate = lambda re: nu.nu_water_topo('Diamond', re, 3.)
+        expected = .3201 * np.maximum(raw, 1.) ** .6679 * 3. ** (1 / 3)
+    else:
+        evaluate = lambda re: nu.nu_sco2_topo('Diamond', re, 3., 7., 2.)
+        co = nu.SCO2_NU_COEFFS['Diamond']
+        expected = co['c'] * np.maximum(raw, 1.) ** co['a'] * 3. ** (1 / 3) * (2. / 7.) ** co['d']
+    with warning_scope({}) as records:
+        actual = evaluate(raw)
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(raw, [0., .1, 5000.])
+    value, = records.values()
+    assert value.minimum == (0., (0,))
+    assert (value.low, value.high, value.size) == (2, 0, 3)
