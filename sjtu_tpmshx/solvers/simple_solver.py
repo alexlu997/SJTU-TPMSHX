@@ -43,7 +43,9 @@ import os
 import numpy as np
 from sjtu_tpmshx.domain.cancellation import CancelledError
 from sjtu_tpmshx.df_surrogate.predict import predict_K_cF, predict_K_cF_vec
-from ._solve_common import LowReExit, F2Monitor
+from ._solve_common import (LowReExit, F2Monitor, f2_state_is_finite,
+                            f2_nonfinite_exit, momentum_component_residuals,
+                            global_mass_residual)
 from .tpms_calc import (air_density, air_viscosity, P_atm)
 from sjtu_tpmshx.logutil import get_logger
 
@@ -806,11 +808,13 @@ class SIMPLESolver:
             # Legacy attribute name: gates on the returned field after local
             # outlet closure; None until an F2 exit happens.
             self.f2_cert_post_rescale_ok = None
-        # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter';
+        # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter' | 'nonfinite';
         # reset on every (re-)entry (the 2D pipeline rebuilds the solver per
         # outer iteration, but direct callers may reuse one instance).
         self.exit_reason = None
         self.final_res = None
+        if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
+            return f2_nonfinite_exit(self, 0, cancel_check)
 
         # Capture the mass-flux inlet target G = v · ρ_inlet,ref ONCE, before
         # any pressure build-up. The `not hasattr` guard keeps it fixed across
@@ -949,6 +953,8 @@ class SIMPLESolver:
                              self.inlet_frac, self.v_inlet_field, self.outlet_frac,
                              Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
             self._update_density()  # compressible: update rho from P
+            if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
+                return f2_nonfinite_exit(self, it, cancel_check)
 
             res = _mass_res_jit(self.u, self.v, Nx, Ny, dx_a, dy_a, rho_eps_field)
             self.residuals.append(res)
@@ -975,13 +981,14 @@ class SIMPLESolver:
                     _rho_eps_now, self._pp_sparsity['cell_kind'])
                 _min, _mout, _bf = _mass_global_jit_2d(
                     self.v, Nx, Ny, dx_a, _rho_eps_now)
-                _Rmg = (abs(_mout - _min) / abs(_min)
-                        if abs(_min) > 1e-14 else 0.0)
+                _Rmg = global_mass_residual(_min, _mout)
                 self.mass_local_residuals.append(_Rml)
                 self.mass_global_residuals.append(_Rmg)
                 self.outlet_backflow_frac = _bf
                 self.final_res_mass_local = _Rml
                 self.final_res_mass_global = _Rmg
+                if not np.isfinite((res, _vd, _Rml, _Rmg, _bf)).all():
+                    return f2_nonfinite_exit(self, it, cancel_check)
 
                 if _f2.should_eval_momentum(it, _vd):
                     _Rmom, _rec = self._momentum_residual(Nx, Ny, dx_a, dy_a,
@@ -990,8 +997,12 @@ class SIMPLESolver:
                     self.mom_residuals.append(_rec)
                     self.final_res_mom = _Rmom
                     _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
+                    if _reason == 'nonfinite':
+                        return f2_nonfinite_exit(self, it, cancel_check)
                     if _reason is not None:
                         self._enforce_mass_conservation(verbose=verbose)
+                        if not f2_state_is_finite(self, (self.u, self.v)):
+                            return f2_nonfinite_exit(self, it, cancel_check)
                         # Re-measure the returned field after local outlet closure.
                         # Keep the original exit decision; post-checks may only
                         # reject convergence, never upgrade a failed pre-check.
@@ -1002,14 +1013,15 @@ class SIMPLESolver:
                             _rho_eps_post, self._pp_sparsity['cell_kind'])
                         _min_p, _mout_p, _bf_p = _mass_global_jit_2d(
                             self.v, Nx, Ny, dx_a, _rho_eps_post)
-                        _Rmg_p = (abs(_mout_p - _min_p) / abs(_min_p)
-                                  if abs(_min_p) > 1e-14 else 0.0)
+                        _Rmg_p = global_mass_residual(_min_p, _mout_p)
                         _Rmom_p, _ = self._momentum_residual(
                             Nx, Ny, dx_a, dy_a, _K2d, _cF2d)
                         self.final_res_mass_local = _Rml_p
                         self.final_res_mass_global = _Rmg_p
                         self.final_res_mom = _Rmom_p
                         self.outlet_backflow_frac = _bf_p
+                        if not np.isfinite((_Rmom_p, _Rml_p, _Rmg_p, _bf_p)).all():
+                            return f2_nonfinite_exit(self, it, cancel_check)
                         self.f2_cert_post_rescale_ok = bool(
                             _Rmom_p < _f2.mom_tol
                             and _Rml_p < _f2.mass_local_tol
@@ -1071,6 +1083,8 @@ class SIMPLESolver:
 
         # Post-solve: enforce mass conservation at partial outlet
         self._enforce_mass_conservation(verbose=verbose)
+        if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v)):
+            return f2_nonfinite_exit(self, max_iter, cancel_check)
 
         self.exit_reason = 'max_iter'
         self.final_res = res
@@ -1123,14 +1137,8 @@ class SIMPLESolver:
             self.u, self.v, self.P, Nx, Ny, dx_a, dy_a,
             self.rho_field, self._mu_eff_field, K2d, cF2d, self.mu_field,
             self.eps_field, self.inlet_frac, self.outlet_frac, self.cf_aniso)
-        d_ref = max(du_, dv_)
-        floor = self._MOM_FLOOR_FRAC * d_ref
-
-        def _r(n, d):
-            den = max(d, floor)
-            return (n / den) if den > 0.0 else 0.0
-
-        ru, rv = _r(nu_, du_), _r(nv_, dv_)
+        ru, rv = momentum_component_residuals(
+            (nu_, nv_), (du_, dv_), self._MOM_FLOOR_FRAC)
         rmax = max(ru, rv)
         return rmax, {'u': ru, 'v': rv, 'max': rmax,
                       'num': (nu_, nv_), 'den': (du_, dv_)}

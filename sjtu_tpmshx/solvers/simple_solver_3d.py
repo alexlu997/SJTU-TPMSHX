@@ -127,7 +127,9 @@ _AMG_GATE = 2_000
 
 from .tpms_calc import P_atm
 from .threads import warn_if_default_pool as _warn_if_default_pool
-from ._solve_common import LowReExit, F2Monitor
+from ._solve_common import (LowReExit, F2Monitor, f2_state_is_finite,
+                            f2_nonfinite_exit, momentum_component_residuals,
+                            global_mass_residual)
 
 
 # ===================================================================
@@ -850,6 +852,22 @@ class SIMPLESolver3D:
         Nx, Ny, Nz = self.Nx, self.Ny, self.Nz
         dx, dy, dz = self.dx, self.dy, self.dz
 
+        # Validate before rejecting an input state or attempting coarse bootstrap.
+        _mode = str(getattr(self, 'convergence_mode',
+                            os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
+        if _mode not in ('legacy', 'f2'):
+            raise ValueError(
+                f"convergence_mode must be 'legacy' or 'f2', got {_mode!r}")
+        if _mode == 'f2' and bool(getattr(self, 'use_anderson', False)):
+            raise ValueError(
+                "convergence_mode='f2' with use_anderson=True is not "
+                "supported: Anderson's acceptance gate still uses the "
+                "C6-falsified mass residual and its rollback does not "
+                "restore rho_field/v_inlet_field exactly (ledger C7 P0-3). "
+                "Disable one of them.")
+        if _mode == 'f2' and not f2_state_is_finite(self, (self.u, self.v, self.w)):
+            return f2_nonfinite_exit(self, 0, cancel_check)
+
         # Capture the mass-flux inlet target ONCE, at reference inlet
         # conditions (prescribed v × initial ρ), before any pressure build-up.
         # Reused across outer-loop warm restarts so the target never drifts
@@ -896,6 +914,8 @@ class SIMPLESolver3D:
                     'applied': False, 'reason': f'exception:{exc}'}
                 if verbose:
                     _log.warning(f"  3D coarse bootstrap skipped: {exc}")
+            if _mode == 'f2' and not f2_state_is_finite(self, (self.u, self.v, self.w)):
+                return f2_nonfinite_exit(self, 0, cancel_check)
 
         if self._pp_sparsity is None:
             self._pp_sparsity = _build_pp_sparsity_3d(Nx, Ny, Nz,
@@ -959,7 +979,7 @@ class SIMPLESolver3D:
         # arch-b-c-e batch C (shared with the 2D solver).
         _lowre = LowReExit(self, (self.u, self.v, self.w), min_iter=10)
         # A2: exit bookkeeping — 'tol' | 'velocity' | 'stall' | 'max_iter'
-        # | 'cancelled'; reset on every (re-)entry so warm restarts don't
+        # | 'cancelled' | 'nonfinite'; reset on every (re-)entry so warm restarts don't
         # carry a stale reason.
         self.exit_reason = None
         self.final_res = None
@@ -986,11 +1006,6 @@ class SIMPLESolver3D:
         #     boundary mass), each with its OWN tolerance, confirmed over
         #     `f2_n_confirm` consecutive checks. A static velocity field triggers
         #     a check; it does NOT terminate. See F2Monitor.
-        _mode = str(getattr(self, 'convergence_mode',
-                            os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
-        if _mode not in ('legacy', 'f2'):
-            raise ValueError(
-                f"convergence_mode must be 'legacy' or 'f2', got {_mode!r}")
         _f2 = None
         if _mode == 'f2':
             # Anderson mutates u/v/w/P/rho AFTER the Picard step, gates its
@@ -999,13 +1014,6 @@ class SIMPLESolver3D:
             # the already-Anderson-mixed rho, and `_apply_massflux_inlet` then
             # rebuilds v_inlet_field from it). Every one of those breaks a
             # residual-gated exit. Fix Anderson first; do not silently combine.
-            if bool(getattr(self, 'use_anderson', False)):
-                raise ValueError(
-                    "convergence_mode='f2' with use_anderson=True is not "
-                    "supported: Anderson's acceptance gate still uses the "
-                    "C6-falsified mass residual and its rollback does not "
-                    "restore rho_field/v_inlet_field exactly (ledger C7 P0-3). "
-                    "Disable one of them.")
             _f2 = F2Monitor(self, (self.u, self.v, self.w), min_iter=10)
             for _h in ('mass_local_residuals', 'mass_global_residuals'):
                 if not hasattr(self, _h):
@@ -1095,6 +1103,8 @@ class SIMPLESolver3D:
                              self.rho_field, self.eps_field, self.outlet_mask_ij,
                              dx, dy, dz)
             self._update_density()  # compressible: ρ = P/(RT) + mass flux rescale
+            if _f2 is not None and not f2_state_is_finite(self, (self.u, self.v, self.w)):
+                return f2_nonfinite_exit(self, it, cancel_check)
 
             # NOTE: `rho_eps_field` here is the PRE-`_update_density` array —
             # the one `_solve_pp_amg` above just solved div(rho_eps.u)=0 against.
@@ -1210,17 +1220,20 @@ class SIMPLESolver3D:
                     _rho_eps_now, self._pp_sparsity['cell_kind'])
                 _min, _mout, _bf = _mass_global_jit_3d(
                     self.v, Nx, Ny, Nz, dx, dz, _rho_eps_now)
-                _Rmg = (abs(_mout - _min) / abs(_min)
-                        if abs(_min) > 1e-14 else 0.0)
+                _Rmg = global_mass_residual(_min, _mout)
                 self.mass_local_residuals.append(_Rml)
                 self.mass_global_residuals.append(_Rmg)
                 self.outlet_backflow_frac = _bf
                 self.final_res_mass_local = _Rml
                 self.final_res_mass_global = _Rmg
+                if not np.isfinite((res, _vd, _Rml, _Rmg, _bf)).all():
+                    return f2_nonfinite_exit(self, it, cancel_check)
 
                 if _Rmom is not None:
                     self.final_res_mom = _Rmom
                     _reason = _f2.submit(it, _Rmom, _Rml, _Rmg, _vd, _bf)
+                    if _reason == 'nonfinite':
+                        return f2_nonfinite_exit(self, it, cancel_check)
                     if _reason is not None:
                         self.exit_reason = _reason
                         return (_reason == 'tol'), it
@@ -1280,12 +1293,8 @@ class SIMPLESolver3D:
             self.rho_field, self._mu_eff_field, self.mu_field,
             self.eps_field, self.K_arr, self.cF_arr,
             self.outlet_coeff, self.inlet_frac, use_sou, use_eps)
-        d_ref = max(du_, dv_, dw_)
-        floor = self._MOM_FLOOR_FRAC * d_ref
-        def _r(n, d):
-            den = max(d, floor)
-            return (n / den) if den > 0.0 else 0.0
-        ru, rv, rw = _r(nu_, du_), _r(nv_, dv_), _r(nw_, dw_)
+        ru, rv, rw = momentum_component_residuals(
+            (nu_, nv_, nw_), (du_, dv_, dw_), self._MOM_FLOOR_FRAC)
         rmax = max(ru, rv, rw)
         return rmax, {'u': ru, 'v': rv, 'w': rw, 'max': rmax,
                       'num': (nu_, nv_, nw_), 'den': (du_, dv_, dw_)}

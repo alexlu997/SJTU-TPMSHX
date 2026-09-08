@@ -234,3 +234,214 @@ def test_solved_cell_mass_excludes_the_dirichlet_outlet_row():
     assert n_counted <= s.Nx * s.Ny * s.Nz - n_pinned
     # The blocked half of the last row is a WALL cell: still solved, still counted.
     assert n_counted > (s.Nx * s.Ny * s.Nz) - n_pinned - s.Nx * s.Nz
+
+
+def _small_f2(dim):
+    if dim == 2:
+        from sjtu_tpmshx.tests.test_f2_convergence_2d import _make
+        return _make(Nx=4, Ny=4, convergence_mode='f2')
+    return _make_solver(Nx=4, Ny=4, Nz=3, convergence_mode='f2',
+                        use_coarse_bootstrap=False)
+
+
+def _solver_module(dim):
+    from sjtu_tpmshx.solvers import simple_solver, simple_solver_3d
+    return simple_solver if dim == 2 else simple_solver_3d
+
+
+@pytest.mark.parametrize('dim,field', [
+    (dim, field) for dim in (2, 3)
+    for field in ('u', 'v', 'P', 'rho_field', 'T_field') + (('w',) if dim == 3 else ())])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize('stage', ['entry', 'iteration'])
+def test_nonfinite_actual_state_cannot_be_certified(monkeypatch, dim, field, bad, stage):
+    s = _small_f2(dim)
+    closed = []
+    if dim == 2:
+        monkeypatch.setattr(s, '_enforce_mass_conservation', lambda **kw: closed.append(True))
+
+    def corrupt():
+        getattr(s, field).flat[0] = bad
+
+    if stage == 'entry':
+        corrupt()
+        # Entry rejection must precede kernels, including the optional 3D bootstrap.
+        def forbidden(*args, **kwargs):
+            pytest.fail('invalid F2 input reached a solver kernel/bootstrap')
+        module = _solver_module(dim)
+        monkeypatch.setattr(module, '_sweep_u_jit_df' if dim == 2 else '_sweep_u_jit_df_3d', forbidden)
+        if dim == 3:
+            from sjtu_tpmshx.solvers import coarse_bootstrap_3d
+            s.use_coarse_bootstrap = True
+            monkeypatch.setattr(coarse_bootstrap_3d, 'bootstrap_simple_3d', forbidden)
+    else:
+        original = s._update_density
+
+        def update():
+            original()
+            corrupt()
+
+        monkeypatch.setattr(s, '_update_density', update)
+    assert s.solve(max_iter=1, verbose=False) == (False, 0 if stage == 'entry' else 1)
+    assert s.exit_reason == 'nonfinite'
+    if dim == 2:
+        assert s.f2_cert_post_rescale_ok is False
+        assert not closed
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+@pytest.mark.parametrize('index', range(5))
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_nonfinite_scalar_breaks_confirmation(dim, index, bad):
+    from types import SimpleNamespace
+    from sjtu_tpmshx.solvers._solve_common import F2Monitor
+    monitor = F2Monitor(SimpleNamespace(), (np.zeros(2),)*dim, min_iter=0)
+    assert monitor.submit(1, 0., 0., 0., 0., 0.) is None
+    values = [0.]*5
+    values[index] = bad
+    assert monitor.submit(2, *values) == 'nonfinite'
+    assert monitor.submit(3, 0., 0., 0., 0., 0.) is None
+    assert monitor.submit(4, 0., 0., 0., 0., 0.) == 'tol'
+
+
+@pytest.mark.parametrize('dim,index', [(dim, i) for dim in (2, 3) for i in range(2*dim)])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_nonfinite_momentum_raw_is_not_a_zero(monkeypatch, dim, index, bad):
+    s = _small_f2(dim)
+    raw = [0., 1.]*dim
+    raw[index] = bad
+    monkeypatch.setattr(_solver_module(dim), f'_mom_res_jit_{dim}d', lambda *a: tuple(raw))
+    if dim == 2:
+        value, record = s._momentum_residual(s.Nx, s.Ny, s.dx_arr, s.dy_arr, None, None)
+    else:
+        value, record = s._momentum_residual(s.Nx, s.Ny, s.Nz, s.dx, s.dy, s.dz, 0, 0)
+    assert not np.isfinite(value)
+    np.testing.assert_equal(record['num'], raw[::2])
+    np.testing.assert_equal(record['den'], raw[1::2])
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_nonfinite_global_flux_stops_before_momentum_schedule(monkeypatch, dim, index, bad):
+    s = _small_f2(dim)
+    raw = [1., 1., 0.]
+    raw[index] = bad
+    monkeypatch.setattr(_solver_module(dim), f'_mass_global_jit_{dim}d', lambda *a: tuple(raw))
+    assert s.solve(max_iter=1, verbose=False) == (False, 1)
+    assert s.exit_reason == 'nonfinite'
+    assert s.mom_residuals == []  # Do not force an unscheduled momentum assembly.
+
+
+@pytest.mark.parametrize('field', ['u', 'v', 'P', 'rho_field', 'T_field'])
+@pytest.mark.parametrize('reason', ['tol', 'stall', None])
+def test_nonfinite_after_2d_closeout_cannot_be_certified(monkeypatch, field, reason):
+    s = _small_f2(2)
+    module = _solver_module(2)
+    monkeypatch.setattr(module.F2Monitor, 'should_eval_momentum', lambda *a: True)
+    monkeypatch.setattr(module.F2Monitor, 'submit', lambda *a: reason)
+    monkeypatch.setattr(s, '_momentum_residual', lambda *a: (0., {}))
+    monkeypatch.setattr(module, '_mass_res_solved_jit_2d', lambda *a: (0., 1))
+    monkeypatch.setattr(module, '_mass_global_jit_2d', lambda *a: (1., 1., 0.))
+
+    def close(**kwargs):
+        getattr(s, field).flat[-1] = np.nan
+
+    monkeypatch.setattr(s, '_enforce_mass_conservation', close)
+    assert s.solve(max_iter=1, verbose=False) == (False, 1)
+    assert s.exit_reason == 'nonfinite'
+    assert s.f2_cert_post_rescale_ok is False
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+@pytest.mark.parametrize('mode', ['unknown', 'unsupported'])
+def test_nonfinite_does_not_hide_configuration_error(dim, mode):
+    s = _small_f2(dim)
+    s.P.flat[0] = np.nan
+    options = {}
+    if mode == 'unknown':
+        s.convergence_mode = 'invalid'
+    elif dim == 2:
+        options['coupling'] = 'simpler'
+    else:
+        s.use_anderson = True
+    with pytest.raises(ValueError, match='convergence_mode|coupling|use_anderson'):
+        s.solve(max_iter=1, verbose=False, **options)
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+def test_nonfinite_input_preserves_cancellation(dim):
+    from sjtu_tpmshx.domain.cancellation import CancelledError
+    s = _small_f2(dim)
+    s.P.flat[0] = np.nan
+    with pytest.raises(CancelledError):
+        s.solve(max_iter=1, verbose=False, cancel_check=lambda: True)
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_nonfinite_momentum_observation_exits_solver(monkeypatch, dim, bad):
+    s = _small_f2(dim)
+    s.track_momentum_residual = True
+    module = _solver_module(dim)
+    monkeypatch.setattr(module.F2Monitor, 'should_eval_momentum', lambda *a: True)
+    raw = (bad, 1.) * dim
+    monkeypatch.setattr(module, f'_mom_res_jit_{dim}d', lambda *a: raw)
+    assert s.solve(max_iter=1, verbose=False) == (False, 1)
+    assert s.exit_reason == 'nonfinite'
+    np.testing.assert_equal(s.mom_residuals[-1]['num'], raw[::2])
+
+
+@pytest.mark.parametrize('metric', ['mom', 'local', 'global', 'backflow'])
+def test_nonfinite_post_closeout_observation_rejects_2d(monkeypatch, metric):
+    s = _small_f2(2)
+    module = _solver_module(2)
+    monkeypatch.setattr(module.F2Monitor, 'should_eval_momentum', lambda *a: True)
+    monkeypatch.setattr(module.F2Monitor, 'submit', lambda *a: 'tol')
+    mom = iter([0., np.nan if metric == 'mom' else 0.])
+    local = iter([0., np.nan if metric == 'local' else 0.])
+    fluxes = iter([(1., 1., 0.),
+                   (1., np.nan if metric == 'global' else 1.,
+                    np.nan if metric == 'backflow' else 0.)])
+    monkeypatch.setattr(s, '_momentum_residual', lambda *a: (next(mom), {}))
+    monkeypatch.setattr(module, '_mass_res_solved_jit_2d', lambda *a: (next(local), 1))
+    monkeypatch.setattr(module, '_mass_global_jit_2d', lambda *a: next(fluxes))
+    assert s.solve(max_iter=1, verbose=False) == (False, 1)
+    assert s.exit_reason == 'nonfinite'
+    assert s.f2_cert_post_rescale_ok is False
+
+
+def test_nonfinite_exit_is_rejected_by_3d_result_consumer(monkeypatch):
+    from sjtu_tpmshx.tests.test_convergence_truth_table import _cheap_3d, _run_3d_stack
+    original = SIMPLESolver3D.solve
+
+    def failed(self, *args, **kwargs):
+        # Keep the existing finite flow; isolate the returned status only.
+        _, iterations = original(self, *args, **kwargs)
+        self.exit_reason = 'nonfinite'
+        return False, iterations
+
+    monkeypatch.setattr(SIMPLESolver3D, 'solve', failed)
+    result = _run_3d_stack(_cheap_3d())
+    detail = result['convergence_detail']
+    assert detail['simple_exit_A'] == 'nonfinite'
+    assert detail['simple_ok'] is False
+    assert result['solver_converged'] is False
+
+
+def test_nonfinite_bootstrap_return_is_rejected_before_main_iteration(monkeypatch):
+    from sjtu_tpmshx.solvers import coarse_bootstrap_3d
+    s = _small_f2(3)
+    s.use_coarse_bootstrap = True
+
+    def bootstrap(solver, **kwargs):
+        solver.P.flat[0] = np.nan
+        return {'applied': False}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('invalid bootstrap return reached the main sweep')
+
+    monkeypatch.setattr(coarse_bootstrap_3d, 'bootstrap_simple_3d', bootstrap)
+    monkeypatch.setattr(_solver_module(3), '_sweep_u_jit_df_3d', forbidden)
+    assert s.solve(max_iter=1, verbose=False) == (False, 0)
+    assert s.exit_reason == 'nonfinite'
