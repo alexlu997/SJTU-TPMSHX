@@ -345,12 +345,12 @@ def test_sco2_notice_follows_first_successful_hv_without_extra_eos(monkeypatch, 
     original_notice = solve_2d.warn_sco2_nu_evidence
     events = []
 
-    def hv(*args):
+    def hv(*args, **kwargs):
         side, stage, layout = rw._range_context.get()
         assert (stage, layout) == ('main-hv', 'real-cell(x,y)')
         if side == failed_side:
             raise ThermalBoundary
-        value = original_hv(*args)
+        value = original_hv(*args, **kwargs)
         events.append(('hv', side))
         return value
 
