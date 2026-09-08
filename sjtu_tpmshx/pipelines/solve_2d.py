@@ -1215,6 +1215,23 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         fluid_props.check_water_state(fluid_B, T_inB if Tb is None else Tb,
                                       P_abs_B, where='2D SIMPLE return B')
 
+        def _classify_nonfinite_flow_failure():
+            # Only called on already-fatal inputs/returns; finite outer states
+            # can still recover. Use this SIMPLE iteration's temperature input.
+            for side, solver, u, v, temperature, inlet in (
+                    ('A', simpA, ucA, vcA, _Ta_for_simpA, T_inA),
+                    ('B', simpB, ucB, vcB, _Tb_for_simpB, T_inB)):
+                if solver.fluid_type != 'ideal_gas':
+                    continue
+                temperature = inlet if temperature is None else temperature
+                if not np.all(np.isfinite(temperature)):
+                    continue
+                speed = np.sqrt(np.asarray(u)**2 + np.asarray(v)**2)
+                gate_solution(
+                    float((solver.P_ref_abs + solver.P).min()), float(speed.max()),
+                    float(inlet), mode=cfg.get('envelope_mode', 'raise'),
+                    dims=f'2D-{side}', ma_max=mach_field_max(speed, temperature))
+
         window._compute_progress = 10 + int(80 * (_coup_it + 0.3) / _MAX_COUPLING)
 
         # Smooth velocity near partial-width wall boundaries — DISPLAY ONLY.
@@ -1392,6 +1409,12 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                     mass_flux_B=_face_mass_fluxes_2d(simpB, dir_B, .5*_eps_src, energy_dx, energy_dy))
                 last_model_inputs = dict(model_kwargs, K_ffA=_Kffa_use, K_ffB=_Kffb_use,
                                          K_ss=_Kss_src, outer_index=int(_coup_it))
+                masses = (model_kwargs['mass_flux_A'], model_kwargs['mass_flux_B'])
+                if (all(m is not None and len(m) == 2
+                        and m[0].shape == (N_x+1, N_y)
+                        and m[1].shape == (N_x, N_y+1) for m in masses)
+                        and any(not np.all(np.isfinite(f)) for m in masses for f in m)):
+                    _classify_nonfinite_flow_failure()
             with range_context(side='A', stage='main-inlet', layout='scalar'):
                 inlet_flux_A = (_inlet_transport_2d(
                     simpA, dir_A, _epsA_use if _epsA_use is not None else .5*_eps_src,
@@ -1429,6 +1452,8 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         fluid_props.check_water_state(fluid_A, Ta, P_abs_A, where='2D energy return A')
         fluid_props.check_water_state(fluid_B, Tb, P_abs_B, where='2D energy return B')
         if not _enthalpy_mode:
+            if any(not np.all(np.isfinite(t)) for t in (Ta, Tb, Ts)):
+                _classify_nonfinite_flow_failure()
             fluid_props.check_finite_temperatures(Ta, Tb, Ts, where='2D energy return')
 
         # 2026-05-09 NaN guard — energy solver may NaN-blow up on water-side

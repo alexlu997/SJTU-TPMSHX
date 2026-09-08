@@ -37,11 +37,11 @@ class ThermalBoundary(Exception):
     pass
 
 
-def _prepare(monkeypatch, *, legacy=False, pair=('air', 'air')):
+def _prepare(monkeypatch, *, legacy=False, pair=('air', 'air'), temperatures=(400., 300.)):
     cfg = _cfg()
     cfg.extrap.allow = True  # Deliberate low-Re warning probe; no physical acceptance.
     cfg.fluid_A.type, cfg.fluid_B.type = pair
-    cfg.fluid_A.T_in_K, cfg.fluid_B.T_in_K = 400., 300.
+    cfg.fluid_A.T_in_K, cfg.fluid_B.T_in_K = temperatures
     for side, fluid in zip(('A', 'B'), (cfg.fluid_A, cfg.fluid_B)):
         fluid.u_mps = .001
         if fluid.type == 'sco2':
@@ -393,3 +393,136 @@ def test_sco2_notice_follows_first_successful_hv_without_extra_eos(monkeypatch, 
     assert [event for event in events if event[0] == 'hv'] == [('hv', side) for side in succeeded] * (2 if not failed_side else 1)
     assert {key[2] for key in records if key[0] == 'nu-evidence'} == set(succeeded)
     assert not any(key[0] == 'property_state' for key in records)
+
+
+def _failure_flow(monkeypatch, fields, *, side, invalid):
+    original = fields['_run_simple']
+
+    def worker(*args, **kwargs):
+        u, v, solver = original(*args, **kwargs)
+        solver._test_side = args[5][-1]
+        solver.P[:] = 0.
+        solver.P_ref_abs = 1000. if invalid and solver._test_side == side else 101325.
+        return u, v, solver
+
+    fields['_run_simple'] = worker
+
+
+@pytest.mark.parametrize('boundary', ['mass', 'thermal'])
+@pytest.mark.parametrize('side', ['A', 'B'])
+@pytest.mark.parametrize('mode', ['raise', 'warn', 'off'])
+@pytest.mark.parametrize('invalid', [False, True])
+def test_fatal_nonfinite_classifies_only_invalid_flow(monkeypatch, boundary, side, mode, invalid):
+    from sjtu_tpmshx.solvers.envelope import ChokedFlowError
+    pipe, fields = _prepare(monkeypatch)
+    pipe._parsed['envelope_mode'] = mode
+    _failure_flow(monkeypatch, fields, side=side, invalid=invalid)
+    if boundary == 'mass':
+        original = solve_2d._face_mass_fluxes_2d
+
+        def mass(solver, *args):
+            faces = original(solver, *args)
+            if solver._test_side == side:
+                faces[0][0, 0] = np.nan
+            return faces
+
+        monkeypatch.setattr(solve_2d, '_face_mass_fluxes_2d', mass)
+    else:
+        def thermal(*args, **kwargs):
+            result = _thermal(*args, **kwargs)
+            result[0 if side == 'A' else 1][0, 0] = np.nan
+            return result
+
+        monkeypatch.setattr(solve_2d, 'solve_full_domain', thermal)
+    error = ChokedFlowError if invalid and mode == 'raise' else ValueError
+    message = (f'2D-{side} solver returned' if error is ChokedFlowError else
+               'mass faces must be finite' if boundary == 'mass' else 'temperature index=')
+    with warning_scope({}), pytest.raises(error, match=message):
+        pipe.run_solvers(fields)
+
+
+@pytest.mark.parametrize('side', ['A', 'B'])
+def test_malformed_mass_keeps_original_error_with_invalid_flow(monkeypatch, side):
+    pipe, fields = _prepare(monkeypatch)
+    _failure_flow(monkeypatch, fields, side=side, invalid=True)
+    original = solve_2d._face_mass_fluxes_2d
+
+    def mass(solver, *args):
+        x, y = original(solver, *args)
+        if solver._test_side == side:
+            x = x[:-1].copy()
+            x[:] = np.nan
+        return x, y
+
+    monkeypatch.setattr(solve_2d, '_face_mass_fluxes_2d', mass)
+    with warning_scope({}), pytest.raises(ValueError, match='mass faces must be finite'):
+        pipe.run_solvers(fields)
+
+
+@pytest.mark.parametrize('water_side', ['A', 'B'])
+@pytest.mark.parametrize('boundary', ['SIMPLE', 'energy'])
+def test_water_return_precedes_invalid_air_classification(monkeypatch, water_side, boundary):
+    from sjtu_tpmshx.solvers.fluid_props import WaterStateError
+    pair = ('water', 'air') if water_side == 'A' else ('air', 'water')
+    pipe, fields = _prepare(monkeypatch, pair=pair, temperatures=(300., 300.))
+    _failure_flow(monkeypatch, fields, side='B' if water_side == 'A' else 'A', invalid=True)
+    original = fields['_run_simple']
+
+    def worker(*args, **kwargs):
+        u, v, solver = original(*args, **kwargs)
+        if boundary == 'SIMPLE' and solver._test_side == water_side:
+            solver.P[:] = np.nan
+        return u, v, solver
+
+    fields['_run_simple'] = worker
+
+    def thermal(*args, **kwargs):
+        result = _thermal(*args, **kwargs)
+        result[0][:] = result[1][:] = np.nan
+        return result
+
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', thermal)
+    with warning_scope({}), pytest.raises(WaterStateError, match=f'2D {boundary} return {water_side}'):
+        pipe.run_solvers(fields)
+
+
+def test_finite_intermediate_off_envelope_still_reaches_thermal(monkeypatch):
+    pipe, fields = _prepare(monkeypatch)
+    _failure_flow(monkeypatch, fields, side='A', invalid=True)
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', _stop)
+    with warning_scope({}), pytest.raises(ThermalBoundary):
+        pipe.run_solvers(fields)
+
+
+@pytest.mark.parametrize('iteration,bad_input', [(0, False), (1, False), (1, True)])
+def test_failure_mach_uses_current_simple_input_not_nan_return(monkeypatch, iteration, bad_input):
+    pipe, fields = _prepare(monkeypatch)
+    pipe._parsed['T_s_init'] = 350.
+    _failure_flow(monkeypatch, fields, side='A', invalid=bad_input)
+    seen = []
+    original = solve_2d.mach_field_max
+
+    def mach(speed, temperature):
+        seen.append(np.asarray(temperature).copy())
+        return original(speed, temperature)
+
+    def thermal(*args, **kwargs):
+        result = _thermal(*args, **kwargs)
+        result[0][:] = np.nan
+        return result
+
+    def drive(*, step, **kwargs):
+        state = inspect.getclosurevars(step).nonlocals
+        state['Ta'][:] = np.nan if bad_input else 330.
+        state['Tb'][:] = 310.
+        step(iteration)
+
+    monkeypatch.setattr(solve_2d, 'mach_field_max', mach)
+    monkeypatch.setattr(solve_2d, 'solve_full_domain', thermal)
+    monkeypatch.setattr(solve_2d, 'run_outer_coupling', drive)
+    with warning_scope({}), pytest.raises(ValueError, match='temperature index='):
+        pipe.run_solvers(fields)
+    expected_values = (310.,) if bad_input else (400., 300.) if iteration == 0 else (330., 310.)
+    assert len(seen) == len(expected_values)
+    for actual, expected in zip(seen, expected_values):
+        assert np.all(actual == expected)
