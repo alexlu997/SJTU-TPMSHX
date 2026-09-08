@@ -3,6 +3,7 @@ plug 速度)。叉流 Nx×Ny×1 (A+x/B+y); 逆流 Nx×1×1 (B−x)。dP 解析 (
 from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
+from sjtu_tpmshx.domain.run_warnings import range_context
 
 from sjtu_tpmshx.solvers.fluid_props import check_finite_temperatures
 from sjtu_tpmshx.solvers.tpms_calc import geometry as tpms_geometry
@@ -74,19 +75,23 @@ def dP_fracs(case, topo, l, t, s, Lx, arrangement="cross", height=None):
     height: 矩形迎风时高(z)向尺寸 [m]; None → 方形 (s_z=s, 现状/UI 默认)。"""
     sz = s if height is None else height          # z(高)向跨度
     geo = tpms_geometry(topo, l, t, K_STEEL, N=GEOM_N); EPS_A = geo["epsilon_A"]
-    pA = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h)
-    pB = fluid_props(case.cold_fluid, case.T_in_c, case.P_in_c)
+    with range_context(side='A', stage='design-dp-inlet', layout='scalar'):
+        pA = fluid_props(case.hot_fluid, case.T_in_h, case.P_in_h)
+    with range_context(side='B', stage='design-dp-inlet', layout='scalar'):
+        pB = fluid_props(case.cold_fluid, case.T_in_c, case.P_in_c)
     # 热侧 A 沿 +x: 迎风面 = y×z = s×sz, 流程 Lx
     A_h = EPS_A * s * sz
-    dP_h = _dp_one(case.hot_fluid, topo, l, t, EPS_A, case.mdot_h, A_h,
-                   case.T_in_h, case.P_in_h, pA, Lx)
+    with range_context(side='A', stage='design-dp-inlet', layout='scalar'):
+        dP_h = _dp_one(case.hot_fluid, topo, l, t, EPS_A, case.mdot_h, A_h,
+                       case.T_in_h, case.P_in_h, pA, Lx)
     # 冷侧 B: 叉流 +y 迎风 = x×z = Lx×sz, 流程 s; 逆流 −x 迎风 = y×z = s×sz, 流程 Lx
     if arrangement == "cross":
         A_c, L_c = EPS_A * Lx * sz, s
     else:
         A_c, L_c = EPS_A * s * sz, Lx
-    dP_c = _dp_one(case.cold_fluid, topo, l, t, EPS_A, case.mdot_c, A_c,
-                   case.T_in_c, case.P_in_c, pB, L_c)
+    with range_context(side='B', stage='design-dp-inlet', layout='scalar'):
+        dP_c = _dp_one(case.cold_fluid, topo, l, t, EPS_A, case.mdot_c, A_c,
+                       case.T_in_c, case.P_in_c, pB, L_c)
     return dP_h / case.P_in_h, dP_c / case.P_in_c
 
 def _cold_outlet(Tb, arrangement):
@@ -116,12 +121,14 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
     # B 迎风首维: cross (+y) = Lx×sz; counter (−x) = s×sz
     span_c1 = Lx if arrangement == "cross" else s
 
-    def _one_pass(Th_eval, Tc_eval, seed):
+    def _one_pass(Th_eval, Tc_eval, seed, stage):
         """在指定取值温 (Th_eval/Tc_eval) 取物性, 解一次 LTNE。seed=(Ta,Tb,Ts) 续解。"""
-        h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
-                                    case.mdot_h, s, sz, Th_eval, case.P_in_h)
-        h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
-                                    case.mdot_c, span_c1, sz, Tc_eval, case.P_in_c)
+        with range_context(side='A', stage=stage, layout='scalar'):
+            h_vA, Re_h, u_h, pA = _hvol(case.hot_fluid, topo, l, t, A0, D_h, EPS_A,
+                                        case.mdot_h, s, sz, Th_eval, case.P_in_h)
+        with range_context(side='B', stage=stage, layout='scalar'):
+            h_vB, Re_c, u_c, pB = _hvol(case.cold_fluid, topo, l, t, A0, D_h, EPS_A,
+                                        case.mdot_c, span_c1, sz, Tc_eval, case.P_in_c)
         ucA = np.full(shp, u_h)
         if arrangement == "cross":
             vcB, ucB = np.full(shp, u_c), z
@@ -148,10 +155,11 @@ def forward(case, topo: str, l: float, t: float, s: float, Lx: float,
         return (Ta, Tb, Ts), Toh, Toc, pA, pB, Re_h, Re_c
 
     fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(
-        case.T_in_h, case.T_in_c, init)
+        case.T_in_h, case.T_in_c, init, 'design-inlet-pass')
     if prop_model == "mean":                       # 第二趟: 均温物性 + warm-start
         Th = 0.5 * (case.T_in_h + T_out_h); Tc = 0.5 * (case.T_in_c + T_out_c)
-        fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(Th, Tc, fld)
+        fld, T_out_h, T_out_c, pA, pB, Re_h, Re_c = _one_pass(
+            Th, Tc, fld, 'design-mean-pass')
     Q_h = case.mdot_h * pA.cp * (case.T_in_h - T_out_h)
     Q_c = case.mdot_c * pB.cp * (T_out_c - case.T_in_c)
     dPh, dPc = dP_fracs(case, topo, l, t, s, Lx, arrangement, height=height)  # 始终入口物性 (保守)

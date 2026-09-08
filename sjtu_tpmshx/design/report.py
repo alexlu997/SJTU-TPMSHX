@@ -20,6 +20,13 @@ def _H_mm(d):
     h = d.height if getattr(d, "height", 0.0) else d.s
     return round(h * 1e3, 2)
 
+def warning_text(d) -> str:
+    """Render final-case notices for the shared UI/CLI/export contract."""
+    return '\n'.join(f"[工况 {pc['case']}] {message}"
+                     for pc in getattr(d, 'percase', [])
+                     for message in pc.get('warnings', []))
+
+
 def summary_rows(results, tags) -> list:
     return [dict(
         构型=cid(d), 拓扑=d.topo, l_mm=d.l, t_mm=d.t, 布置=d.arrangement,
@@ -31,6 +38,7 @@ def summary_rows(results, tags) -> list:
         Re热_max=round(getattr(d, "Re_hot_max", 0.0)),
         Re冷_max=round(getattr(d, "Re_cold_max", 0.0)),
         验证=getattr(d, "validity", ""),
+        警告=warning_text(d),
         备注=d.reason, 标记=",".join(tags.get(id(d), []))) for d in results]
 
 
@@ -43,7 +51,8 @@ def detail_rows(results) -> list:
         冷侧绝对压损_Pa=round(pc["dP_cold_pa"], 1),
         冷侧相对压损_pct=round(pc["dP_cold_frac"] * 100, 3),
         换热量_kW=round(pc["Q_W"] / 1e3, 3),
-        Re热=round(pc["Re_hot"]), Re冷=round(pc["Re_cold"]))
+        Re热=round(pc["Re_hot"]), Re冷=round(pc["Re_cold"]),
+        警告='\n'.join(pc.get('warnings', [])))
         for d in results if d.feasible for pc in d.percase]
 
 

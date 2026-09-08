@@ -122,6 +122,7 @@ def _fill_table(window, feasible, best):
     """把可行件按 V 排序填进 window._qd_table (QTableWidget)。无表则打印。"""
     rows = sorted(feasible, key=lambda d: d.V)
     from sjtu_tpmshx.design.select import pareto_tags
+    from sjtu_tpmshx.design.report import warning_text
     tags = pareto_tags(feasible)
     def _hmm(d):                       # 矩形取固定高, 方形回退 W=s
         h = getattr(d, "height", 0.0) or d.s
@@ -135,6 +136,9 @@ def _fill_table(window, feasible, best):
                       f"dPc={d.dP_cold_max*100:.2f} Re_h={getattr(d,'Re_hot_max',0):.0f} "
                       f"Re_c={getattr(d,'Re_cold_max',0):.0f} "
                       f"{'⚠'+vd if vd else ''} {','.join(tags.get(id(d),[]))}")
+            notices = warning_text(d)
+            if notices:
+                _log.info(notices)
         return
     cols = ["拓扑","l","t","W×H(mm)","Lx(mm)","V(L)","重量(kg)","热侧压损%","冷侧压损%",
             "Re热","Re冷","验证域","标签"]
@@ -144,14 +148,18 @@ def _fill_table(window, feasible, best):
     from PySide6.QtGui import QColor
     for i, d in enumerate(rows):
         vd = getattr(d, "validity", "")
+        notices = warning_text(d)
         vals = [d.topo, f"{d.l:g}", f"{d.t:g}", _hmm(d),
                 f"{d.Lx*1e3:.1f}", f"{d.V*1e3:.3f}", f"{d.weight:.3f}",
                 f"{d.dP_hot_max*100:.2f}", f"{d.dP_cold_max*100:.2f}",
                 f"{getattr(d,'Re_hot_max',0):.0f}", f"{getattr(d,'Re_cold_max',0):.0f}",
-                (vd if vd else "域内"), ",".join(tags.get(id(d), []))]
+                (';'.join(filter(None, (vd, '有警告' if notices else ''))) or "域内"),
+                ",".join(tags.get(id(d), []))]
         for j, v in enumerate(vals):
             it = QTableWidgetItem(str(v))
-            if vd:                      # A+B: 外推/退化 → 整行验证列标红, 提示勿盲信
+            if j == 11 and notices:
+                it.setToolTip(notices)
+            if vd or notices:           # Final-case warnings remain visible with validity.
                 it.setForeground(QColor(200, 0, 0))
             tbl.setItem(i, j, it)
 

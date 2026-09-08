@@ -54,7 +54,8 @@ def run(argv=None) -> int:
                                    prop_model=a.prop_model)
             if ref is not best:
                 results = results + [ref]
-    from .report import write_xlsx, cid          # 双 sheet 写入器 (CLI/UI 共用)
+                best = ref
+    from .report import write_xlsx, cid, warning_text  # CLI/UI 共用
     n_total, n_feas, n_det = write_xlsx(a.out, results)
     print(f"[written] {a.out}  构型 {n_total} (可行 {n_feas}) × 工况 {len(cases)} "
           f"→ 工况明细 {n_det} 行 (sheet: 构型汇总 / 工况明细)")
@@ -62,6 +63,9 @@ def run(argv=None) -> int:
         print(f"best (min-V): {cid(best)}  "
               f"{best.s*1e3:.1f}×{best.s*1e3:.1f}×{best.Lx*1e3:.1f}mm  "
               f"V={best.V*1e3:.3f}L  wt={best.weight:.3f}kg")
+        notices = warning_text(best)
+        if notices:
+            print(notices)
     else:
         print("无可行构型 (全部 >450mm 或 dP 超限)", file=sys.stderr)
     return 0
