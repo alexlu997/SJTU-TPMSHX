@@ -1162,7 +1162,7 @@ class Main_Menu(RunHistoryMixin, DialogsMixin, ZonePanelMixin, OptimizeUIMixin,
 
     _CO2_PRESSURE_HELP = (
         "<br/>For sCO₂, the entire actual local pressure field must remain within "
-        "8–16 MPa; an inlet value in range alone is insufficient. "
+        "7.9–16 MPa; an inlet value in range alone is insufficient. "
         "Allow for the computed pressure variation.")
     _FIELD_HELP = {
         'le_L': (

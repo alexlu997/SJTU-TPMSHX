@@ -58,11 +58,11 @@ def test_sco2_switch_default_and_explicit_pressure_preserved(win, side):
     fluid = getattr(config_from_window(win), f'fluid_{side}')
     assert (fluid.type, fluid.u_mps, fluid.T_in_K, fluid.P_in_Pa) == (
         'sco2', 2., 350., 12e6)
-    assert 'absolute' in pressure.toolTip() and '8–16 MPa' in pressure.toolTip()
+    assert 'absolute' in pressure.toolTip() and '7.9–16 MPa' in pressure.toolTip()
     pressure.setText('11000000')
     assert getattr(config_from_window(win), f'fluid_{side}').P_in_Pa == 11e6
     assert pressure.text() == '11000000'
-    for endpoint in ('8000000', '16000000'):
+    for endpoint in ('7900000', '8000000', '16000000'):
         for previous_type in (0, 2):
             combo.setCurrentIndex(previous_type)
             win._apply_user_preset({

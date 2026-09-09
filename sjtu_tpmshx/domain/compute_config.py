@@ -125,6 +125,7 @@ TPMSType = Literal['Diamond', 'Gyroid']
 RoughMode = Literal['baseline', 'norris_1a', 'bhatti_shah_1b']
 ZoneAxis = Literal['x', 'y', 'grid']
 
+SCO2_P_RANGE_PA = (7.9e6, 16.0e6)
 
 
 # ── dataclasses ──────────────────────────────────────────────────────
@@ -680,9 +681,9 @@ class ComputeConfig:
                 if not 280.0 <= fl.T_in_K <= 700.0:
                     raise ValueError(
                         f"sCO2 fluid {side} temperature must be 280..700 K")
-                if not 8.0e6 <= fl.P_in_Pa <= 16.0e6:
+                if not SCO2_P_RANGE_PA[0] <= fl.P_in_Pa <= SCO2_P_RANGE_PA[1]:
                     raise ValueError(
-                        f"sCO2 fluid {side} pressure must be 8..16 MPa")
+                        f"sCO2 fluid {side} pressure must be 7.9..16 MPa")
             if self.zones.enabled:
                 raise ValueError("sCO2 V2 does not support zones")
             if self.geometry.delta_levelset != 0.0:

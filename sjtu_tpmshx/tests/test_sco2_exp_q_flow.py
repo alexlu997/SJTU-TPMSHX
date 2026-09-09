@@ -164,6 +164,7 @@ def test_fixed_selection_and_run_manifest(monkeypatch):
     df.loc[df.case == 3, "ok_hb"] = False
     df.loc[(df.case == 4) & (df.side == "cold"), "Pin_abs_Pa"] = 17101325.
     df.loc[df.case == 5, "ok_done"] = False
+    df.loc[df.case == 2, "Pout_abs_Pa"] = 7.9e6
     assert runner._valid_case_numbers(df) == [1, 2]
     df.attrs["reference"] = {"version": "synthetic"}
     monkeypatch.setattr(runner, "load_exp", lambda topology: df)
@@ -191,6 +192,19 @@ def test_fixed_selection_and_run_manifest(monkeypatch):
     assert len(calls) == len(result) == 6
     assert result.attrs["expected_cases"] == fixed
     assert set(result["case"]) == {1, 3}  # Failed HB retained; valid case 2 not added.
+
+
+@pytest.mark.parametrize('endpoint', ['Pin_abs_Pa', 'Pout_abs_Pa'])
+def test_reference_pressure_bounds(endpoint):
+    import pandas as pd
+    from sjtu_tpmshx.validation.cases import validate_sco2_exp_q as runner
+
+    df = pd.DataFrame([dict(ok_done=True, ok_hb=True, ok_heat_flow=True,
+                           mdot=.05, Tin_C=100., Tout_C=110.,
+                           Pin_abs_Pa=8e6, Pout_abs_Pa=8e6)] * 6)
+    df[endpoint] = [np.nextafter(7.9e6, -np.inf), 7.9e6, 7.99e6,
+                    8e6, 16e6, np.nextafter(16e6, np.inf)]
+    assert runner._reference_valid(df).tolist() == [False, True, True, True, True, False]
 
 
 @pytest.mark.parametrize("args", [

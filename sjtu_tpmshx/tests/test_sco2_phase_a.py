@@ -107,7 +107,45 @@ def test_compute_sco2_routes_sco2_nu():
 
 
 @pytest.mark.parametrize('T,P', [(279.9, 8e6), (700.1, 8e6),
-                                  (300.0, 7.99e6), (300.0, 16.01e6)])
+                                  (300.0, np.nextafter(7.9e6, -np.inf)),
+                                  (300.0, np.nextafter(16e6, np.inf))])
 def test_sco2_v1_property_envelope(T, P):
     with pytest.raises(ValueError, match='sCO2 V1'):
         fluid_props.get('sco2').rho(T, P)
+
+
+@pytest.mark.parametrize('pressure', [7.9e6, 7.99e6, 8e6, 12e6, 16e6])
+def test_sco2_pressure_domain_matches_direct_eos(pressure):
+    from CoolProp.CoolProp import PropsSI
+
+    model = fluid_props.get('sco2')
+    temperature = np.array([310., 360.])
+    for name, key in [('rho', 'D'), ('cp', 'C'), ('mu', 'V'),
+                      ('k', 'L'), ('enthalpy', 'H')]:
+        prop = getattr(model, name)
+        expected = PropsSI(key, 'T', temperature, 'P', pressure, 'CO2')
+        np.testing.assert_array_equal(prop(temperature, pressure), expected)
+        assert prop(360., pressure) == expected[1]
+
+
+@pytest.mark.parametrize('nz', [1, 2])
+@pytest.mark.parametrize('side', ['A', 'B'])
+@pytest.mark.parametrize('other_fluid', ['air', 'water', 'sco2'])
+def test_sco2_config_pressure_bounds(nz, side, other_fluid):
+    from sjtu_tpmshx.domain.compute_config import ComputeConfig, FluidConfig
+
+    cfg = ComputeConfig()
+    cfg.solver.Nz = nz
+    cfg.geometry.Lz_m = .042
+    cfg.fluid_A = FluidConfig(type=other_fluid, T_in_K=330.,
+                             P_in_Pa=8e6 if other_fluid == 'sco2' else 2e5)
+    cfg.fluid_B = FluidConfig(**vars(cfg.fluid_A))
+    fluid = getattr(cfg, 'fluid_' + side)
+    fluid.type = 'sco2'
+    for pressure in (7.9e6, 8e6, 12e6, 16e6):
+        fluid.P_in_Pa = pressure
+        cfg.validate()
+    for pressure in (np.nextafter(7.9e6, -np.inf), np.nextafter(16e6, np.inf)):
+        fluid.P_in_Pa = pressure
+        with pytest.raises(ValueError, match='sCO2 fluid ' + side + ' pressure'):
+            cfg.validate()

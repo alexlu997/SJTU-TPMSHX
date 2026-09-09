@@ -31,6 +31,7 @@ from sjtu_tpmshx.domain.compute_config import (
     SolverConfig,
 )
 from sjtu_tpmshx.solvers import fluid_props
+from sjtu_tpmshx.solvers.sco2_props import P_RANGE_PA
 from sjtu_tpmshx.solvers.tpms_props import geometry as tpms_geometry
 from sjtu_tpmshx.validation.sco2_exp.load_sco2_exp import load_exp
 from sjtu_tpmshx.validation.harness._provenance import _git_sha, _iso_now
@@ -76,8 +77,8 @@ def _reference_valid(df: pd.DataFrame) -> pd.Series:
         & (df["mdot"] > 0)
         & (df["Tin_C"] + 273.15).between(280.0, 700.0)
         & (df["Tout_C"] + 273.15).between(280.0, 700.0)
-        & df["Pin_abs_Pa"].between(8.0e6, 16.0e6)
-        & df["Pout_abs_Pa"].between(8.0e6, 16.0e6)
+        & df["Pin_abs_Pa"].between(*P_RANGE_PA)
+        & df["Pout_abs_Pa"].between(*P_RANGE_PA)
     )
 
 
@@ -429,7 +430,7 @@ def main() -> int:
         "selection": ("fixed expected_cases from prior metadata; no quality-based reselection"
                       if fixed_cases is not None else
                       "all-valid: ok_done & ok_hb & ok_heat_flow, both sides Tin/Tout 280..700 K "
-                      "and absolute Pin/Pout 8..16 MPa; no ok_dp/ok_dT exclusion"
+                      "and absolute Pin/Pout 7.9..16 MPa; no ok_dp/ok_dT exclusion"
                       if args.all_valid else "case/smoke diagnostic"),
         "case_manifest": str(args.case_manifest) if args.case_manifest is not None else None,
         "Q_definition": "Qref=0.5*(abs(Qhot)+abs(Qcold)); 2D Q and mdot * 0.042 m",

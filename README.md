@@ -453,7 +453,7 @@ This applies only to the D/G-7-6 sCO2 whole-exchanger experiment in the
 are retained even if new reference quality checks fail; new qualifying cases
 are not added. Acceptance requires both sides passing `ok_done`, recomputed
 `ok_hb`, positive finite signed heat duty and mass flow, inlet/outlet temperature
-280–700 K and absolute inlet/outlet pressure 8–16 MPa. Old and new heat-balance
+280–700 K and absolute inlet/outlet pressure 7.9–16 MPa. Old and new heat-balance
 flags are reported; there is no `ok_dp` or `ok_dT` exclusion.
 Each selected dimension/topology must contain every planned
 case exactly once, with finite positive Q values and all existing numerical
