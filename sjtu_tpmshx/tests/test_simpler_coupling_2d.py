@@ -4,7 +4,7 @@ Covers the spec requirements:
 1. `coupling` parameter validation (default / explicit / invalid).
 2. Pseudo-velocity kernel coefficient parity with the sweep kernels:
    - d_u/d_v pointwise parity on a zero-flow frozen state (GS == Jacobi there,
-     so the comparison is exact; exercises diffusion + Darcy + wall penalty).
+     so the comparison is exact; exercises diffusion + Darcy + wall flux).
    - single-cell hand-assembled û/v̂ spot check on a NONZERO frozen state
      (exercises the convective / SOU / variable-ρμ terms the zero-flow
      state cannot).
@@ -21,7 +21,7 @@ from sjtu_tpmshx.solvers.simple_solver import (
     SIMPLESolver,
     _sweep_u_jit_df, _sweep_v_jit_df,
     _pseudo_u_jit_df, _pseudo_v_jit_df,
-    _porous_src_df, _umag_u, _sou_corr_u_x, _sou_corr_u_y, _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD,
+    _porous_src_df, _umag_u, _sou_corr_u_x, _sou_corr_u_y,
 )
 
 
@@ -78,12 +78,12 @@ def test_d_coefficient_parity_zero_flow():
     d_sweep_v = np.zeros_like(s.d_v); d_pseudo_v = np.zeros_like(s.d_v)
 
     _sweep_u_jit_df(u.copy(), v.copy(), P, d_sweep_u,
-                    s.inlet_frac, s.outlet_frac,
+                    s.outlet_u_frac,
                     Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
                     *_K2d_pair(s), s.mu_field, s.eps_field, 1.0, 1, 0.0)
     uhat = u.copy()
     _pseudo_u_jit_df(u, v, uhat, d_pseudo_u,
-                     s.inlet_frac, s.outlet_frac,
+                     s.outlet_u_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
                      *_K2d_pair(s), s.mu_field, s.eps_field, 0.0)
     np.testing.assert_allclose(d_pseudo_u, d_sweep_u, rtol=1e-12, atol=0.0)
@@ -115,15 +115,15 @@ def _expected_uhat_cell(s, u, v, i, j):
     Dn0 = mu_e * dxi / dyj
     uE = u[i + 1, j] if i + 1 < Nx else 0.0
     uW = u[i - 1, j] if i > 1 else 0.0
-    uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+    uN = u[i, j + 1] if j < Ny - 1 else 0.0
     uS = u[i, j - 1] if j > 0 else 0.0
     De = Dw = De0
-    Dn = Dn0 if j < Ny - 1 else 0.0
-    Ds = Dn0 if j > 0 else 0.0
+    Dn = Dn0 if j < Ny - 1 else 2.0 * Dn0 * (1.0 - s.outlet_u_frac[i])
+    Ds = Dn0 if j > 0 else 2.0 * Dn0
     ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
     uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
     il, ir = max(i - 1, 0), min(i, Nx - 1)
-    vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+    vn = 0.5 * (v[il, j + 1] + v[ir, j + 1])
     vs = 0.5 * (v[il, j] + v[ir, j])
     rho_loc = 0.5 * (s.rho_field[il_r, j] + s.rho_field[ir_r, j])
     mu_loc = 0.5 * (s.mu_field[il_r, j] + s.mu_field[ir_r, j])
@@ -133,15 +133,6 @@ def _expected_uhat_cell(s, u, v, i, j):
     aN = Dn + max(-Fn, 0.0); aS = Ds + max(Fs, 0.0)
     umag = _umag_u(u, v, i, j, Nx, Ny)
     Sp = _porous_src_df(umag, s._K_arr[j], s._cF_arr[j], mu_loc, rho_loc) * vol
-    aP_nat = aE + aW + aN + aS
-    wall_out = 1.0 - 0.5 * (s.outlet_frac[il_r] + s.outlet_frac[ir_r])
-    if wall_out > 0.01 and j >= Ny - 8:
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (Ny - j - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (s.inlet_frac[il_r] + s.inlet_frac[ir_r])
-    if wall_in > 0.01 and j < 8:
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * j) * aP_nat
     sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
            + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
     aP0 = aE + aW + aN + aS + Sp
@@ -160,7 +151,7 @@ def test_pseudo_u_spot_check_nonzero_flow():
     uhat = u.copy()
     d_u = np.zeros_like(s.d_u)
     _pseudo_u_jit_df(u, v, uhat, d_u,
-                     s.inlet_frac, s.outlet_frac,
+                     s.outlet_u_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
                      *_K2d_pair(s), s.mu_field, s.eps_field, 0.0)
     for (i, j) in [(3, 5), (6, 12), (Nx - 2, Ny - 10)]:
@@ -178,7 +169,7 @@ def test_pseudo_boundary_faces_carry_bcs():
     v = 4.0 + 0.1 * rng.standard_normal((Nx, Ny + 1))
     uhat = u.copy(); vhat = v.copy()
     d_u = np.zeros_like(s.d_u); d_v = np.zeros_like(s.d_v)
-    _pseudo_u_jit_df(u, v, uhat, d_u, s.inlet_frac, s.outlet_frac,
+    _pseudo_u_jit_df(u, v, uhat, d_u, s.outlet_u_frac,
                      Nx, Ny, s.dx_arr, s.dy_arr, s.rho_field, s._mu_eff_field,
                      *_K2d_pair(s), s.mu_field, s.eps_field, 0.0)
     _pseudo_v_jit_df(u, v, uhat, vhat, d_v, s.inlet_frac, s.v_inlet_field,

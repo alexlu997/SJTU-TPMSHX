@@ -50,7 +50,7 @@ def test_fractional_outlet_support_and_local_continuity(stage):
                       eps=.6, fluid_type='incompressible')
     f = np.tile(np.array([.2, .8, 0.])[:, None], (1, 3))
     s.apply_outlet_taper()
-    s.outlet_frac = f
+    s.set_ports(s.inlet_rect, (.008, .018, 0., .03))
     np.testing.assert_array_equal(s.outlet_mask_ij, f > 0)
     np.testing.assert_allclose(s.outlet_coeff, f * _build_outlet_frac_taper(3, 3))
     s._pp_sparsity = _build_pp_sparsity_3d(3, 2, 3, s.outlet_mask_ij)
@@ -67,12 +67,11 @@ def test_fractional_outlet_support_and_local_continuity(stage):
         sweep = _sweep_v_jit_df_3d if stage == 'serial' else _sweep_v_jit_df_3d_parallel
         sweep(s.u, s.v, s.w, s.P, s.d_v, s.v_inlet_field, 3, 2, 3,
               s.dx, s.dy, s.dz, s.rho_field, s.eps_field, s._mu_eff_field,
-              s.mu_field, np.ones((2, 3)), np.ones((2, 3)), s.outlet_coeff,
-              s.inlet_frac, .5, 0, 0, 1, s.outlet_mask_ij)
+              s.mu_field, np.ones((2, 3)), np.ones((2, 3)), .5, 0, 0, 1, s.outlet_mask_ij)
     # South face rho*eps=1.4, north=1.6; f must not rescale the closed flux.
     np.testing.assert_allclose(s.v[:, -1, :][f > 0], 2. * 1.4 / 1.6)
     np.testing.assert_array_equal(s.v[:, -1, :][f == 0], 0.)
-    s.outlet_frac = np.ones((3, 3))
+    s.set_ports(s.inlet_rect, (0., .03, 0., .03))
     assert s._pp_sparsity is None
 
 

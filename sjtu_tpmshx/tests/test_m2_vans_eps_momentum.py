@@ -54,7 +54,7 @@ def _frozen_sweep_pair(eps_field_a, eps_field_b, s):
     for eps_f in (eps_field_a, eps_field_b):
         u = u0.copy(); v = v0.copy(); P = P0.copy()
         d_u = np.zeros_like(s.d_u); d_v = np.zeros_like(s.d_v)
-        _sweep_u_jit_df(u, v, P, d_u, s.inlet_frac, s.outlet_frac,
+        _sweep_u_jit_df(u, v, P, d_u, s.outlet_u_frac,
                         s.Nx, s.Ny, s.dx_arr, s.dy_arr,
                         s.rho_field, s._mu_eff_field,
                         K2d, cF2d, s.mu_field, eps_f, 0.7, 1, 0.0)

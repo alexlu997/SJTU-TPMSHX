@@ -79,8 +79,9 @@ def _water_air_cfg(*, tpms="Diamond", water_u=0.15, air_u=20.0,
 
 def test_water_hx_velocity_window_is_explicit():
     _water_air_cfg().validate()
-    with pytest.raises(ValueError, match="active side A.*0.1<=u"):
-        _water_air_cfg(water_u=0.09).validate()
+    _water_air_cfg(water_u=0.09).validate()
+    with pytest.raises(ValueError, match="active side A.*0.0139648<=u"):
+        _water_air_cfg(water_u=0.013).validate()
     with pytest.raises(ValueError, match="active side A.*0.254055"):
         _water_air_cfg(water_u=0.26).validate()
     with pytest.raises(ValueError, match="active side B.*22.7599"):
@@ -99,10 +100,47 @@ def test_sco2_hx_velocity_window_is_explicit(topology, lower, upper):
         (lower, upper))
     correction_scale(topology, "sco2", 7.0, 0.6,
                      0.5 * (lower + upper))
-    with pytest.raises(ValueError, match="sco2 HX.*requires"):
-        correction_scale(topology, "sco2", 7.0, 0.6, lower - 0.01)
+    correction_scale(topology, "sco2", 7.0, 0.6, lower - 0.01)
     with pytest.raises(ValueError, match="sco2 HX.*requires"):
         correction_scale(topology, "sco2", 7.0, 0.6, upper + 0.01)
+
+
+@pytest.mark.parametrize("fluid,topology,lo,hi", [
+    ("water", "Diamond", 0.013964829878811822, 0.25405479940574704),
+    ("water", "Gyroid", 0.01623408984155984, 0.22587576822423192),
+    ("air", "Diamond", 3.8832357133212434, 22.759887982116293),
+    ("air", "Gyroid", 3.912822900405603, 24.546710397710296),
+    ("sco2", "Diamond", 0.4349250602441561, 2.53960962894522),
+    ("sco2", "Gyroid", 0.3814083098626136, 2.470456518760552),
+])
+def test_hx_application_window_retains_calibration_and_warns(fluid, topology, lo, hi):
+    from sjtu_tpmshx.domain.run_warnings import (
+        range_context, warning_scope, warning_messages,
+        cache_warning_records, merge_warnings)
+
+    original = hx_velocity_bounds(fluid, topology)
+    assert original[0] > lo
+    cached = {}
+    with cache_warning_records(cached):
+        K, cF, meta = apply_correction(topology, fluid, 7, .6, 2., 3., lo)
+    assert K == 2. and cF == 3. * meta["scale_F"]
+    assert meta["calibration_velocity_window_mps"] == dict(zip(("min", "max"), original))
+    assert meta["velocity_window_mps"] == {"min": lo, "max": hi}
+    assert meta["inlet_u_mps"] == lo and meta["extrapolated"] is True
+    assert "measured combinations" in meta["application_scope"]
+    for side in ("A", "B"):
+        records = {}
+        with warning_scope(records), range_context(side=side, stage="df-application"):
+            merge_warnings(records, [cached], bind_context=True)
+        notice, = warning_messages(records)
+        assert f"side={side}" in notice and fluid in notice and topology in notice
+        assert str(lo) in notice and str(original[0]) in notice
+        assert "approved application" in notice
+    assert hx_velocity_bounds(fluid, topology) == original
+    correction_scale(topology, fluid, 7., .6, hi)
+    for outside in (lo - 1e-6, hi + 1e-6):
+        with pytest.raises(ValueError, match="HX.*requires"):
+            correction_scale(topology, fluid, 7., .6, outside)
 
 
 def test_water_hx_requires_matching_domain_but_allows_local_ports():
@@ -352,3 +390,83 @@ def test_matching_hx_air_and_water_pair_use_separate_frozen_scales():
     assert float(np.asarray(wsf)) == pytest.approx(4.892779870412083)
     assert float(np.asarray(asf)) == pytest.approx(1.8024228153853061)
     assert campaign_w == campaign_a == "water-air-hx-7-6"
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+@pytest.mark.parametrize('fluid_A', ['water', 'sco2'])
+def test_application_coefficients_precede_real_seed_and_solver_setup(monkeypatch, dim, fluid_A):
+    from sjtu_tpmshx.pipelines import stages_2d, stages_3d, run_stack_3d_stages
+    from sjtu_tpmshx.solvers import fluid_props
+    from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
+    from sjtu_tpmshx.domain.run_warnings import range_context, warning_scope, warning_messages
+
+    cfg = ComputeConfig(
+        fluid_A=FluidConfig(type=fluid_A, u_mps=.02 if fluid_A == 'water' else .45,
+                            T_in_K=300. if fluid_A == 'water' else 350.,
+                            P_in_Pa=150000. if fluid_A == 'water' else 1e7),
+        fluid_B=FluidConfig(type='air', u_mps=4., T_in_K=400., P_in_Pa=150000.),
+        geometry=GeometryConfig(tpms='Diamond', L_cell_mm=7., t_wall_mm=.6,
+                                L_dom_m=.182, H_dom_m=.042, Lz_m=.042 if dim == 3 else None),
+        solver=SolverConfig(Nx=6, Ny=4, Nz=3 if dim == 3 else 1),
+        bc_A=PartialBCConfig(dir=4 if dim == 3 else 2, in_ctr=.091, in_w=.091,
+                            out_ctr=.091, out_w=.091),
+        bc_B=PartialBCConfig(dir=5 if dim == 3 else 3, in_ctr=.091, in_w=.091,
+                            out_ctr=.091, out_w=.091),
+        df_mode='experimental')
+    if fluid_A == 'water':
+        # The approved low-Re research use is explicit and keeps its Nu notice.
+        cfg.extrap.allow = True
+    cfg.validate()
+    solvers = []
+    with warning_scope({}) as warnings:
+        if dim == 2:
+            parsed = stages_2d._parse_inputs_cfg(cfg)
+            fields = stages_2d._build_fields_cfg(parsed)
+
+            def solve(s, **kwargs):
+                # Distinct interior values expose any post-solve attenuation.
+                s.u[1:-1] = .3
+                s.v[:] = .7
+                return True, 1
+
+            monkeypatch.setattr(SIMPLESolver, 'solve', solve)
+            for side, fc in (('A', cfg.fluid_A), ('B', cfg.fluid_B)):
+                model = fluid_props.get(fc.type)
+                with range_context(side=side, stage='df-application'):
+                    uc, vc, s = fields['_run_simple'](
+                        parsed['cfg' + side], model.rho(fc.T_in_K, fc.P_in_Pa),
+                        model.mu(fc.T_in_K, fc.P_in_Pa), fc.T_in_K, fc.u_mps, side,
+                        P_in_abs=fc.P_in_Pa, fluid_type=fluid_props.flow_model(fc.type),
+                        fluid_name=fc.type)
+                solvers.append(s)
+                np.testing.assert_allclose(abs(vc), .7)
+                np.testing.assert_allclose(uc, .5 * (s.u[:-1] + s.u[1:]))
+        else:
+            monkeypatch.setattr(run_stack_3d_stages, '_run_two_simple_parallel', lambda *a, **kw: None)
+            parsed = stages_3d._parse_inputs_3d_cfg(cfg)
+            problem = run_stack_3d_stages._build_3d_problem(parsed)
+            solvers = [problem.sA, problem.sB]
+
+    for s, fc in zip(solvers, (cfg.fluid_A, cfg.fluid_B)):
+        meta = s._df_metadata
+        base_K, base_cF = _base('Diamond', 7., .6)
+        _, sf, _, _ = correction_scale('Diamond', fc.type, 7., .6, fc.u_mps)
+        np.testing.assert_allclose(s._K_arr if dim == 2 else s.K_arr, base_K, rtol=1e-13)
+        np.testing.assert_allclose(s._cF_arr if dim == 2 else s.cF_arr, base_cF * sf, rtol=1e-13)
+        assert meta['extrapolated']
+        assert meta['calibration_velocity_window_mps']['min'] > fc.u_mps
+        if fc.type == 'air':
+            model = fluid_props.get('air')
+            # Keep each pipeline's existing inlet-density convention.
+            rho_seed = (fc.P_in_Pa / (287.05 * fc.T_in_K) if dim == 2
+                        else model.rho(fc.T_in_K, fc.P_in_Pa))
+            G = rho_seed * fc.u_mps
+            C = model.mu(fc.T_in_K, fc.P_in_Pa) * G / base_K + base_cF * float(sf) * G**2
+            expected = np.sqrt(fc.P_in_Pa**2 - 2. * 287.05 * fc.T_in_K * C * .042)
+            assert s.P_ref_abs == pytest.approx(expected, rel=1e-13)
+    messages = list(warning_messages(warnings))
+    if fluid_A == 'water':
+        assert any('water Nu window' in message for message in messages)
+        assert parsed['extrap_reasons'] == []  # Nu notices keep their own route.
+    for side in ('A', 'B'):
+        assert any('[D-F extrap]' in msg and f'side={side}' in msg for msg in messages)

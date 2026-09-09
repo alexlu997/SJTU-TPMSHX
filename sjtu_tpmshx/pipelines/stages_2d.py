@@ -746,10 +746,9 @@ def _build_fields_cfg(cfg: dict[str, Any], *,
             # fix (judge the FINAL solve per side).
             simple_warnings.pop(label, None)
 
-        # Extract cell-centre velocities (wall-masked for energy solver)
-        u_m, v_m = s.get_wall_masked_velocity()
-        main_cc = 0.5 * (v_m[:, :-1] + v_m[:, 1:])    # main flow (v in SIMPLE)
-        cross_cc = 0.5 * (u_m[:-1, :] + u_m[1:, :])   # cross flow (u in SIMPLE)
+        # Use the solved field: wall fluxes already impose no-slip at the housing.
+        main_cc = 0.5 * (s.v[:, :-1] + s.v[:, 1:])    # main flow (v in SIMPLE)
+        cross_cc = 0.5 * (s.u[:-1, :] + s.u[1:, :])   # cross flow (u in SIMPLE)
         if is_x:
             # SIMPLE (perp=Ny, flow=Nx) → real (Nx, Ny)
             uc_real = main_cc.T     # main flow → x

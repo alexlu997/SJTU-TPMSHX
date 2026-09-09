@@ -3,8 +3,8 @@
 `P_ref_abs` is the OUTLET absolute pressure (ledger C8): the realized inlet
 absolute pressure is P_ref_abs + dP_solved. Both pipelines seed the anchor
 from the 1D compressible Forchheimer closed form, which only ESTIMATES the
-drag — so with shooting OFF the realized inlet misses the user-specified
-P_in by O(Δp_est − Δp_solved) (case 16: −5.2%). With the knob ON the outer
+drag. The 3D correction test imposes a known estimate bias, rather than
+depending on a particular wall model to produce one. With the knob ON the outer
 loop reseeds from the MEASURED drag via the P² update
 
     P_out²_new = P_in² − (realized_prev² − P_ref_prev²)
@@ -75,25 +75,27 @@ _FULL_B_3D = dict(dir=3, in_ctr=0.021, in_w=0.042, out_ctr=0.021, out_w=0.042,
 
 @pytest.fixture(scope="module")
 def _res3d_pair():
-    """One small high-Δp air-air 3D case, solved with shooting OFF then ON.
+    """Real solves with a known 2% low pressure estimate on side A.
 
-    u_A raised from the golden 10 → 16 m/s so the legacy seed-vs-solved
-    mismatch is far above the assertion tolerance (teeth: a dead knob can
-    not pass). Not higher: the 1D pre-solve seed's P² depletion is
-    NON-linear in u — at u=25 the ESTIMATE already chokes (2RT·C·L ≥ P_in²)
-    and the envelope guard correctly raises before any solve. u=16 keeps
-    the estimated Δp/P_in ≈ 0.28, safely inside. Grid 15³ → 12³ for runtime.
-
-    Fluid B is deliberately made BENIGN (full-face, u_B 20 → 5): the golden
-    partial-B point runs Δp_B/P_inB ≈ 0.53 at ATMOSPHERIC inlet pressure —
-    at that point no steady solution realizes the spec inlet pressure, which
-    shooting correctly detects (see test_3d_shooting_raises_on_true_choke).
-    Here we want both sides to LAND.
+    The no-slip wall model makes the unperturbed estimate too accurate to
+    distinguish a dead shooting knob. Bias only the estimated seeds; leave
+    the measured-drag shooting update and every acceptance threshold intact.
     """
+    from sjtu_tpmshx.pipelines import run_stack_3d_stages as stages
+
+    original_seed = stages._seed_p_ref
+
+    def biased_estimate(*args, **kwargs):
+        value = original_seed(*args, **kwargs)
+        context = kwargs['context']
+        return .98 * value if context.startswith('fluid A ') and 'shooting' not in context else value
+
     base = dict(Nx=12, Ny=12, Nz=12, u_A=16.0, u_B=5.0,
                 fluid_B_cfg=dict(_FULL_B_3D))
-    r_off = _run_3d_stack(_cfg3d_air_air(**base))
-    r_on = _run_3d_stack(_cfg3d_air_air(**base, p_in_shooting=True))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(stages, '_seed_p_ref', biased_estimate)
+        r_off = _run_3d_stack(_cfg3d_air_air(**base))
+        r_on = _run_3d_stack(_cfg3d_air_air(**base, p_in_shooting=True))
     return r_off, r_on
 
 
@@ -104,7 +106,7 @@ def test_3d_shooting_lands_on_spec(_res3d_pair):
     # OFF: the legacy bias must be visible (this is what C8 is about) —
     # otherwise the ON assertion below has no teeth at this operating point.
     assert abs(resid_off) > 5e-3, (
-        f"operating point too soft: legacy resid {resid_off:.2%} — raise u_A")
+        f"controlled estimate bias not visible: legacy resid {resid_off:.2%}")
     # ON: realized inlet lands on the specified P_in.
     assert abs(resid_on) < 2e-3, (
         f"shooting did not land: realized {r_on['P_in_realized_A']:.0f} vs "
@@ -120,17 +122,18 @@ def test_3d_diagnostic_keys_present_and_finite(_res3d_pair):
         assert np.isfinite(r_off[k]), f"{k} not finite on an air-air run"
 
 
-def test_3d_shooting_raises_on_true_choke_legacy_sails_past():
-    """Shooting turns a hidden off-envelope operating point into a LOUD
-    ChokedFlowError (repo invariant: never return a number for a choked
-    state). The golden air-air geometry at 12³ has a partial-B side whose
-    MEASURED drag exceeds the atmospheric spec inlet pressure — the blind
-    1D reseed (estimate too low: it knows nothing of the partial-face
-    constriction) sails past it every outer iteration; the measured-drag
-    reseed hits the same `_seed_p_ref` envelope gate and raises. This is a
-    capability, not a regression — lock it."""
+def test_3d_shooting_rejects_overloaded_measured_drag(monkeypatch):
+    """A known overloading pressure measurement must reach the choke guard.
+
+    The original partial-port point no longer necessarily chokes with the
+    no-slip walls. Inject the measurement, not a new physical operating point;
+    keep the real shooting P² update and its original envelope check.
+    """
     from sjtu_tpmshx.solvers.envelope import ChokedFlowError
+    from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
     cfg = _cfg3d_air_air(Nx=12, Ny=12, Nz=12, p_in_shooting=True)
+    monkeypatch.setattr(SIMPLESolver3D, 'extract_dP_face_extrap',
+                        staticmethod(lambda solver: 2.0 * cfg['P_inA']))
     with pytest.raises(ChokedFlowError, match='shooting reseed'):
         _run_3d_stack(cfg)
 

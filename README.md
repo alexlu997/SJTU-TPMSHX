@@ -139,6 +139,15 @@
 | **V&V** | ASME V&V 20 Standard Tier — MMS code verification (`p_obs ≥ 2.07`), GCI grid convergence, tolerance sweep |
 | **GUI** | PySide6 + pyvistaqt 3D viewer · 3-workspace session persistence · glassmorphism dark theme |
 
+All non-opening exterior faces are stationary no-slip walls. Momentum uses
+half-cell tangential viscous fluxes, including both z walls in 3D, with no
+extra volume penalty or post-solve velocity attenuation. Rectangular openings
+intersect the actual primary and staggered grids directly; geometric support
+is separate from the inlet taper. A single-layer 3D momentum solve retains
+its z walls, while 2D has no finite-thickness z-wall term. Dated validation and
+performance numbers above predate this wall change; affected production
+acceptance is pending.
+
 Water use is currently limited to research and design comparisons for existing
 low-temperature, near-atmospheric-pressure cases, retaining the current property
 formulas. R&D acceptance targets are **RMSRE ≤ 10% for both whole-exchanger Q and
@@ -156,7 +165,11 @@ case members, reporting RMSRE and signed bias against the 10% RMSRE R&D target.
 Underprediction alone does not establish failure of the core resistance model,
 and meeting this proxy target does not demonstrate 10% core pressure-drop accuracy.
 Preserve the measurements without estimating or subtracting piping losses,
-adding offsets, or refitting parameters to pass.
+adding offsets, or refitting parameters to pass. For the new fixed Shanghai
+16-case wall/experimental-D-F run specifically, the approved water proxy gate
+is RMSRE ≤25% and whole-exchanger Q remains ≤10%; this scoped exception does
+not replace the historical results or general R&D target. The new air-side
+pressure-drop gate is pending a user decision (12% is only a candidate).
 
 ---
 
@@ -171,9 +184,9 @@ adding offsets, or refitting parameters to pass.
 The experiment selector is a data-routing key, not a claim that K/cF differences
 are intrinsic to air, water, or sCO2. The available campaigns use different rigs,
 boundaries, pressure taps, manifolds, flow-area definitions, instruments, and
-reduction paths; their individual contributions are not separated. Air is limited
-to the core-specimen L=6..8 mm, t=0.3..0.5 mm domain. sCO2 is HX-effective only
-for uniform symmetric D/G-7-6 and its measured inlet-velocity windows:
+reduction paths; their individual contributions are not separated. Air's
+core-specimen branch is limited to the L=6..8 mm, t=0.3..0.5 mm domain. sCO2 is HX-effective only
+for uniform symmetric D/G-7-6; its original hot-side calibration/source-audit windows are:
 0.5827..2.5396 m/s (Diamond) or 0.6120..2.4705 m/s (Gyroid). These ranges use
 corrected absolute pressures for the same measured hot-side `ok_dp` members,
 mass flows and experimental flow areas; sF remains frozen at 6.313005350332494
@@ -189,8 +202,8 @@ m/s`, the fixed-K0 water corrections are sF=4.8928 (Diamond, RMSRE 6.84%) and
 4.1989 (Gyroid, 0.93%); they are bounded above by the measured 0.2541/0.2232
 m/s limits. Matching HX-air uses separate sF=1.8024/2.0120 corrections over
 the measured inlet-velocity windows 7.6566..22.7599 / 7.5231..24.5414 m/s.
-The lower-flow water points remain in the report as outside the production
-applicability window, not as bad data. Raw records remain intact; water
+These are the original calibration windows, retained unchanged for fitting
+membership and source audits; lower-flow records remain intact. Raw records remain intact; water
 `G_7_6/工况1` is excluded as negative dP, and `D_7_6/工况10` plus `工况11`
 are both excluded as ambiguous duplicate rows. Custom-port runs use the same
 calibrated porous D-F parameters; their boundary layout was not independently
@@ -199,6 +212,18 @@ so all nine ordered air/water/sCO2 pairs are available when both sides satisfy t
 own geometry, domain, and velocity applicability rules. Combining corrections from
 different campaigns enables a model calculation; it is not joint experimental
 validation of that fluid pair.
+
+Production application windows approved on 2026-09-09 are distinct from those
+calibration windows. With current inlet properties and voxel single-side area,
+they are (Diamond / Gyroid, m/s): water **0.0139648–0.254055 / 0.0162341–0.225876**,
+air **3.88324–22.7599 / 3.91282–24.5467**, sCO2 **0.434925–2.53961 /
+0.381408–2.47046**. K0 and every frozen sF remain unchanged. Going outside the
+original calibration window records the actual inlet speed, both windows,
+side and approved purpose in run warnings and result metadata. Water's much
+lower admitted speeds are approved extrapolation, not new fitted evidence.
+This permission covers the reviewed 7/0.6 mm, 0.182×0.042×0.042 m measured
+combinations and approved port checks; it does not establish an arbitrary
+T/P/mass-flow domain or relax property-state guards.
 
 <br><br>
 

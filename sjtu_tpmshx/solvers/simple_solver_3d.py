@@ -423,28 +423,44 @@ class SIMPLESolver3D:
             self.Nx, self.Nz, n_taper=n_taper, min_frac=min_frac)
         self.outlet_coeff = self.outlet_frac * self._outlet_taper
 
-    # Raw geometry owns BC/PPE support; c=f*g owns momentum wall damping.
+    def set_ports(self, inlet_rect, outlet_rect):
+        """Set physical (xlo, xhi, zlo, zhi) rectangles on this actual grid.
+
+        Array velocities remain the caller's prescribed face averages. Scalar
+        inlets can move only before their mass-flux reference is captured.
+        Primary fractions cannot determine the staggered overlap at an edge.
+        """
+        from .simple_solver import _port_overlap_1d
+        inlet_changed = tuple(inlet_rect) != getattr(self, 'inlet_rect', None)
+        if (inlet_changed and self._scalar_inlet
+                and hasattr(self, '_massflux_target')):
+            raise ValueError('Cannot change scalar inlet after mass-flux capture; '
+                             'create a new solver with a new inlet reference state.')
+        self.inlet_rect, self.outlet_rect = tuple(inlet_rect), tuple(outlet_rect)
+        xi, zi = (_port_overlap_1d(d, *bounds) for d, bounds in
+                  ((self.dx, inlet_rect[:2]), (self.dz, inlet_rect[2:])))
+        xo, zo = (_port_overlap_1d(d, *bounds) for d, bounds in
+                  ((self.dx, outlet_rect[:2]), (self.dz, outlet_rect[2:])))
+        if not (xi.any() and zi.any() and xo.any() and zo.any()):
+            raise ValueError('Inlet / outlet range resolves to zero cells.')
+        self.inlet_frac = np.outer(xi, zi)
+        if inlet_changed and self._scalar_inlet:
+            self.v_inlet_field = self.v_inlet * self.inlet_frac
+            self.v[:, 0, :] = self.v_inlet_field
+        self._outlet_frac = np.outer(xo, zo)
+        self.outlet_u_frac = np.outer(
+            _port_overlap_1d(self.dx, *outlet_rect[:2], staggered=True), zo)
+        self.outlet_w_frac = np.outer(
+            xo, _port_overlap_1d(self.dz, *outlet_rect[2:], staggered=True))
+        self.outlet_coeff = self._outlet_frac * self._outlet_taper
+        self.outlet_mask_ij = self._outlet_frac > 0.0
+        # Changed open cells change Dirichlet pin rows on solver reuse.
+        self._pp_sparsity = None
+
+    # Raw geometry owns BC/PPE support; taper is retained for legacy reporting.
     @property
     def outlet_frac(self):
         return self._outlet_frac
-
-    @outlet_frac.setter
-    def outlet_frac(self, value):
-        arr = np.ascontiguousarray(value, dtype=np.float64)
-        self._outlet_frac = arr
-        self.outlet_coeff = arr * self._outlet_taper
-        self.outlet_mask_ij = arr > 0.0
-        # 2026-07-13 audit: the pp sparsity's `cell_kind` pin set is built from
-        # this mask ONCE at the first solve(). Without invalidation, a caller
-        # that changes the outlet mask AFTER a solve keeps the OLD pin set —
-        # some new wall cells retain a Pp=0 Dirichlet row (never solved) while
-        # `_v_bc_3d`/`_correct_jit_3d` wall their outlet face by the NEW mask:
-        # mass accumulates there with no pressure response. All production
-        # callers set the mask before the first solve (invalidation is then a
-        # no-op); this closes the reuse trap. AMG operator cache is keyed on
-        # the sparsity, so it rebuilds with it.
-        if getattr(self, '_pp_sparsity', None) is not None:
-            self._pp_sparsity = None
 
     @staticmethod
     def extract_dP_weighted(s, *, numerical_taper=False):
@@ -547,7 +563,8 @@ class SIMPLESolver3D:
                  fluid_type='ideal_gas',
                  R_gas=287.05,
                  alpha_rho=0.3,
-                 dx_arr=None, dy_arr=None, dz_arr=None):
+                 dx_arr=None, dy_arr=None, dz_arr=None,
+                 inlet_rect=None, outlet_rect=None):
         self.Lx, self.Ly, self.Lz = Lx, Ly, Lz
         self.Nx, self.Ny, self.Nz = Nx, Ny, Nz
         # E1 (2026-06-09): accept non-uniform cell spacings (wall_refine).
@@ -575,8 +592,10 @@ class SIMPLESolver3D:
         self.mu = float(mu)
         self.eps = float(eps)
         self.T_in = float(T_in)
-        # v_inlet: scalar → uniform (Nx, Nz) field; array → taken as-is
-        if np.ndim(v_inlet) == 0:
+        # Scalar: uniform speed on the physical opening (owned by set_ports).
+        # Array: prescribed face-average velocity, already including open area.
+        self._scalar_inlet = np.ndim(v_inlet) == 0
+        if self._scalar_inlet:
             self.v_inlet = float(v_inlet)
             self.v_inlet_field = np.full((Nx, Nz), float(v_inlet), dtype=np.float64)
         else:
@@ -653,10 +672,11 @@ class SIMPLESolver3D:
         self.d_v = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
         self.d_w = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-        # Geometry defaults to full-face; taper only changes momentum coefficients.
+        # Geometry defaults to full-face; array inlet velocities include area.
         self._outlet_taper = np.ones((Nx, Nz), dtype=np.float64)
-        self.outlet_frac = np.ones((Nx, Nz), dtype=np.float64)  # sets mask
-        self.inlet_frac = np.ones((Nx, Nz), dtype=np.float64)
+        full_face = (0., float(np.sum(self.dx)), 0., float(np.sum(self.dz)))
+        self.set_ports(full_face if inlet_rect is None else inlet_rect,
+                       full_face if outlet_rect is None else outlet_rect)
 
         # Inlet BC seed (may be non-uniform via v_inlet_field)
         self.v[:, 0, :] = self.v_inlet_field
@@ -1057,7 +1077,7 @@ class SIMPLESolver3D:
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_coeff, self.inlet_frac,
+                      self.outlet_u_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
             _sweep_v(self.u, self.v, self.w, self.P, self.d_v,
                       self.v_inlet_field,
@@ -1065,7 +1085,6 @@ class SIMPLESolver3D:
                       self.rho_field, self.eps_field,
                       self._mu_eff_field, self.mu_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_coeff, self.inlet_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps,
                       self.outlet_mask_ij)
             _sweep_w(self.u, self.v, self.w, self.P, self.d_w,
@@ -1073,7 +1092,7 @@ class SIMPLESolver3D:
                       self.rho_field, self._mu_eff_field, self.mu_field,
                       self.eps_field,
                       self.K_arr, self.cF_arr,
-                      self.outlet_coeff, self.inlet_frac,
+                      self.outlet_w_frac,
                       self.alpha_u, n_inner, _use_sou, _use_eps)
 
             # E2 (audit 2026-06-28): force a rebuild on the first inner iter only
@@ -1299,7 +1318,7 @@ class SIMPLESolver3D:
             Nx, Ny, Nz, dx, dy, dz,
             self.rho_field, self._mu_eff_field, self.mu_field,
             self.eps_field, self.K_arr, self.cF_arr,
-            self.outlet_coeff, self.inlet_frac, use_sou, use_eps)
+            self.outlet_u_frac, self.outlet_w_frac, use_sou, use_eps)
         ru, rv, rw = momentum_component_residuals(
             (nu_, nv_, nw_), (du_, dv_, dw_), self._MOM_FLOOR_FRAC)
         rmax = max(ru, rv, rw)
@@ -1340,24 +1359,25 @@ def _warmup_simple_3d():
         K_arr = ones3((Ny, Nz)) * 1e-7
         cF_arr = ones3((Ny, Nz)) * 340.0
         v_inlet = ones3((Nx, Nz))
-        out_frac = ones3((Nx, Nz))
-        in_frac = ones3((Nx, Nz))
+        out_u_frac = ones3((Nx + 1, Nz))
+        out_w_frac = ones3((Nx, Nz + 1))
+        outlet_mask = np.ones((Nx, Nz), dtype=np.bool_)
         alpha_u = 0.5
         n = 1
         # u/w sig: (u,v,w,P,d, Nx,Ny,Nz, dx,dy,dz, rho,mu_eff,mu,eps, K,cF,
-        #           out,in, alpha, n, use_sou, use_eps)  [M2b adds eps+flag]
+        #           staggered outlet fraction, alpha, n, use_sou, use_eps)
         for ku in (_sweep_u_jit_df_3d, _sweep_u_jit_df_3d_parallel):
             ku(u, v, w, P, d_u, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               rho, mu_eff, mu, eps, K_arr, cF_arr, out_u_frac, alpha_u,
                n, 0, 0)
         # v sig inserts v_inlet right after d_v, before Nx,Ny,Nz; eps after rho.
         for kv in (_sweep_v_jit_df_3d, _sweep_v_jit_df_3d_parallel):
             kv(u, v, w, P, d_v, v_inlet, Nx, Ny, Nz, dx, dy, dz,
-               rho, eps, mu_eff, mu, K_arr, cF_arr, out_frac, in_frac,
-               alpha_u, n, 0, 0, out_frac > 0.0)
+               rho, eps, mu_eff, mu, K_arr, cF_arr,
+               alpha_u, n, 0, 0, outlet_mask)
         for kw in (_sweep_w_jit_df_3d, _sweep_w_jit_df_3d_parallel):
             kw(u, v, w, P, d_w, Nx, Ny, Nz, dx, dy, dz,
-               rho, mu_eff, mu, eps, K_arr, cF_arr, out_frac, in_frac, alpha_u,
+               rho, mu_eff, mu, eps, K_arr, cF_arr, out_w_frac, alpha_u,
                n, 0, 0)
         _mass_res_jit_3d(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho)
     except Exception as e:

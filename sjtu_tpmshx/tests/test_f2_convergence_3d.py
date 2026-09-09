@@ -217,9 +217,7 @@ def test_solved_cell_mass_excludes_the_dirichlet_outlet_row():
     from sjtu_tpmshx.solvers._kernels_simple_3d import _mass_res_solved_jit_3d
     s = _make_solver(convergence_mode='f2')
     # Block half the outlet face -> those cells are walls, not Dirichlet pins.
-    frac = np.ones((s.Nx, s.Nz))
-    frac[: s.Nx // 2, :] = 0.0
-    s.outlet_frac = frac                     # property setter rebuilds the mask
+    s.set_ports(s.inlet_rect, (s.Lx / 2, s.Lx, 0., s.Lz))
     s.solve(max_iter=800)
 
     kind = s._pp_sparsity['cell_kind']
@@ -631,9 +629,13 @@ def test_pressure_invalid_after_correction_precedes_density(monkeypatch, backend
 
 @pytest.mark.parametrize('mode_source', ['attribute', 'environment'])
 @pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
-def test_prolongated_pressure_reaches_parent_without_density_clip(monkeypatch, mode_source, bad):
+@pytest.mark.parametrize('field', ['P', 'v_inlet', 'v_outlet'])
+@pytest.mark.parametrize('fluid_type', ['ideal_gas', 'incompressible'])
+def test_prolongated_nonfinite_reaches_parent_without_reset(
+        monkeypatch, mode_source, bad, field, fluid_type):
     from sjtu_tpmshx.solvers import coarse_bootstrap_3d
-    s = _make_solver(Nx=8, Ny=8, Nz=8, convergence_mode='f2', use_coarse_bootstrap=True)
+    s = _make_solver(Nx=8, Ny=8, Nz=8, convergence_mode='f2', use_coarse_bootstrap=True,
+                     fluid_type=fluid_type)
     if mode_source == 'environment':
         del s.convergence_mode
         monkeypatch.setenv('TPMSHX_CONV_MODE', 'f2')
@@ -650,8 +652,9 @@ def test_prolongated_pressure_reaches_parent_without_density_clip(monkeypatch, m
 
     def prolongate(arr, shape):
         result = zoom(arr, shape)
-        if arr is coarse[0].P:
-            result.flat[0] = bad
+        target = coarse[0].P if field == 'P' else coarse[0].v
+        if arr is target:
+            result[0, -1 if field == 'v_outlet' else 0, 0] = bad
         return result
 
     reached = []
@@ -665,10 +668,11 @@ def test_prolongated_pressure_reaches_parent_without_density_clip(monkeypatch, m
     monkeypatch.setattr(coarse_bootstrap_3d, '_trilinear_zoom', prolongate)
     monkeypatch.setattr(s, '_update_density', density)
     result = solve(s, max_iter=1, verbose=False)
-    assert not reached, f'fine density consumed prolongated bad pressure: {reached}'
+    assert not reached, f'fine density consumed prolongated bad {field}: {reached}'
     assert result == (False, 0)
     assert s.exit_reason == 'nonfinite'
-    np.testing.assert_equal(s.P.flat[0], bad)
+    target = s.P if field == 'P' else s.v
+    np.testing.assert_equal(target[0, -1 if field == 'v_outlet' else 0, 0], bad)
     assert s.residuals == []
     assert s._coarse_bootstrap_info == dict(
         applied=True, coarse_iters=1, coarse_converged=True,

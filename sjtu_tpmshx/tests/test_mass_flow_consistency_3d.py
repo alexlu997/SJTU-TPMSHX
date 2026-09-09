@@ -166,8 +166,7 @@ def test_partial_mask_mass_flow_match_inlet_BC():
         P_ref_abs=101325.0,
         fluid_type='incompressible',
     )
-    sol.inlet_frac = in_mask
-    sol.outlet_frac = out_mask
+    sol.set_ports((Lx / 2, Lx, 0., Lz), (0., Lx / 2, 0., Lz))
 
     conv, it = sol.solve(max_iter=2000, tol=1e-6)
     print(f"\n[partial-mask] converged={conv} iters={it}")

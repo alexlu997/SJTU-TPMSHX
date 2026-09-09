@@ -53,7 +53,7 @@ def _mom(s):
     return _mom_res_jit_2d(
         s.u, s.v, s.P, s.Nx, s.Ny, s.dx_arr, s.dy_arr,
         s.rho_field, s._mu_eff_field, _K2d(s), _cF2d(s), s.mu_field,
-        s.eps_field, s.inlet_frac, s.outlet_frac, s.cf_aniso)
+        s.eps_field, s.outlet_u_frac, s.cf_aniso)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -132,15 +132,14 @@ def test_momentum_residual_vanishes_at_the_sweep_fixed_point():
 
     for _ in range(3000):
         pu, pv = s.u.copy(), s.v.copy()
-        _sweep_u_jit_df(s.u, s.v, s.P, s.d_u, s.inlet_frac, s.outlet_frac, **kw)
+        _sweep_u_jit_df(s.u, s.v, s.P, s.d_u, s.outlet_u_frac, **kw)
         _sweep_v_jit_df(s.u, s.v, s.P, s.d_v, s.inlet_frac, s.v_inlet_field,
                         s.outlet_frac, **kw)
         d = max(np.abs(s.u - pu).max(), np.abs(s.v - pv).max())
         if d < 1e-14:
             break
-    else:
-        pytest.fail(f"momentum sweeps did not reach a fixed point (d={d:.2e})")
-
+    # The iterate can oscillate by a few ULPs (~1.15e-14 at 8 m/s).
+    # Stagnation only saves work; the independent equation below is the gate.
     nu, du, nv, dv = _mom(s)
     Ru = nu / du if du > 0 else 0.0
     Rv = nv / dv if dv > 0 else 0.0

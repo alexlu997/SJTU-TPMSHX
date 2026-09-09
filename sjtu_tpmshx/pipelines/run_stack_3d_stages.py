@@ -49,7 +49,7 @@ from sjtu_tpmshx.pipelines.grid_3d import (
 from sjtu_tpmshx.pipelines.stages_3d_helpers import (  # Phase 3: extracted pure helpers
     _stream_axis, _inlet_index, _outlet_index,
     _face_slice, _real_outlet_slice,
-    _build_partial_masks, _solver_velocity_to_real, _solver_staggered_to_real,
+    _build_partial_masks, _port_rectangles, _solver_velocity_to_real, _solver_staggered_to_real,
     _balance_stream_outflow, _build_chi_B_union_extrude,
     _build_chi_B_mass_flux_threshold, _build_chi_B_velocity_threshold,
 )
@@ -807,9 +807,10 @@ def _build_3d_problem(cfg):
     from sjtu_tpmshx.df_surrogate.experimental_correction import (
         apply_correction, cfd_metadata)
     if _df_mode == 'experimental':
-        K_A_arr, cF_A_arr, _df_meta_A = apply_correction(
-            tpms_type, fluid_type_A, Lcell, t_wall, K_A_arr, cF_A_arr,
-            u_mps=abs(float(u_A)))
+        with range_context(side='A', stage='df-application', layout='scalar'):
+            K_A_arr, cF_A_arr, _df_meta_A = apply_correction(
+                tpms_type, fluid_type_A, Lcell, t_wall, K_A_arr, cF_A_arr,
+                u_mps=abs(float(u_A)))
         K_pred = float(np.asarray(K_A_arr).mean())
         cF_pred = float(np.asarray(cF_A_arr).mean())
     else:
@@ -849,12 +850,11 @@ def _build_3d_problem(cfg):
             eps=eps, K_arr=K_A_arr, cF_arr=cF_A_arr,
             P_ref_abs=P_ref_A, fluid_type=solver_fluid_type_A,
             dx_arr=_sdxA, dy_arr=_sdyA, dz_arr=_sdzA,
+            **_port_rectangles(fA, float(np.sum(dcross2))),
         )
     sA._df_metadata = _df_meta_A
     # Phase A/B/C acceleration flags (Phase A on by default; B/C opt-in).
     _apply_accel_flags(sA, cfg)
-    sA.inlet_frac = in_mask_2d
-    sA.outlet_frac = out_mask_2d
     # sCO2 keeps pressure frozen in V1 but rho(T) still changes; retain the
     # measured inlet mass flux when the outer property loop updates rho.
     if fluid_type_A == 'sco2':
@@ -872,7 +872,7 @@ def _build_3d_problem(cfg):
                 sA.mu_field / sA.eps_field, dtype=np.float64)
     if fluid_type_A != 'sco2':
         sA.apply_outlet_taper(n_taper=8, min_frac=0.2)
-    # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
+    # Rectangles set both raw BC support and staggered wall areas.
     # A.solve() deferred — build B first then run both in parallel threads.
 
     # Fluid A type was resolved through the same registry path as side B.
@@ -899,9 +899,10 @@ def _build_3d_problem(cfg):
         K_B_arr = np.full((N_stream_B, N_cross2_B), K_pred_B)
         cF_B_arr = np.full((N_stream_B, N_cross2_B), cF_pred_B)
         if _df_mode == 'experimental':
-            K_B_arr, cF_B_arr, _df_meta_B = apply_correction(
-                tpms_type, fluid_type_B, Lcell, t_wall, K_B_arr, cF_B_arr,
-                u_mps=abs(float(u_B)))
+            with range_context(side='B', stage='df-application', layout='scalar'):
+                K_B_arr, cF_B_arr, _df_meta_B = apply_correction(
+                    tpms_type, fluid_type_B, Lcell, t_wall, K_B_arr, cF_B_arr,
+                    u_mps=abs(float(u_B)))
             K_pred_B = float(np.asarray(K_B_arr).mean())
             cF_pred_B = float(np.asarray(cF_B_arr).mean())
         else:
@@ -935,12 +936,11 @@ def _build_3d_problem(cfg):
                 eps=eps, K_arr=K_B_arr, cF_arr=cF_B_arr,
                 P_ref_abs=P_ref_B, fluid_type=solver_fluid_type_B,
                 dx_arr=_sdxB, dy_arr=_sdyB, dz_arr=_sdzB,
+                **_port_rectangles(fB, float(np.sum(dcross2_B))),
             )
         sB._df_metadata = _df_meta_B
         # Mirror Phase A/B/C flags onto sB (sweep config consistent with sA).
         _apply_accel_flags(sB, cfg)
-        sB.inlet_frac = in_mask_B
-        sB.outlet_frac = out_mask_B
         if fluid_type_B == 'sco2':
             sB._massflux_target = (v_inlet_B * rho_B).copy()
         # Zoned ε for sB.
@@ -955,7 +955,7 @@ def _build_3d_problem(cfg):
                     sB.mu_field / sB.eps_field, dtype=np.float64)
         if fluid_type_B != 'sco2':
             sB.apply_outlet_taper(n_taper=8, min_frac=0.2)
-        # outlet_mask_ij auto-synced by @outlet_frac.setter (commit 44800ba).
+        # Rectangles set both raw BC support and staggered wall areas.
         # sB.solve deferred — dispatched with sA below in parallel threads.
         sB_info = dict(
             axis_map=axis_map_B,
