@@ -42,15 +42,19 @@ from sjtu_tpmshx._version import __version__  # noqa: E402
 
 def _git_commit_hash():
     """Return the running source tree's 7-character commit, or '' without Git."""
+    import os
     import subprocess
 
     root = _PathBoot(__file__).resolve().parent.parent
     if not (root / '.git').exists():
         return ''
+    env = os.environ.copy()
+    for name in ('GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE'):
+        env.pop(name, None)
     try:
         return subprocess.check_output(
             ['git', 'rev-parse', '--verify', 'HEAD'], cwd=root,
-            stderr=subprocess.DEVNULL, text=True,
+            stderr=subprocess.DEVNULL, text=True, env=env,
         ).strip()[:7]
     except (OSError, subprocess.CalledProcessError):
         return ''
