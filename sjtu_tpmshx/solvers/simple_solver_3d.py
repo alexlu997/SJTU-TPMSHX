@@ -480,7 +480,9 @@ class SIMPLESolver3D:
         cell-centre dP is erratic / non-monotone).
 
         Extrapolating P to the faces with a one-sided 2nd-order stencil
-        ``P_face = 1.5·P₀ − 0.5·P₁`` removes that O(h) EXTRACTION term: as an
+        ``P_face = (1+r)·P₀ − r·P₁``, where ``r = dy₀/(dy₀+dy₁)``
+        uses the boundary-to-centre / centre-to-centre distance ratio
+        (uniform grid: ``1.5·P₀ − 0.5·P₁``). This removes that O(h) EXTRACTION term: as an
         operator on a smooth field the functional is 2nd-order (manufactured-field
         order 1.91, ``tests/test_dp_face_extrap_order.py``) and the cell-centre dP
         goes from non-monotone to monotone. NOTE the REAL-field dP convergence
@@ -504,8 +506,10 @@ class SIMPLESolver3D:
             return 0.0
         if s.P.shape[1] < 2:          # need 2 cells to extrapolate
             return SIMPLESolver3D.extract_dP_weighted(s, numerical_taper=numerical_taper)
-        P_in_face = 1.5 * s.P[:, 0, :] - 0.5 * s.P[:, 1, :]
-        P_out_face = 1.5 * s.P[:, -1, :] - 0.5 * s.P[:, -2, :]
+        r_in = s.dy[0] / (s.dy[0] + s.dy[1])
+        r_out = s.dy[-1] / (s.dy[-2] + s.dy[-1])
+        P_in_face = (1.0 + r_in) * s.P[:, 0, :] - r_in * s.P[:, 1, :]
+        P_out_face = (1.0 + r_out) * s.P[:, -1, :] - r_out * s.P[:, -2, :]
         return float(np.average(P_in_face[mI], weights=wI[mI])
                      - np.average(P_out_face[mO], weights=wO[mO]))
 

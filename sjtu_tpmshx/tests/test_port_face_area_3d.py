@@ -101,7 +101,7 @@ def test_pressure_reductions_use_nonuniform_face_area():
     pin = np.array([[10., 20.], [900., 40.]])
     s = SimpleNamespace(P=np.stack((pin, np.zeros_like(pin)), axis=1),
                         inlet_frac=f, outlet_frac=f,
-                        dx=np.array([1., 3.]), dz=np.array([2., 5.]),
+                        dx=np.array([1., 3.]), dy=np.ones(2), dz=np.array([2., 5.]),
                         rho_field=np.ones((2, 2, 2)),
                         v=np.repeat(f[:, None, :], 3, axis=1))
     expected = (10. * .4 + 20. * 4. + 40. * 15.) / (.4 + 4. + 15.)
