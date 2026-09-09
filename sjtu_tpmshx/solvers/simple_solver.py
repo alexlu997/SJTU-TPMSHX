@@ -53,11 +53,8 @@ _log = get_logger(__name__)
 
 # --- moved kernels (openspec split-solver-kernels, 2026-07-03) ----------
 # All numba kernels + pressure-Poisson infra live in _kernels_simple_2d.py
-# (verbatim move). Re-exported here so existing importers keep working
-# (e.g. simple_solver_3d.py imports _WALL_PENALTY_* from this module).
+# Re-exported here for existing kernel importers.
 from ._kernels_simple_2d import (  # noqa: F401
-    _WALL_PENALTY_BASE,
-    _WALL_PENALTY_EFOLD,
     _sou_corr_u_x,
     _sou_corr_u_y,
     _sou_corr_v_x,
@@ -89,12 +86,22 @@ from ._kernels_simple_2d import (  # noqa: F401
 #  Adaptive grid generation
 # ===================================================================
 
-def _port_fractions_1d(widths, lo, hi):
-    """Return physical overlap and the existing four-cell tapered profile."""
+def _port_overlap_1d(widths, lo, hi, *, staggered=False):
+    """Exact interval overlap on primary CVs or CVs between adjacent centres."""
     x_lo_edge = np.concatenate(([0.0], np.cumsum(widths[:-1])))
     x_hi_edge = np.cumsum(widths)
-    raw = np.clip((np.minimum(x_hi_edge, hi) - np.maximum(x_lo_edge, lo)) / widths,
-                  0.0, 1.0)
+    if staggered:
+        centres = x_hi_edge - np.asarray(widths) / 2
+        x_lo_edge = np.r_[0., centres]
+        x_hi_edge = np.r_[centres, x_hi_edge[-1]]
+        widths = x_hi_edge - x_lo_edge
+    return np.clip((np.minimum(x_hi_edge, hi) - np.maximum(x_lo_edge, lo)) / widths,
+                   0.0, 1.0)
+
+
+def _port_fractions_1d(widths, lo, hi):
+    """Return physical overlap and the existing four-cell tapered profile."""
+    raw = _port_overlap_1d(widths, lo, hi)
     profile = raw.copy()
     for i in range(len(widths)):
         if raw[i] > 0.99:
@@ -528,6 +535,7 @@ class SIMPLESolver:
         Nx = self.Nx
         self.v_inlet_field = np.full(Nx, float(self.v_inlet), dtype=np.float64)
         inf_raw, self.inlet_frac = _port_fractions_1d(self.dx_arr, inlet_lo, inlet_hi)
+        self.inlet_geom_frac = inf_raw
         # N3 (2026-07-07): the taper smooths the imposed profile but must not
         # DELETE throughput — unrenormalised it under-delivered the imposed
         # inlet mass flux by ~0.914 cell-widths of open area per pipe edge, a
@@ -547,12 +555,18 @@ class SIMPLESolver:
 
         # Outlet — partial or full-width, with smooth lateral transition
         if outlet_lo is not None and outlet_hi is not None:
-            _, self.outlet_frac = _port_fractions_1d(self.dx_arr, outlet_lo, outlet_hi)
+            self.outlet_geom_frac, self.outlet_frac = _port_fractions_1d(
+                self.dx_arr, outlet_lo, outlet_hi)
             self.outlet_frac = self.outlet_frac.astype(np.float64)
         else:
+            outlet_lo, outlet_hi = 0., float(np.sum(self.dx_arr))
             self.outlet_frac = np.ones(Nx, dtype=np.float64)
+            self.outlet_geom_frac = self.outlet_frac.copy()
+        self.outlet_u_frac = _port_overlap_1d(
+            self.dx_arr, outlet_lo, outlet_hi, staggered=True)
 
-        self.outlet_mask = self.outlet_frac > 0.01
+        self.outlet_mask = self.outlet_geom_frac > 0.0
+        self._pp_sparsity = None
         self._set_bc()
 
     def _set_bc(self):
@@ -560,7 +574,7 @@ class SIMPLESolver:
         self.u[0, :] = 0.0;  self.u[Nx, :] = 0.0
         for i in range(Nx):
             self.v[i, 0] = self.v_inlet_field[i] * self.inlet_frac[i]
-            self.v[i, Ny] = self.v[i, Ny - 1]
+            self.v[i, Ny] = self.v[i, Ny - 1] if self.outlet_mask[i] else 0.0
 
     def update_rho_field(self, rho_field):
         """Update density field for variable-density coupling iterations."""
@@ -873,7 +887,7 @@ class SIMPLESolver:
             np.multiply(self.rho_field, self.eps_field, out=self._rho_eps)
             rho_eps_field = self._rho_eps
             if self._pp_sparsity is None:
-                self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_frac)
+                self._pp_sparsity = _build_pp_sparsity_pattern(Nx, Ny, self.outlet_geom_frac)
 
             if coupling == 'simpler':
                 # SIMPLER six steps (design D2, openspec simpler-coupling-2d):
@@ -882,14 +896,14 @@ class SIMPLESolver:
                 np.copyto(self._uhat, self.u)
                 np.copyto(self._vhat, self.v)
                 _pseudo_u_jit_df(self.u, self.v, self._uhat, self.d_u,
-                                 self.inlet_frac, self.outlet_frac,
+                                 self.outlet_u_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
                                  self.eps_field, self.cf_aniso)
                 _pseudo_v_jit_df(self.u, self.v, self._uhat, self._vhat, self.d_v,
                                  self.inlet_frac, self.v_inlet_field,
-                                 self.outlet_frac,
+                                 self.outlet_geom_frac,
                                  Nx, Ny, dx_a, dy_a, self.rho_field,
                                  self._mu_eff_field,
                                  _K2d, _cF2d, self.mu_field,
@@ -897,7 +911,7 @@ class SIMPLESolver:
                 # ③ pressure equation from û/v̂ (same ρ·A·d stencil as p') —
                 #    P solved directly, replaced without α_p under-relaxation
                 _solve_pp_sparse_fast(self._P_hat, self._uhat, self._vhat,
-                                      self.d_u, self.d_v, self.outlet_frac,
+                                      self.d_u, self.d_v, self.outlet_geom_frac,
                                       Nx, Ny, dx_a, dy_a, rho_eps_field,
                                       self._pp_sparsity)
                 if simpler_relax_p >= 1.0:
@@ -907,7 +921,7 @@ class SIMPLESolver:
                     self.P += simpler_relax_p * self._P_hat
                 # ④ momentum with the solved P (existing kernels, α_u as usual)
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
-                                self.inlet_frac, self.outlet_frac,
+                                self.outlet_u_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
@@ -915,7 +929,7 @@ class SIMPLESolver:
                                 alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
                                 self.inlet_frac, self.v_inlet_field,
-                                self.outlet_frac,
+                                self.outlet_geom_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field,
                                 self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
@@ -923,34 +937,34 @@ class SIMPLESolver:
                                 alpha_u, n_inner, self.cf_aniso)
                 # ⑤ p' from u*/v*  ⑥ α_p=0.0 → P untouched, velocities only
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v,
-                                      self.d_u, self.d_v, self.outlet_frac,
+                                      self.d_u, self.d_v, self.outlet_geom_frac,
                                       Nx, Ny, dx_a, dy_a, rho_eps_field,
                                       self._pp_sparsity)
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
                              self.inlet_frac, self.v_inlet_field,
-                             self.outlet_frac,
+                             self.outlet_geom_frac,
                              Nx, Ny, dx_a, dy_a, 0.0, self.rho_field, self.eps_field)
             else:
                 _sweep_u_jit_df(self.u, self.v, self.P, self.d_u,
-                                self.inlet_frac, self.outlet_frac,
+                                self.outlet_u_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
                                 alpha_u, n_inner, self.cf_aniso)
                 _sweep_v_jit_df(self.u, self.v, self.P, self.d_v,
-                                self.inlet_frac, self.v_inlet_field, self.outlet_frac,
+                                self.inlet_frac, self.v_inlet_field, self.outlet_geom_frac,
                                 Nx, Ny, dx_a, dy_a, self.rho_field, self._mu_eff_field,
                                 _K2d, _cF2d, self.mu_field,
                                 self.eps_field,
                                 alpha_u, n_inner, self.cf_aniso)
                 _solve_pp_sparse_fast(self.Pp, self.u, self.v, self.d_u, self.d_v,
-                                      self.outlet_frac,
+                                      self.outlet_geom_frac,
                                       Nx, Ny, dx_a, dy_a, rho_eps_field,
                                       self._pp_sparsity)
                 _correct_jit(self.u, self.v, self.P, self.Pp,
                              self.d_u, self.d_v,
-                             self.inlet_frac, self.v_inlet_field, self.outlet_frac,
+                             self.inlet_frac, self.v_inlet_field, self.outlet_geom_frac,
                              Nx, Ny, dx_a, dy_a, alpha_p, self.rho_field, self.eps_field)
             if (_f2 is not None and self.fluid_type == 'ideal_gas'
                     and not f2_state_is_finite(self, (self.u, self.v))):
@@ -1093,32 +1107,6 @@ class SIMPLESolver:
         self.final_res = res
         return False, max_iter
 
-    def get_wall_masked_velocity(self):
-        """Return velocity fields with wall-region velocities tapered.
-        Matches the 8-cell Brinkman penalty zone at both inlet and outlet."""
-        Nx, Ny = self.Nx, self.Ny
-        u_masked = self.u.copy()
-        v_masked = self.v.copy()
-
-        def _taper(frac_arr, j_range_fn):
-            for i in range(Nx):
-                if frac_arr[i] < 0.5:
-                    for j, wd in j_range_fn(Ny):
-                        taper = 1.0 - np.exp(-1.5 * (wd - 1))
-                        v_masked[i, j] *= taper
-                        v_masked[i, j + 1] *= taper
-                        if i < Nx:
-                            u_masked[i, j] *= taper
-                        if i + 1 <= Nx:
-                            u_masked[i + 1, j] *= taper
-
-        # Outlet wall (j near Ny)
-        _taper(self.outlet_frac, lambda Ny: [(j, Ny - j) for j in range(max(0, Ny - 8), Ny)])
-        # Inlet wall (j near 0)
-        _taper(self.inlet_frac, lambda Ny: [(j, j + 1) for j in range(min(8, Ny))])
-
-        return u_masked, v_masked
-
     # ── ledger C9 — momentum residual, balanced normalisation (mirrors 3D) ──
     _MOM_FLOOR_FRAC = 1e-3
 
@@ -1139,7 +1127,7 @@ class SIMPLESolver:
         nu_, du_, nv_, dv_ = _mom_res_jit_2d(
             self.u, self.v, self.P, Nx, Ny, dx_a, dy_a,
             self.rho_field, self._mu_eff_field, K2d, cF2d, self.mu_field,
-            self.eps_field, self.inlet_frac, self.outlet_frac, self.cf_aniso)
+            self.eps_field, self.outlet_u_frac, self.cf_aniso)
         ru, rv = momentum_component_residuals(
             (nu_, nv_), (du_, dv_), self._MOM_FLOOR_FRAC)
         rmax = max(ru, rv)
@@ -1156,7 +1144,7 @@ class SIMPLESolver:
         self._last_outlet_mass_scale = 1.0  # No global velocity scaling.
         if not getattr(self, 'enforce_outlet_mass_balance', True):
             return
-        _close_outlet_mass(self.u, self.v, self.outlet_frac, self.Nx, self.Ny,
+        _close_outlet_mass(self.u, self.v, self.outlet_geom_frac, self.Nx, self.Ny,
                            self.dx_arr, self.dy_arr, self.rho_field, self.eps_field)
 
     # ──────────────── temperature solve ───────────────────────────

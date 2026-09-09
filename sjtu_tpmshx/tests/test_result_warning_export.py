@@ -1,4 +1,4 @@
-"""Cached real Nu notices survive worker publication and result export."""
+"""Real closure notices survive worker publication and result export."""
 import csv
 import json
 
@@ -16,7 +16,8 @@ from sjtu_tpmshx.tests.test_worker_result_handoff import (
 
 
 @pytest.mark.parametrize('mode', ['2d', '3d'])
-def test_cached_nu_warning_worker_to_export(win, monkeypatch, tmp_path, mode):
+@pytest.mark.parametrize('source', ['Nu', 'D-F'])
+def test_closure_warning_worker_to_export(win, monkeypatch, tmp_path, mode, source):
     cfg = _configure(win, monkeypatch, mode)
     if mode == '3d':
         cfg.geometry.Lz_m = 0.042
@@ -25,8 +26,14 @@ def test_cached_nu_warning_worker_to_export(win, monkeypatch, tmp_path, mode):
     pipeline = Pipeline2D if mode == '2d' else Pipeline3D
 
     def build(pipe):
-        compute(*args)  # Actual Nu source and cache replay, no injected notice.
-        if mode == '3d':
+        if source == 'Nu':
+            compute(*args)  # Actual Nu source and cache replay.
+        else:
+            from sjtu_tpmshx.df_surrogate.experimental_correction import apply_correction
+            from sjtu_tpmshx.domain.run_warnings import range_context
+            with range_context(side='B', stage='df-application'):
+                apply_correction('Diamond', 'water', 7., .6, 1e-8, 200., u_mps=.02)
+        if mode == '3d' and source == 'Nu':
             warn_sco2_nu_evidence(side='B', stage='3D h_v property refresh',
                                   tpms_type='Gyroid', L_mm=np.array([5., 6.]),
                                   t_mm=np.array([.3, .4]), P_in=12e6)
@@ -43,9 +50,13 @@ def test_cached_nu_warning_worker_to_export(win, monkeypatch, tmp_path, mode):
         _wait_for(win.compute.is_idle)
         assert not win._test_error_dialogs
         result = win.compute.last_result()
-        assert any('[Nu extrap]' in message for message in result.warnings)
-        assert sum('[sCO2 Nu evidence]' in message for message in result.warnings) == (mode == '3d')
-        if mode == '3d':
+        assert any(f'[{source} extrap]' in message for message in result.warnings)
+        if source == 'D-F':
+            notice = next(m for m in result.warnings if '[D-F extrap]' in m)
+            assert 'side=B' in notice and 'frozen sF' in notice
+            assert 'approved application' in notice and '0.02' in notice
+        assert sum('[sCO2 Nu evidence]' in message for message in result.warnings) == (mode == '3d' and source == 'Nu')
+        if mode == '3d' and source == 'Nu':
             assert any('zoned L=[5,6] mm, t=[0.3,0.4] mm' in message for message in result.warnings)
         assert result.extrap_reasons == []
         assert win._diag_summary['warnings'] == result.warnings

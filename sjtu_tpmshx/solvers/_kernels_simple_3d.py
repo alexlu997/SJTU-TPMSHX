@@ -3,7 +3,6 @@
 import numpy as np
 from numba import njit, prange
 
-from .simple_solver import _WALL_PENALTY_BASE, _WALL_PENALTY_EFOLD
 from ._kernels_2d import minmod
 
 
@@ -90,7 +89,7 @@ def _sou_axis(p_mm, p_m, p_c, p_p, p_pp,
 def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field, eps_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  K_arr, cF_arr, outlet_u_frac, alpha_u, use_sou,
                   use_eps):
     """One Gauss-Seidel update of the u-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup; previously duplicated
@@ -126,24 +125,27 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
     Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
           if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
     Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
-          if k < Nz - 1 else 0.0)
+          if k < Nz - 1 else 2.0 * mu_e * dxi * dyj / dzk)
     Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
-          if k > 0 else 0.0)
+          if k > 0 else 2.0 * mu_e * dxi * dyj / dzk)
+
+    # Only the closed part of the physical outlet has wall diffusion.
+    if j == Ny - 1:
+        Dn *= 1.0 - outlet_u_frac[i, k]
 
     # Neighbour values (with wall-BC zero outside domain)
     uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
     uW = u[i - 1, j, k] if i > 0 else 0.0
-    uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
+    uN = u[i, j + 1, k] if j < Ny - 1 else 0.0
     uS = u[i, j - 1, k] if j > 0 else 0.0
-    uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
-    uB = u[i, j, k - 1] if k > 0 else u[i, j, k]
+    uT = u[i, j, k + 1] if k < Nz - 1 else 0.0
+    uB = u[i, j, k - 1] if k > 0 else 0.0
 
     # Face-centred fluxes (upwind, first order)
     ue = 0.5 * (u[i, j, k] + u[min(i + 1, Nx), j, k])
     uw = 0.5 * (u[max(i - 1, 0), j, k] + u[i, j, k])
     il = max(i - 1, 0); ir = min(i, Nx - 1)
-    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k]) \
-        if j < Ny - 1 else 0.0
+    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k])
     vs = 0.5 * (v[il, j, k] + v[ir, j, k])
     wn = 0.5 * (w[il, j, k + 1] + w[ir, j, k + 1]) \
         if k < Nz - 1 else 0.0
@@ -195,19 +197,6 @@ def _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
     Sp = _porous_src_df_3d(umag, K_arr[j, k], cF_arr[j, k],
                              mu_loc, rho_loc) * vol
 
-    # P1b-c: wall penalty, grid-invariant via aP_natural
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     # Pressure gradient source
     p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
 
@@ -246,7 +235,7 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                         dx, dy, dz,
                         rho_field, mu_eff_field, mu_field, eps_field,
                         K_arr, cF_arr,
-                        outlet_frac, inlet_frac,
+                        outlet_u_frac,
                         alpha_u, n_sweeps, use_sou, use_eps):
     """Solve the x-momentum equation on the u-staggered face.
 
@@ -262,7 +251,7 @@ def _sweep_u_jit_df_3d(u, v, w, P, d_u,
                     _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field, eps_field,
-                                  K_arr, cF_arr, outlet_frac, inlet_frac,
+                                  K_arr, cF_arr, outlet_u_frac,
                                   alpha_u, use_sou, use_eps)
 
     # No-slip BC at x-walls
@@ -283,7 +272,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                                  dx, dy, dz,
                                  rho_field, mu_eff_field, mu_field, eps_field,
                                  K_arr, cF_arr,
-                                 outlet_frac, inlet_frac,
+                                 outlet_u_frac,
                                  alpha_u, n_sweeps, use_sou, use_eps):
     for _ in range(n_sweeps):
         for color in range(2):
@@ -295,8 +284,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
                         _u_cell_df_3d(u, v, w, P, d_u, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field, eps_field,
-                                      K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou, use_eps)
+                                      K_arr, cF_arr, outlet_u_frac, alpha_u, use_sou, use_eps)
     for j in range(Ny):
         for k in range(Nz):
             u[0, j, k] = 0.0
@@ -309,7 +297,7 @@ def _sweep_u_jit_df_3d_parallel(u, v, w, P, d_u,
 def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field, eps_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  K_arr, cF_arr, alpha_u, use_sou,
                   use_eps):
     """One Gauss-Seidel update of the v-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup). M2b: guarded VANS ε-ratio
@@ -332,19 +320,19 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
           if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi)
     Dw = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i - 1]))
           if i > 0 else 2.0 * mu_e * dyj * dzk / dxi)
-    Dn = mu_e * dxi * dzk / dy[jt] if j < Ny - 1 else 0.0
+    Dn = mu_e * dxi * dzk / dy[jt]
     Ds = mu_e * dxi * dzk / dy[jb]
     Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
-          if k < Nz - 1 else 0.0)
+          if k < Nz - 1 else 2.0 * mu_e * dxi * dyj / dzk)
     Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
-          if k > 0 else 0.0)
+          if k > 0 else 2.0 * mu_e * dxi * dyj / dzk)
 
     vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
     vW = v[i - 1, j, k] if i > 0 else 0.0
-    vN = v[i, j + 1, k] if j < Ny - 1 else v[i, j, k]
+    vN = v[i, j + 1, k]
     vS = v[i, j - 1, k]
-    vT = v[i, j, k + 1] if k < Nz - 1 else v[i, j, k]
-    vB = v[i, j, k - 1] if k > 0 else v[i, j, k]
+    vT = v[i, j, k + 1] if k < Nz - 1 else 0.0
+    vB = v[i, j, k - 1] if k > 0 else 0.0
 
     ue = 0.5 * (u[i + 1, jb, k] + u[i + 1, jt, k]) \
         if i < Nx - 1 else 0.0
@@ -395,19 +383,6 @@ def _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
     umag = _umag_v_3d(u, v, w, i, j, k, Nx, Ny, Nz)
     Sp = _porous_src_df_3d(umag, K_arr[jc, k], cF_arr[jc, k],
                              mu_loc, rho_loc) * vol
-
-    # P1b-c: wall penalty, grid-invariant via aP_natural
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - outlet_frac[i, k]
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - inlet_frac[i, k]
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
     p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
 
@@ -474,7 +449,6 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                         dx, dy, dz,
                         rho_field, eps_field, mu_eff_field, mu_field,
                         K_arr, cF_arr,
-                        outlet_frac, inlet_frac,
                         alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     """Solve the y-momentum equation on the v-staggered face.
 
@@ -490,8 +464,7 @@ def _sweep_v_jit_df_3d(u, v, w, P, d_v,
                     _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field, eps_field,
-                                  K_arr, cF_arr, outlet_frac, inlet_frac,
-                                  alpha_u, use_sou, use_eps)
+                                  K_arr, cF_arr, alpha_u, use_sou, use_eps)
 
     # Apply BCs
     _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
@@ -506,7 +479,6 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                                  dx, dy, dz,
                                  rho_field, eps_field, mu_eff_field, mu_field,
                                  K_arr, cF_arr,
-                                 outlet_frac, inlet_frac,
                                  alpha_u, n_sweeps, use_sou, use_eps, outlet_mask_ij):
     for _ in range(n_sweeps):
         for color in range(2):
@@ -518,8 +490,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
                         _v_cell_df_3d(u, v, w, P, d_v, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field, eps_field,
-                                      K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou, use_eps)
+                                      K_arr, cF_arr, alpha_u, use_sou, use_eps)
     _v_bc_3d(u, v, w, v_inlet_field, rho_field, eps_field, outlet_mask_ij,
              Nx, Ny, Nz, dx, dy, dz)
 
@@ -530,7 +501,7 @@ def _sweep_v_jit_df_3d_parallel(u, v, w, P, d_v,
 def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                   Nx, Ny, Nz, dx, dy, dz,
                   rho_field, mu_eff_field, mu_field, eps_field,
-                  K_arr, cF_arr, outlet_frac, inlet_frac, alpha_u, use_sou,
+                  K_arr, cF_arr, outlet_w_frac, alpha_u, use_sou,
                   use_eps):
     """One Gauss-Seidel update of the w-face (i, j, k) — shared cell body
     for the serial and parallel sweeps (B6 dedup). M2b: guarded VANS ε-ratio
@@ -557,22 +528,24 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
           if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj)
     Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
           if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
-    Dt = mu_e * dxi * dyj / dz[kt] if k < Nz - 1 else 0.0
+    Dt = mu_e * dxi * dyj / dz[kt]
     Db = mu_e * dxi * dyj / dz[kb]
+
+    if j == Ny - 1:
+        Dn *= 1.0 - outlet_w_frac[i, k]
 
     wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
     wW = w[i - 1, j, k] if i > 0 else 0.0
     wN = w[i, j + 1, k] if j < Ny - 1 else 0.0
     wS = w[i, j - 1, k] if j > 0 else 0.0
-    wT = w[i, j, k + 1] if k < Nz - 1 else w[i, j, k]
+    wT = w[i, j, k + 1]
     wB = w[i, j, k - 1]
 
     ue = 0.5 * (u[i + 1, j, kb] + u[i + 1, j, kt]) \
         if i < Nx - 1 else 0.0
     uw = 0.5 * (u[i, j, kb] + u[i, j, kt]) if i > 0 else 0.0
-    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt]) \
-        if j < Ny - 1 else 0.0
-    vs = 0.5 * (v[i, j, kb] + v[i, j, kt]) if j > 0 else 0.0
+    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt])
+    vs = 0.5 * (v[i, j, kb] + v[i, j, kt])
     wn = 0.5 * (w[i, j, k] + w[i, j, min(k + 1, Nz)])
     wb = 0.5 * (w[i, j, max(k - 1, 0)] + w[i, j, k])
 
@@ -617,20 +590,6 @@ def _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
     Sp = _porous_src_df_3d(umag, K_arr[j, kc], cF_arr[j, kc],
                              mu_loc, rho_loc) * vol
 
-    # P1b-c: wall penalty, grid-invariant via aP_natural.
-    # w-face at (i, j, k) between cells (i, j, k-1) and (i, j, k).
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
 
     aP0 = aE + aW + aN + aS + aT + aB + Sp
@@ -667,7 +626,7 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                         dx, dy, dz,
                         rho_field, mu_eff_field, mu_field, eps_field,
                         K_arr, cF_arr,
-                        outlet_frac, inlet_frac,
+                        outlet_w_frac,
                         alpha_u, n_sweeps, use_sou, use_eps):
     """Solve the z-momentum equation on the w-staggered face.
 
@@ -681,7 +640,7 @@ def _sweep_w_jit_df_3d(u, v, w, P, d_w,
                     _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                                   Nx, Ny, Nz, dx, dy, dz,
                                   rho_field, mu_eff_field, mu_field, eps_field,
-                                  K_arr, cF_arr, outlet_frac, inlet_frac,
+                                  K_arr, cF_arr, outlet_w_frac,
                                   alpha_u, use_sou, use_eps)
 
     # No-slip at z-walls
@@ -698,7 +657,7 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                                  dx, dy, dz,
                                  rho_field, mu_eff_field, mu_field, eps_field,
                                  K_arr, cF_arr,
-                                 outlet_frac, inlet_frac,
+                                 outlet_w_frac,
                                  alpha_u, n_sweeps, use_sou, use_eps):
     for _ in range(n_sweeps):
         for color in range(2):
@@ -710,8 +669,7 @@ def _sweep_w_jit_df_3d_parallel(u, v, w, P, d_w,
                         _w_cell_df_3d(u, v, w, P, d_w, i, j, k,
                                       Nx, Ny, Nz, dx, dy, dz,
                                       rho_field, mu_eff_field, mu_field, eps_field,
-                                      K_arr, cF_arr, outlet_frac,
-                                      inlet_frac, alpha_u, use_sou, use_eps)
+                                      K_arr, cF_arr, outlet_w_frac, alpha_u, use_sou, use_eps)
     for i in range(Nx):
         for j in range(Ny):
             w[i, j, 0] = 0.0
@@ -1051,7 +1009,7 @@ def _mass_global_jit_3d(v, Nx, Ny, Nz, dx, dz, rho_eps_field):
 def _u_coeffs_df_3d(u, v, w, P, i, j, k,
                     Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou,
+                    K_arr, cF_arr, outlet_u_frac, use_sou,
                     use_eps):
     """Assemble (aP0, rhs) for the u-face (i, j, k): the UNRELAXED discrete
     x-momentum equation ``aP0 * u = rhs``, with
@@ -1102,24 +1060,27 @@ def _u_coeffs_df_3d(u, v, w, P, i, j, k,
     Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
           if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
     Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
-          if k < Nz - 1 else 0.0)
+          if k < Nz - 1 else 2.0 * mu_e * dxi * dyj / dzk)
     Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
-          if k > 0 else 0.0)
+          if k > 0 else 2.0 * mu_e * dxi * dyj / dzk)
+
+    # Only the closed part of the physical outlet has wall diffusion.
+    if j == Ny - 1:
+        Dn *= 1.0 - outlet_u_frac[i, k]
 
     # Neighbour values (with wall-BC zero outside domain)
     uE = u[i + 1, j, k] if i + 1 < Nx else 0.0
     uW = u[i - 1, j, k] if i > 0 else 0.0
-    uN = u[i, j + 1, k] if j < Ny - 1 else u[i, j, k]
+    uN = u[i, j + 1, k] if j < Ny - 1 else 0.0
     uS = u[i, j - 1, k] if j > 0 else 0.0
-    uT = u[i, j, k + 1] if k < Nz - 1 else u[i, j, k]
-    uB = u[i, j, k - 1] if k > 0 else u[i, j, k]
+    uT = u[i, j, k + 1] if k < Nz - 1 else 0.0
+    uB = u[i, j, k - 1] if k > 0 else 0.0
 
     # Face-centred fluxes (upwind, first order)
     ue = 0.5 * (u[i, j, k] + u[min(i + 1, Nx), j, k])
     uw = 0.5 * (u[max(i - 1, 0), j, k] + u[i, j, k])
     il = max(i - 1, 0); ir = min(i, Nx - 1)
-    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k]) \
-        if j < Ny - 1 else 0.0
+    vn = 0.5 * (v[il, j + 1, k] + v[ir, j + 1, k])
     vs = 0.5 * (v[il, j, k] + v[ir, j, k])
     wn = 0.5 * (w[il, j, k + 1] + w[ir, j, k + 1]) \
         if k < Nz - 1 else 0.0
@@ -1171,19 +1132,6 @@ def _u_coeffs_df_3d(u, v, w, P, i, j, k,
     Sp = _porous_src_df_3d(umag, K_arr[j, k], cF_arr[j, k],
                              mu_loc, rho_loc) * vol
 
-    # P1b-c: wall penalty, grid-invariant via aP_natural
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - 0.5 * (outlet_frac[il_r, k] + outlet_frac[ir_r, k])
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (inlet_frac[il_r, k] + inlet_frac[ir_r, k])
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     # Pressure gradient source
     p_src = (P[i - 1, j, k] - P[i, j, k]) * dyj * dzk
 
@@ -1216,7 +1164,7 @@ def _u_coeffs_df_3d(u, v, w, P, i, j, k,
 def _v_coeffs_df_3d(u, v, w, P, i, j, k,
                     Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou,
+                    K_arr, cF_arr, use_sou,
                     use_eps):
     """Assemble (aP0, rhs) for the v-face — UNRELAXED discrete y-momentum
     `aP0 * v = rhs`. DELIBERATE PARALLEL ASSEMBLY of `_v_cell_df_3d`'s
@@ -1242,19 +1190,19 @@ def _v_coeffs_df_3d(u, v, w, P, i, j, k,
           if i < Nx - 1 else 2.0 * mu_e * dyj * dzk / dxi)
     Dw = (mu_e * dyj * dzk / (0.5 * (dx[i] + dx[i - 1]))
           if i > 0 else 2.0 * mu_e * dyj * dzk / dxi)
-    Dn = mu_e * dxi * dzk / dy[jt] if j < Ny - 1 else 0.0
+    Dn = mu_e * dxi * dzk / dy[jt]
     Ds = mu_e * dxi * dzk / dy[jb]
     Dt = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k + 1]))
-          if k < Nz - 1 else 0.0)
+          if k < Nz - 1 else 2.0 * mu_e * dxi * dyj / dzk)
     Db = (mu_e * dxi * dyj / (0.5 * (dz[k] + dz[k - 1]))
-          if k > 0 else 0.0)
+          if k > 0 else 2.0 * mu_e * dxi * dyj / dzk)
 
     vE = v[i + 1, j, k] if i < Nx - 1 else 0.0
     vW = v[i - 1, j, k] if i > 0 else 0.0
-    vN = v[i, j + 1, k] if j < Ny - 1 else v[i, j, k]
+    vN = v[i, j + 1, k]
     vS = v[i, j - 1, k]
-    vT = v[i, j, k + 1] if k < Nz - 1 else v[i, j, k]
-    vB = v[i, j, k - 1] if k > 0 else v[i, j, k]
+    vT = v[i, j, k + 1] if k < Nz - 1 else 0.0
+    vB = v[i, j, k - 1] if k > 0 else 0.0
 
     ue = 0.5 * (u[i + 1, jb, k] + u[i + 1, jt, k]) \
         if i < Nx - 1 else 0.0
@@ -1306,19 +1254,6 @@ def _v_coeffs_df_3d(u, v, w, P, i, j, k,
     Sp = _porous_src_df_3d(umag, K_arr[jc, k], cF_arr[jc, k],
                              mu_loc, rho_loc) * vol
 
-    # P1b-c: wall penalty, grid-invariant via aP_natural
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - outlet_frac[i, k]
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - inlet_frac[i, k]
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     p_src = (P[i, j - 1, k] - P[i, j, k]) * dxi * dzk
 
     aP0 = aE + aW + aN + aS + aT + aB + Sp
@@ -1349,7 +1284,7 @@ def _v_coeffs_df_3d(u, v, w, P, i, j, k,
 def _w_coeffs_df_3d(u, v, w, P, i, j, k,
                     Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou,
+                    K_arr, cF_arr, outlet_w_frac, use_sou,
                     use_eps):
     """Assemble (aP0, rhs) for the w-face — UNRELAXED discrete z-momentum
     `aP0 * w = rhs`. DELIBERATE PARALLEL ASSEMBLY of `_w_cell_df_3d`'s
@@ -1379,22 +1314,24 @@ def _w_coeffs_df_3d(u, v, w, P, i, j, k,
           if j < Ny - 1 else 2.0 * mu_e * dxi * dzk / dyj)
     Ds = (mu_e * dxi * dzk / (0.5 * (dy[j] + dy[j - 1]))
           if j > 0 else 2.0 * mu_e * dxi * dzk / dyj)
-    Dt = mu_e * dxi * dyj / dz[kt] if k < Nz - 1 else 0.0
+    Dt = mu_e * dxi * dyj / dz[kt]
     Db = mu_e * dxi * dyj / dz[kb]
+
+    if j == Ny - 1:
+        Dn *= 1.0 - outlet_w_frac[i, k]
 
     wE = w[i + 1, j, k] if i < Nx - 1 else 0.0
     wW = w[i - 1, j, k] if i > 0 else 0.0
     wN = w[i, j + 1, k] if j < Ny - 1 else 0.0
     wS = w[i, j - 1, k] if j > 0 else 0.0
-    wT = w[i, j, k + 1] if k < Nz - 1 else w[i, j, k]
+    wT = w[i, j, k + 1]
     wB = w[i, j, k - 1]
 
     ue = 0.5 * (u[i + 1, j, kb] + u[i + 1, j, kt]) \
         if i < Nx - 1 else 0.0
     uw = 0.5 * (u[i, j, kb] + u[i, j, kt]) if i > 0 else 0.0
-    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt]) \
-        if j < Ny - 1 else 0.0
-    vs = 0.5 * (v[i, j, kb] + v[i, j, kt]) if j > 0 else 0.0
+    vn = 0.5 * (v[i, j + 1, kb] + v[i, j + 1, kt])
+    vs = 0.5 * (v[i, j, kb] + v[i, j, kt])
     wn = 0.5 * (w[i, j, k] + w[i, j, min(k + 1, Nz)])
     wb = 0.5 * (w[i, j, max(k - 1, 0)] + w[i, j, k])
 
@@ -1439,20 +1376,6 @@ def _w_coeffs_df_3d(u, v, w, P, i, j, k,
     Sp = _porous_src_df_3d(umag, K_arr[j, kc], cF_arr[j, kc],
                              mu_loc, rho_loc) * vol
 
-    # P1b-c: wall penalty, grid-invariant via aP_natural.
-    # w-face at (i, j, k) between cells (i, j, k-1) and (i, j, k).
-    aP_nat = aE + aW + aN + aS + aT + aB
-    wall_out = 1.0 - 0.5 * (outlet_frac[i, kb] + outlet_frac[i, kt])
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (inlet_frac[i, kb] + inlet_frac[i, kt])
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     p_src = (P[i, j, k - 1] - P[i, j, k]) * dxi * dyj
 
     aP0 = aE + aW + aN + aS + aT + aB + Sp
@@ -1483,7 +1406,7 @@ def _w_coeffs_df_3d(u, v, w, P, i, j, k,
 def _mom_res_jit_3d(u, v, w, P,
                     Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac,
+                    K_arr, cF_arr, outlet_u_frac, outlet_w_frac,
                     use_sou, use_eps):
     """Momentum-equation residual  R = aP0·φ − (Σ a_nb·φ_nb + p_src [+ SOU]),
     evaluated on the CURRENT (post-correction, post-`_update_density`) fields.
@@ -1549,7 +1472,7 @@ def _mom_res_jit_3d(u, v, w, P,
                 aP0, rhs = _u_coeffs_df_3d(
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
+                    K_arr, cF_arr, outlet_u_frac, use_sou, use_eps)
                 lhs = aP0 * u[i, j, k]
                 nu_ += abs(lhs - rhs)
                 du_ += 0.5 * (abs(lhs) + abs(rhs))
@@ -1561,7 +1484,7 @@ def _mom_res_jit_3d(u, v, w, P,
                 aP0, rhs = _v_coeffs_df_3d(
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
+                    K_arr, cF_arr, use_sou, use_eps)
                 lhs = aP0 * v[i, j, k]
                 nv_ += abs(lhs - rhs)
                 dv_ += 0.5 * (abs(lhs) + abs(rhs))
@@ -1573,7 +1496,7 @@ def _mom_res_jit_3d(u, v, w, P,
                 aP0, rhs = _w_coeffs_df_3d(
                     u, v, w, P, i, j, k, Nx, Ny, Nz, dx, dy, dz,
                     rho_field, mu_eff_field, mu_field, eps_field,
-                    K_arr, cF_arr, outlet_frac, inlet_frac, use_sou, use_eps)
+                    K_arr, cF_arr, outlet_w_frac, use_sou, use_eps)
                 lhs = aP0 * w[i, j, k]
                 nw_ += abs(lhs - rhs)
                 dw_ += 0.5 * (abs(lhs) + abs(rhs))

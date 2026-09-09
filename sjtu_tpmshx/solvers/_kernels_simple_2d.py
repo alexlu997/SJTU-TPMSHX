@@ -145,16 +145,6 @@ def _sou_corr_v_y(v, i, j, Ny, Fn, Fs):
         return 0.5 * (Fn * phi_n - Fs * phi_s)
 
 
-# Brinkman wall-penalty coefficients (P1b-c, B6 naming). Within 8 cells of a
-# blocked inlet/outlet face the momentum source gains
-# `BASE · frac⁴ · exp(−EFOLD·(dist−1)) · aP_natural` — a grid-invariant
-# no-slip layer. EFOLD=1.5 → the penalty e-folds over 1.5 cells (fits the
-# Brinkman layer δ_B ≈ 0.05 mm at production grids); BASE=1e3 dominates aP
-# without losing float64 precision at any tested resolution. Captured as
-# compile-time constants by the Numba kernels here and in simple_solver_3d.
-_WALL_PENALTY_BASE = 1e3
-_WALL_PENALTY_EFOLD = 1.5
-
 
 @njit(cache=True)
 def _porous_src_df(umag, K, cF, mu, rho):
@@ -190,7 +180,7 @@ def _umag_v(u, v, i, j, Nx, Ny):
 
 # ── SIMPLE Step 1: x-momentum with D-F closure ───────────────────
 @njit(cache=True)
-def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
+def _sweep_u_jit_df(u, v, P, d_u, outlet_u_frac,
                     Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                     K_arr, cF_arr, mu_field, eps_field,
                     alpha_u, n_sweeps, cf_aniso):
@@ -243,19 +233,19 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                 De = r_e * mu_e * dyj / dx_arr[ir_r]
                 Dw = r_w * mu_e * dyj / dx_arr[il_r]
                 Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
-                      if j < Ny - 1 else 0.0)
+                      if j < Ny - 1 else 2.0 * mu_e * dxi / dyj * (1.0 - outlet_u_frac[i]))
                 Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
-                      if j > 0 else 0.0)
+                      if j > 0 else 2.0 * mu_e * dxi / dyj)
 
                 uE = u[i + 1, j] if i + 1 < Nx else 0.0
                 uW = u[i - 1, j] if i > 1 else 0.0
-                uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+                uN = u[i, j + 1] if j < Ny - 1 else 0.0
                 uS = u[i, j - 1] if j > 0 else 0.0
 
                 ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
                 uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
                 il = max(i - 1, 0); ir = min(i, Nx - 1)
-                vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+                vn = 0.5 * (v[il, j + 1] + v[ir, j + 1])
                 vs = 0.5 * (v[il, j] + v[ir, j])
 
                 rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
@@ -292,22 +282,6 @@ def _sweep_u_jit_df(u, v, P, d_u, inlet_frac, outlet_frac,
                     cF_u = cF_u * (1.0 + cf_aniso * xi4)
                 Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
-                # Brinkman penalty: grid-invariant via aP_natural (matches 3D
-                # convention in simple_solver_3d.py). Old form `1e8*...*vol`
-                # scaled with cell volume and was grid-dependent.
-                aP_nat = aE + aW + aN + aS
-                il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
-                wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
-                if wall_out > 0.01 and j >= Ny - 8:
-                    wall_dist = Ny - j
-                    Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-                wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
-                if wall_in > 0.01 and j < 8:
-                    wall_dist = j + 1
-                    Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
                 p_src = (P[i - 1, j] - P[i, j]) * dyj
                 sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
                      + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
@@ -329,12 +303,13 @@ def _close_outlet_mass(u, v, outlet_frac, Nx, Ny, dx_arr, dy_arr,
                        rho_field, eps_field):
     """Close each pressure-outlet CV: Fn = Fs + Fw - Fe.
 
+    outlet_frac is raw geometric overlap; every positive overlap is open.
     Use the PPE's face-averaged rho*eps, divided by the outlet CV's eps.
     Epsilon ratios keep uniform-epsilon momentum independent of its value.
     """
     j = Ny - 1
     for i in range(Nx):
-        if outlet_frac[i] > 0.5:
+        if outlet_frac[i] > 0.0:
             rho_c = rho_field[i, j]
             eps_c = eps_field[i, j]
             rho_s = (0.5 * (rho_field[i, j - 1] * (eps_field[i, j - 1] / eps_c)
@@ -405,10 +380,10 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
                 else:
                     vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
-                vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+                vN = v[i, j + 1]
                 vS = v[i, j - 1]
 
-                Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+                Dn = r_n * mu_e * dxi / dy_arr[jt]
                 Ds = r_s * mu_e * dxi / dy_arr[jb]
 
                 ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
@@ -442,19 +417,6 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
                     cF_v = cF_v * (1.0 + cf_aniso * xi4)
                 Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
-                # Brinkman penalty — grid-invariant (3D parity, P1b-c)
-                aP_nat = aE + aW + aN + aS
-                wall_out = 1.0 - outlet_frac[i]
-                if wall_out > 0.01 and j >= Ny - 8:
-                    wall_dist = Ny - j
-                    Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-                wall_in = 1.0 - inlet_frac[i]
-                if wall_in > 0.01 and j < 8:
-                    wall_dist = j + 1
-                    Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-                        -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
                 p_src = (P[i, j - 1] - P[i, j]) * dxi
                 sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
                      + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
@@ -479,12 +441,12 @@ def _sweep_v_jit_df(u, v, P, d_v, inlet_frac, v_inlet_field, outlet_frac,
 # (Tao Main95.f:528-539 fills UHAT boundaries with the real BC velocity).
 #
 # COEFFICIENT PARITY: the aE/aW/aN/aS/Sp blocks below MUST stay line-for-line
-# identical to _sweep_u_jit_df / _sweep_v_jit_df (DF source, Brinkman wall
-# penalty, SOU deferred correction, variable-ρ/μ face interpolation) minus the
+# identical to _sweep_u_jit_df / _sweep_v_jit_df (DF source, wall
+# flux, SOU deferred correction, variable-ρ/μ face interpolation) minus the
 # pressure source and under-relaxation. Update BOTH kernels when touching either.
 
 @njit(cache=True)
-def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
+def _pseudo_u_jit_df(u, v, uhat, d_u, outlet_u_frac,
                      Nx, Ny, dx_arr, dy_arr, rho_field, mu_eff_field,
                      K_arr, cF_arr, mu_field, eps_field, cf_aniso):
     """SIMPLER pseudo-velocity û. Writes uhat interior + fills d_u = dy/aP0.
@@ -517,19 +479,19 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
             De = r_e * mu_e * dyj / dx_arr[ir_r]
             Dw = r_w * mu_e * dyj / dx_arr[il_r]
             Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
-                  if j < Ny - 1 else 0.0)
+                  if j < Ny - 1 else 2.0 * mu_e * dxi / dyj * (1.0 - outlet_u_frac[i]))
             Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
-                  if j > 0 else 0.0)
+                  if j > 0 else 2.0 * mu_e * dxi / dyj)
 
             uE = u[i + 1, j] if i + 1 < Nx else 0.0
             uW = u[i - 1, j] if i > 1 else 0.0
-            uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+            uN = u[i, j + 1] if j < Ny - 1 else 0.0
             uS = u[i, j - 1] if j > 0 else 0.0
 
             ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
             uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
             il = max(i - 1, 0); ir = min(i, Nx - 1)
-            vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+            vn = 0.5 * (v[il, j + 1] + v[ir, j + 1])
             vs = 0.5 * (v[il, j] + v[ir, j])
 
             rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
@@ -556,19 +518,6 @@ def _pseudo_u_jit_df(u, v, uhat, d_u, inlet_frac, outlet_frac,
                 xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
                 cF_u = cF_u * (1.0 + cf_aniso * xi4)
             Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
-
-            aP_nat = aE + aW + aN + aS
-            il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
-            wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
-            if wall_out > 0.01 and j >= Ny - 8:
-                wall_dist = Ny - j
-                Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-            wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
-            if wall_in > 0.01 and j < 8:
-                wall_dist = j + 1
-                Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
             sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
                  + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
@@ -621,10 +570,10 @@ def _pseudo_v_jit_df(u, v, uhat, vhat, d_v, inlet_frac, v_inlet_field, outlet_fr
                 Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
             else:
                 vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi   # west wall (no-slip)
-            vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+            vN = v[i, j + 1]
             vS = v[i, j - 1]
 
-            Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+            Dn = r_n * mu_e * dxi / dy_arr[jt]
             Ds = r_s * mu_e * dxi / dy_arr[jb]
 
             ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
@@ -655,18 +604,6 @@ def _pseudo_v_jit_df(u, v, uhat, vhat, d_v, inlet_frac, v_inlet_field, outlet_fr
                 xi4 = 4.0 * ux2 * uy2 / (umag * umag * umag * umag)
                 cF_v = cF_v * (1.0 + cf_aniso * xi4)
             Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
-
-            aP_nat = aE + aW + aN + aS
-            wall_out = 1.0 - outlet_frac[i]
-            if wall_out > 0.01 and j >= Ny - 8:
-                wall_dist = Ny - j
-                Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-            wall_in = 1.0 - inlet_frac[i]
-            if wall_in > 0.01 and j < 8:
-                wall_dist = j + 1
-                Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-                    -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
 
             sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
                  + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
@@ -716,17 +653,8 @@ def _build_pp_sparsity_pattern(Nx, Ny, outlet_frac):
             k = idx(i, j)
             cell_base[k] = pos
             # Outlet reference: diagonal only, Pp = 0.
-            # Threshold 0.01 is permissive on purpose — any cell that *might*
-            # pass flow becomes a pressure anchor. For Shanghai and optimizer
-            # full-width outlets (outlet_frac identically 1.0) this has no
-            # effect. For partial-outlet / zoned configurations, the taper
-            # logic in __init__ (L1255-1264) keeps outlet_frac of open cells
-            # ≥ 0.706 (d=1 of the 4-cell exp decay), so transition cells in
-            # (0.01, 0.5] should not normally appear on an aligned grid.
-            # Retain the reference threshold; velocity closure still treats
-            # fractions <= 0.5 as walls. Straddling-cell threshold semantics
-            # are separate from closing mass on the active outlet cells.
-            if j == Ny - 1 and outlet_frac[i] > 0.01:
+            # The same raw support owns normal flow, pressure pins and walls.
+            if j == Ny - 1 and outlet_frac[i] > 0.0:
                 cell_kind[k] = 1
                 indices_list.append(k)
                 pos += 1
@@ -866,7 +794,7 @@ def _correct_jit(u, v, P, Pp, d_u, d_v, inlet_frac, v_inlet_field, outlet_frac,
     # Pressure correction (skip only outlet cells at j=Ny-1)
     for i in range(Nx):
         for j in range(Ny):
-            if j == Ny - 1 and outlet_frac[i] > 0.01:
+            if j == Ny - 1 and outlet_frac[i] > 0.0:
                 continue  # outlet: Pp=0, no correction
             P[i, j] += alpha_p * Pp[i, j]
     # u correction
@@ -1040,7 +968,7 @@ def _solve_temp_jit(Tf, Ts, u, v, inlet_mask,
 @njit(cache=True)
 def _u_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
                     rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
-                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+                    eps_field, outlet_u_frac, cf_aniso):
     """(aP0, rhs) for the u-face (i, j): the UNRELAXED discrete x-momentum
     equation ``aP0 * u = rhs``, with ``rhs = sum(a_nb*u_nb) + p_src + SOU``.
 
@@ -1083,19 +1011,19 @@ def _u_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
     De = r_e * mu_e * dyj / dx_arr[ir_r]
     Dw = r_w * mu_e * dyj / dx_arr[il_r]
     Dn = (r_n * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j + 1]))
-          if j < Ny - 1 else 0.0)
+          if j < Ny - 1 else 2.0 * mu_e * dxi / dyj * (1.0 - outlet_u_frac[i]))
     Ds = (r_s * mu_e * dxi / (0.5 * (dy_arr[j] + dy_arr[j - 1]))
-          if j > 0 else 0.0)
+          if j > 0 else 2.0 * mu_e * dxi / dyj)
 
     uE = u[i + 1, j] if i + 1 < Nx else 0.0
     uW = u[i - 1, j] if i > 1 else 0.0
-    uN = u[i, j + 1] if j < Ny - 1 else u[i, j]
+    uN = u[i, j + 1] if j < Ny - 1 else 0.0
     uS = u[i, j - 1] if j > 0 else 0.0
 
     ue = 0.5 * (u[i, j] + u[min(i + 1, Nx), j])
     uw = 0.5 * (u[max(i - 1, 0), j] + u[i, j])
     il = max(i - 1, 0); ir = min(i, Nx - 1)
-    vn = 0.5 * (v[il, j + 1] + v[ir, j + 1]) if j < Ny - 1 else 0.0
+    vn = 0.5 * (v[il, j + 1] + v[ir, j + 1])
     vs = 0.5 * (v[il, j] + v[ir, j])
 
     rho_loc = 0.5 * (rho_field[il_r, j] + rho_field[ir_r, j])
@@ -1121,19 +1049,6 @@ def _u_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
         cF_u = cF_u * (1.0 + cf_aniso * xi4)
     Sp = _porous_src_df(umag, K_u, cF_u, mu_loc, rho_loc) * vol
 
-    aP_nat = aE + aW + aN + aS
-    il_u = max(i - 1, 0); ir_u = min(i, Nx - 1)
-    wall_out = 1.0 - 0.5 * (outlet_frac[il_u] + outlet_frac[ir_u])
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - 0.5 * (inlet_frac[il_u] + inlet_frac[ir_u])
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     p_src = (P[i - 1, j] - P[i, j]) * dyj
     sou = (_sou_corr_u_x(u, i, j, Nx, Fe, Fw)
            + _sou_corr_u_y(u, i, j, Ny, Fn, Fs))
@@ -1145,7 +1060,7 @@ def _u_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
 @njit(cache=True)
 def _v_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
                     rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
-                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+                    eps_field, cf_aniso):
     """(aP0, rhs) for the v-face (i, j) — UNRELAXED discrete y-momentum.
     Parallel assembly of `_sweep_v_jit_df`; see `_u_coeffs_df_2d`."""
     jc = min(j, Ny - 1)
@@ -1176,10 +1091,10 @@ def _v_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
         Dw = r_w * mu_e * dyj / (0.5 * (dx_arr[i] + dx_arr[i - 1]))
     else:
         vW = 0.0; Dw = 2.0 * mu_e * dyj / dxi
-    vN = v[i, j + 1] if j < Ny - 1 else v[i, j]
+    vN = v[i, j + 1]
     vS = v[i, j - 1]
 
-    Dn = r_n * mu_e * dxi / dy_arr[jt] if j < Ny - 1 else 0.0
+    Dn = r_n * mu_e * dxi / dy_arr[jt]
     Ds = r_s * mu_e * dxi / dy_arr[jb]
 
     ue = 0.5 * (u[i + 1, jb] + u[i + 1, jt]) if i < Nx - 1 else 0.0
@@ -1209,18 +1124,6 @@ def _v_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
         cF_v = cF_v * (1.0 + cf_aniso * xi4)
     Sp = _porous_src_df(umag, K_arr[i, jc], cF_v, mu_loc, rho_loc) * vol
 
-    aP_nat = aE + aW + aN + aS
-    wall_out = 1.0 - outlet_frac[i]
-    if wall_out > 0.01 and j >= Ny - 8:
-        wall_dist = Ny - j
-        Sp += _WALL_PENALTY_BASE * wall_out**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-    wall_in = 1.0 - inlet_frac[i]
-    if wall_in > 0.01 and j < 8:
-        wall_dist = j + 1
-        Sp += _WALL_PENALTY_BASE * wall_in**4 * np.exp(
-            -_WALL_PENALTY_EFOLD * (wall_dist - 1)) * aP_nat
-
     p_src = (P[i, j - 1] - P[i, j]) * dxi
     sou = (_sou_corr_v_x(v, i, j, Nx, Fe, Fw)
            + _sou_corr_v_y(v, i, j, Ny, Fn, Fs))
@@ -1232,7 +1135,7 @@ def _v_coeffs_df_2d(u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
 @njit(cache=True)
 def _mom_res_jit_2d(u, v, P, Nx, Ny, dx_arr, dy_arr,
                     rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
-                    eps_field, inlet_frac, outlet_frac, cf_aniso):
+                    eps_field, outlet_u_frac, cf_aniso):
     """Momentum residual  R = aP0*phi - (sum a_nb*phi_nb + p_src + SOU), on the
     CURRENT (post-correction, post-`_update_density`) fields.
 
@@ -1251,7 +1154,7 @@ def _mom_res_jit_2d(u, v, P, Nx, Ny, dx_arr, dy_arr,
             aP0, rhs = _u_coeffs_df_2d(
                 u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
                 rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
-                eps_field, inlet_frac, outlet_frac, cf_aniso)
+                eps_field, outlet_u_frac, cf_aniso)
             lhs = aP0 * u[i, j]
             nu_ += abs(lhs - rhs)
             du_ += 0.5 * (abs(lhs) + abs(rhs))
@@ -1262,7 +1165,7 @@ def _mom_res_jit_2d(u, v, P, Nx, Ny, dx_arr, dy_arr,
             aP0, rhs = _v_coeffs_df_2d(
                 u, v, P, i, j, Nx, Ny, dx_arr, dy_arr,
                 rho_field, mu_eff_field, K_arr, cF_arr, mu_field,
-                eps_field, inlet_frac, outlet_frac, cf_aniso)
+                eps_field, cf_aniso)
             lhs = aP0 * v[i, j]
             nv_ += abs(lhs - rhs)
             dv_ += 0.5 * (abs(lhs) + abs(rhs))

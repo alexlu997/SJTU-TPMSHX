@@ -97,3 +97,46 @@ def test_bootstrap_solver_matches_baseline_converged_state():
     # final attractor; bootstrap is only an init perturbation).
     np.testing.assert_allclose(s_cold.u, s_warm.u, rtol=2e-2, atol=1e-3)
     np.testing.assert_allclose(s_cold.v, s_warm.v, rtol=2e-2, atol=1e-3)
+
+
+def test_bootstrap_rebuilds_rectangles_and_conserves_inlet_mass(monkeypatch):
+    # Odd, nonuniform axes deliberately cut the opening in different fine and
+    # coarse cells. Mock only solve: all real setup and transfer run normally.
+    widths = [np.linspace(.3, 1.7, n) / n for n in (9, 9, 11)]
+    fine = SIMPLESolver3D(1., 1., 1., 9, 9, 11, 2., .01, 300., 0.,
+                         eps=.6, fluid_type='incompressible',
+                         dx_arr=widths[0], dy_arr=widths[1], dz_arr=widths[2],
+                         inlet_rect=(.61, .97, .13, .86),
+                         outlet_rect=(.08, .42, .23, .93))
+    fine.rho_field[:] = np.linspace(1., 3., 9)[:, None, None]
+    fine.eps_field[:] = np.linspace(.4, .7, 11)[None, None, :]
+    fine.v_inlet_field = fine.inlet_frac * np.linspace(.5, 1.5, 11)[None, :]
+    fine._massflux_target = fine.rho_field[:, 0, :] * fine.v_inlet_field
+    target = np.sum(fine._massflux_target * fine.eps_field[:, 0, :]
+                    * fine.dx[:, None] * fine.dz[None, :])
+    seen = []
+
+    def solve(coarse, **kwargs):
+        seen.append(coarse)
+        assert kwargs['max_iter'] == 37 and kwargs['tol'] == .002
+        assert coarse.inlet_rect == fine.inlet_rect
+        assert coarse.outlet_rect == fine.outlet_rect
+        area = coarse.dx[:, None] * coarse.dz[None, :]
+        np.testing.assert_allclose(np.sum(coarse.rho_field[:, 0, :]
+                                   * coarse.eps_field[:, 0, :] * coarse.v_inlet_field * area),
+                                   target, rtol=2e-14)
+        np.testing.assert_allclose(np.sum(coarse.inlet_frac * area), .36 * .73)
+        assert np.all(coarse.v_inlet_field[coarse.inlet_frac == 0.] == 0.)
+        assert coarse.outlet_u_frac.shape == (5, 5)
+        assert coarse.outlet_w_frac.shape == (4, 6)
+        coarse.v[:] = .3
+        coarse.residuals = [.01]
+        return False, 37
+
+    monkeypatch.setattr(SIMPLESolver3D, 'solve', solve)
+    info = bootstrap_simple_3d(fine, max_iter_coarse=37, tol_coarse=.002)
+    assert len(seen) == 1 and info['applied'] and not info['coarse_converged']
+    np.testing.assert_array_equal(fine.v[:, 0, :], fine.v_inlet_field)
+    assert np.all(fine.v[:, -1, :][~fine.outlet_mask_ij] == 0.)
+    np.testing.assert_allclose(np.sum(fine.rho_field[:, 0, :] * fine.eps_field[:, 0, :]
+                               * fine.v[:, 0, :] * fine.dx[:, None] * fine.dz[None, :]), target)

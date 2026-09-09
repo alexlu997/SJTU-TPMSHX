@@ -40,6 +40,19 @@ def _real_outlet_slice(T_field, dir_code):
     return _face_slice(T_field, dir_code, 'outlet')
 
 
+def _port_rectangles(fluid_cfg, cross2_length):
+    """Keep the original physical edges; reversing flow never swaps ports."""
+    return {
+        f'{end}let_rect': (
+            fluid_cfg[f'{end}_ctr'] - fluid_cfg[f'{end}_w'] / 2,
+            fluid_cfg[f'{end}_ctr'] + fluid_cfg[f'{end}_w'] / 2,
+            fluid_cfg.get(f'{end}_z_ctr', cross2_length / 2)
+            - fluid_cfg.get(f'{end}_z_w', cross2_length) / 2,
+            fluid_cfg.get(f'{end}_z_ctr', cross2_length / 2)
+            + fluid_cfg.get(f'{end}_z_w', cross2_length) / 2)
+        for end in ('in', 'out')}
+
+
 def _build_partial_masks(fA, dcross1, dcross2, N_cross1, N_cross2, is_reverse):
     """Build inlet/outlet exact open-area fractions on the 2-axis inlet face.
 

@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from sjtu_tpmshx.domain.run_warnings import record_range
 
 CFD_SMOOTH = "cfd_smooth"
 EXPERIMENTAL = "experimental"
@@ -53,6 +54,21 @@ _HX_U_BOUNDS = {
     ("sco2", "Gyroid"): (0.6119811082039116, 2.470456518760552),
 }
 
+# Approved 2026-09-09: production inlet density and voxel single-side area.
+# Keep the calibration windows above: source audits and fit membership use them.
+_HX_APPLICATION_U_BOUNDS = {
+    ("water", "Diamond"): (0.013964829878811822, 0.25405479940574704),
+    ("water", "Gyroid"): (0.01623408984155984, 0.22587576822423192),
+    ("air", "Diamond"): (3.8832357133212434, 22.759887982116293),
+    ("air", "Gyroid"): (3.912822900405603, 24.546710397710296),
+    ("sco2", "Diamond"): (0.4349250602441561, 2.53960962894522),
+    ("sco2", "Gyroid"): (0.3814083098626136, 2.470456518760552),
+}
+_HX_APPLICATION_SCOPE = (
+    "7/0.6 mm, 0.182 x 0.042 x 0.042 m HX measured combinations and "
+    "approved port validation; not an arbitrary T/P/mdot domain or "
+    "independent cold-side sCO2 pressure-drop validation")
+
 
 def _summary(value: Any) -> float | dict[str, float]:
     a = np.asarray(value, dtype=float)
@@ -83,8 +99,13 @@ def _is_hx_76(L_mm: Any, t_mm: Any) -> bool:
 
 
 def hx_velocity_bounds(fluid: str, tpms: str) -> tuple[float, float]:
-    """Return the reviewed inlet-velocity window for one HX-effective fit."""
+    """Return the original calibration window; preserve source members/audits."""
     return _HX_U_BOUNDS[(fluid, tpms)]
+
+
+def hx_application_velocity_bounds(fluid: str, tpms: str) -> tuple[float, float]:
+    """Return the approved production application window, with frozen sF."""
+    return _HX_APPLICATION_U_BOUNDS[(fluid, tpms)]
 
 
 def _hx_scale(tpms: str, fluid: str, L_mm: Any, t_mm: Any,
@@ -97,7 +118,7 @@ def _hx_scale(tpms: str, fluid: str, L_mm: Any, t_mm: Any,
         raise ValueError(
             f"{fluid} HX experiment calibration requires inlet velocity")
     u = np.asarray(u_mps, dtype=float)
-    lo, hi = hx_velocity_bounds(fluid, tpms)
+    lo, hi = hx_application_velocity_bounds(fluid, tpms)
     if np.any((u < lo - 1e-12) | (u > hi + 1e-12)):
         raise ValueError(
             f"{fluid} HX experiment calibration requires {lo:.6g}<=u<="
@@ -143,9 +164,19 @@ def apply_correction(tpms: str, fluid: str, L_mm: Any, t_mm: Any,
         "campaign": campaign, "scope": scope,
     }
     if scope == "HX-effective":
-        lo, hi = hx_velocity_bounds(fluid, tpms)
+        lo, hi = hx_application_velocity_bounds(fluid, tpms)
+        cal_lo, cal_hi = hx_velocity_bounds(fluid, tpms)
+        u = np.asarray(u_mps, dtype=float)
         metadata.update(inlet_u_mps=_summary(u_mps),
-                        velocity_window_mps={"min": lo, "max": hi})
+                        velocity_window_mps={"min": lo, "max": hi},
+                        calibration_velocity_window_mps={"min": cal_lo, "max": cal_hi},
+                        application_scope=_HX_APPLICATION_SCOPE,
+                        extrapolated=bool(np.any((u < cal_lo) | (u > cal_hi))))
+        record_range(
+            ('df-experimental', fluid, tpms), u, (cal_lo, cal_hi),
+            label=(f"[D-F extrap] {fluid}/{tpms}; frozen sF; approved application "
+                   f"window [{lo}, {hi}] m/s; {_HX_APPLICATION_SCOPE}"),
+            quantity='inlet u', unit='m/s')
     return K_out, cF_out, metadata
 
 
@@ -162,4 +193,5 @@ def cfd_metadata(K: Any, cF: Any) -> dict[str, Any]:
 __all__ = [
     "CFD_SMOOTH", "EXPERIMENTAL", "DF_MODES", "correction_scale",
     "apply_correction", "cfd_metadata", "hx_velocity_bounds",
+    "hx_application_velocity_bounds",
 ]

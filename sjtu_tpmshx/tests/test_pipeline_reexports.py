@@ -49,7 +49,6 @@ _SURFACE = {
     'sjtu_tpmshx.solvers.simple_solver': [
         'SIMPLESolver', '_aligned_grid', 'build_wall_refined_1d',
         'build_inlet_stretched_1d',
-        '_WALL_PENALTY_BASE', '_WALL_PENALTY_EFOLD',
         '_sweep_u_jit_df', '_sweep_v_jit_df', '_pseudo_u_jit_df',
         '_pseudo_v_jit_df', '_porous_src_df', '_umag_u', '_umag_v',
         '_sou_corr_u_x', '_sou_corr_u_y', '_sou_corr_v_x', '_sou_corr_v_y',

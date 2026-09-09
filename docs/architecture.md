@@ -96,7 +96,18 @@ explicit numerical-model change with directly relevant validation.
 9. **Port boundary.** `ComputeConfig.validate()` normalizes both ports and
    calls the shared validator. 2D supports every ±x/±y direction; 3D also
    supports ±z, with both transverse extents validated against the correct
-   domain axes.
+   domain axes. Non-opening exterior surfaces are stationary no-slip walls:
+   tangential momentum has half-cell viscous wall flux, including z± in 3D;
+   there is no volume wall penalty or post-solve velocity attenuation. 2D has
+   no finite-thickness z term; Nz=1 3D momentum still has two z walls.
+   Raw primary and staggered opening fractions come directly from the original
+   rectangle on the final actual grid, never from averaged primary fractions.
+   Positive raw overlap owns normal outlet flow and PPE support; taper remains
+   a separate numerical profile. The inlet mass normalization and local outlet
+   mass closure remain in force. Coarse bootstrap rebuilds the original ports,
+   transfers inlet mass by physical open-area intersection, and reapplies the
+   fine outlet support after prolongation; its budget and initial-guess role
+   are unchanged. Richardson does not add a fine SIMPLE solve.
 10. **True-enthalpy ownership.** Any ordered fluid pair containing sCO2 uses
     the conservative enthalpy kernel. It consumes SIMPLE's signed staggered
     face mass flows and computes duty from boundary enthalpy fluxes; it must
@@ -108,8 +119,8 @@ explicit numerical-model change with directly relevant validation.
     outlet zero-gradient applies at the external face. Explicit CC callers
     with SIMPLE supply actual inlet capacity transport while retaining the CC
     interior scheme. Prescribed B remains an external thermal reservoir.
-12. **Experiment-correction applicability.** Air uses only the core-specimen
-    L=6..8 mm, t=0.3..0.5 mm interpolation domain; t=0.6 is not extrapolated.
+12. **Experiment-correction applicability.** The air core-specimen branch uses
+    L=6..8 mm, t=0.3..0.5 mm interpolation; t=0.6 uses the separate HX campaign.
     sCO2 uses only D/G-7-6 hot-side `ok_dp` evidence, keeps K=K0, and is
     HX-effective: uniform symmetric core, no zones, delta, other L/t, or
     independent cold-side fit. Its measured inlet-velocity windows are
@@ -128,8 +139,7 @@ explicit numerical-model change with directly relevant validation.
     28/34 channel-count scale or geometric-face shortcut. After excluding
     G/water case 1 (`dp_nonphysical`) and D/water cases 10/11
     (`duplicate_row`), the production water fit uses the declared high-flow
-    window `u>=0.10 m/s`; lower-flow valid records remain reported as outside
-    scope. Fixed-K0 water RMSRE is 6.84% D / 0.93% G with sF 4.8928 / 4.1989.
+    window `u>=0.10 m/s`; this original calibration membership is unchanged. Fixed-K0 water RMSRE is 6.84% D / 0.93% G with sF 4.8928 / 4.1989.
     The measured upper bounds are 0.2541 / 0.2232 m/s. Matching HX-air uses its
     own sF 1.8024 / 2.0120 and measured velocity windows. `ComputeConfig`
     selects each side independently, allowing all nine ordered air/water/sCO2
@@ -139,6 +149,21 @@ explicit numerical-model change with directly relevant validation.
     own velocity window, the matching 0.182 x 0.042 x 0.042 m domain, and delta=0.
     Custom inlet/outlet positions and sizes remain supported. Every active side
     must match its own applicability rules; there is no silent fallback.
+    `hx_velocity_bounds()` retains original calibration/source-audit windows.
+    `hx_application_velocity_bounds()` separately supplies the approved
+    production windows (Diamond/Gyroid, m/s): water 0.0139648..0.254055 /
+    0.0162341..0.225876; air 3.88324..22.7599 / 3.91282..24.5467; sCO2
+    0.434925..2.53961 / 0.381408..2.47046. Full precision is in the selector.
+    These windows cover reviewed 7/0.6 mm full-HX measured combinations and
+    approved port validation, not arbitrary T/P/mdot combinations. Both ranges,
+    actual inlet u and approved purpose are retained in correction metadata;
+    leaving the calibration window emits a run-local side-specific warning
+    through the existing cache/UI/export path. Water's lower-speed extension
+    is substantial approved extrapolation; no coefficients are refitted.
+    Each side applies its frozen sF exactly once before pressure seeding and
+    SIMPLE, with K unchanged. Explicit CFD mode and independent Nu selection
+    retain their defaults. D-F permission does not relax water-state, sCO2
+    property-domain, nonfinite, numerical or energy guards.
 
 ## Extension points
 

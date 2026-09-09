@@ -7,10 +7,12 @@ the initial guess for the fine solve. The fine solver then reaches
 its tight tol in ~half the outer iterations because the cold-start
 transient is already absorbed at coarse resolution.
 
-Geometry coefficients (K_arr, cF_arr, eps, v_inlet_field) are
+Geometry coefficients (K_arr, cF_arr, eps) are
 block-averaged onto the coarse grid — geometry is NOT re-evaluated via
 the TPMS sigmoid because the coarse grid is purely a bootstrap
 device, not a physical answer.
+Ports are rebuilt from their physical rectangles; inlet mass is transferred
+by open-area intersection, including nonuniform and odd-sized fine grids.
 
 Final correctness is preserved: the fine solver still converges to its
 own tol gate. Coarse bootstrap is opt-in via `solver_fine.use_coarse_bootstrap`.
@@ -49,6 +51,15 @@ def _trilinear_zoom(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
     from scipy.ndimage import zoom
     factors = tuple(t / s for t, s in zip(target_shape, arr.shape))
     return zoom(arr, factors, order=1, mode='nearest')
+
+
+def _open_intersections(fine_widths, coarse_widths, lo, hi):
+    """Open lengths shared by each coarse/fine face interval."""
+    fine = np.r_[0., np.cumsum(fine_widths)]
+    coarse = np.r_[0., np.cumsum(coarse_widths)]
+    left = np.maximum(np.maximum(coarse[:-1, None], fine[None, :-1]), lo)
+    right = np.minimum(np.minimum(coarse[1:, None], fine[None, 1:]), hi)
+    return np.maximum(right - left, 0.)
 
 
 def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
@@ -96,9 +107,6 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
     K_arr_c = _block_average_2d(solver_fine.K_arr, fy, fz)
     cF_arr_c = _block_average_2d(solver_fine.cF_arr, fy, fz)
 
-    # v_inlet_field is shaped (Nx, Nz) on solver — average accordingly.
-    v_inlet_c = _block_average_2d(solver_fine.v_inlet_field, fx, fz)
-
     # eps may be uniform (scalar) or zoned (3D array).
     eps_uniform = float(solver_fine.eps)
     has_zoned_eps = (solver_fine.eps_field.std() > 1e-12)
@@ -117,7 +125,7 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
         Nx=Nx_c, Ny=Ny_c, Nz=Nz_c,
         rho=rho_init, mu=solver_fine.mu,
         T_in=solver_fine.T_in,
-        v_inlet=v_inlet_c,
+        v_inlet=0.,
         eps=eps_scalar,
         K_arr=K_arr_c, cF_arr=cF_arr_c,
         P_ref_abs=solver_fine.P_ref_abs,
@@ -126,12 +134,30 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
         fluid_type=solver_fine.fluid_type,
         R_gas=solver_fine.R_gas,
         alpha_rho=solver_fine.alpha_rho,
+        inlet_rect=solver_fine.inlet_rect,
+        outlet_rect=solver_fine.outlet_rect,
     )
     if eps_c_field is not None:
         solver_coarse.eps_field = np.ascontiguousarray(
             eps_c_field, dtype=np.float64)
         solver_coarse._mu_eff_field = np.ascontiguousarray(
             solver_fine.mu / eps_c_field, dtype=np.float64)
+
+    # Fine velocity already contains its open fraction. Divide once to obtain
+    # flux on the physical opening, then integrate onto actual coarse faces.
+    flux = getattr(solver_fine, '_massflux_target',
+                   solver_fine.rho_field[:, 0, :] * solver_fine.v_inlet_field)
+    mass_open = np.divide(
+        flux * solver_fine.eps_field[:, 0, :], solver_fine.inlet_frac,
+        out=np.zeros_like(flux), where=solver_fine.inlet_frac > 0.)
+    xlo, xhi, zlo, zhi = solver_fine.inlet_rect
+    ox = _open_intersections(solver_fine.dx, solver_coarse.dx, xlo, xhi)
+    oz = _open_intersections(solver_fine.dz, solver_coarse.dz, zlo, zhi)
+    area = solver_coarse.dx[:, None] * solver_coarse.dz[None, :]
+    solver_coarse.v_inlet_field = np.ascontiguousarray(
+        (ox @ mass_open @ oz.T) / (area * rho_init * solver_coarse.eps_field[:, 0, :]))
+    solver_coarse.v_inlet = float(solver_coarse.v_inlet_field.mean())
+    solver_coarse.v[:, 0, :] = solver_coarse.v_inlet_field
 
     # Inherit Phase A adaptive AMG; do NOT enable Phase B Anderson on coarse
     # (less benefit, more risk for short solve).
@@ -149,19 +175,26 @@ def bootstrap_simple_3d(solver_fine, max_iter_coarse: int = 200,
     solver_fine.w[:] = _trilinear_zoom(solver_coarse.w, solver_fine.w.shape)
     solver_fine.P[:] = _trilinear_zoom(solver_coarse.P, solver_fine.P.shape)
 
-    # Re-impose inlet BC on fine (prolongation may smear it).
-    solver_fine.v[:, 0, :] = solver_fine.v_inlet_field
-
-    # Refresh fine ρ field from prolongated P + T_in. Compressible-only;
-    # incompressible solvers leave rho_field untouched here.
-    if solver_fine.fluid_type == 'ideal_gas':
-        mode = str(getattr(solver_fine, 'convergence_mode',
-                           os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
-        # Leave invalid fine fields for the owning F2 solve's exit guard;
-        # density clipping must not erase the prolonged pressure failure.
-        if mode != 'f2' or f2_state_is_finite(
-                solver_fine, (solver_fine.u, solver_fine.v, solver_fine.w)):
+    mode = str(getattr(solver_fine, 'convergence_mode',
+                       os.environ.get('TPMSHX_CONV_MODE', 'legacy')))
+    # Preserve any invalid prolonged field for the parent F2 exit guard.
+    # Neither density clipping nor reapplying a boundary may erase it.
+    if mode != 'f2' or f2_state_is_finite(
+            solver_fine, (solver_fine.u, solver_fine.v, solver_fine.w)):
+        solver_fine.v[:, 0, :] = solver_fine.v_inlet_field
+        if solver_fine.fluid_type == 'ideal_gas':
             solver_fine._update_density()
+
+    # Prolongation can smear a partial outlet across its edge. Reapply the
+    # fine solver's existing boundary closure using the fine physical support.
+    from ._kernels_simple_3d import _v_bc_3d
+    if mode != 'f2' or f2_state_is_finite(
+            solver_fine, (solver_fine.u, solver_fine.v, solver_fine.w)):
+        _v_bc_3d(solver_fine.u, solver_fine.v, solver_fine.w,
+                 solver_fine.v_inlet_field, solver_fine.rho_field,
+                 solver_fine.eps_field, solver_fine.outlet_mask_ij,
+                 solver_fine.Nx, solver_fine.Ny, solver_fine.Nz,
+                 solver_fine.dx, solver_fine.dy, solver_fine.dz)
 
     return {
         'applied': True,

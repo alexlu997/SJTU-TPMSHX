@@ -58,7 +58,7 @@ def _mom_res(s, use_sou=0, use_eps=0):
         s.u, s.v, s.w, s.P,
         s.Nx, s.Ny, s.Nz, s.dx, s.dy, s.dz,
         s.rho_field, s._mu_eff_field, s.mu_field, s.eps_field,
-        s.K_arr, s.cF_arr, s.outlet_coeff, s.inlet_frac, use_sou, use_eps)
+        s.K_arr, s.cF_arr, s.outlet_u_frac, s.outlet_w_frac, use_sou, use_eps)
     f = lambda n, d: (n / d if d > 1e-300 else 0.0)  # noqa: E731
     return f(nu, du), f(nv, dv), f(nw, dw)
 
@@ -83,7 +83,6 @@ def test_residual_vanishes_at_momentum_fixed_point(use_sou, use_eps):
               rho_field=s.rho_field, mu_eff_field=s._mu_eff_field,
               mu_field=s.mu_field, eps_field=s.eps_field,
               K_arr=s.K_arr, cF_arr=s.cF_arr,
-              outlet_frac=s.outlet_coeff, inlet_frac=s.inlet_frac,
               alpha_u=1.0, use_sou=use_sou, use_eps=use_eps)
 
     # Momentum-only Picard: sweep u/v/w with P frozen until the field stops
@@ -91,11 +90,11 @@ def test_residual_vanishes_at_momentum_fixed_point(use_sou, use_eps):
     # equation aP0*phi = rhs, which is exactly what the residual measures.
     for _ in range(600):
         prev = (s.u.copy(), s.v.copy(), s.w.copy())
-        _sweep_u_jit_df_3d(s.u, s.v, s.w, s.P, s.d_u, n_sweeps=1, **kw)
+        _sweep_u_jit_df_3d(s.u, s.v, s.w, s.P, s.d_u, outlet_u_frac=s.outlet_u_frac, n_sweeps=1, **kw)
         _sweep_v_jit_df_3d(s.u, s.v, s.w, s.P, s.d_v,
                            v_inlet_field=s.v_inlet_field, n_sweeps=1,
                            outlet_mask_ij=s.outlet_mask_ij, **kw)
-        _sweep_w_jit_df_3d(s.u, s.v, s.w, s.P, s.d_w, n_sweeps=1, **kw)
+        _sweep_w_jit_df_3d(s.u, s.v, s.w, s.P, s.d_w, outlet_w_frac=s.outlet_w_frac, n_sweeps=1, **kw)
         d = max(np.abs(s.u - prev[0]).max(),
                 np.abs(s.v - prev[1]).max(),
                 np.abs(s.w - prev[2]).max())
@@ -115,15 +114,14 @@ def _sweep_to_momentum_fixed_point(s, use_sou=0, use_eps=0, n=600):
               rho_field=s.rho_field, mu_eff_field=s._mu_eff_field,
               mu_field=s.mu_field, eps_field=s.eps_field,
               K_arr=s.K_arr, cF_arr=s.cF_arr,
-              outlet_frac=s.outlet_coeff, inlet_frac=s.inlet_frac,
               alpha_u=1.0, use_sou=use_sou, use_eps=use_eps)
     for _ in range(n):
         prev = (s.u.copy(), s.v.copy(), s.w.copy())
-        _sweep_u_jit_df_3d(s.u, s.v, s.w, s.P, s.d_u, n_sweeps=1, **kw)
+        _sweep_u_jit_df_3d(s.u, s.v, s.w, s.P, s.d_u, outlet_u_frac=s.outlet_u_frac, n_sweeps=1, **kw)
         _sweep_v_jit_df_3d(s.u, s.v, s.w, s.P, s.d_v,
                            v_inlet_field=s.v_inlet_field, n_sweeps=1,
                            outlet_mask_ij=s.outlet_mask_ij, **kw)
-        _sweep_w_jit_df_3d(s.u, s.v, s.w, s.P, s.d_w, n_sweeps=1, **kw)
+        _sweep_w_jit_df_3d(s.u, s.v, s.w, s.P, s.d_w, outlet_w_frac=s.outlet_w_frac, n_sweeps=1, **kw)
         d = max(np.abs(s.u - prev[0]).max(), np.abs(s.v - prev[1]).max(),
                 np.abs(s.w - prev[2]).max())
         if d < 1e-14:
@@ -176,7 +174,7 @@ def test_balanced_denominator_has_no_false_zero():
     nu, du, nv, dv, nw, dw = _mom_res_jit_3d(
         s.u, s.v, s.w, s.P, s.Nx, s.Ny, s.Nz, s.dx, s.dy, s.dz,
         s.rho_field, s._mu_eff_field, s.mu_field, s.eps_field,
-        s.K_arr, s.cF_arr, s.outlet_coeff, s.inlet_frac, 0, 0)
+        s.K_arr, s.cF_arr, s.outlet_u_frac, s.outlet_w_frac, 0, 0)
 
     assert nw > 0.0, "w-momentum numerator must be nonzero (p_src != 0)"
     assert dw > 0.0, (

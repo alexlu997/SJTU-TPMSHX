@@ -36,7 +36,8 @@ def _frozen_state(Nx=6, Ny=10, Nz=4, seed=0):
         'cF': np.full((Ny, Nz), 340.0),
         'v_in': np.full((Nx, Nz), 3.0),
         'out': np.ones((Nx, Nz)),
-        'in_': np.ones((Nx, Nz)),
+        'out_u': np.ones((Nx + 1, Nz)),
+        'out_w': np.ones((Nx, Nz + 1)),
         'dx': np.full(Nx, 0.01), 'dy': np.full(Ny, 0.01),
         'dz': np.full(Nz, 0.01),
         'dims': (Nx, Ny, Nz),
@@ -52,17 +53,17 @@ def _run_sweeps(st, eps_field, use_eps):
     _sweep_u_jit_df_3d(u, v, w, P, d_u, Nx, Ny, Nz,
                        st['dx'], st['dy'], st['dz'],
                        st['rho'], st['mu_eff'], st['mu'], eps_field,
-                       st['K'], st['cF'], st['out'], st['in_'],
+                       st['K'], st['cF'], st['out_u'],
                        0.7, 1, 0, use_eps)
     _sweep_v_jit_df_3d(u, v, w, P, d_v, st['v_in'], Nx, Ny, Nz,
                        st['dx'], st['dy'], st['dz'],
                        st['rho'], eps_field, st['mu_eff'], st['mu'],
-                       st['K'], st['cF'], st['out'], st['in_'],
+                       st['K'], st['cF'],
                        0.7, 1, 0, use_eps, st['out'] > 0.0)
     _sweep_w_jit_df_3d(u, v, w, P, d_w, Nx, Ny, Nz,
                        st['dx'], st['dy'], st['dz'],
                        st['rho'], st['mu_eff'], st['mu'], eps_field,
-                       st['K'], st['cF'], st['out'], st['in_'],
+                       st['K'], st['cF'], st['out_w'],
                        0.7, 1, 0, use_eps)
     return u, v, w
 
