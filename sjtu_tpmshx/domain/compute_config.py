@@ -125,6 +125,7 @@ TPMSType = Literal['Diamond', 'Gyroid']
 RoughMode = Literal['baseline', 'norris_1a', 'bhatti_shah_1b']
 ZoneAxis = Literal['x', 'y', 'grid']
 
+SCO2_P_RANGE_PA = (7.9e6, 16.0e6)
 
 
 # ── dataclasses ──────────────────────────────────────────────────────
@@ -674,14 +675,13 @@ class ComputeConfig:
         sco2_A = self.fluid_A.type == 'sco2'
         sco2_B = self.fluid_B.type == 'sco2'
         if sco2_A or sco2_B:
-            from sjtu_tpmshx.solvers.sco2_props import P_RANGE_PA
             for side, fl in (('A', self.fluid_A), ('B', self.fluid_B)):
                 if fl.type != 'sco2':
                     continue
                 if not 280.0 <= fl.T_in_K <= 700.0:
                     raise ValueError(
                         f"sCO2 fluid {side} temperature must be 280..700 K")
-                if not P_RANGE_PA[0] <= fl.P_in_Pa <= P_RANGE_PA[1]:
+                if not SCO2_P_RANGE_PA[0] <= fl.P_in_Pa <= SCO2_P_RANGE_PA[1]:
                     raise ValueError(
                         f"sCO2 fluid {side} pressure must be 7.9..16 MPa")
             if self.zones.enabled:

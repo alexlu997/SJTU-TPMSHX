@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from sjtu_tpmshx.domain.compute_config import SCO2_P_RANGE_PA as P_RANGE_PA
+
 try:
     from CoolProp.CoolProp import PropsSI as _PropsSI
     _HAVE_COOLPROP = True
@@ -30,7 +32,6 @@ except Exception:                       # pragma: no cover - import guard
 
 _FLUID = "CO2"
 T_RANGE_K = (280.0, 700.0)
-P_RANGE_PA = (7.9e6, 16.0e6)
 
 
 def _validate_state(T_K, P_Pa, *, where=None) -> None:
