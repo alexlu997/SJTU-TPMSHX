@@ -82,6 +82,9 @@ def test_orchestrator_wires_the_initializer():
 
 def test_caps_hard_set_and_escape_hatch(monkeypatch):
     from sjtu_tpmshx.optimization._thread_caps import set_worker_thread_caps
+    # The worker initializer writes every cap directly; isolate those writes
+    # from the already-initialized Numba pool in this pytest process.
+    monkeypatch.setattr(os, 'environ', os.environ.copy())
     monkeypatch.setenv('OMP_NUM_THREADS', '8')   # stray shell export
     monkeypatch.delenv('TPMSHX_WORKER_THREADS', raising=False)
     set_worker_thread_caps()
