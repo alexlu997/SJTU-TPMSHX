@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 import os
 
 import numpy as np
-from sjtu_tpmshx.domain.run_warnings import range_context
 from sjtu_tpmshx.domain.compute_config import ComputeConfig, bc_to_dict
 from sjtu_tpmshx.domain.compute_result import ComputeResult
 from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
@@ -840,63 +839,7 @@ def _finalize_cfg(raw: dict[str, Any],
     ucA, vcA = raw['ucA'], raw['vcA']
     ucB, vcB = raw['ucB'], raw['vcB']
 
-    # Mass-weighted outlet T per side using the same enthalpy balance
-    # _run_solvers used for Q_A_fine / Q_B_fine; that gives the same
-    # T_out a downstream finalize_plots would compute by hand.
     compute_cfg = fields['compute_cfg']
-
-    def _outlet_T(T_field, uc_field, vc_field, dir_code, fluid_type,
-                  T_in_K, P_in_Pa):
-        # B1 1.1: param renamed from `fluid_props` — it shadowed the
-        # solvers.fluid_props module this function now dispatches through.
-        from sjtu_tpmshx.solvers import fluid_props as _fluids
-        # Same convention as ``_enthalpy_balance_2d`` outlet plane.
-        import numpy as _np
-        # Zoned-ε outlet weighting (2026-07-13 audit): the physical mass flux
-        # through an outlet cell is ε·ρ·|u|·dA. A missing ε cancels when ε is
-        # uniform along the outlet plane (every run without zoned ε — weights
-        # unchanged, bit-identical) but mis-weights T_out on zoned designs,
-        # inconsistent with the N1-fixed Q weighting. The FULL ε is enough:
-        # the per-side asym split ratio s is a scalar and cancels in the
-        # weighted average.
-        _za_f = fields.get('za')
-        _eps2d = None
-        if _za_f is not None and _za_f.get('eps_arr') is not None:
-            _e = _np.asarray(_za_f['eps_arr'], dtype=_np.float64)
-            if _e.shape == _np.asarray(T_field).shape:
-                _eps2d = _e
-        if dir_code in (0, 1):
-            j_out = -1 if dir_code == 0 else 0
-            u_face = uc_field[j_out, :]
-            T_face = T_field[j_out, :]
-            eps_face = _eps2d[j_out, :] if _eps2d is not None else 1.0
-            dA = raw['energy_dy']
-        else:
-            i_out = -1 if dir_code == 2 else 0
-            u_face = vc_field[:, i_out]
-            T_face = T_field[:, i_out]
-            eps_face = _eps2d[:, i_out] if _eps2d is not None else 1.0
-            dA = raw['energy_dx']
-        # ε·ρ·cp weighting — registry primitives (water rho ignores P).
-        _m = _fluids.get(fluid_type)
-        rho = _m.rho(T_face, P_in_Pa)
-        cp = _m.cp(T_face, P_in_Pa)
-        w = eps_face * _np.asarray(rho) * _np.asarray(cp) * _np.abs(u_face) * dA
-        wsum = float(_np.sum(w))
-        if wsum < 1e-30:
-            return float(_np.mean(T_face))
-        return float(_np.sum(w * T_face) / wsum)
-
-    with range_context(side='A', stage='final-outlet', layout='outlet-face'):
-        T_out_A = _outlet_T(Ta, ucA, vcA, fields['dir_A'],
-                            compute_cfg.fluid_A.type,
-                            compute_cfg.fluid_A.T_in_K,
-                            compute_cfg.fluid_A.P_in_Pa)
-    with range_context(side='B', stage='final-outlet', layout='outlet-face'):
-        T_out_B = _outlet_T(Tb, ucB, vcB, fields['dir_B'],
-                            compute_cfg.fluid_B.type,
-                            compute_cfg.fluid_B.T_in_K,
-                            compute_cfg.fluid_B.P_in_Pa)
 
     # Zone slot — None when zones disabled.
     zones_slot = None
@@ -920,8 +863,8 @@ def _finalize_cfg(raw: dict[str, Any],
         # Fail-safe default: a missing/renamed key must read as NOT converged,
         # not silently report success (blind-spot audit W5, 2026-07-07).
         converged=bool(raw.get('solver_converged', False)),
-        T_out_A_K=T_out_A,
-        T_out_B_K=T_out_B,
+        T_out_A_K=raw['T_out_A_K'],
+        T_out_B_K=raw['T_out_B_K'],
         fields={
             'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
             'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,

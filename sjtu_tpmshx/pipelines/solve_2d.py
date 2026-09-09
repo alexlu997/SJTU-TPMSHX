@@ -307,6 +307,34 @@ def _inlet_transport_2d(simp, direction, eps_side, cp_in, dx, dy):
     return np.ascontiguousarray(flux * cp_in)
 
 
+def _outlet_temperature_2d(temperature, mass_flux, direction, outlet_fraction):
+    """Raw outlet-cell T weighted by positive outward mass, in K.
+
+    Outlet zero-gradient uses the adjacent cell T. Face mass already includes
+    area; geometry only selects the real opening. Keep signed inputs intact
+    for the separate full-boundary mass and energy checks.
+    """
+    mx, my = mass_flux
+    if direction == 0:
+        face_T, outward = temperature[-1, :], mx[-1, :]
+    elif direction == 1:
+        face_T, outward = temperature[0, :], -mx[0, :]
+    elif direction == 2:
+        face_T, outward = temperature[:, -1], my[:, -1]
+    else:
+        face_T, outward = temperature[:, 0], -my[:, 0]
+    opening = np.asarray(outlet_fraction) > 0.0
+    weights = np.maximum(outward[opening], 0.0)
+    total = float(weights.sum())
+    if not np.isfinite(total) or total <= 0.0:
+        raise ValueError('2D outlet temperature requires finite positive outward mass flow')
+    flowing = weights > 0.0
+    value = float(np.sum(weights[flowing] * face_T[opening][flowing]) / total)
+    if not np.isfinite(value):
+        raise ValueError('2D outlet temperature is non-finite')
+    return value
+
+
 def _compute_pressure_2d(simpA, simpB, dir_A, dir_B, P_inA, P_inB, window):
     """Real-coordinate pressure fields + pipe-weighted dP from converged SIMPLE.
 
@@ -737,12 +765,9 @@ def _compute_Q_richardson(
     # try/except above so an exception in the Richardson block doesn't
     # short-circuit it. Computes
     #     Q_A ≈ m_dot_A · cp_A · |T_inA − ⟨T_out_A⟩|
-    # using the same outlet-face mean convention the UI's T_OUT widget uses
-    # (np.mean over the outlet face with a finite-only filter). Q_total
-    # stays whatever Richardson / Q_*_fine produced when those are finite;
-    # if and only if Q_total is nan after the Richardson block, this
-    # bumps in. Guarantees Q_total is finite whenever T_OUT_A / T_OUT_B
-    # display finite (which is the same condition the UI advertises).
+    # using the legacy finite-only outlet-face mean. This Q fallback is
+    # independent of the result/UI mass-weighted outlet temperature. Finite
+    # Richardson / Q_*_fine duty remains unchanged.
     if not np.isfinite(Q_total) and model_inputs is None:
         try:
             # Outlet face per side. dir_code: 0=+x 1=-x 2=+y 3=-y.
@@ -1096,6 +1121,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         rho_cp_B = _pB['rho'](T_inB, P_inB_val) * _pB['cp'](T_inB, P_inB_val)
     last_temperature_inputs = None
     last_model_inputs = None
+    mass_flux_A = mass_flux_B = None
 
     # Variable density: 2D rho fields for SIMPLE (initialized uniform)
     with range_context(side='A', stage='inlet', layout='scalar'):
@@ -1117,6 +1143,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         nonlocal drho_A, drho_B, dT_A, dT_B
         nonlocal last_temperature_inputs
         nonlocal last_model_inputs
+        nonlocal mass_flux_A, mass_flux_B
         if cancel_check is not None and cancel_check():
             raise CancelledError("compute cancelled by user")
         window._compute_progress = 10 + int(80 * _coup_it / _MAX_COUPLING)
@@ -1367,6 +1394,14 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
         else:
             _Kffa_use = _Kffa_src; _Kffb_use = _Kffb_src
             _epsA_use = None; _epsB_use = None
+        # Retain the last main thermal input for the raw outlet temperature,
+        # including the legacy temperature-form zones/offset paths.
+        mass_flux_A = _face_mass_fluxes_2d(
+            simpA, dir_A, _epsA_use if _epsA_use is not None else .5*_eps_src,
+            energy_dx, energy_dy)
+        mass_flux_B = _face_mass_fluxes_2d(
+            simpB, dir_B, _epsB_use if _epsB_use is not None else .5*_eps_src,
+            energy_dx, energy_dy)
         if _enthalpy_mode:
             from sjtu_tpmshx.solvers.ltne_enthalpy_2d import solve_enthalpy_2d
             eps_total = np.broadcast_to(
@@ -1375,10 +1410,6 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
                          else 0.5 * eps_total)
             eps_B_ent = (_epsB_use if _epsB_use is not None
                          else 0.5 * eps_total)
-            mass_flux_A = _face_mass_fluxes_2d(
-                simpA, dir_A, eps_A_ent, energy_dx, energy_dy)
-            mass_flux_B = _face_mass_fluxes_2d(
-                simpB, dir_B, eps_B_ent, energy_dx, energy_dy)
             def _inflow_total(face_flux):
                 fx, fy = face_flux
                 return float(
@@ -1409,8 +1440,7 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
             if _model_h_mode:
                 model_kwargs = dict(
                     model_fluids=(_pA['name'], _pB['name']),
-                    mass_flux_A=_face_mass_fluxes_2d(simpA, dir_A, .5*_eps_src, energy_dx, energy_dy),
-                    mass_flux_B=_face_mass_fluxes_2d(simpB, dir_B, .5*_eps_src, energy_dx, energy_dy))
+                    mass_flux_A=mass_flux_A, mass_flux_B=mass_flux_B)
                 last_model_inputs = dict(model_kwargs, K_ffA=_Kffa_use, K_ffB=_Kffb_use,
                                          K_ss=_Kss_src, outer_index=int(_coup_it))
                 masses = (model_kwargs['mass_flux_A'], model_kwargs['mass_flux_B'])
@@ -1733,6 +1763,10 @@ def _run_solvers(window, cfg, fields, *, cancel_check=None):
     result = {
         'sco2_nu_observations': nu_observations,
         'Ta': Ta, 'Tb': Tb, 'Ts': Ts,
+        'T_out_A_K': _outlet_temperature_2d(
+            Ta_raw, mass_flux_A, dir_A, simpA.outlet_geom_frac),
+        'T_out_B_K': _outlet_temperature_2d(
+            Tb_raw, mass_flux_B, dir_B, simpB.outlet_geom_frac),
         'ucA': ucA, 'vcA': vcA, 'ucB': ucB, 'vcB': vcB,
         # N5: display-smoothed copies (partial-BC runs only; None ⇒ use raw).
         # Physics consumers ('ucA' etc.) stay raw / mass-conserving.

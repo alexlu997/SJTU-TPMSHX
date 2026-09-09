@@ -264,31 +264,11 @@ class FluidInputMixin:
             f"Temperature display switched to {self._temp_unit}.", 3000)
 
     def _update_tout(self, t_idx: int):
-        """Update outlet temperature display using actual flow directions.
-
-        2026-05-20 UI sweep: was displaying raw Kelvin even when the
-        user had toggled the header K/°C button to °C, producing a
-        value/unit mismatch (label says °C, number was 415.4 K).
-        Route through ``_set_temp_K`` so the displayed unit honours
-        ``self._temp_unit``.
-        """
-        dir_A = self._dir_int(self.combo_dirA)
-        dir_B = self._dir_int(self.combo_dirB)
-        # Fluid A outlet
-        if dir_A == 0:   ta = np.mean(self.T_fA[t_idx, -1, :])
-        elif dir_A == 1: ta = np.mean(self.T_fA[t_idx, 0, :])
-        elif dir_A == 2: ta = np.mean(self.T_fA[t_idx, :, -1])
-        else:            ta = np.mean(self.T_fA[t_idx, :, 0])
-        self._set_temp_K(self._r_ToutA, float(ta))
-        # Fluid B outlet
-        if dir_B == 0:   tb = np.mean(self.T_fB[t_idx, -1, :])
-        elif dir_B == 1: tb = np.mean(self.T_fB[t_idx, 0, :])
-        elif dir_B == 2: tb = np.mean(self.T_fB[t_idx, :, -1])
-        else:            tb = np.mean(self.T_fB[t_idx, :, 0])
-        self._set_temp_K(self._r_ToutB, float(tb))
-        # Cache the raw K values so a later K/°C toggle can re-render
-        # without re-running the solver.
-        self._tout_K_cache = (float(ta), float(tb))
+        """Render this run's result scalars in the selected temperature unit."""
+        cached = getattr(self, '_tout_K_cache', None)
+        if cached is not None:
+            self._set_temp_K(self._r_ToutA, cached[0])
+            self._set_temp_K(self._r_ToutB, cached[1])
 
     def _on_shape_changed(self, idx):
         """Show/hide controls based on domain shape (Rectangle vs Polygon)."""

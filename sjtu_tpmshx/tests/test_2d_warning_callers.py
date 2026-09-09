@@ -58,7 +58,11 @@ def _prepare(monkeypatch, *, legacy=False, pair=('air', 'air'), temperatures=(40
         monkeypatch.setattr(tpms_geometry, '_phi_grid', lambda *a: np.zeros((2, 2, 2)))
         monkeypatch.setattr(asym_geometry, 'a0_sides', lambda *a, **k: (100., 120.))
         monkeypatch.setattr(asym_geometry, 'dh_sides', lambda *a, **k: (.002, .003))
-    monkeypatch.setattr(SIMPLESolver, 'solve', lambda *a, **k: (True, 0))
+    def solved(solver, *args, **kwargs):
+        # A completed fake flow needs outward mass for the result's Tout.
+        solver.v[:, -1] = .001 * solver.outlet_geom_frac
+        return True, 0
+    monkeypatch.setattr(SIMPLESolver, 'solve', solved)
     return pipe, fields
 
 
@@ -164,8 +168,8 @@ def test_main_warm_return_final_and_outlet_keep_actual_states(monkeypatch, nan, 
             assert record.size == np.prod(shape)
             assert record.minimum[0] == value if low and side == 'A' else record.maximum[0] == value
             assert record.nonfinite == int(nan and side == 'A' and stage == 'main-return')
-        assert any(key[0:2] == ('property', 'air_cp') and key[-1] ==
-                   (side, 'final-outlet', 'outlet-face') for key in records)
+        # Tout transcribes the raw mass-weighted scalar; no display-property call.
+        assert not any(key[-1] == (side, 'final-outlet', 'outlet-face') for key in records)
         for layout in ('asym-reference-scalar', 'asym-side-scalar'):
             raw_re = records[('nu_raw', 'air', 'Gyroid', (), (side, 'asym-ratio', layout))]
             source = records[('nu', 'air', 'Gyroid', (), (side, 'asym-ratio', layout))]

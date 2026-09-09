@@ -109,6 +109,7 @@ class RunResultsMixin:
         if getattr(self, '_result_3d', None) is not None:
             self._result_3d = None
         f = result.fields
+        self._tout_K_cache = (result.T_out_A_K, result.T_out_B_K)
         self._compute_results = {
             'metadata': deepcopy(result.metadata),
             'converged': result.converged,
