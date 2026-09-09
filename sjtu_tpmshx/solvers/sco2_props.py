@@ -30,7 +30,7 @@ except Exception:                       # pragma: no cover - import guard
 
 _FLUID = "CO2"
 T_RANGE_K = (280.0, 700.0)
-P_RANGE_PA = (8.0e6, 16.0e6)
+P_RANGE_PA = (7.9e6, 16.0e6)
 
 
 def _validate_state(T_K, P_Pa, *, where=None) -> None:
@@ -44,7 +44,7 @@ def _validate_state(T_K, P_Pa, *, where=None) -> None:
         message = "sCO2 V1 temperature must be within 280..700 K"
         invalid = (T < T_RANGE_K[0]) | (T > T_RANGE_K[1])
     elif _np.any((P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])):
-        message = "sCO2 V1 pressure must be within 8..16 MPa"
+        message = "sCO2 V1 pressure must be within 7.9..16 MPa"
         invalid = (P < P_RANGE_PA[0]) | (P > P_RANGE_PA[1])
     else:
         return
@@ -127,7 +127,7 @@ def sco2_temperature(h_Jkg: float, P_Pa: float) -> float:
     the energy balance is carried in enthalpy and converted back to T here
     rather than integrating an ill-conditioned cp·dT."""
     if not P_RANGE_PA[0] <= float(P_Pa) <= P_RANGE_PA[1]:
-        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
+        raise ValueError("sCO2 V1 pressure must be within 7.9..16 MPa")
     T = float(_PropsSI("T", "H", float(h_Jkg), "P", float(P_Pa), _FLUID))
     _validate_state(T, P_Pa)
     return T
@@ -144,7 +144,7 @@ def sco2_temperature_from_enthalpy(h_Jkg, P_Pa):
     hf = _np.ascontiguousarray(_np.broadcast_to(h, shape)).ravel()
     Pf = _np.ascontiguousarray(_np.broadcast_to(P, shape)).ravel()
     if _np.any((Pf < P_RANGE_PA[0]) | (Pf > P_RANGE_PA[1])):
-        raise ValueError("sCO2 V1 pressure must be within 8..16 MPa")
+        raise ValueError("sCO2 V1 pressure must be within 7.9..16 MPa")
     T = _np.asarray(_PropsSI("T", "H", hf, "P", Pf, _FLUID), dtype=float)
     T = T.reshape(shape)
     _validate_state(T, _np.broadcast_to(P, shape))

@@ -112,6 +112,11 @@ explicit numerical-model change with directly relevant validation.
     the conservative enthalpy kernel. It consumes SIMPLE's signed staggered
     face mass flows and computes duty from boundary enthalpy fluxes; it must
     not reconstruct a full-face x-flow from a scalar mass rate.
+    Every sCO2 side in 2D/3D uses the shared property-wrapper range
+    **280–700 K, 7.9–16 MPa absolute**, at inlets and actual local states.
+    The 2026-09-09 pressure-floor extension leaves the EOS backend and the
+    independent Nu/D-F applicability and acceptance gates unchanged; it does
+    not establish experimental accuracy in the added range.
 11. **Current V2 limit.** sCO2 zones and offset level sets remain rejected;
     air/water-only runs retain their existing temperature-form kernels.
     For Nz>1, those kernels solve every physical fluid and solid end control
