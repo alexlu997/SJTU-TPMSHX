@@ -66,6 +66,30 @@ def _configure(win, monkeypatch, mode):
     return cfg
 
 
+def test_2d_tout_displays_result_scalars_across_units_and_direction_drafts(win):
+    win._temp_unit = 'K'
+    result = ComputeResult(Q_W=123., T_out_A_K=341.25, T_out_B_K=312.75,
+        fields={'Ta': np.arange(6.).reshape(2, 3) + 400.,
+                'Tb': np.arange(6.).reshape(2, 3) + 300.},
+        diagnostics={'mode': '2d'})
+    win.write_result(result)
+    assert win._tout_K_cache == (341.25, 312.75)
+    for direction in range(4):
+        win.combo_dirA.setCurrentIndex(direction)
+        win.combo_dirB.setCurrentIndex(3-direction)
+        win._update_tout(-1)
+        assert float(win._r_ToutA.text()) == 341.25
+        assert float(win._r_ToutB.text()) == 312.75
+    win._toggle_temp_unit()
+    win._update_tout(0)
+    assert float(win._r_ToutA.text()) == pytest.approx(68.10)
+    assert float(win._r_ToutB.text()) == pytest.approx(39.60)
+    win._toggle_temp_unit()
+    assert float(win._r_ToutA.text()) == 341.25
+    assert float(win._r_ToutB.text()) == 312.75
+    assert win._compute_results['Q_total'] == result.Q_W == 123.
+
+
 @pytest.mark.parametrize('mode', ['2d', '3d'])
 @pytest.mark.parametrize('df_extrap', [False, True])
 def test_real_source_warnings_do_not_set_df_ui_flag(win, monkeypatch, mode, df_extrap):
