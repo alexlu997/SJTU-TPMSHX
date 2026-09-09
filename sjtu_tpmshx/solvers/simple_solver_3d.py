@@ -426,10 +426,16 @@ class SIMPLESolver3D:
     def set_ports(self, inlet_rect, outlet_rect):
         """Set physical (xlo, xhi, zlo, zhi) rectangles on this actual grid.
 
-        v_inlet_field remains the caller's prescribed face-average velocity.
+        Array velocities remain the caller's prescribed face averages. Scalar
+        inlets can move only before their mass-flux reference is captured.
         Primary fractions cannot determine the staggered overlap at an edge.
         """
         from .simple_solver import _port_overlap_1d
+        inlet_changed = tuple(inlet_rect) != getattr(self, 'inlet_rect', None)
+        if (inlet_changed and self._scalar_inlet
+                and hasattr(self, '_massflux_target')):
+            raise ValueError('Cannot change scalar inlet after mass-flux capture; '
+                             'create a new solver with a new inlet reference state.')
         self.inlet_rect, self.outlet_rect = tuple(inlet_rect), tuple(outlet_rect)
         xi, zi = (_port_overlap_1d(d, *bounds) for d, bounds in
                   ((self.dx, inlet_rect[:2]), (self.dz, inlet_rect[2:])))
@@ -438,6 +444,9 @@ class SIMPLESolver3D:
         if not (xi.any() and zi.any() and xo.any() and zo.any()):
             raise ValueError('Inlet / outlet range resolves to zero cells.')
         self.inlet_frac = np.outer(xi, zi)
+        if inlet_changed and self._scalar_inlet:
+            self.v_inlet_field = self.v_inlet * self.inlet_frac
+            self.v[:, 0, :] = self.v_inlet_field
         self._outlet_frac = np.outer(xo, zo)
         self.outlet_u_frac = np.outer(
             _port_overlap_1d(self.dx, *outlet_rect[:2], staggered=True), zo)
@@ -583,9 +592,10 @@ class SIMPLESolver3D:
         self.mu = float(mu)
         self.eps = float(eps)
         self.T_in = float(T_in)
-        # Scalar: uniform speed on the physical opening (masked below).
+        # Scalar: uniform speed on the physical opening (owned by set_ports).
         # Array: prescribed face-average velocity, already including open area.
-        if np.ndim(v_inlet) == 0:
+        self._scalar_inlet = np.ndim(v_inlet) == 0
+        if self._scalar_inlet:
             self.v_inlet = float(v_inlet)
             self.v_inlet_field = np.full((Nx, Nz), float(v_inlet), dtype=np.float64)
         else:
@@ -667,8 +677,6 @@ class SIMPLESolver3D:
         full_face = (0., float(np.sum(self.dx)), 0., float(np.sum(self.dz)))
         self.set_ports(full_face if inlet_rect is None else inlet_rect,
                        full_face if outlet_rect is None else outlet_rect)
-        if np.ndim(v_inlet) == 0 and inlet_rect is not None:
-            self.v_inlet_field *= self.inlet_frac
 
         # Inlet BC seed (may be non-uniform via v_inlet_field)
         self.v[:, 0, :] = self.v_inlet_field

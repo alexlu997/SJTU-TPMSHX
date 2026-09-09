@@ -71,25 +71,38 @@ def test_res_norm_fallback_absolute_on_no_flow():
     print("test_res_norm_fallback_absolute_on_no_flow PASS")
 
 
-def test_residual_scale_invariance():
-    """Quadrupling ṁ must not change the normalised residual's meaning.
+def test_residual_scale_invariance(monkeypatch):
+    """Scale the same state, not two different Reynolds-number trajectories.
 
-    Measured normalised ratio is ~0.35 (the two flows' physical residual
-    trajectories genuinely differ ~3x). If the normalisation regressed to
-    the old absolute norm, the ratio would gain the throughput factor 4:
-    0.35 * 4 = ~1.4. The band's upper bound must therefore sit BELOW 1.4 —
-    the original 0.1..10 band let the exact regression this test guards
-    against pass through its middle (blind-spot audit T3, 2026-07-07)."""
-    hist = {}
-    for v in (1.0, 4.0):
-        s = _solver_3d(v_inlet=v)
-        s.lowre_early_exit = False   # full 30 iters for both trajectories
-        s.solve(max_iter=30, tol=0.0)
-        hist[v] = np.asarray(s.residuals[5:30])
-    ratio = np.median(hist[4.0] / hist[1.0])
-    assert 0.12 < ratio < 1.0, \
-        f"normalised residuals not scale-invariant: median ratio {ratio:.3e}"
-    print(f"test_residual_scale_invariance PASS (median ratio {ratio:.2f})")
+    Also check the real solve's published history, so removing its division
+    by inlet flux fails even if the raw kernel's scaling remains correct.
+    """
+    from sjtu_tpmshx.solvers import simple_solver_3d as module
+    raw_kernel = module._mass_res_jit_3d
+    expected = []
+
+    def record(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_eps):
+        raw = raw_kernel(u, v, w, Nx, Ny, Nz, dx, dy, dz, rho_eps)
+        flux = float(np.sum(rho_eps[:, 0, :] * np.abs(v[:, 0, :])
+                            * dx[:, None] * dz[None, :]))
+        scaled_raw = raw_kernel(4*u, 4*v, 4*w, Nx, Ny, Nz, dx, dy, dz, rho_eps)
+        scaled_flux = float(np.sum(rho_eps[:, 0, :] * np.abs(4*v[:, 0, :])
+                                   * dx[:, None] * dz[None, :]))
+        assert flux > 0.
+        np.testing.assert_allclose(scaled_raw, 4*raw, rtol=1e-12, atol=0.)
+        np.testing.assert_allclose(scaled_flux, 4*flux, rtol=1e-12, atol=0.)
+        np.testing.assert_allclose(scaled_raw/scaled_flux, raw/flux,
+                                   rtol=1e-12, atol=0.)
+        expected.append(raw/flux)
+        return raw
+
+    monkeypatch.setattr(module, '_mass_res_jit_3d', record)
+    s = _solver_3d(v_inlet=1.)
+    s.lowre_early_exit = False
+    s.solve(max_iter=30, tol=0.)
+    assert len(expected) == len(s.residuals) == 30
+    assert np.any(np.asarray(expected) > 0.)
+    np.testing.assert_allclose(s.residuals, expected, rtol=1e-12, atol=0.)
 
 
 # ── exit_reason semantics ────────────────────────────────────────────

@@ -32,6 +32,50 @@ def test_constructor_inlet_velocity_contains_open_fraction_once(array_inlet):
         np.testing.assert_array_equal(prescribed, velocity)
 
 
+@pytest.mark.parametrize('array_inlet', [False, True])
+def test_port_reuse_preserves_inlet_ownership(array_inlet):
+    prescribed = np.array([[.5], [1.5]]) if array_inlet else 2.
+    s = SIMPLESolver3D(1., 1., 1., 2, 2, 1, 3., .001, 300., prescribed)
+    if array_inlet:
+        s._massflux_target = 3. * prescribed
+    full = (0., 1., 0., 1.)
+    for rect, fraction in [((.1, .4, 0., 1.), [.6, 0.]),
+                           ((.6, .9, 0., 1.), [0., .6]),
+                           ((.6, .9, 0., 1.), [0., .6]),
+                           (full, [1., 1.])]:
+        s.set_ports(rect, full)
+        expected = prescribed if array_inlet else 2. * np.array(fraction)[:, None]
+        np.testing.assert_allclose(s.v_inlet_field, expected, rtol=0, atol=1e-15)
+        np.testing.assert_array_equal(s.v[:, 0, :], s.v_inlet_field)
+    if array_inlet:
+        np.testing.assert_array_equal(prescribed, [[.5], [1.5]])
+        np.testing.assert_array_equal(s._massflux_target, 3. * prescribed)
+
+
+def test_scalar_port_change_after_massflux_capture_is_atomic():
+    s = SIMPLESolver3D(1., 1., 1., 2, 2, 1, 3., .001, 300., 2.)
+    s._massflux_target = s.v_inlet_field * s.rho_field[:, 0, :]
+    s.rho_field *= 2.
+    s._apply_massflux_inlet()
+    s.v[:, 0, :] = s.v_inlet_field
+    field, target = s.v_inlet_field.copy(), s._massflux_target.copy()
+    # Same inlet, including an outlet-only change, preserves the captured state.
+    s.set_ports(s.inlet_rect, s.outlet_rect)
+    s.set_ports(s.inlet_rect, (0., .5, 0., 1.))
+    np.testing.assert_array_equal(s.v_inlet_field, field)
+    np.testing.assert_array_equal(s._massflux_target, target)
+    before = {key: value.copy() if isinstance(value, np.ndarray) else value
+              for key, value in vars(s).items()}
+    with pytest.raises(ValueError, match='new solver.*reference state'):
+        s.set_ports((.5, 1., 0., 1.), (0., 1., 0., 1.))
+    assert vars(s).keys() == before.keys()
+    for key, value in before.items():
+        if isinstance(value, np.ndarray):
+            np.testing.assert_array_equal(vars(s)[key], value)
+        else:
+            assert vars(s)[key] == value
+
+
 def test_case16_staggered_outlet_is_not_an_average_of_primary_fractions():
     s = SIMPLESolver3D(.182, .042, .042, 20, 10, 3, 1., 1e-3, 300., 1.,
                       inlet_rect=(.007, .049, 0., .042),
