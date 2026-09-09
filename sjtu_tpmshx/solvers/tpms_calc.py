@@ -220,7 +220,7 @@ def _compute_cached(tpms_type: str,
                     P_in_Pa: float,
                     k_s: float,
                     fluid_type: str = 'air',
-                    _df_env: tuple = ('', '')) -> tuple[dict, dict]:
+                    _df_env: tuple = ('', ''), sco2_nu=None) -> tuple[dict, dict]:
     """
     Compute all TPMS heat-transfer and fluid properties.
 
@@ -272,7 +272,7 @@ def _compute_cached(tpms_type: str,
         # registry (water rho ignores P — incompressible; air ideal-gas).
         # Function-level import: fluid_props imports tpms_calc at module level.
         from sjtu_tpmshx.solvers import fluid_props as _fluids
-        _m = _fluids.get(fluid_type)
+        _m = _fluids.get(fluid_type, sco2_nu=sco2_nu)
         # Pass P to all primitives: air/water ignore it (T-only), sCO2 needs it
         # (real-gas cp/mu/k/rho depend on both T and P). Widened 2026-06-26.
         mu = float(_m.mu(T_in_K, P_in_Pa))
@@ -375,7 +375,7 @@ def compute(tpms_type: str,
             T_in_K: float,
             P_in_Pa: float,
             k_s: float,
-            fluid_type: str = 'air') -> dict:
+            fluid_type: str = 'air', *, sco2_nu=None) -> dict:
     """Public entry — see ``_compute_cached`` for the full docstring.
 
     V2 production uses the fixed water+sCO2 CFD closure. Alternate backends
@@ -395,7 +395,7 @@ def compute(tpms_type: str,
     _df_method = SCO2_DF_METHOD
     _df_env = (_df_method, '')
     result, records = _compute_cached(tpms_type, L_cell_mm, t_mm, u, T_in_K,
-                                     P_in_Pa, k_s, fluid_type, _df_env)
+                                     P_in_Pa, k_s, fluid_type, _df_env, sco2_nu)
     merge_warnings(current_warnings(), [records], bind_context=True)
     return dict(result)
 

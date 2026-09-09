@@ -20,6 +20,17 @@ class SessionPresetsMixin:
         "Shanghai (3D Diamond)",
     ]
 
+    def _set_sco2_nu_parameters(self, payload):
+        from dataclasses import asdict
+        from sjtu_tpmshx.domain.compute_config import Sco2NuConfig
+        settings = Sco2NuConfig(**payload).validate()
+        self._sco2_nu_parameters = asdict(settings) if payload else {}
+        label = getattr(self, 'lbl_sco2_nu_parameters', None)
+        if label is not None:
+            label.setText(f"{settings.parameter_version} · {settings.source}"
+                          if settings.parameter_version else "未导入标定参数")
+            label.setToolTip(settings.applicability)
+
     def _load_user_presets(self):
         """Return the list of user-defined preset dicts (possibly empty).
 
@@ -142,7 +153,9 @@ class SessionPresetsMixin:
                 except Exception: pass
         # Shape rebuilds polygon edge options: restore in canonical order,
         # independent of JSON object key order.
-        combos = preset.get('combos') or {}
+        self._set_sco2_nu_parameters(preset.get('sco2_nu_parameters', {}))
+        combos = dict(preset.get('combos') or {})
+        combos.setdefault('combo_sco2_nu_mode', 0)
         for name in self._PRESET_COMBOS:
             if name not in combos:
                 continue
@@ -201,14 +214,19 @@ class SessionPresetsMixin:
 
         if not isinstance(preset, dict):
             raise ValueError('Preset must be a JSON object.')
-        if complete and set(preset) != {'name', 'temp_unit', 'line_edits',
+        if complete and set(preset) - {'sco2_nu_parameters'} != {'name', 'temp_unit', 'line_edits',
                                        'combos', 'checks', 'zone_inputs'}:
             raise ValueError('Incomplete or unsupported preset fields.')
+        from sjtu_tpmshx.domain.compute_config import Sco2NuConfig
+        from dataclasses import replace
+        parameters = Sco2NuConfig(**preset.get('sco2_nu_parameters', {})).validate()
         if preset.get('temp_unit', 'K') not in ('K', 'C'):
             raise ValueError('Unsupported temperature unit.')
         combos = preset.get('combos', {})
         if not isinstance(combos, dict):
             raise ValueError('Invalid combos.')
+        if combos.get('combo_sco2_nu_mode', 0) == 1:
+            replace(parameters, mode='experimental').validate()
         shape = combos.get('combo_shape', self.combo_shape.currentIndex())
         for section, allowed in (('line_edits', self._SESSION_LINE_EDITS),
                                  ('combos', self._PRESET_COMBOS),
@@ -219,6 +237,8 @@ class SessionPresetsMixin:
             required = {n for n in allowed if getattr(self, n, None) is not None}
             if section == 'combos' and shape == 0:
                 required -= set(self._POLYGON_COMBOS)
+            if section == 'combos' and 'combo_sco2_nu_mode' not in values:
+                required.discard('combo_sco2_nu_mode')  # old saved configs default to CFD
             if complete and set(values) != required:
                 raise ValueError(f'Incomplete or unsupported {section}: '
                                  f'{sorted(set(values) ^ required)}')
@@ -291,7 +311,8 @@ class SessionPresetsMixin:
         """Build a preset payload from the current field state."""
         payload = {'name': name,
                    'temp_unit': getattr(self, '_temp_unit', 'K'),
-                   'line_edits': {}, 'combos': {}, 'checks': {}}
+                   'line_edits': {}, 'combos': {}, 'checks': {},
+                   'sco2_nu_parameters': dict(getattr(self, '_sco2_nu_parameters', {}))}
         for n in self._SESSION_LINE_EDITS:
             w = getattr(self, n, None)
             if w is not None:
@@ -383,7 +404,7 @@ class SessionPresetsMixin:
     )
     _SESSION_COMBOS = (
         'combo_shape', 'combo_dim', 'combo_tpms',
-        'combo_df_mode',
+        'combo_df_mode', 'combo_sco2_nu_mode',
         'combo_fluidA', 'combo_fluidB',
         'combo_dirA', 'combo_dirB',
     )
@@ -463,7 +484,8 @@ class SessionPresetsMixin:
         is silently skipped — partial sessions still reload cleanly
         (missing keys fall back to the Shanghai preset).
         """
-        payload = {'temp_unit': getattr(self, '_temp_unit', 'K')}
+        payload = {'temp_unit': getattr(self, '_temp_unit', 'K'),
+                   'sco2_nu_parameters': dict(getattr(self, '_sco2_nu_parameters', {}))}
         lines = {}
         for name in self._SESSION_LINE_EDITS:
             w = getattr(self, name, None)
@@ -533,6 +555,10 @@ class SessionPresetsMixin:
         payload = self.sm.load_session(ws)
         if payload is None:
             return
+        self._set_sco2_nu_parameters(payload.get('sco2_nu_parameters', {}))
+        nu_combo = getattr(self, 'combo_sco2_nu_mode', None)
+        if nu_combo is not None:
+            nu_combo.setCurrentIndex(0)
         # Apply temp_unit first so we can interpret text correctly. The JSON
         # stores text as the user saw it, so matching units is the safe path.
         saved_unit = payload.get('temp_unit', 'K')

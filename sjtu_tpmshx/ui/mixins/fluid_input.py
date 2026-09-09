@@ -54,12 +54,13 @@ class FluidInputMixin:
             from sjtu_tpmshx.solvers.tpms_calc import parse_fluid_type
             _combo = getattr(self, f'combo_fluid{fluid}', None)
             _ftype = parse_fluid_type(_combo) if _combo is not None else 'air'
+            from sjtu_tpmshx.ui.window_config import sco2_nu_from_window
             r = tpms_compute(
                 self.combo_tpms.currentText(),
                 float(self.le_Lcell.text()), float(self.le_t.text()),
                 float(le_u.text()), T_K,
                 float(le_Pin.text()), float(self.le_ks.text()),
-                fluid_type=_ftype)
+                fluid_type=_ftype, sco2_nu=sco2_nu_from_window(self))
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e)); return
 

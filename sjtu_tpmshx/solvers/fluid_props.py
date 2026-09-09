@@ -15,7 +15,8 @@ Behavior contract (must stay byte-identical to the old inline dispatch):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from typing import Callable
 
 import numpy as np
@@ -104,10 +105,13 @@ def _nu_water(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
     return tpms_calc.nu_water_topo(tpms_type, Re, Pr)
 
 
-def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr):
+def _nu_sco2(tpms_type, Re, eps_f, L_mm, D_h_mm, Pr, *, settings=None):
     # V1 uses the smooth-wall CFD fit directly; experiment roughness/pressure
     # losses are deliberately outside this validation round.
     del eps_f
+    if settings is not None:
+        from .nu_correlations import nu_sco2_selected
+        return nu_sco2_selected(tpms_type, Re, Pr, L_mm, D_h_mm, settings=settings)
     return tpms_calc.nu_sco2_topo(tpms_type, Re, Pr, L_mm, D_h_mm)
 
 
@@ -192,12 +196,18 @@ FLUIDS = {
 }
 
 
-def get(fluid: str) -> FluidModel:
+def get(fluid: str, *, sco2_nu=None) -> FluidModel:
     """Return the FluidModel for ``fluid`` ('air' | 'water'), case-insensitive."""
     try:
-        return FLUIDS[fluid.strip().lower()]
+        model = FLUIDS[fluid.strip().lower()]
     except (KeyError, AttributeError):
         raise ValueError(f"unknown fluid {fluid!r}; known: {sorted(FLUIDS)}")
+
+    if model.name == 'sco2' and sco2_nu is not None:
+        sco2_nu.validate()
+        if sco2_nu.mode == 'experimental':
+            return replace(model, nu=partial(_nu_sco2, settings=sco2_nu))
+    return model
 
 
 def flow_model(fluid: str) -> str:

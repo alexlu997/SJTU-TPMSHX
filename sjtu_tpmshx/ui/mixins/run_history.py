@@ -90,6 +90,7 @@ class RunHistoryMixin:
             "mode": provenance['mode'],
             "input_grid": list(provenance['input_grid']),
             "actual_grid": list(provenance['actual_grid']),
+            "model_metadata": deepcopy(getattr(self, '_result_model_metadata', {})),
         }
         self._recent_runs.appendleft(entry)
 

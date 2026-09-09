@@ -88,6 +88,7 @@ class IOActionsMixin:
                     'envelope_valid': diag.get('envelope_valid'),
                     'outer_converged': (diag.get('convergence_detail') or {}
                                         ).get('outer_converged'),
+                    'metadata': res_3d.metadata,
                     'warnings': res_3d.warnings,
                     'extrap_reasons': res_3d.extrap_reasons,
                 }
@@ -112,7 +113,7 @@ class IOActionsMixin:
                 res_2d = self._compute_results
                 status = {key: res_2d.get(key) for key in
                           ('converged', 'envelope_valid', 'outer_converged',
-                           'warnings', 'extrap_reasons')}
+                           'warnings', 'extrap_reasons', 'metadata')}
                 rows.append(["Q [W]", f"{res_2d['Q_total']:.4f}"])
                 rows.append(["dP_A [Pa]", f"{res_2d['dP_A']:.2f}"])
                 rows.append(["dP_B [Pa]", f"{res_2d['dP_B']:.2f}"])
@@ -161,6 +162,23 @@ class IOActionsMixin:
     # ─────────────────────────────────────────────────────────
     #  Save / Load configuration
     # ─────────────────────────────────────────────────────────
+    def _load_sco2_nu_parameters(self):
+        """Resolve a local parameter file now; snapshots never reread its path."""
+        path, _ = QFileDialog.getOpenFileName(self, "导入 sCO₂ Nu 标定参数", "", "JSON (*.json)")
+        if not path:
+            return False
+        try:
+            from pathlib import Path
+            from dataclasses import asdict, replace
+            from sjtu_tpmshx.domain.compute_config import Sco2NuConfig
+            settings = Sco2NuConfig(**json.loads(Path(path).read_text(encoding='utf-8')))
+            replace(settings, mode='experimental').validate()
+            self._set_sco2_nu_parameters(asdict(settings))
+            return True
+        except (OSError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "标定参数无法加载", str(exc))
+            return False
+
     def save_config(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Config", "SJTU-TPMSHX_config.json",

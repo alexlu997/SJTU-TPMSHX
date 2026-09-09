@@ -175,7 +175,7 @@ def _mass_weighted_h_out(T_face: np.ndarray, P_ref: float,
 def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
                          u_abs: np.ndarray | float, A_0: float,
                          D_h_m: float, tpms_type: str,
-                         L_cell_mm: float) -> np.ndarray:
+                         L_cell_mm: float, *, sco2_nu=None, observation=None) -> np.ndarray:
     """Shared 2D/3D sCO2 h_v = A_0·Nu·k(T)/D_h with local properties.
 
     ρ, μ, k, cp — hence Re and Pr — are evaluated per cell at the local
@@ -198,10 +198,27 @@ def _sco2_hv_local_field(T_field: np.ndarray, P_Pa: float,
     Pr = _s2.sco2_cp_field(T, P_Pa) * mu / np.maximum(k_f, 1e-30)
     Re_loc = rho * np.abs(u_abs) * D_h_m / np.maximum(mu, 1e-30)
     record_raw_nu_range('sco2', tpms_type, Re_loc)
-    Nu_loc = np.maximum(
-        np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
-                          L_cell_mm, D_h_m * 1000.0),
-                   dtype=np.float64), _floor)
+    if sco2_nu is not None:
+        sco2_nu.validate()
+        if sco2_nu.mode == 'experimental':
+            from functools import partial
+            from sjtu_tpmshx.solvers.nu_correlations import nu_sco2_selected
+            _nu_s2 = partial(nu_sco2_selected, settings=sco2_nu)
+    Nu_raw = np.asarray(_nu_s2(tpms_type, np.maximum(Re_loc, 1.0), Pr,
+                               L_cell_mm, D_h_m * 1000.0), dtype=np.float64)
+    if observation is not None:
+        observation.clear()
+        observation.update(
+            stage='last local h_v coefficient evaluation (lagged temperature)',
+            shape=list(Nu_raw.shape), cells=int(Nu_raw.size),
+            floor_cells=int(np.count_nonzero(Nu_raw < _floor)),
+            floor_fraction=float(np.mean(Nu_raw < _floor)), floor=float(_floor),
+            pre_floor_min=float(Nu_raw.min()), pre_floor_max=float(Nu_raw.max()),
+            Re_min=float(Re_loc.min()), Re_max=float(Re_loc.max()),
+            Pr_min=float(Pr.min()), Pr_max=float(Pr.max()),
+            T_min_K=float(T.min()), T_max_K=float(T.max()),
+            P_abs_Pa=float(P_Pa))
+    Nu_loc = np.maximum(Nu_raw, _floor)
     return A_0 * Nu_loc * k_f / D_h_m
 
 
