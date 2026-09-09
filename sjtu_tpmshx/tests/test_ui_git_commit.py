@@ -21,35 +21,41 @@ def test_source_checkout_worktree_and_no_metadata(tmp_path, monkeypatch, overrid
     git(repo, 'init')
     git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
         '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'first')
-    expected = git(repo, 'rev-parse', 'HEAD')[:7]
     worktree = tmp_path / 'worktree'
     git(repo, 'worktree', 'add', '--detach', str(worktree), 'HEAD')
     git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
         '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'second')
-    checkout_commit = git(repo, 'rev-parse', 'HEAD')[:7]
     foreign = tmp_path / 'foreign'
     git(repo, 'clone', str(repo), str(foreign))
     git(foreign, '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
         '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'foreign')
-    if override:
-        target = {'GIT_DIR': foreign / '.git',
-                  'GIT_COMMON_DIR': foreign / 'missing-metadata',
-                  'GIT_WORK_TREE': foreign}[override]
-        monkeypatch.setenv(override, str(target))
-    inherited = os.environ.copy()
-    monkeypatch.chdir(repo)  # Different commit from the running worktree.
-    assert (worktree / '.git').is_file()
-    for root, commit in ((worktree, expected),
-                         (repo, checkout_commit)):
-        monkeypatch.setattr(main, '__file__', str(root / 'sjtu_tpmshx' / 'main.py'))
-        assert main._git_commit_hash() == commit
-        assert io_actions._git_commit_hash() == commit
-        assert run_history._git_commit_hash() == commit
+    revisions = []
+    with monkeypatch.context() as env_patch:
+        if override:
+            target = {'GIT_DIR': foreign / '.git',
+                      'GIT_COMMON_DIR': foreign / 'missing-metadata',
+                      'GIT_WORK_TREE': foreign}[override]
+            env_patch.setenv(override, str(target))
+        inherited = os.environ.copy()
+        monkeypatch.chdir(repo)  # Different commit from the running worktree.
+        assert (worktree / '.git').is_file()
+        for root, subject in ((worktree, 'first'), (repo, 'second')):
+            monkeypatch.setattr(main, '__file__', str(root / 'sjtu_tpmshx' / 'main.py'))
+            for helper in (main._git_commit_hash, io_actions._git_commit_hash,
+                           run_history._git_commit_hash):
+                revision = helper()
+                assert len(revision) == 7
+                revisions.append((revision, subject))
 
-    # An installed/frozen layout inside another repo must not inherit its HEAD.
-    monkeypatch.setattr(main, '__file__', str(repo / 'installed' / 'sjtu_tpmshx' / 'main.py'))
-    assert main._git_commit_hash() == ''
-    assert os.environ == inherited
+        # An installed/frozen layout inside another repo must not inherit its HEAD.
+        monkeypatch.setattr(main, '__file__', str(repo / 'installed' / 'sjtu_tpmshx' / 'main.py'))
+        assert main._git_commit_hash() == ''
+        assert os.environ == inherited
+
+    # Read source semantics after restoring the intentionally overridden environment.
+    # The foreign clone contains all three uniquely named commits.
+    for revision, subject in revisions:
+        assert git(foreign, 'show', '-s', '--format=%s', revision) == subject
 
 
 def test_git_unavailable_or_invalid_metadata(tmp_path, monkeypatch):
