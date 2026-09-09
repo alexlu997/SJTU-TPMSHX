@@ -12,6 +12,7 @@ dP converges to the exact face-to-face Δp. No solver run — isolates the
 discretisation order of the reduction itself.
 """
 import numpy as np
+import pytest
 from types import SimpleNamespace
 
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
@@ -37,7 +38,31 @@ def _make_state(Ny):
     P = _Pfield(yc)[None, :, None]          # (1, Ny, 1)
     ones = np.ones((1, 1), dtype=np.float64)
     return SimpleNamespace(P=P, inlet_frac=ones, outlet_frac=ones,
-                           dx=np.ones(1), dz=np.ones(1))
+                           dx=np.ones(1), dy=np.full(Ny, h), dz=np.ones(1))
+
+
+@pytest.mark.parametrize('widths', [[.1, .9], [.1, .2, .4, .3], [.3, .4, .2, .1]])
+def test_nonuniform_affine_pressure_reaches_physical_faces(widths):
+    s = _make_state(len(widths))
+    s.dy = np.array(widths) * LY
+    yc = np.cumsum(s.dy) - .5 * s.dy
+    s.P = (1234. - 700. * yc / LY)[None, :, None]
+    assert SIMPLESolver3D.extract_dP_face_extrap(s) == pytest.approx(700., abs=1e-10)
+
+
+def test_uniform_face_extrap_preserves_exact_result():
+    s = _make_state(8)
+    expected = float((1.5 * s.P[:, 0, :] - .5 * s.P[:, 1, :]).item()
+                     - (1.5 * s.P[:, -1, :] - .5 * s.P[:, -2, :]).item())
+    assert SIMPLESolver3D.extract_dP_face_extrap(s) == expected
+
+
+def test_single_cell_and_empty_opening():
+    s = _make_state(1)
+    assert SIMPLESolver3D.extract_dP_face_extrap(s) == SIMPLESolver3D.extract_dP_weighted(s)
+    s = _make_state(2)
+    s.outlet_frac = np.zeros((1, 1))
+    assert SIMPLESolver3D.extract_dP_face_extrap(s) == 0.
 
 
 def _orders():
