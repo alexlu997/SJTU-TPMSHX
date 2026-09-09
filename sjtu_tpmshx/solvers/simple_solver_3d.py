@@ -583,7 +583,8 @@ class SIMPLESolver3D:
         self.mu = float(mu)
         self.eps = float(eps)
         self.T_in = float(T_in)
-        # v_inlet: scalar → uniform (Nx, Nz) field; array → taken as-is
+        # Scalar: uniform speed on the physical opening (masked below).
+        # Array: prescribed face-average velocity, already including open area.
         if np.ndim(v_inlet) == 0:
             self.v_inlet = float(v_inlet)
             self.v_inlet_field = np.full((Nx, Nz), float(v_inlet), dtype=np.float64)
@@ -661,11 +662,13 @@ class SIMPLESolver3D:
         self.d_v = np.zeros((Nx, Ny + 1, Nz), dtype=np.float64)
         self.d_w = np.zeros((Nx, Ny, Nz + 1), dtype=np.float64)
 
-        # Geometry defaults to full-face; v_inlet_field already includes area.
+        # Geometry defaults to full-face; array inlet velocities include area.
         self._outlet_taper = np.ones((Nx, Nz), dtype=np.float64)
         full_face = (0., float(np.sum(self.dx)), 0., float(np.sum(self.dz)))
         self.set_ports(full_face if inlet_rect is None else inlet_rect,
                        full_face if outlet_rect is None else outlet_rect)
+        if np.ndim(v_inlet) == 0 and inlet_rect is not None:
+            self.v_inlet_field *= self.inlet_frac
 
         # Inlet BC seed (may be non-uniform via v_inlet_field)
         self.v[:, 0, :] = self.v_inlet_field

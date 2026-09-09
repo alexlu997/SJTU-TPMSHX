@@ -6,6 +6,32 @@ from sjtu_tpmshx.solvers.simple_solver import SIMPLESolver
 from sjtu_tpmshx.solvers.simple_solver_3d import SIMPLESolver3D
 
 
+@pytest.mark.parametrize('array_inlet', [False, True])
+def test_constructor_inlet_velocity_contains_open_fraction_once(array_inlet):
+    dx = np.array([.1, .2, .3, .4])
+    dz = np.array([.2, .3, .5])
+    # Both transverse edges cut cells; the last x/z cells are fully closed.
+    fraction = np.outer([.5, 1., 1/6, 0.], [.5, 1., 0.])
+    velocity = 2. * fraction
+    prescribed = velocity.copy() if array_inlet else 2.
+    s = SIMPLESolver3D(1., 1., 1., 4, 2, 3, 3., 1e-3, 300., prescribed,
+                      eps=.7, dx_arr=dx, dz_arr=dz,
+                      inlet_rect=(.05, .35, .1, .5))
+    np.testing.assert_allclose(s.inlet_frac, fraction, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(s.v_inlet_field, velocity, rtol=0, atol=1e-15)
+    np.testing.assert_array_equal(s.v[:, 0, :], s.v_inlet_field)
+    assert np.all(s.v_inlet_field[fraction == 0.] == 0.)
+    area = dx[:, None] * dz[None, :]
+    assert np.sum(s.eps_field[:, 0, :] * s.rho_field[:, 0, :]
+                  * s.v[:, 0, :] * area) == pytest.approx(.7 * 3. * 2. * .3 * .4)
+    # Geometry refresh must not multiply a prescribed face average again.
+    before = s.v_inlet_field.copy()
+    s.set_ports(s.inlet_rect, s.outlet_rect)
+    np.testing.assert_array_equal(s.v_inlet_field, before)
+    if array_inlet:
+        np.testing.assert_array_equal(prescribed, velocity)
+
+
 def test_case16_staggered_outlet_is_not_an_average_of_primary_fractions():
     s = SIMPLESolver3D(.182, .042, .042, 20, 10, 3, 1., 1e-3, 300., 1.,
                       inlet_rect=(.007, .049, 0., .042),
